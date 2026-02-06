@@ -818,3 +818,8 @@
 - [x] Remove react-router-dom from package.json (project uses wouter)
 - [x] Clean up any remaining react-router-dom imports
 - [x] Verify build succeeds
+
+## Fix Database Query Errors
+- [x] Add workflowApprovalQueue table to schema or disable queries
+- [x] Add supplyChainWorkflows table to schema or disable queries
+- [ ] Fix DialogTitle accessibility warning
