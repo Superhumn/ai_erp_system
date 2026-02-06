@@ -813,3 +813,8 @@
 ## Fix Duplicate Key Error in Navigation
 - [x] Fix duplicate `/crm` key in DashboardLayout navigation
 - [x] Ensure all navigation items have unique keys
+
+## Fix Deployment Failure
+- [x] Remove react-router-dom from package.json (project uses wouter)
+- [x] Clean up any remaining react-router-dom imports
+- [x] Verify build succeeds
