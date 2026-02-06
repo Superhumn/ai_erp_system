@@ -78,6 +78,22 @@ export const googleOAuthTokens = mysqlTable("googleOAuthTokens", {
 export type GoogleOAuthToken = typeof googleOAuthTokens.$inferSelect;
 export type InsertGoogleOAuthToken = typeof googleOAuthTokens.$inferInsert;
 
+export const quickbooksOAuthTokens = mysqlTable("quickbooksOAuthTokens", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  accessToken: text("accessToken").notNull(),
+  refreshToken: text("refreshToken"),
+  tokenType: varchar("tokenType", { length: 32 }).default("Bearer"),
+  expiresAt: timestamp("expiresAt"),
+  realmId: varchar("realmId", { length: 64 }), // QuickBooks company ID
+  scope: text("scope"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type QuickBooksOAuthToken = typeof quickbooksOAuthTokens.$inferSelect;
+export type InsertQuickBooksOAuthToken = typeof quickbooksOAuthTokens.$inferInsert;
+
 // ============================================
 // CORE ENTITIES
 // ============================================

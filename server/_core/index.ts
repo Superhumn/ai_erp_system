@@ -363,6 +363,71 @@ async function startServer() {
     }
   });
 
+  // QuickBooks OAuth callback
+  app.get('/api/oauth/quickbooks/callback', async (req, res) => {
+    const { code, state, realmId } = req.query;
+    
+    if (!code || !state || !realmId) {
+      return res.redirect('/settings/integrations?quickbooks_error=missing_params');
+    }
+
+    try {
+      // Authenticate the user from session
+      const { sdk } = await import('./sdk');
+      let user;
+      try {
+        user = await sdk.authenticateRequest(req);
+      } catch (error) {
+        return res.redirect('/settings/integrations?quickbooks_error=not_authenticated');
+      }
+
+      if (!user) {
+        return res.redirect('/settings/integrations?quickbooks_error=not_authenticated');
+      }
+
+      // Validate state parameter
+      const { validateOAuthState, exchangeCodeForToken } = await import('./quickbooks');
+      const stateValidation = validateOAuthState(state as string);
+      
+      if (stateValidation.error || stateValidation.userId !== user.id) {
+        return res.redirect('/settings/integrations?quickbooks_error=invalid_state');
+      }
+
+      // Exchange code for tokens
+      const tokenResult = await exchangeCodeForToken(code as string);
+      
+      if (tokenResult.error) {
+        console.error('QuickBooks token exchange failed:', tokenResult.error);
+        return res.redirect('/settings/integrations?quickbooks_error=token_exchange_failed');
+      }
+
+      // Store the QuickBooks connection
+      const { upsertQuickBooksOAuthToken, createSyncLog } = await import('../db');
+      
+      await upsertQuickBooksOAuthToken({
+        userId: user.id,
+        accessToken: tokenResult.access_token!,
+        refreshToken: tokenResult.refresh_token!,
+        expiresAt: new Date(Date.now() + (tokenResult.expires_in! * 1000)),
+        realmId: realmId as string,
+        scope: 'com.intuit.quickbooks.accounting',
+      });
+
+      // Log the connection
+      await createSyncLog({
+        integration: 'quickbooks',
+        action: 'connected',
+        status: 'success',
+        details: `QuickBooks connected - Realm ID: ${realmId}`,
+      });
+
+      res.redirect('/settings/integrations?quickbooks_success=connected');
+    } catch (error) {
+      console.error('QuickBooks OAuth error:', error);
+      res.redirect('/settings/integrations?quickbooks_error=oauth_failed');
+    }
+  });
+
   // tRPC API
   app.use(
     "/api/trpc",

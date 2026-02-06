@@ -10,6 +10,7 @@ import {
   projects, projectMilestones, projectTasks,
   auditLogs, notifications, integrationConfigs, aiConversations, aiMessages,
   googleOAuthTokens, InsertGoogleOAuthToken,
+  quickbooksOAuthTokens, InsertQuickBooksOAuthToken,
   freightCarriers, freightRfqs, freightQuotes, freightEmails,
   customsClearances, customsDocuments, freightBookings,
   inventoryTransfers, inventoryTransferItems,
@@ -1437,6 +1438,47 @@ export async function deleteGoogleOAuthToken(userId: number) {
   const db = await getDb();
   if (!db) return;
   await db.delete(googleOAuthTokens).where(eq(googleOAuthTokens.userId, userId));
+}
+
+// QuickBooks OAuth token management
+export async function getQuickBooksOAuthToken(userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(quickbooksOAuthTokens).where(eq(quickbooksOAuthTokens.userId, userId)).limit(1);
+  return result[0];
+}
+
+export async function upsertQuickBooksOAuthToken(data: InsertQuickBooksOAuthToken) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Check if token exists for this user
+  const existing = await getQuickBooksOAuthToken(data.userId);
+  
+  if (existing) {
+    // Update existing token
+    // Note: QuickBooks always returns a new refresh token on token refresh
+    await db.update(quickbooksOAuthTokens)
+      .set({
+        accessToken: data.accessToken,
+        refreshToken: data.refreshToken ?? existing.refreshToken, // Use existing only if new one not provided
+        expiresAt: data.expiresAt,
+        scope: data.scope,
+        realmId: data.realmId,
+      })
+      .where(eq(quickbooksOAuthTokens.userId, data.userId));
+    return { id: existing.id };
+  } else {
+    // Insert new token
+    const result = await db.insert(quickbooksOAuthTokens).values(data);
+    return { id: result[0].insertId };
+  }
+}
+
+export async function deleteQuickBooksOAuthToken(userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(quickbooksOAuthTokens).where(eq(quickbooksOAuthTokens.userId, userId));
 }
 
 // ============================================

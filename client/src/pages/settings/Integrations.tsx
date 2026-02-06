@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 
 export default function IntegrationsPage() {
+  const searchParams = useSearch();
   const [testEmail, setTestEmail] = useState("");
   const [showAddShopify, setShowAddShopify] = useState(false);
   const [shopifyShopDomain, setShopifyShopDomain] = useState("");
@@ -44,6 +45,9 @@ export default function IntegrationsPage() {
   const { data: gmailAuthUrl } = trpc.gmail.getAuthUrl.useQuery();
   const { data: workspaceAuthUrl } = trpc.googleWorkspace.getAuthUrl.useQuery();
   const { data: sheetsAuthUrl } = trpc.sheetsImport.getAuthUrl.useQuery();
+  
+  // Get QuickBooks OAuth URL
+  const { data: quickbooksAuthUrl } = trpc.quickbooks.getAuthUrl.useQuery();
 
   // Handle OAuth callback
   useEffect(() => {
@@ -113,12 +117,26 @@ export default function IntegrationsPage() {
     },
   });
 
+  const quickbooksDisconnectMutation = trpc.quickbooks.disconnect.useMutation({
+    onSuccess: () => {
+      toast.success("QuickBooks disconnected successfully");
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
   // Check for OAuth callback success/error in URL
   React.useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    if (!searchParams) return;
+    
+    const params = new URLSearchParams(searchParams);
     const shopifySuccess = params.get('shopify_success');
     const shopifyError = params.get('shopify_error');
     const shopName = params.get('shop');
+    const quickbooksSuccess = params.get('quickbooks_success');
+    const quickbooksError = params.get('quickbooks_error');
 
     if (shopifySuccess === 'connected') {
       toast.success(`Successfully connected to ${shopName || 'Shopify store'}!`);
@@ -144,7 +162,26 @@ export default function IntegrationsPage() {
       // Clean up URL
       window.history.replaceState({}, '', '/settings/integrations');
     }
-  }, [refetch]);
+
+    if (quickbooksSuccess === 'connected') {
+      toast.success('Successfully connected to QuickBooks!');
+      refetch();
+      // Clean up URL
+      window.history.replaceState({}, '', '/settings/integrations');
+    } else if (quickbooksError) {
+      const errorMessages: Record<string, string> = {
+        'missing_params': 'Missing required parameters from QuickBooks',
+        'not_configured': 'QuickBooks integration is not configured. Please contact your administrator.',
+        'not_authenticated': 'You must be logged in to connect QuickBooks',
+        'invalid_state': 'Invalid OAuth state parameter',
+        'token_exchange_failed': 'Failed to exchange authorization code for access token',
+        'oauth_failed': 'OAuth authentication failed',
+      };
+      toast.error(errorMessages[quickbooksError] || 'Failed to connect QuickBooks');
+      // Clean up URL
+      window.history.replaceState({}, '', '/settings/integrations');
+    }
+  }, [searchParams, refetch]);
 
   const handleConnectShopify = () => {
     if (!shopifyShopDomain.trim()) {
@@ -974,16 +1011,11 @@ export default function IntegrationsPage() {
                         <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_ENVIRONMENT</code> - sandbox or production (optional, defaults to sandbox)</li>
                       </ul>
                       <Button
-                        onClick={async () => {
-                          try {
-                            const result = await getQuickBooksAuthUrlMutation.refetch();
-                            if (result.data?.error) {
-                              toast.error(result.data.error);
-                            } else if (result.data?.url) {
-                              window.location.href = result.data.url;
-                            }
-                          } catch (error: any) {
-                            toast.error(error.message || 'Failed to get QuickBooks auth URL');
+                        onClick={() => {
+                          if (quickbooksAuthUrl?.url) {
+                            window.location.href = quickbooksAuthUrl.url;
+                          } else {
+                            toast.error(quickbooksAuthUrl?.error || "QuickBooks OAuth not configured");
                           }
                         }}
                       >
@@ -1052,7 +1084,7 @@ export default function IntegrationsPage() {
                         <Button 
                           variant="outline" 
                           size="sm"
-                          onClick={() => disconnectQuickBooksMutation.mutate()}
+                          onClick={() => quickbooksDisconnectMutation.mutate()}
                         >
                           Disconnect
                         </Button>

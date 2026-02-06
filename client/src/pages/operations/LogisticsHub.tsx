@@ -169,6 +169,12 @@ function RfqDetailPanel({ rfq, onClose, onSendToCarriers }: {
   onSendToCarriers: (rfq: any) => void;
 }) {
   const statusOption = rfqStatusOptions.find(s => s.value === rfq.status);
+  const origin = rfq.originCity && rfq.originCountry 
+    ? `${rfq.originCity}, ${rfq.originCountry}` 
+    : rfq.originCity || rfq.originCountry || "-";
+  const destination = rfq.destinationCity && rfq.destinationCountry 
+    ? `${rfq.destinationCity}, ${rfq.destinationCountry}` 
+    : rfq.destinationCity || rfq.destinationCountry || "-";
 
   return (
     <div className="p-6 space-y-4">
@@ -179,7 +185,7 @@ function RfqDetailPanel({ rfq, onClose, onSendToCarriers }: {
             <Badge className={statusOption?.color}>{statusOption?.label}</Badge>
           </h3>
           <p className="text-sm text-muted-foreground">
-            {rfq.origin} → {rfq.destination}
+            {origin} → {destination}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -205,12 +211,12 @@ function RfqDetailPanel({ rfq, onClose, onSendToCarriers }: {
           <div className="font-semibold">{rfq.totalWeight || "-"} kg</div>
         </div>
         <div className="bg-muted/50 rounded-lg p-3">
-          <div className="text-xs text-muted-foreground mb-1">Dimensions</div>
-          <div className="font-semibold">{rfq.dimensions || "-"}</div>
+          <div className="text-xs text-muted-foreground mb-1">Volume</div>
+          <div className="font-semibold">{rfq.totalVolume || "-"} CBM</div>
         </div>
         <div className="bg-muted/50 rounded-lg p-3">
           <div className="text-xs text-muted-foreground mb-1">Required By</div>
-          <div className="font-semibold">{formatDate(rfq.requiredDate)}</div>
+          <div className="font-semibold">{formatDate(rfq.requiredDeliveryDate)}</div>
         </div>
       </div>
 
@@ -246,13 +252,13 @@ function CustomsDetailPanel({ customs, onClose }: { customs: any; onClose: () =>
         <div>
           <h3 className="text-lg font-semibold flex items-center gap-2">
             <FileCheck className="h-5 w-5" />
-            Customs Entry #{customs.entryNumber || customs.id}
+            Customs Entry #{customs.clearanceNumber || customs.id}
             <Badge variant={customs.status === "cleared" ? "default" : "secondary"}>
-              {customs.status || "Pending"}
+              {customs.status?.replace(/_/g, " ") || "Pending"}
             </Badge>
           </h3>
           <p className="text-sm text-muted-foreground">
-            {customs.shipment?.trackingNumber || `Shipment #${customs.shipmentId}`}
+            {customs.shipment?.trackingNumber || (customs.shipmentId ? `Shipment #${customs.shipmentId}` : "No linked shipment")}
           </p>
         </div>
         <Button size="sm" variant="ghost" onClick={onClose}>
@@ -262,20 +268,35 @@ function CustomsDetailPanel({ customs, onClose }: { customs: any; onClose: () =>
 
       <div className="grid grid-cols-4 gap-4">
         <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1">Type</div>
+          <div className="font-semibold capitalize">{customs.type || "-"}</div>
+        </div>
+        <div className="bg-muted/50 rounded-lg p-3">
           <div className="text-xs text-muted-foreground mb-1">HS Code</div>
           <div className="font-semibold">{customs.hsCode || "-"}</div>
         </div>
         <div className="bg-muted/50 rounded-lg p-3">
-          <div className="text-xs text-muted-foreground mb-1">Declared Value</div>
-          <div className="font-semibold">{formatCurrency(customs.declaredValue)}</div>
-        </div>
-        <div className="bg-muted/50 rounded-lg p-3">
           <div className="text-xs text-muted-foreground mb-1">Duties</div>
-          <div className="font-semibold">{formatCurrency(customs.dutiesAmount)}</div>
+          <div className="font-semibold">{formatCurrency(customs.dutyAmount)}</div>
         </div>
         <div className="bg-muted/50 rounded-lg p-3">
-          <div className="text-xs text-muted-foreground mb-1">Entry Date</div>
-          <div className="font-semibold">{formatDate(customs.entryDate)}</div>
+          <div className="text-xs text-muted-foreground mb-1">Expected Date</div>
+          <div className="font-semibold">{formatDate(customs.expectedClearanceDate)}</div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-4">
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1">Port of Entry</div>
+          <div className="font-semibold">{customs.portOfEntry || "-"}</div>
+        </div>
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1">Country</div>
+          <div className="font-semibold">{customs.country || "-"}</div>
+        </div>
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1">Country of Origin</div>
+          <div className="font-semibold">{customs.countryOfOrigin || "-"}</div>
         </div>
       </div>
 
@@ -291,6 +312,13 @@ function CustomsDetailPanel({ customs, onClose }: { customs: any; onClose: () =>
           ))}
         </div>
       </div>
+
+      {customs.notes && (
+        <div>
+          <h4 className="text-sm font-medium mb-1">Notes</h4>
+          <p className="text-sm text-muted-foreground bg-muted/30 rounded p-2">{customs.notes}</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -350,21 +378,557 @@ function TransferDetailPanel({ transfer, onClose, onStatusChange }: {
   );
 }
 
+// Create Shipment Dialog
+function CreateShipmentDialog({ 
+  open, 
+  onOpenChange, 
+  onSubmit 
+}: { 
+  open: boolean; 
+  onOpenChange: (open: boolean) => void; 
+  onSubmit: (data: any) => void;
+}) {
+  const [formData, setFormData] = useState({
+    origin: "",
+    destination: "",
+    mode: "ground" as "air" | "sea" | "ground",
+    carrier: "",
+    trackingNumber: "",
+    estimatedDelivery: "",
+    weight: "",
+    cost: "",
+    notes: "",
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSubmit({
+      origin: formData.origin || undefined,
+      destination: formData.destination || undefined,
+      mode: formData.mode,
+      carrier: formData.carrier || undefined,
+      trackingNumber: formData.trackingNumber || undefined,
+      estimatedDelivery: formData.estimatedDelivery ? new Date(formData.estimatedDelivery) : undefined,
+      weight: formData.weight || undefined,
+      cost: formData.cost || undefined,
+      notes: formData.notes || undefined,
+      status: "pending",
+    });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <form onSubmit={handleSubmit}>
+          <DialogHeader>
+            <DialogTitle>Create New Shipment</DialogTitle>
+            <DialogDescription>
+              Add a new shipment to track freight movement
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="origin">Origin *</Label>
+                <Input
+                  id="origin"
+                  value={formData.origin}
+                  onChange={(e) => setFormData({ ...formData, origin: e.target.value })}
+                  placeholder="e.g., Shanghai, China"
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="destination">Destination *</Label>
+                <Input
+                  id="destination"
+                  value={formData.destination}
+                  onChange={(e) => setFormData({ ...formData, destination: e.target.value })}
+                  placeholder="e.g., Los Angeles, USA"
+                  required
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="mode">Mode</Label>
+                <Select value={formData.mode} onValueChange={(value: any) => setFormData({ ...formData, mode: value })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="air">Air</SelectItem>
+                    <SelectItem value="sea">Sea</SelectItem>
+                    <SelectItem value="ground">Ground</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="carrier">Carrier</Label>
+                <Input
+                  id="carrier"
+                  value={formData.carrier}
+                  onChange={(e) => setFormData({ ...formData, carrier: e.target.value })}
+                  placeholder="e.g., Maersk, DHL"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="trackingNumber">Tracking Number</Label>
+                <Input
+                  id="trackingNumber"
+                  value={formData.trackingNumber}
+                  onChange={(e) => setFormData({ ...formData, trackingNumber: e.target.value })}
+                  placeholder="Tracking #"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="estimatedDelivery">Est. Delivery</Label>
+                <Input
+                  id="estimatedDelivery"
+                  type="date"
+                  value={formData.estimatedDelivery}
+                  onChange={(e) => setFormData({ ...formData, estimatedDelivery: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="weight">Weight (kg)</Label>
+                <Input
+                  id="weight"
+                  value={formData.weight}
+                  onChange={(e) => setFormData({ ...formData, weight: e.target.value })}
+                  placeholder="e.g., 1000"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="cost">Cost ($)</Label>
+                <Input
+                  id="cost"
+                  value={formData.cost}
+                  onChange={(e) => setFormData({ ...formData, cost: e.target.value })}
+                  placeholder="e.g., 5000"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="notes">Notes</Label>
+              <Textarea
+                id="notes"
+                value={formData.notes}
+                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                placeholder="Additional shipment details..."
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit">
+              Create Shipment
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Create Freight RFQ Dialog
+function CreateFreightRfqDialog({ 
+  open, 
+  onOpenChange, 
+  onSubmit 
+}: { 
+  open: boolean; 
+  onOpenChange: (open: boolean) => void; 
+  onSubmit: (data: any) => void;
+}) {
+  const [formData, setFormData] = useState({
+    title: "",
+    originCity: "",
+    originCountry: "",
+    destinationCity: "",
+    destinationCountry: "",
+    cargoDescription: "",
+    cargoType: "general" as any,
+    totalWeight: "",
+    totalVolume: "",
+    numberOfPackages: "",
+    preferredMode: "any" as any,
+    requiredDeliveryDate: "",
+    notes: "",
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSubmit({
+      title: formData.title,
+      originCity: formData.originCity || undefined,
+      originCountry: formData.originCountry || undefined,
+      destinationCity: formData.destinationCity || undefined,
+      destinationCountry: formData.destinationCountry || undefined,
+      cargoDescription: formData.cargoDescription || undefined,
+      cargoType: formData.cargoType,
+      totalWeight: formData.totalWeight || undefined,
+      totalVolume: formData.totalVolume || undefined,
+      numberOfPackages: formData.numberOfPackages ? parseInt(formData.numberOfPackages, 10) : undefined,
+      preferredMode: formData.preferredMode,
+      requiredDeliveryDate: formData.requiredDeliveryDate ? new Date(formData.requiredDeliveryDate) : undefined,
+      notes: formData.notes || undefined,
+    });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <form onSubmit={handleSubmit}>
+          <DialogHeader>
+            <DialogTitle>Create Freight RFQ</DialogTitle>
+            <DialogDescription>
+              Request quotes from freight carriers for your shipment
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="title">RFQ Title *</Label>
+              <Input
+                id="title"
+                value={formData.title}
+                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                placeholder="e.g., Q1 2024 Electronics Shipment"
+                required
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="originCity">Origin City</Label>
+                <Input
+                  id="originCity"
+                  value={formData.originCity}
+                  onChange={(e) => setFormData({ ...formData, originCity: e.target.value })}
+                  placeholder="e.g., Shenzhen"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="originCountry">Origin Country</Label>
+                <Input
+                  id="originCountry"
+                  value={formData.originCountry}
+                  onChange={(e) => setFormData({ ...formData, originCountry: e.target.value })}
+                  placeholder="e.g., China"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="destinationCity">Destination City</Label>
+                <Input
+                  id="destinationCity"
+                  value={formData.destinationCity}
+                  onChange={(e) => setFormData({ ...formData, destinationCity: e.target.value })}
+                  placeholder="e.g., Los Angeles"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="destinationCountry">Destination Country</Label>
+                <Input
+                  id="destinationCountry"
+                  value={formData.destinationCountry}
+                  onChange={(e) => setFormData({ ...formData, destinationCountry: e.target.value })}
+                  placeholder="e.g., USA"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="cargoType">Cargo Type</Label>
+                <Select value={formData.cargoType} onValueChange={(value: any) => setFormData({ ...formData, cargoType: value })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="general">General</SelectItem>
+                    <SelectItem value="hazardous">Hazardous</SelectItem>
+                    <SelectItem value="refrigerated">Refrigerated</SelectItem>
+                    <SelectItem value="oversized">Oversized</SelectItem>
+                    <SelectItem value="fragile">Fragile</SelectItem>
+                    <SelectItem value="liquid">Liquid</SelectItem>
+                    <SelectItem value="bulk">Bulk</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="preferredMode">Preferred Mode</Label>
+                <Select value={formData.preferredMode} onValueChange={(value: any) => setFormData({ ...formData, preferredMode: value })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="any">Any</SelectItem>
+                    <SelectItem value="ocean_fcl">Ocean FCL</SelectItem>
+                    <SelectItem value="ocean_lcl">Ocean LCL</SelectItem>
+                    <SelectItem value="air">Air</SelectItem>
+                    <SelectItem value="express">Express</SelectItem>
+                    <SelectItem value="ground">Ground</SelectItem>
+                    <SelectItem value="rail">Rail</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="cargoDescription">Cargo Description</Label>
+              <Input
+                id="cargoDescription"
+                value={formData.cargoDescription}
+                onChange={(e) => setFormData({ ...formData, cargoDescription: e.target.value })}
+                placeholder="e.g., Electronic components"
+              />
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="totalWeight">Total Weight (kg)</Label>
+                <Input
+                  id="totalWeight"
+                  value={formData.totalWeight}
+                  onChange={(e) => setFormData({ ...formData, totalWeight: e.target.value })}
+                  placeholder="e.g., 5000"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="totalVolume">Total Volume (CBM)</Label>
+                <Input
+                  id="totalVolume"
+                  value={formData.totalVolume}
+                  onChange={(e) => setFormData({ ...formData, totalVolume: e.target.value })}
+                  placeholder="e.g., 15"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="numberOfPackages">Packages</Label>
+                <Input
+                  id="numberOfPackages"
+                  type="number"
+                  value={formData.numberOfPackages}
+                  onChange={(e) => setFormData({ ...formData, numberOfPackages: e.target.value })}
+                  placeholder="e.g., 100"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="requiredDeliveryDate">Required Delivery Date</Label>
+              <Input
+                id="requiredDeliveryDate"
+                type="date"
+                value={formData.requiredDeliveryDate}
+                onChange={(e) => setFormData({ ...formData, requiredDeliveryDate: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="notes">Additional Notes</Label>
+              <Textarea
+                id="notes"
+                value={formData.notes}
+                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                placeholder="Any special requirements or instructions..."
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit">
+              Create RFQ
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Create Customs Clearance Dialog
+function CreateCustomsClearanceDialog({ 
+  open, 
+  onOpenChange, 
+  onSubmit 
+}: { 
+  open: boolean; 
+  onOpenChange: (open: boolean) => void; 
+  onSubmit: (data: any) => void;
+}) {
+  const { data: shipments } = trpc.shipments.list.useQuery();
+  const [formData, setFormData] = useState({
+    shipmentId: "",
+    type: "import" as "import" | "export",
+    customsOffice: "",
+    portOfEntry: "",
+    country: "",
+    hsCode: "",
+    countryOfOrigin: "",
+    expectedClearanceDate: "",
+    notes: "",
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSubmit({
+      shipmentId: formData.shipmentId ? parseInt(formData.shipmentId, 10) : undefined,
+      type: formData.type,
+      customsOffice: formData.customsOffice || undefined,
+      portOfEntry: formData.portOfEntry || undefined,
+      country: formData.country || undefined,
+      hsCode: formData.hsCode || undefined,
+      countryOfOrigin: formData.countryOfOrigin || undefined,
+      expectedClearanceDate: formData.expectedClearanceDate ? new Date(formData.expectedClearanceDate) : undefined,
+      notes: formData.notes || undefined,
+    });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <form onSubmit={handleSubmit}>
+          <DialogHeader>
+            <DialogTitle>Create Customs Clearance</DialogTitle>
+            <DialogDescription>
+              Start a new customs clearance entry
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="type">Type *</Label>
+                <Select value={formData.type} onValueChange={(value: any) => setFormData({ ...formData, type: value })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="import">Import</SelectItem>
+                    <SelectItem value="export">Export</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="shipmentId">Link to Shipment</Label>
+                <Select value={formData.shipmentId} onValueChange={(value) => setFormData({ ...formData, shipmentId: value })}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select shipment..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {shipments?.map((shipment: any) => (
+                      <SelectItem key={shipment.id} value={shipment.id.toString()}>
+                        {shipment.trackingNumber || `Shipment #${shipment.id}`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="portOfEntry">Port of Entry</Label>
+                <Input
+                  id="portOfEntry"
+                  value={formData.portOfEntry}
+                  onChange={(e) => setFormData({ ...formData, portOfEntry: e.target.value })}
+                  placeholder="e.g., Port of Los Angeles"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="country">Country</Label>
+                <Input
+                  id="country"
+                  value={formData.country}
+                  onChange={(e) => setFormData({ ...formData, country: e.target.value })}
+                  placeholder="e.g., United States"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="customsOffice">Customs Office</Label>
+              <Input
+                id="customsOffice"
+                value={formData.customsOffice}
+                onChange={(e) => setFormData({ ...formData, customsOffice: e.target.value })}
+                placeholder="e.g., CBP Los Angeles"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="hsCode">HS Code</Label>
+                <Input
+                  id="hsCode"
+                  value={formData.hsCode}
+                  onChange={(e) => setFormData({ ...formData, hsCode: e.target.value })}
+                  placeholder="e.g., 8471.30.01"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="countryOfOrigin">Country of Origin</Label>
+                <Input
+                  id="countryOfOrigin"
+                  value={formData.countryOfOrigin}
+                  onChange={(e) => setFormData({ ...formData, countryOfOrigin: e.target.value })}
+                  placeholder="e.g., China"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="expectedClearanceDate">Expected Clearance Date</Label>
+              <Input
+                id="expectedClearanceDate"
+                type="date"
+                value={formData.expectedClearanceDate}
+                onChange={(e) => setFormData({ ...formData, expectedClearanceDate: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="notes">Notes</Label>
+              <Textarea
+                id="notes"
+                value={formData.notes}
+                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                placeholder="Additional clearance details or special instructions..."
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit">
+              Create Customs Entry
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function LogisticsHub() {
   const [activeTab, setActiveTab] = useState("shipments");
   const [expandedShipmentId, setExpandedShipmentId] = useState<number | string | null>(null);
   const [expandedRfqId, setExpandedRfqId] = useState<number | string | null>(null);
   const [expandedTransferId, setExpandedTransferId] = useState<number | string | null>(null);
   const [expandedCustomsId, setExpandedCustomsId] = useState<number | string | null>(null);
+  
+  // Dialog states
+  const [shipmentDialogOpen, setShipmentDialogOpen] = useState(false);
+  const [rfqDialogOpen, setRfqDialogOpen] = useState(false);
+  const [customsDialogOpen, setCustomsDialogOpen] = useState(false);
 
   // Queries
   const { data: shipments, isLoading: shipmentsLoading, refetch: refetchShipments } = trpc.shipments.list.useQuery();
   const { data: freightRfqs, isLoading: rfqsLoading, refetch: refetchRfqs } = trpc.freight.rfqs.list.useQuery();
   const { data: transfers, isLoading: transfersLoading, refetch: refetchTransfers } = trpc.transfers.list.useQuery();
-  
-  // Mock customs data (would need to add customs table)
-  const customsData: any[] = [];
-  const customsLoading = false;
+  const { data: customsData, isLoading: customsLoading, refetch: refetchCustoms } = trpc.customs.clearances.list.useQuery();
 
   // Mutations
   const updateShipmentStatus = trpc.shipments.update.useMutation({
@@ -391,6 +955,34 @@ export default function LogisticsHub() {
     onError: (err: any) => toast.error(err.message),
   });
 
+  // Create mutations
+  const createShipment = trpc.shipments.create.useMutation({
+    onSuccess: () => {
+      toast.success("Shipment created successfully");
+      setShipmentDialogOpen(false);
+      refetchShipments();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const createRfq = trpc.freight.rfqs.create.useMutation({
+    onSuccess: () => {
+      toast.success("Freight RFQ created successfully");
+      setRfqDialogOpen(false);
+      refetchRfqs();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const createCustomsClearance = trpc.customs.clearances.create.useMutation({
+    onSuccess: () => {
+      toast.success("Customs clearance created successfully");
+      setCustomsDialogOpen(false);
+      refetchCustoms();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
   // Column definitions
   const shipmentColumns: Column<any>[] = [
     { key: "trackingNumber", header: "Tracking #", type: "text", sortable: true },
@@ -409,12 +1001,28 @@ export default function LogisticsHub() {
 
   const rfqColumns: Column<any>[] = [
     { key: "rfqNumber", header: "RFQ #", type: "text", sortable: true },
-    { key: "origin", header: "Origin", type: "text", sortable: true },
-    { key: "destination", header: "Destination", type: "text", sortable: true },
+    { 
+      key: "origin", 
+      header: "Origin", 
+      type: "text", 
+      sortable: true,
+      render: (row) => row.originCity && row.originCountry 
+        ? `${row.originCity}, ${row.originCountry}` 
+        : row.originCity || row.originCountry || "-"
+    },
+    { 
+      key: "destination", 
+      header: "Destination", 
+      type: "text", 
+      sortable: true,
+      render: (row) => row.destinationCity && row.destinationCountry 
+        ? `${row.destinationCity}, ${row.destinationCountry}` 
+        : row.destinationCity || row.destinationCountry || "-"
+    },
     { key: "cargoType", header: "Cargo", type: "text" },
     { key: "totalWeight", header: "Weight", type: "text", render: (row) => `${row.totalWeight || "-"} kg` },
     { key: "status", header: "Status", type: "status", options: rfqStatusOptions, filterable: true },
-    { key: "requiredDate", header: "Required By", type: "date", sortable: true },
+    { key: "requiredDeliveryDate", header: "Required By", type: "date", sortable: true },
     { key: "quotesCount", header: "Quotes", type: "text", render: (row) => row.quotes?.length || 0 },
   ];
 
@@ -429,18 +1037,24 @@ export default function LogisticsHub() {
   ];
 
   const customsColumns: Column<any>[] = [
-    { key: "entryNumber", header: "Entry #", type: "text", sortable: true },
-    { key: "shipment", header: "Shipment", type: "text", render: (row) => row.shipment?.trackingNumber || "-" },
+    { key: "clearanceNumber", header: "Entry #", type: "text", sortable: true },
+    { key: "shipment", header: "Shipment", type: "text", render: (row) => row.shipment?.trackingNumber || (row.shipmentId ? `Shipment #${row.shipmentId}` : "-") },
     { key: "hsCode", header: "HS Code", type: "text" },
-    { key: "declaredValue", header: "Value", type: "currency", sortable: true },
-    { key: "dutiesAmount", header: "Duties", type: "currency" },
+    { key: "type", header: "Type", type: "badge", options: [
+      { value: "import", label: "Import", color: "bg-blue-100 text-blue-800" },
+      { value: "export", label: "Export", color: "bg-green-100 text-green-800" },
+    ]},
+    { key: "dutyAmount", header: "Duties", type: "currency" },
     { key: "status", header: "Status", type: "badge", options: [
-      { value: "pending", label: "Pending", color: "bg-gray-100 text-gray-800" },
-      { value: "in_review", label: "In Review", color: "bg-yellow-100 text-yellow-800" },
+      { value: "pending_documents", label: "Pending Docs", color: "bg-gray-100 text-gray-800" },
+      { value: "documents_submitted", label: "Submitted", color: "bg-blue-100 text-blue-800" },
+      { value: "under_review", label: "In Review", color: "bg-yellow-100 text-yellow-800" },
+      { value: "additional_info_required", label: "Info Required", color: "bg-orange-100 text-orange-800" },
       { value: "cleared", label: "Cleared", color: "bg-green-100 text-green-800" },
       { value: "held", label: "Held", color: "bg-red-100 text-red-800" },
+      { value: "rejected", label: "Rejected", color: "bg-red-100 text-red-800" },
     ]},
-    { key: "entryDate", header: "Entry Date", type: "date", sortable: true },
+    { key: "expectedClearanceDate", header: "Expected Date", type: "date", sortable: true },
   ];
 
   // Stats
@@ -528,6 +1142,7 @@ export default function LogisticsHub() {
                   showSearch
                   showFilters
                   showExport
+                  onAdd={() => setShipmentDialogOpen(true)}
                   expandable
                   expandedRowId={expandedShipmentId}
                   onExpandChange={setExpandedShipmentId}
@@ -555,6 +1170,7 @@ export default function LogisticsHub() {
                   showSearch
                   showFilters
                   showExport
+                  onAdd={() => setRfqDialogOpen(true)}
                   expandable
                   expandedRowId={expandedRfqId}
                   onExpandChange={setExpandedRfqId}
@@ -575,12 +1191,13 @@ export default function LogisticsHub() {
             <Card>
               <CardContent className="pt-6">
                 <SpreadsheetTable
-                  data={customsData}
+                  data={customsData || []}
                   columns={customsColumns}
                   isLoading={customsLoading}
                   emptyMessage="No customs entries found"
                   showSearch
                   showFilters
+                  onAdd={() => setCustomsDialogOpen(true)}
                   expandable
                   expandedRowId={expandedCustomsId}
                   onExpandChange={setExpandedCustomsId}
@@ -622,6 +1239,23 @@ export default function LogisticsHub() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        {/* Create dialogs */}
+        <CreateShipmentDialog
+          open={shipmentDialogOpen}
+          onOpenChange={setShipmentDialogOpen}
+          onSubmit={(data) => createShipment.mutate(data)}
+        />
+        <CreateFreightRfqDialog
+          open={rfqDialogOpen}
+          onOpenChange={setRfqDialogOpen}
+          onSubmit={(data) => createRfq.mutate(data)}
+        />
+        <CreateCustomsClearanceDialog
+          open={customsDialogOpen}
+          onOpenChange={setCustomsDialogOpen}
+          onSubmit={(data) => createCustomsClearance.mutate(data)}
+        />
       </div>
   );
 }

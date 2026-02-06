@@ -18,6 +18,7 @@ import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
+import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo } from "./_core/quickbooks";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -2154,6 +2155,10 @@ export const appRouter = router({
       const googleToken = await db.getGoogleOAuthToken(ctx.user.id);
       const googleConnected = googleToken && (!googleToken.expiresAt || new Date(googleToken.expiresAt) > new Date());
       
+      // Check QuickBooks OAuth connection
+      const quickbooksToken = await db.getQuickBooksOAuthToken(ctx.user.id);
+      const quickbooksConnected = quickbooksToken && (!quickbooksToken.expiresAt || new Date(quickbooksToken.expiresAt) > new Date());
+      
       return {
         sendgrid: {
           configured: sendgridConfigured,
@@ -2181,8 +2186,9 @@ export const appRouter = router({
           email: googleToken?.googleEmail,
         },
         quickbooks: {
-          configured: false,
-          status: 'not_configured',
+          configured: quickbooksConnected,
+          status: quickbooksConnected ? 'connected' : 'not_configured',
+          realmId: quickbooksToken?.realmId,
         },
         syncHistory,
       };
@@ -3317,6 +3323,87 @@ export const appRouter = router({
         
         return { success: true, permissionId: result.permissionId };
       }),
+  }),
+
+  // ============================================
+  // QUICKBOOKS INTEGRATION
+  // ============================================
+  quickbooks: router({
+    // Get QuickBooks OAuth URL
+    getAuthUrl: protectedProcedure.query(({ ctx }) => {
+      return getQuickBooksAuthUrl(ctx.user.id);
+    }),
+
+    // Get connection status
+    getConnectionStatus: protectedProcedure.query(async ({ ctx }) => {
+      const token = await db.getQuickBooksOAuthToken(ctx.user.id);
+      if (!token) {
+        return { connected: false, realmId: null };
+      }
+      const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+      return { 
+        connected: !isExpired, 
+        realmId: token.realmId,
+        needsRefresh: isExpired 
+      };
+    }),
+
+    // Disconnect QuickBooks
+    disconnect: protectedProcedure.mutation(async ({ ctx }) => {
+      await db.deleteQuickBooksOAuthToken(ctx.user.id);
+      await db.createSyncLog({
+        integration: 'quickbooks',
+        action: 'disconnect',
+        status: 'success',
+        details: 'QuickBooks disconnected',
+      });
+      return { success: true };
+    }),
+
+    // Test connection
+    testConnection: protectedProcedure.mutation(async ({ ctx }) => {
+      const token = await db.getQuickBooksOAuthToken(ctx.user.id);
+      if (!token || !token.realmId) {
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'QuickBooks not connected' });
+      }
+
+      // Check if token is expired
+      const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+      let accessToken = token.accessToken;
+
+      if (isExpired && token.refreshToken) {
+        // Try to refresh the token
+        const refreshResult = await refreshQuickBooksToken(token.refreshToken);
+        if (refreshResult.error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Token expired and refresh failed' });
+        }
+        
+        // Update token in database
+        // QuickBooks always returns a new refresh token on token refresh
+        await db.upsertQuickBooksOAuthToken({
+          userId: ctx.user.id,
+          accessToken: refreshResult.access_token!,
+          refreshToken: refreshResult.refresh_token!, // QuickBooks always provides a new refresh token
+          expiresAt: new Date(Date.now() + (refreshResult.expires_in! * 1000)),
+          realmId: token.realmId,
+        });
+        
+        accessToken = refreshResult.access_token!;
+      }
+
+      // Test the connection by fetching company info
+      const result = await getCompanyInfo(accessToken, token.realmId);
+      
+      if (result.error) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
+      }
+
+      return { 
+        success: true, 
+        message: 'QuickBooks connection is working',
+        companyName: result.data?.CompanyInfo?.CompanyName 
+      };
+    }),
   }),
 
   // ============================================
