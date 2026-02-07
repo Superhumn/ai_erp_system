@@ -29,6 +29,10 @@ export const ENV = {
   quickbooksClientSecret: process.env.QUICKBOOKS_CLIENT_SECRET ?? "",
   quickbooksRedirectUri: process.env.QUICKBOOKS_REDIRECT_URI ?? "",
   quickbooksEnvironment: process.env.QUICKBOOKS_ENVIRONMENT ?? "sandbox", // sandbox or production
+  // Shopify OAuth configuration
+  shopifyClientId: process.env.SHOPIFY_CLIENT_ID ?? "",
+  shopifyClientSecret: process.env.SHOPIFY_CLIENT_SECRET ?? "",
+  shopifyRedirectUri: process.env.SHOPIFY_REDIRECT_URI ?? "",
 };
 
 /**

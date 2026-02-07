@@ -803,7 +803,7 @@ export const notificationPreferences = mysqlTable("notification_preferences", {
 export const integrationConfigs = mysqlTable("integration_configs", {
   id: int("id").autoincrement().primaryKey(),
   companyId: int("companyId"),
-  type: mysqlEnum("type", ["quickbooks", "shopify", "stripe", "slack", "email", "webhook"]).notNull(),
+  type: mysqlEnum("type", ["quickbooks", "shopify", "stripe", "slack", "email", "webhook", "fireflies"]).notNull(),
   name: varchar("name", { length: 255 }).notNull(),
   config: json("config"),
   credentials: json("credentials"),
@@ -1934,6 +1934,7 @@ export type InsertRecommendation = typeof recommendations.$inferInsert;
 // Shopify store configuration
 export const shopifyStores = mysqlTable("shopifyStores", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"), // Multi-tenant support
   storeDomain: varchar("storeDomain", { length: 255 }).notNull().unique(), // mystore.myshopify.com
   storeName: varchar("storeName", { length: 255 }),
   accessToken: text("accessToken"), // Encrypted in production
@@ -3199,7 +3200,7 @@ export const crmContacts = mysqlTable("crm_contacts", {
 
   // CRM classification
   contactType: mysqlEnum("contactType", ["lead", "prospect", "customer", "partner", "investor", "donor", "vendor", "other"]).default("lead").notNull(),
-  source: mysqlEnum("source", ["iphone_bump", "whatsapp", "linkedin_scan", "business_card", "website", "referral", "event", "cold_outreach", "import", "manual"]).default("manual").notNull(),
+  source: mysqlEnum("source", ["iphone_bump", "whatsapp", "linkedin_scan", "business_card", "website", "referral", "event", "cold_outreach", "import", "manual", "fireflies"]).default("manual").notNull(),
   status: mysqlEnum("status", ["active", "inactive", "unsubscribed", "bounced"]).default("active").notNull(),
 
   // Sales/Fundraising context
@@ -4229,3 +4230,213 @@ export const workflowNotifications = mysqlTable("workflowNotifications", {
 
 export type WorkflowNotification = typeof workflowNotifications.$inferSelect;
 export type InsertWorkflowNotification = typeof workflowNotifications.$inferInsert;
+
+// ============================================
+// FIREFLIES.AI INTEGRATION
+// ============================================
+
+export const firefliesMeetings = mysqlTable("fireflies_meetings", {
+  id: int("id").autoincrement().primaryKey(),
+  firefliesId: varchar("firefliesId", { length: 128 }).notNull().unique(),
+  title: varchar("title", { length: 500 }).notNull(),
+  date: timestamp("date"),
+  duration: int("duration"), // seconds
+  organizerEmail: varchar("organizerEmail", { length: 320 }),
+  organizerName: varchar("organizerName", { length: 255 }),
+
+  // Participants
+  participants: text("participants"), // JSON array of { name, email }
+
+  // Content
+  summary: text("summary"),
+  shortSummary: text("shortSummary"),
+  keywords: text("keywords"), // JSON array of strings
+  topics: text("topics"), // JSON array of strings
+  sentimentAnalysis: text("sentimentAnalysis"), // JSON object
+
+  // Transcript
+  transcriptUrl: text("transcriptUrl"),
+  transcriptText: text("transcriptText"),
+
+  // Action items extracted by Fireflies
+  actionItems: text("actionItems"), // JSON array of { text, assignee, dueDate }
+
+  // Processing status
+  processingStatus: mysqlEnum("processingStatus", [
+    "pending", "contacts_created", "tasks_created", "project_created", "fully_processed", "skipped", "error"
+  ]).default("pending").notNull(),
+  processedAt: timestamp("processedAt"),
+  processedBy: int("processedBy"),
+  processingNotes: text("processingNotes"),
+
+  // Auto-generation settings (what was auto-created from this meeting)
+  autoCreatedProjectId: int("autoCreatedProjectId"),
+  autoCreatedTaskCount: int("autoCreatedTaskCount").default(0),
+  autoCreatedContactCount: int("autoCreatedContactCount").default(0),
+
+  // Metadata
+  meetingSource: varchar("meetingSource", { length: 64 }), // zoom, google_meet, teams, etc.
+  calendarEventId: varchar("calendarEventId", { length: 255 }),
+  recordingUrl: text("recordingUrl"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FirefliesMeeting = typeof firefliesMeetings.$inferSelect;
+export type InsertFirefliesMeeting = typeof firefliesMeetings.$inferInsert;
+
+// Track individual action items extracted from Fireflies and their mapping to project tasks
+export const firefliesActionItems = mysqlTable("fireflies_action_items", {
+  id: int("id").autoincrement().primaryKey(),
+  meetingId: int("meetingId").notNull(), // FK to firefliesMeetings
+  firefliesMeetingId: varchar("firefliesMeetingId", { length: 128 }).notNull(),
+
+  // Action item content
+  text: text("text").notNull(),
+  assignee: varchar("assignee", { length: 255 }),
+  assigneeEmail: varchar("assigneeEmail", { length: 320 }),
+  dueDate: timestamp("dueDate"),
+
+  // Mapping to ERP entities
+  projectTaskId: int("projectTaskId"), // FK to project_tasks if converted
+  crmContactId: int("crmContactId"), // FK to crm_contacts for assigned person
+
+  // Status
+  status: mysqlEnum("status", ["pending", "converted_to_task", "skipped", "completed"]).default("pending").notNull(),
+  convertedAt: timestamp("convertedAt"),
+  convertedBy: int("convertedBy"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FirefliesActionItem = typeof firefliesActionItems.$inferSelect;
+export type InsertFirefliesActionItem = typeof firefliesActionItems.$inferInsert;
+
+// Tracks contacts discovered from Fireflies meeting participants
+export const firefliesContactMappings = mysqlTable("fireflies_contact_mappings", {
+  id: int("id").autoincrement().primaryKey(),
+  meetingId: int("meetingId").notNull(), // FK to firefliesMeetings
+  participantEmail: varchar("participantEmail", { length: 320 }).notNull(),
+  participantName: varchar("participantName", { length: 255 }),
+
+  // Mapping
+  crmContactId: int("crmContactId"), // FK to crm_contacts if matched/created
+  isNewContact: boolean("isNewContact").default(false),
+  wasAutoCreated: boolean("wasAutoCreated").default(false),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type FirefliesContactMapping = typeof firefliesContactMappings.$inferSelect;
+export type InsertFirefliesContactMapping = typeof firefliesContactMappings.$inferInsert;
+
+// ============================================
+// COPACKER PORTAL
+// ============================================
+
+// Biweekly inventory update submissions from copackers
+export const copackerInventoryUpdates = mysqlTable("copacker_inventory_updates", {
+  id: int("id").autoincrement().primaryKey(),
+  warehouseId: int("warehouseId").notNull(),
+  submittedBy: int("submittedBy").notNull(),
+  periodStart: timestamp("periodStart").notNull(),
+  periodEnd: timestamp("periodEnd").notNull(),
+  status: mysqlEnum("status", ["draft", "submitted", "reviewed", "approved", "rejected"]).default("draft").notNull(),
+  notes: text("notes"),
+  reviewedBy: int("reviewedBy"),
+  reviewedAt: timestamp("reviewedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CopackerInventoryUpdate = typeof copackerInventoryUpdates.$inferSelect;
+export type InsertCopackerInventoryUpdate = typeof copackerInventoryUpdates.$inferInsert;
+
+// Line items within a biweekly inventory update
+export const copackerInventoryUpdateItems = mysqlTable("copacker_inventory_update_items", {
+  id: int("id").autoincrement().primaryKey(),
+  updateId: int("updateId").notNull(),
+  productId: int("productId").notNull(),
+  previousQuantity: decimal("previousQuantity", { precision: 15, scale: 4 }),
+  newQuantity: decimal("newQuantity", { precision: 15, scale: 4 }).notNull(),
+  quantityReceived: decimal("quantityReceived", { precision: 15, scale: 4 }).default("0"),
+  quantityShipped: decimal("quantityShipped", { precision: 15, scale: 4 }).default("0"),
+  quantityDamaged: decimal("quantityDamaged", { precision: 15, scale: 4 }).default("0"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CopackerInventoryUpdateItem = typeof copackerInventoryUpdateItems.$inferSelect;
+export type InsertCopackerInventoryUpdateItem = typeof copackerInventoryUpdateItems.$inferInsert;
+
+// Invoices submitted by copackers for their services
+export const copackerInvoices = mysqlTable("copacker_invoices", {
+  id: int("id").autoincrement().primaryKey(),
+  warehouseId: int("warehouseId").notNull(),
+  submittedBy: int("submittedBy").notNull(),
+  invoiceNumber: varchar("invoiceNumber", { length: 64 }).notNull(),
+  invoiceDate: timestamp("invoiceDate").notNull(),
+  dueDate: timestamp("dueDate"),
+  description: text("description"),
+  subtotal: decimal("subtotal", { precision: 15, scale: 2 }).notNull(),
+  taxAmount: decimal("taxAmount", { precision: 15, scale: 2 }).default("0"),
+  totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).notNull(),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  status: mysqlEnum("status", ["draft", "submitted", "under_review", "approved", "rejected", "paid"]).default("draft").notNull(),
+  fileUrl: text("fileUrl"),
+  fileKey: varchar("fileKey", { length: 512 }),
+  fileName: varchar("fileName", { length: 255 }),
+  mimeType: varchar("mimeType", { length: 128 }),
+  reviewedBy: int("reviewedBy"),
+  reviewedAt: timestamp("reviewedAt"),
+  rejectionReason: text("rejectionReason"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CopackerInvoice = typeof copackerInvoices.$inferSelect;
+export type InsertCopackerInvoice = typeof copackerInvoices.$inferInsert;
+
+// Line items on copacker invoices
+export const copackerInvoiceItems = mysqlTable("copacker_invoice_items", {
+  id: int("id").autoincrement().primaryKey(),
+  invoiceId: int("invoiceId").notNull(),
+  description: text("description").notNull(),
+  quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),
+  unitPrice: decimal("unitPrice", { precision: 15, scale: 2 }).notNull(),
+  totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CopackerInvoiceItem = typeof copackerInvoiceItems.$inferSelect;
+export type InsertCopackerInvoiceItem = typeof copackerInvoiceItems.$inferInsert;
+
+// Shipping documents uploaded by copackers (BOL, packing lists, etc.)
+export const copackerShippingDocuments = mysqlTable("copacker_shipping_documents", {
+  id: int("id").autoincrement().primaryKey(),
+  warehouseId: int("warehouseId").notNull(),
+  shipmentId: int("shipmentId"),
+  uploadedBy: int("uploadedBy").notNull(),
+  documentType: mysqlEnum("documentType", [
+    "bill_of_lading", "packing_list", "commercial_invoice", "proof_of_delivery",
+    "weight_certificate", "inspection_report", "customs_declaration", "other"
+  ]).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  fileUrl: text("fileUrl").notNull(),
+  fileKey: varchar("fileKey", { length: 512 }).notNull(),
+  fileSize: int("fileSize"),
+  mimeType: varchar("mimeType", { length: 128 }),
+  status: mysqlEnum("status", ["uploaded", "reviewed", "approved", "rejected"]).default("uploaded").notNull(),
+  reviewedBy: int("reviewedBy"),
+  reviewedAt: timestamp("reviewedAt"),
+  rejectionReason: text("rejectionReason"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CopackerShippingDocument = typeof copackerShippingDocuments.$inferSelect;
+export type InsertCopackerShippingDocument = typeof copackerShippingDocuments.$inferInsert;

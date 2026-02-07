@@ -84,6 +84,7 @@ import Documents from "./pages/legal/Documents";
 import Integrations from "./pages/settings/Integrations";
 import NotificationSettings from "./pages/settings/Notifications";
 import TransactionalEmails from "./pages/settings/TransactionalEmails";
+import Fireflies from "./pages/settings/Fireflies";
 
 // Projects
 import Projects from "./pages/projects/Projects";
@@ -97,6 +98,9 @@ import Team from "./pages/settings/Team";
 // Portals
 import CopackerPortal from "./pages/portal/CopackerPortal";
 import VendorPortal from "./pages/portal/VendorPortal";
+
+// SOPs
+import SOPs from "./pages/SOPs";
 
 // Data Room
 import DataRooms from "./pages/DataRooms";
@@ -132,6 +136,7 @@ function Router() {
         <Route path="/settings/integrations" component={Integrations} />
         <Route path="/settings/notifications" component={NotificationSettings} />
         <Route path="/settings/emails" component={TransactionalEmails} />
+        <Route path="/settings/fireflies" component={Fireflies} />
 
         {/* Finance */}
         <Route path="/finance/accounts" component={Accounts} />
@@ -211,6 +216,9 @@ function Router() {
         {/* Portals */}
         <Route path="/portal/copacker" component={CopackerPortal} />
         <Route path="/portal/vendor" component={VendorPortal} />
+
+        {/* SOPs */}
+        <Route path="/sops" component={SOPs} />
 
         {/* Data Room */}
         <Route path="/datarooms" component={DataRooms} />

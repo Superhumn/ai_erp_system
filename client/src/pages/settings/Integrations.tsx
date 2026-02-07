@@ -459,13 +459,41 @@ export default function IntegrationsPage() {
                       ? `Connected to QuickBooks company ${status.quickbooks.realmId}. Sync financial data automatically.`
                       : "Connect QuickBooks for automatic financial sync. Add QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET in Settings → Secrets."}
                   </p>
-                  <Button 
-                    variant="outline" 
+                  <Button
+                    variant="outline"
                     size="sm"
                     onClick={() => {
                       const tab = document.querySelector('[data-value="quickbooks"]');
                       if (tab) (tab as HTMLElement).click();
                     }}
+                  >
+                    <Settings className="w-4 h-4 mr-2" />
+                    Configure
+                  </Button>
+                </CardContent>
+              </Card>
+
+              {/* Fireflies Card */}
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-orange-500/10 rounded-lg">
+                      <Settings className="w-5 h-5 text-orange-500" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg">Fireflies.ai</CardTitle>
+                      <CardDescription>Meeting transcription & action items</CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Sync meeting transcripts from Fireflies.ai and auto-generate CRM contacts, tasks, and projects from action items.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => window.location.href = '/settings/fireflies'}
                   >
                     <Settings className="w-4 h-4 mr-2" />
                     Configure
