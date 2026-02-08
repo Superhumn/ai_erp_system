@@ -620,6 +620,20 @@ export const appRouter = router({
         currency: z.string().optional(),
         notes: z.string().optional(),
         terms: z.string().optional(),
+        // B2B and International Freight fields
+        paymentTerms: z.enum(['due_on_receipt', 'net_15', 'net_30', 'net_45', 'net_60', 'net_90', 'eom', 'cod', 'cia', 'custom']).optional(),
+        paymentMethod: z.enum(['bank_transfer', 'wire', 'ach', 'check', 'credit_card', 'letter_of_credit', 'cash_in_advance', 'documentary_collection', 'open_account', 'consignment', 'other']).optional(),
+        purchaseOrderNumber: z.string().optional(),
+        incoterms: z.string().optional(),
+        freightRfqId: z.number().optional(),
+        portOfLoading: z.string().optional(),
+        portOfDischarge: z.string().optional(),
+        exportLicenseNumber: z.string().optional(),
+        importLicenseNumber: z.string().optional(),
+        shippingInstructions: z.string().optional(),
+        freightAmount: z.string().optional(),
+        insuranceAmount: z.string().optional(),
+        customsDuties: z.string().optional(),
         items: z.array(z.object({
           productId: z.number().optional(),
           description: z.string(),
@@ -628,6 +642,11 @@ export const appRouter = router({
           taxRate: z.string().optional(),
           taxAmount: z.string().optional(),
           totalAmount: z.string(),
+          // International freight fields for items
+          hsCode: z.string().optional(),
+          countryOfOrigin: z.string().optional(),
+          weight: z.string().optional(),
+          volume: z.string().optional(),
         })).optional(),
       }))
       .mutation(async ({ input, ctx }) => {

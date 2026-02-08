@@ -169,6 +169,16 @@ export const vendors = mysqlTable("vendors", {
   defaultLeadTimeDays: int("defaultLeadTimeDays").default(14), // Default lead time for this vendor
   minOrderAmount: decimal("minOrderAmount", { precision: 12, scale: 2 }), // Minimum order amount
   shippingMethod: varchar("shippingMethod", { length: 64 }), // Preferred shipping method
+  
+  // Phone/Call capabilities for AI-powered communication
+  phoneExtension: varchar("phoneExtension", { length: 20 }),
+  mobilePhone: varchar("mobilePhone", { length: 32 }),
+  faxNumber: varchar("faxNumber", { length: 32 }),
+  preferredContactMethod: mysqlEnum("preferredContactMethod", ["email", "phone", "both"]).default("email"),
+  callAvailability: text("callAvailability"), // JSON with availability schedule
+  voiceCapable: boolean("voiceCapable").default(false), // Can handle AI voice calls
+  voicePreferences: text("voicePreferences"), // JSON with voice call preferences
+  
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -232,6 +242,20 @@ export const invoices = mysqlTable("invoices", {
   currency: varchar("currency", { length: 3 }).default("USD"),
   notes: text("notes"),
   terms: text("terms"),
+  // B2B and International Freight fields
+  paymentTerms: mysqlEnum("paymentTerms", ["due_on_receipt", "net_15", "net_30", "net_45", "net_60", "net_90", "eom", "cod", "cia", "custom"]),
+  paymentMethod: mysqlEnum("paymentMethod", ["bank_transfer", "wire", "ach", "check", "credit_card", "letter_of_credit", "cash_in_advance", "documentary_collection", "open_account", "consignment", "other"]),
+  purchaseOrderNumber: varchar("purchaseOrderNumber", { length: 64 }),
+  incoterms: varchar("incoterms", { length: 10 }), // EXW, FOB, CIF, DDP, etc.
+  freightRfqId: int("freightRfqId"), // Link to freight shipment
+  portOfLoading: varchar("portOfLoading", { length: 255 }),
+  portOfDischarge: varchar("portOfDischarge", { length: 255 }),
+  exportLicenseNumber: varchar("exportLicenseNumber", { length: 64 }),
+  importLicenseNumber: varchar("importLicenseNumber", { length: 64 }),
+  shippingInstructions: text("shippingInstructions"),
+  freightAmount: decimal("freightAmount", { precision: 15, scale: 2 }).default("0"),
+  insuranceAmount: decimal("insuranceAmount", { precision: 15, scale: 2 }).default("0"),
+  customsDuties: decimal("customsDuties", { precision: 15, scale: 2 }).default("0"),
   quickbooksInvoiceId: varchar("quickbooksInvoiceId", { length: 64 }),
   createdBy: int("createdBy"),
   approvedBy: int("approvedBy"),
@@ -251,6 +275,11 @@ export const invoiceItems = mysqlTable("invoice_items", {
   taxAmount: decimal("taxAmount", { precision: 15, scale: 2 }).default("0"),
   discountPercent: decimal("discountPercent", { precision: 5, scale: 2 }).default("0"),
   totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).notNull(),
+  // International freight fields
+  hsCode: varchar("hsCode", { length: 20 }), // Harmonized System code for customs
+  countryOfOrigin: varchar("countryOfOrigin", { length: 100 }),
+  weight: decimal("weight", { precision: 12, scale: 2 }), // Item weight in kg
+  volume: decimal("volume", { precision: 12, scale: 2 }), // Item volume in CBM
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -3549,6 +3578,8 @@ export const supplyChainWorkflows = mysqlTable("supplyChainWorkflows", {
     "invoice_matching",
     "payment_processing",
     "exception_handling",
+    "vendor_quote_procurement",
+    "vendor_quote_analysis",
     "custom"
   ]).notNull(),
 

@@ -30,6 +30,10 @@ import {
   invoices,
   payments,
   supplierPerformance,
+  vendorRfqs,
+  vendorQuotes,
+  vendorRfqInvitations,
+  vendorRfqEmails,
 } from "../drizzle/schema";
 import { eq, and, lt, lte, gte, gt, desc, asc, sql, isNull, or, inArray, between } from "drizzle-orm";
 import type { WorkflowEngine, WorkflowContext, WorkflowResult, StepResult } from "./autonomousWorkflowEngine";
@@ -2305,6 +2309,769 @@ Decide: resolve with specific action, or escalate to human?`,
 };
 
 // ============================================
+// VENDOR QUOTE ANALYSIS WORKFLOW
+// Analyzes received quotes and provides recommendations
+// ============================================
+
+const vendorQuoteAnalysisProcessor: WorkflowProcessor = {
+  async execute(engine: WorkflowEngine, context: WorkflowContext): Promise<WorkflowResult> {
+    const db = engine.getDb();
+    let itemsProcessed = 0;
+    let itemsSucceeded = 0;
+    let itemsFailed = 0;
+
+    // Get input data
+    const { rfqId, autoApproveThreshold = 5000 } = context.inputData;
+
+    if (!rfqId) {
+      return {
+        success: false,
+        runId: context.runId,
+        status: "failed",
+        itemsProcessed: 0,
+        itemsSucceeded: 0,
+        itemsFailed: 0,
+        error: "Missing required field: rfqId",
+      };
+    }
+
+    // Step 1: Fetch RFQ and quotes
+    const step1 = await engine.recordStep(context, 1, "Fetch RFQ and Quotes", "data_fetch", async () => {
+      const [rfq] = await db.select().from(vendorRfqs).where(eq(vendorRfqs.id, rfqId));
+
+      if (!rfq) {
+        throw new Error(`RFQ ${rfqId} not found`);
+      }
+
+      const quotes = await db
+        .select()
+        .from(vendorQuotes)
+        .where(and(eq(vendorQuotes.rfqId, rfqId), eq(vendorQuotes.status, "received")));
+
+      if (quotes.length === 0) {
+        throw new Error("No quotes received yet");
+      }
+
+      return {
+        success: true,
+        data: {
+          rfq,
+          quotes,
+          quoteCount: quotes.length,
+        },
+      };
+    });
+
+    if (!step1.success) {
+      return {
+        success: false,
+        runId: context.runId,
+        status: "failed",
+        itemsProcessed: 0,
+        itemsSucceeded: 0,
+        itemsFailed: 0,
+        error: step1.error,
+      };
+    }
+
+    const rfq = step1.data.rfq;
+    const quotes = step1.data.quotes;
+    itemsProcessed = quotes.length;
+
+    // Step 2: AI-powered quote analysis and comparison
+    const step2 = await engine.recordStep(context, 2, "Analyze and Compare Quotes", "ai_analysis", async () => {
+      // Fetch vendor details for each quote
+      const vendorIds = quotes.map((q: any) => q.vendorId);
+      const vendorDetails = await db
+        .select()
+        .from(vendors)
+        .where(inArray(vendors.id, vendorIds));
+
+      const vendorMap = new Map(vendorDetails.map((v: any) => [v.id, v]));
+
+      // Prepare quote data for AI analysis
+      const quoteData = quotes.map((q: any) => {
+        const vendor = vendorMap.get(q.vendorId);
+        return {
+          quoteId: q.id,
+          vendorId: q.vendorId,
+          vendorName: vendor?.name || "Unknown",
+          unitPrice: parseFloat(q.unitPrice || "0"),
+          totalPrice: parseFloat(q.totalPrice || "0"),
+          shippingCost: parseFloat(q.shippingCost || "0"),
+          totalWithCharges: parseFloat(q.totalWithCharges || q.totalPrice || "0"),
+          leadTimeDays: q.leadTimeDays,
+          estimatedDeliveryDate: q.estimatedDeliveryDate,
+          paymentTerms: q.paymentTerms,
+          validUntil: q.validUntil,
+        };
+      });
+
+      // Use AI to analyze and rank quotes
+      const analysisPrompt = `Analyze and compare the following vendor quotes for RFQ:
+Material: ${rfq.materialName}
+Quantity: ${rfq.quantity} ${rfq.unit}
+Required Delivery Date: ${rfq.requiredDeliveryDate || "ASAP"}
+
+Quotes:
+${JSON.stringify(quoteData, null, 2)}
+
+Provide:
+1. Ranking of quotes (1 = best)
+2. Price comparison analysis
+3. Lead time comparison
+4. Overall recommendation with reasoning
+5. Risk assessment for each quote
+6. Best value recommendation considering price, quality, and delivery
+
+Rank all quotes and identify the best option.`;
+
+      const aiAnalysis = await invokeLLM({
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a procurement expert analyzing vendor quotes. Provide detailed analysis focusing on value, reliability, and risk.",
+          },
+          {
+            role: "user",
+            content: analysisPrompt,
+          },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "quote_analysis",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                rankings: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      quoteId: { type: "number" },
+                      rank: { type: "number" },
+                      score: { type: "number" },
+                      priceRank: { type: "number" },
+                      leadTimeRank: { type: "number" },
+                    },
+                    required: ["quoteId", "rank", "score", "priceRank", "leadTimeRank"],
+                    additionalProperties: false,
+                  },
+                },
+                bestQuoteId: { type: "number" },
+                recommendation: { type: "string" },
+                reasoning: { type: "string" },
+                riskAssessment: { type: "string" },
+                confidence: { type: "number" },
+              },
+              required: ["rankings", "bestQuoteId", "recommendation", "reasoning", "riskAssessment", "confidence"],
+              additionalProperties: false,
+            },
+          },
+        },
+      });
+
+      const content = aiAnalysis.choices[0].message.content;
+      const analysis = JSON.parse(typeof content === "string" ? content : "{}");
+
+      // Update quotes with AI rankings
+      for (const ranking of analysis.rankings) {
+        await db
+          .update(vendorQuotes)
+          .set({
+            aiScore: ranking.score,
+            priceComparisonRank: ranking.priceRank,
+            leadTimeComparisonRank: ranking.leadTimeRank,
+            overallRank: ranking.rank,
+            aiAnalysis: JSON.stringify(ranking),
+            aiRecommendation: ranking.quoteId === analysis.bestQuoteId ? analysis.recommendation : null,
+          })
+          .where(eq(vendorQuotes.id, ranking.quoteId));
+      }
+
+      return {
+        success: true,
+        data: {
+          analysis,
+          bestQuote: quotes.find((q: any) => q.id === analysis.bestQuoteId),
+        },
+        aiResponse: analysis,
+      };
+    });
+
+    if (!step2.success) {
+      return {
+        success: false,
+        runId: context.runId,
+        status: "failed",
+        itemsProcessed,
+        itemsSucceeded: 0,
+        itemsFailed: itemsProcessed,
+        error: step2.error,
+      };
+    }
+
+    const bestQuote = step2.data.bestQuote;
+    const analysis = step2.data.analysis;
+    itemsSucceeded = quotes.length;
+
+    // Step 3: Auto-approve or request approval based on threshold
+    const step3 = await engine.recordStep(context, 3, "Approval Decision", "ai_decision", async () => {
+      const bestQuoteTotal = parseFloat(bestQuote.totalWithCharges || bestQuote.totalPrice || "0");
+
+      const approvalCheck = await engine.checkApprovalRequired("vendor_quote", bestQuoteTotal);
+
+      let approvalResult;
+      if (approvalCheck.autoApprove) {
+        // Auto-approve
+        await db
+          .update(vendorQuotes)
+          .set({
+            status: "accepted",
+          })
+          .where(eq(vendorQuotes.id, bestQuote.id));
+
+        // Reject other quotes
+        const otherQuoteIds = quotes.filter((q: any) => q.id !== bestQuote.id).map((q: any) => q.id);
+        if (otherQuoteIds.length > 0) {
+          await db
+            .update(vendorQuotes)
+            .set({
+              status: "rejected",
+            })
+            .where(inArray(vendorQuotes.id, otherQuoteIds));
+        }
+
+        // Update RFQ status
+        await db
+          .update(vendorRfqs)
+          .set({
+            status: "awarded",
+          })
+          .where(eq(vendorRfqs.id, rfqId));
+
+        approvalResult = {
+          autoApproved: true,
+          approvalId: null,
+          message: `Quote auto-approved. Total: $${bestQuoteTotal.toFixed(2)} is at or below threshold $${autoApproveThreshold}`,
+        };
+      } else {
+        // Request approval
+        const approval = await engine.requestApproval(
+          context,
+          "vendor_quote",
+          `Vendor Quote Approval - ${rfq.materialName}`,
+          `Best quote from vendor for ${rfq.quantity} ${rfq.unit} of ${rfq.materialName}. Total: $${bestQuoteTotal.toFixed(2)}`,
+          bestQuoteTotal,
+          "vendor_quote",
+          bestQuote.id,
+          analysis.recommendation,
+          analysis.confidence
+        );
+
+        approvalResult = {
+          autoApproved: false,
+          approvalId: approval.approvalId,
+          message: "Approval required. Waiting for human review.",
+        };
+      }
+
+      return {
+        success: true,
+        data: approvalResult,
+      };
+    });
+
+    // Step 4: Send notifications
+    const step4 = await engine.recordStep(context, 4, "Send Notifications", "communication", async () => {
+      const vendor = await db.select().from(vendors).where(eq(vendors.id, bestQuote.vendorId));
+
+      if (step3.data.autoApproved) {
+        const procurementEmail = process.env.PROCUREMENT_EMAIL || "procurement@company.com";
+        
+        // Send award notification email
+        await db.insert(vendorRfqEmails).values({
+          rfqId,
+          vendorId: bestQuote.vendorId,
+          quoteId: bestQuote.id,
+          direction: "outbound",
+          emailType: "award_notification",
+          fromEmail: procurementEmail,
+          toEmail: vendor[0]?.email,
+          subject: `Award Notification - ${rfq.rfqNumber}`,
+          body: `Congratulations! Your quote has been selected for ${rfq.materialName}.`,
+          aiGenerated: true,
+          sendStatus: "queued",
+        });
+
+        // Send rejection to other vendors
+        const otherQuotes = quotes.filter((q: any) => q.id !== bestQuote.id);
+        for (const quote of otherQuotes) {
+          const otherVendor = await db.select().from(vendors).where(eq(vendors.id, quote.vendorId));
+
+          await db.insert(vendorRfqEmails).values({
+            rfqId,
+            vendorId: quote.vendorId,
+            quoteId: quote.id,
+            direction: "outbound",
+            emailType: "rejection_notification",
+            fromEmail: procurementEmail,
+            toEmail: otherVendor[0]?.email,
+            subject: `Quote Response - ${rfq.rfqNumber}`,
+            body: `Thank you for your quote. We have selected another vendor for this RFQ.`,
+            aiGenerated: true,
+            sendStatus: "queued",
+          });
+        }
+      }
+
+      return {
+        success: true,
+        data: {
+          notificationsSent: step3.data.autoApproved ? quotes.length : 0,
+        },
+      };
+    });
+
+    return {
+      success: true,
+      runId: context.runId,
+      status: step3.data.autoApproved ? "completed" : "awaiting_approval",
+      itemsProcessed,
+      itemsSucceeded,
+      itemsFailed: itemsProcessed - itemsSucceeded,
+      totalValue: parseFloat(bestQuote.totalWithCharges || bestQuote.totalPrice || "0"),
+      pendingApprovals: step3.data.autoApproved ? 0 : 1,
+      outputData: {
+        rfqId,
+        bestQuoteId: bestQuote.id,
+        analysis: analysis,
+        autoApproved: step3.data.autoApproved,
+        approvalId: step3.data.approvalId,
+        totalValue: parseFloat(bestQuote.totalWithCharges || bestQuote.totalPrice || "0"),
+      },
+    };
+  },
+};
+
+// ============================================
+// VENDOR QUOTE PROCUREMENT WORKFLOW
+// ============================================
+
+const vendorQuoteProcurementProcessor: WorkflowProcessor = {
+  async execute(engine: WorkflowEngine, context: WorkflowContext): Promise<WorkflowResult> {
+    const db = engine.getDb();
+    let itemsProcessed = 0;
+    let itemsSucceeded = 0;
+    let itemsFailed = 0;
+
+    // Get input data
+    const {
+      materialName,
+      materialDescription,
+      quantity,
+      unit,
+      specifications,
+      requiredDeliveryDate,
+      deliveryLocation,
+      priority = "normal",
+      maxVendors = 5,
+      autoApproveThreshold = 5000,
+    } = context.inputData;
+
+    if (!materialName || !quantity || !unit) {
+      return {
+        success: false,
+        runId: context.runId,
+        status: "failed",
+        itemsProcessed: 0,
+        itemsSucceeded: 0,
+        itemsFailed: 0,
+        error: "Missing required fields: materialName, quantity, unit",
+      };
+    }
+
+    // Step 1: Search for suitable vendors (AI-powered web search)
+    const step1 = await engine.recordStep(context, 1, "Search for Suitable Vendors", "ai_analysis", async () => {
+      // First, search in database for existing vendors who have supplied similar materials
+      const existingVendors = await db
+        .select()
+        .from(vendors)
+        .where(eq(vendors.status, "active"))
+        .limit(20);
+
+      // Use AI to search for suitable vendors
+      const searchPrompt = `Find suitable vendors for the following material procurement:
+Material: ${materialName}
+Description: ${materialDescription || "N/A"}
+Quantity: ${quantity} ${unit}
+Specifications: ${specifications || "N/A"}
+Required Delivery Date: ${requiredDeliveryDate || "ASAP"}
+Location: ${deliveryLocation || "N/A"}
+
+Based on the material type and requirements, suggest types of vendors that would be suitable suppliers. Consider:
+1. Industry specialization
+2. Geographic location
+3. Material/product specialization
+4. Typical vendor types for this material
+
+Return a list of vendor characteristics to search for.`;
+
+      const aiResponse = await invokeLLM({
+        messages: [
+          {
+            role: "system",
+            content: "You are a procurement expert helping to identify suitable vendor types for material procurement.",
+          },
+          {
+            role: "user",
+            content: searchPrompt,
+          },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "vendor_search",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                vendorTypes: {
+                  type: "array",
+                  items: { type: "string" },
+                },
+                searchCriteria: {
+                  type: "array",
+                  items: { type: "string" },
+                },
+                reasoning: { type: "string" },
+              },
+              required: ["vendorTypes", "searchCriteria", "reasoning"],
+              additionalProperties: false,
+            },
+          },
+        },
+      });
+
+      const content = aiResponse.choices[0].message.content;
+      const searchResults = JSON.parse(typeof content === "string" ? content : "{}");
+
+      return {
+        success: true,
+        data: {
+          existingVendors,
+          searchResults,
+        },
+        aiResponse: searchResults,
+      };
+    });
+
+    if (!step1.success) {
+      return {
+        success: false,
+        runId: context.runId,
+        status: "failed",
+        itemsProcessed: 0,
+        itemsSucceeded: 0,
+        itemsFailed: 0,
+        error: step1.error,
+      };
+    }
+
+    // Step 2: Auto-select vendors based on material/history
+    const step2 = await engine.recordStep(context, 2, "Select Best Vendors", "ai_decision", async () => {
+      const candidateVendors = step1.data.existingVendors;
+
+      if (candidateVendors.length === 0) {
+        return {
+          success: true,
+          data: {
+            selectedVendors: [],
+            message: "No existing vendors found. Manual vendor addition required.",
+          },
+        };
+      }
+
+      // Use AI to rank and select vendors
+      const selectionPrompt = `Rank and select the best vendors for this RFQ:
+Material: ${materialName}
+Quantity: ${quantity} ${unit}
+Priority: ${priority}
+
+Available Vendors:
+${candidateVendors
+  .map(
+    (v: any) =>
+      `- ID: ${v.id}, Name: ${v.name}, Contact: ${v.contactName}, Email: ${v.email}, Phone: ${v.phone}, Lead Time: ${v.defaultLeadTimeDays} days, Min Order: ${v.minOrderAmount || "N/A"}`
+  )
+  .join("\n")}
+
+Select up to ${maxVendors} vendors that best match the requirements. Consider:
+1. Default lead time vs required delivery date
+2. Minimum order amount vs requested quantity
+3. Vendor type and specialization
+4. Contact availability (email, phone)
+
+Return vendor IDs in order of preference.`;
+
+      const aiDecision = await engine.makeAIDecision(
+        context,
+        "vendor_selection",
+        selectionPrompt,
+        candidateVendors.map((v: any) => v.id),
+        {
+          type: "object",
+          properties: {
+            choice: {
+              type: "array",
+              items: { type: "number" },
+            },
+            reasoning: { type: "string" },
+            confidence: { type: "number" },
+          },
+          required: ["choice", "reasoning", "confidence"],
+          additionalProperties: false,
+        }
+      );
+
+      const selectedVendorIds = Array.isArray(aiDecision.decision)
+        ? aiDecision.decision.slice(0, maxVendors)
+        : [];
+      const selectedVendors = candidateVendors.filter((v: any) => selectedVendorIds.includes(v.id));
+
+      return {
+        success: true,
+        data: {
+          selectedVendors,
+          reasoning: aiDecision.reasoning,
+          confidence: aiDecision.confidence,
+        },
+      };
+    });
+
+    if (!step2.success || step2.data.selectedVendors.length === 0) {
+      return {
+        success: false,
+        runId: context.runId,
+        status: "failed",
+        itemsProcessed: 0,
+        itemsSucceeded: 0,
+        itemsFailed: 0,
+        error: "No suitable vendors found or selected",
+      };
+    }
+
+    const selectedVendors = step2.data.selectedVendors;
+    itemsProcessed = selectedVendors.length;
+
+    // Step 3: Create RFQ
+    const step3 = await engine.recordStep(context, 3, "Create RFQ", "data_create", async () => {
+      // Generate unique RFQ number with timestamp and random component
+      const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      const randomPart = Math.random().toString(36).substring(2, 8).toUpperCase();
+      const rfqNumber = `RFQ-${timestamp}-${randomPart}`;
+
+      const [rfq] = await db
+        .insert(vendorRfqs)
+        .values({
+          rfqNumber,
+          materialName,
+          materialDescription,
+          quantity: quantity.toString(),
+          unit,
+          specifications,
+          requiredDeliveryDate: requiredDeliveryDate ? new Date(requiredDeliveryDate) : null,
+          deliveryLocation,
+          quoteDueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
+          validityPeriod: 30,
+          priority: priority as any,
+          status: "draft",
+        })
+        .$returningId();
+
+      return {
+        success: true,
+        data: { rfqId: rfq.id, rfqNumber },
+        createdEntities: [{ type: "vendor_rfq", id: rfq.id }],
+      };
+    });
+
+    if (!step3.success) {
+      return {
+        success: false,
+        runId: context.runId,
+        status: "failed",
+        itemsProcessed,
+        itemsSucceeded: 0,
+        itemsFailed: itemsProcessed,
+        error: step3.error,
+      };
+    }
+
+    const rfqId = step3.data.rfqId;
+    const rfqNumber = step3.data.rfqNumber;
+
+    // Step 4: Generate and send RFQ emails via AI
+    const step4 = await engine.recordStep(context, 4, "Send RFQ Emails", "communication", async () => {
+      const emailResults = [];
+
+      for (const vendor of selectedVendors) {
+        // Generate AI-powered email content
+        const emailPrompt = `Generate a professional RFQ email to vendor:
+Vendor Name: ${vendor.name}
+Contact Name: ${vendor.contactName || "Procurement Team"}
+
+RFQ Details:
+- RFQ Number: ${rfqNumber}
+- Material: ${materialName}
+- Description: ${materialDescription || "N/A"}
+- Quantity: ${quantity} ${unit}
+- Specifications: ${specifications || "N/A"}
+- Required Delivery Date: ${requiredDeliveryDate || "ASAP"}
+- Delivery Location: ${deliveryLocation || "N/A"}
+- Quote Due Date: 7 days from now
+- Validity Period: 30 days
+
+Generate a professional, concise email requesting a quote.`;
+
+        const aiEmail = await invokeLLM({
+          messages: [
+            {
+              role: "system",
+              content: "You are a professional procurement officer writing RFQ emails to vendors.",
+            },
+            {
+              role: "user",
+              content: emailPrompt,
+            },
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "rfq_email",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  subject: { type: "string" },
+                  body: { type: "string" },
+                },
+                required: ["subject", "body"],
+                additionalProperties: false,
+              },
+            },
+          },
+        });
+
+        const content = aiEmail.choices[0].message.content;
+        const emailContent = JSON.parse(typeof content === "string" ? content : "{}");
+
+        // Create invitation record
+        const [invitation] = await db
+          .insert(vendorRfqInvitations)
+          .values({
+            rfqId,
+            vendorId: vendor.id,
+            status: "pending",
+            invitedAt: new Date(),
+          })
+          .$returningId();
+
+        // Create email record
+        const [email] = await db
+          .insert(vendorRfqEmails)
+          .values({
+            rfqId,
+            vendorId: vendor.id,
+            direction: "outbound",
+            emailType: "rfq_request",
+            fromEmail: process.env.PROCUREMENT_EMAIL || "procurement@company.com",
+            toEmail: vendor.email,
+            subject: emailContent.subject,
+            body: emailContent.body,
+            aiGenerated: true,
+            sendStatus: "queued",
+          })
+          .$returningId();
+
+        emailResults.push({
+          vendorId: vendor.id,
+          vendorName: vendor.name,
+          email: vendor.email,
+          invitationId: invitation.id,
+          emailId: email.id,
+          status: "queued",
+        });
+
+        itemsSucceeded++;
+      }
+
+      // Update RFQ status to sent
+      await db.update(vendorRfqs).set({ status: "sent" }).where(eq(vendorRfqs.id, rfqId));
+
+      // Update invitations to sent
+      await db
+        .update(vendorRfqInvitations)
+        .set({ status: "sent" })
+        .where(eq(vendorRfqInvitations.rfqId, rfqId));
+
+      return {
+        success: true,
+        data: {
+          emailResults,
+          totalSent: emailResults.length,
+        },
+      };
+    });
+
+    if (!step4.success) {
+      return {
+        success: false,
+        runId: context.runId,
+        status: "failed",
+        itemsProcessed,
+        itemsSucceeded: 0,
+        itemsFailed: itemsProcessed,
+        error: step4.error,
+      };
+    }
+
+    // Step 5: Note about monitoring (this would be done by a separate scheduled workflow)
+    const step5 = await engine.recordStep(context, 5, "Setup Quote Monitoring", "configuration", async () => {
+      return {
+        success: true,
+        data: {
+          message: "RFQ emails queued. Quote monitoring will be handled by email scanner and response processor.",
+          rfqId,
+          rfqNumber,
+          vendorCount: selectedVendors.length,
+          quoteDueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        },
+      };
+    });
+
+    return {
+      success: true,
+      runId: context.runId,
+      status: "completed",
+      itemsProcessed,
+      itemsSucceeded,
+      itemsFailed: itemsProcessed - itemsSucceeded,
+      outputData: {
+        rfqId,
+        rfqNumber,
+        vendorsContacted: selectedVendors.length,
+        emailsSent: step4.data.totalSent,
+        monitoring: step5.data,
+      },
+    };
+  },
+};
+
+// ============================================
 // EXPORT ALL PROCESSORS
 // ============================================
 
@@ -2326,4 +3093,6 @@ export const workflowProcessors = {
   invoiceMatching: invoiceMatchingProcessor,
   paymentProcessing: paymentProcessingProcessor,
   exceptionHandling: exceptionHandlingProcessor,
+  vendorQuoteAnalysis: vendorQuoteAnalysisProcessor,
+  vendorQuoteProcurement: vendorQuoteProcurementProcessor,
 };
