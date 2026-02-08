@@ -36,14 +36,9 @@ async function startServer() {
   // Validate email configuration at startup
   const emailConfigValidation = validateEmailConfig();
   if (!emailConfigValidation.valid) {
-    if (ENV.isProduction) {
-      console.error("[Email Config] FATAL: Missing required email configuration in production:");
-      emailConfigValidation.errors.forEach(err => console.error(`  - ${err}`));
-      process.exit(1);
-    } else {
-      console.warn("[Email Config] Warning: Some email configuration is missing:");
-      emailConfigValidation.errors.forEach(err => console.warn(`  - ${err}`));
-    }
+    console.warn("[Email Config] Warning: Some email configuration is missing:");
+    emailConfigValidation.errors.forEach(err => console.warn(`  - ${err}`));
+    console.warn("[Email Config] Email features will be disabled until configuration is provided.");
   }
 
   const app = express();
