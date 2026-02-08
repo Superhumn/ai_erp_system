@@ -268,6 +268,13 @@ export async function getCustomerByEmail(email: string) {
   return result[0];
 }
 
+export async function getCustomerByName(name: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(customers).where(sql`LOWER(${customers.name}) = LOWER(${name})`).limit(1);
+  return result[0];
+}
+
 export async function createCustomer(data: InsertCustomer) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

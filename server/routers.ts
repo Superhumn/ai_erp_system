@@ -685,6 +685,161 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'approve', 'invoice', input.id);
         return { success: true };
       }),
+    createFromText: financeProcedure
+      .input(z.object({ text: z.string().min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        const { parseInvoiceText, findOrCreateCustomer } = await import('./_core/invoiceTextParser');
+        
+        // Parse the text using AI
+        const parsed = await parseInvoiceText(input.text);
+        
+        // Find or create customer
+        const customerId = await findOrCreateCustomer(parsed.customerName, db);
+        
+        // Calculate dates
+        const issueDate = new Date();
+        const dueDate = new Date();
+        if (parsed.dueInDays) {
+          dueDate.setDate(dueDate.getDate() + parsed.dueInDays);
+        } else {
+          dueDate.setDate(dueDate.getDate() + 30); // Default to 30 days
+        }
+        
+        // Create draft invoice
+        const invoiceNumber = generateNumber('INV');
+        const invoice = await db.createInvoice({
+          customerId,
+          invoiceNumber,
+          type: 'invoice',
+          status: 'draft',
+          issueDate,
+          dueDate,
+          subtotal: parsed.amount.toFixed(2),
+          taxAmount: '0.00',
+          discountAmount: '0.00',
+          totalAmount: parsed.amount.toFixed(2),
+          currency: 'USD',
+          notes: parsed.paymentTerms ? `Payment Terms: ${parsed.paymentTerms}` : undefined,
+          createdBy: ctx.user.id,
+        });
+        
+        // Create invoice line item
+        const description = parsed.quantity && parsed.unit 
+          ? `${parsed.quantity} ${parsed.unit} ${parsed.description}`
+          : parsed.description;
+        
+        // Calculate unit price: if quantity is provided, divide total by quantity
+        const quantity = parsed.quantity ?? 1;
+        const unitPrice = parsed.amount / quantity;
+        
+        await db.createInvoiceItem({
+          invoiceId: invoice.id,
+          description,
+          quantity: quantity.toString(),
+          unitPrice: unitPrice.toFixed(2),
+          taxRate: '0',
+          taxAmount: '0.00',
+          totalAmount: parsed.amount.toFixed(2),
+        });
+        
+        await createAuditLog(ctx.user.id, 'create', 'invoice', invoice.id, invoiceNumber, null, { source: 'text', originalText: input.text });
+        
+        return { 
+          invoiceId: invoice.id,
+          invoiceNumber,
+          parsed,
+        };
+      }),
+    approveAndEmail: financeProcedure
+      .input(z.object({ 
+        invoiceId: z.number(),
+        message: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const invoice = await db.getInvoiceWithItems(input.invoiceId);
+        if (!invoice) throw new TRPCError({ code: 'NOT_FOUND', message: 'Invoice not found' });
+        
+        const customer = invoice.customer;
+        if (!customer?.email) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Customer has no email address' });
+        }
+        
+        // Generate PDF
+        const { generateInvoicePdf, getDefaultCompanyInfo } = await import('./_core/invoicePdf');
+        const company = getDefaultCompanyInfo();
+        
+        const pdfBuffer = await generateInvoicePdf({
+          invoiceNumber: invoice.invoiceNumber,
+          issueDate: invoice.issueDate,
+          dueDate: invoice.dueDate,
+          customer: {
+            name: customer.name,
+            email: customer.email,
+            address: customer.address,
+            phone: customer.phone,
+          },
+          items: (invoice.items || []).map((item: any) => ({
+            description: item.description,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            taxRate: item.taxRate,
+            taxAmount: item.taxAmount,
+            totalAmount: item.totalAmount,
+          })),
+          subtotal: invoice.subtotal,
+          taxAmount: invoice.taxAmount,
+          discountAmount: invoice.discountAmount,
+          totalAmount: invoice.totalAmount,
+          notes: invoice.notes,
+          terms: invoice.terms,
+          currency: invoice.currency || 'USD',
+        }, company);
+        
+        // Send email with PDF attachment
+        const { sendEmail } = await import('./_core/email');
+        const emailContent = `
+          <h2>Invoice ${invoice.invoiceNumber}</h2>
+          <p>Dear ${customer.name},</p>
+          ${input.message ? `<p>${input.message}</p>` : '<p>Thank you for your business. Please find your invoice attached.</p>'}
+          <p><strong>Invoice Number:</strong> ${invoice.invoiceNumber}</p>
+          <p><strong>Amount Due:</strong> $${Number(invoice.totalAmount).toFixed(2)}</p>
+          <p><strong>Due Date:</strong> ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : 'N/A'}</p>
+          ${invoice.notes ? `<p><strong>Notes:</strong> ${invoice.notes}</p>` : ''}
+          <p>Please see the attached PDF for full details.</p>
+          <p>Thank you for your business!</p>
+        `;
+        
+        try {
+          await sendEmail({
+            to: customer.email,
+            subject: `Invoice ${invoice.invoiceNumber}`,
+            html: emailContent,
+            attachments: [{
+              content: pdfBuffer.toString('base64'),
+              filename: `invoice-${invoice.invoiceNumber}.pdf`,
+              type: 'application/pdf',
+              disposition: 'attachment',
+            }],
+          });
+          
+          // Update invoice status to sent and mark as approved
+          await db.updateInvoice(input.invoiceId, { 
+            status: 'sent',
+            approvedBy: ctx.user.id,
+            approvedAt: new Date(),
+          });
+          await createAuditLog(ctx.user.id, 'approve', 'invoice', input.invoiceId, invoice.invoiceNumber);
+        } catch (error) {
+          // Ensure we don't mark the invoice as sent/approved if the email fails
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'Failed to send invoice email. The invoice was not marked as sent.',
+            cause: error,
+          });
+        }
+        
+        return { success: true, invoiceNumber: invoice.invoiceNumber };
+      }),
     sendEmail: financeProcedure
       .input(z.object({
         invoiceId: z.number(),
