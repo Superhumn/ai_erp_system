@@ -616,7 +616,6 @@ export default function InventoryCosting() {
                   quantity: parseFloat(layerQuantity),
                   unitCost: parseFloat(layerUnitCost),
                   referenceType: layerReference ? "manual" : undefined,
-                  referenceId: layerReference || undefined,
                   notes: layerReference || undefined,
                 });
               }}
