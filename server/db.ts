@@ -8173,6 +8173,10 @@ export async function getCogsSummary(filters?: {
   return query.orderBy(desc(cogsPeriodSummary.periodStart));
 }
 
+/**
+ * Get an existing COGS period summary record by period parameters.
+ * Note: undefined companyId/productId represents NULL in the database (company-wide or product-wide aggregation)
+ */
 export async function getCogsPeriodSummary(params: {
   companyId?: number;
   productId?: number;
@@ -8216,6 +8220,7 @@ export async function updateCogsPeriodSummaryRecord(id: number, data: Partial<In
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(cogsPeriodSummary).set(data as any).where(eq(cogsPeriodSummary.id, id));
+  return { id };
 }
 
 // Aggregated COGS dashboard stats
