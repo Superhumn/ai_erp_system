@@ -134,7 +134,7 @@ const menuGroups = [
     label: "Projects & Data",
     items: [
       { icon: FolderKanban, label: "Projects", path: "/projects" },
-      { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
+      { icon: FolderLock, label: "Data Room", path: "/dataroom" },
     ],
   },
   {

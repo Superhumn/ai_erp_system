@@ -11,23 +11,19 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { toast } from "sonner";
+import { Toaster, toast } from "sonner";
 import {
   Plus, FolderOpen, Link2, Users, BarChart3, Settings,
   Eye, Download, Clock, Trash2, Copy, ExternalLink,
   FileText, Lock, Globe, Archive, Upload, File, Folder,
   ChevronRight, ArrowLeft, MoreVertical, Mail, Send, Cloud,
   HardDrive, RefreshCw, Shield, Activity, TrendingUp,
-  AlertCircle, CheckCircle2, XCircle
+  AlertCircle, CheckCircle2, XCircle, FolderLock, LayoutDashboard
 } from "lucide-react";
-import { useLocation, useParams } from "wouter";
+import { useLocation } from "wouter";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 export default function DataRoomDetail() {
-  const params = useParams<{ id: string }>();
-  const paramValue = params.id || "";
-  const isNumericId = /^\d+$/.test(paramValue);
-  const numericId = isNumericId ? parseInt(paramValue) : 0;
   const [, setLocation] = useLocation();
   const [currentFolderId, setCurrentFolderId] = useState<number | null>(null);
   const [createFolderOpen, setCreateFolderOpen] = useState(false);
@@ -51,18 +47,7 @@ export default function DataRoomDetail() {
   const [selectedDriveFolderId, setSelectedDriveFolderId] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Support both numeric ID and slug-based URLs
-  const { data: roomById, isLoading: roomByIdLoading, refetch: refetchRoomById } = trpc.dataRoom.getById.useQuery(
-    { id: numericId },
-    { enabled: isNumericId }
-  );
-  const { data: roomBySlug, isLoading: roomBySlugLoading, refetch: refetchRoomBySlug } = trpc.dataRoom.getBySlug.useQuery(
-    { slug: paramValue },
-    { enabled: !isNumericId && paramValue.length > 0 }
-  );
-  const room = roomById ?? roomBySlug;
-  const roomLoading = isNumericId ? roomByIdLoading : roomBySlugLoading;
-  const refetchRoom = isNumericId ? refetchRoomById : refetchRoomBySlug;
+  const { data: room, isLoading: roomLoading, refetch: refetchRoom } = trpc.dataRoom.getOrCreate.useQuery();
   const roomId = room?.id ?? 0;
 
   const { data: folders, refetch: refetchFolders } = trpc.dataRoom.folders.list.useQuery({ dataRoomId: roomId, parentId: currentFolderId }, { enabled: roomId > 0 });
@@ -220,46 +205,60 @@ export default function DataRoomDetail() {
 
   if (roomLoading) {
     return (
-      <div className="p-6 flex items-center justify-center h-64">
-          <div className="text-muted-foreground">Loading...</div>
-        </div>
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center">
+        <Toaster />
+        <div className="text-muted-foreground">Loading data room...</div>
+      </div>
     );
   }
 
   if (!room) {
     return (
-      <div className="p-6 flex flex-col items-center justify-center h-64">
-          <h2 className="text-xl font-semibold">Data Room Not Found</h2>
-          <Button variant="link" onClick={() => setLocation("/datarooms")}>
-            Back to Data Rooms
-          </Button>
-        </div>
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center gap-4">
+        <Toaster />
+        <FolderLock className="h-12 w-12 text-muted-foreground" />
+        <h2 className="text-xl font-semibold">Unable to load data room</h2>
+        <Button variant="outline" onClick={() => setLocation("/")}>
+          Back to Dashboard
+        </Button>
+      </div>
     );
   }
 
   return (
-    <div className="p-6 space-y-6">
-        {/* Header */}
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => setLocation("/datarooms")}>
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <div className="flex-1">
-            <h1 className="text-2xl font-bold">{room.name}</h1>
-            <p className="text-muted-foreground">/dataroom/{room.slug}</p>
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
+      <Toaster />
+      {/* Standalone Header */}
+      <header className="bg-white dark:bg-slate-900 border-b sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="sm" onClick={() => setLocation("/")}>
+              <LayoutDashboard className="h-4 w-4 mr-2" />
+              Dashboard
+            </Button>
+            <div className="h-5 w-px bg-border" />
+            <div className="flex items-center gap-2">
+              <FolderLock className="h-4 w-4 text-primary" />
+              <span className="font-semibold text-sm">{room.name}</span>
+            </div>
+            <Badge variant="outline" className="text-xs">{room.status}</Badge>
           </div>
-          <Button variant="outline" onClick={() => copyLinkUrl(room.slug)}>
-            <Copy className="h-4 w-4 mr-2" />
-            Copy Link
-          </Button>
-          <Button variant="outline" onClick={() => window.open(`/share/${room.slug}`, '_blank')}>
-            <ExternalLink className="h-4 w-4 mr-2" />
-            Preview
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => copyLinkUrl(room.slug)}>
+              <Copy className="h-3.5 w-3.5 mr-1.5" />
+              Copy Link
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => window.open(`/share/${room.slug}`, '_blank')}>
+              <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+              Preview
+            </Button>
+          </div>
         </div>
+      </header>
 
+      <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
@@ -1074,7 +1073,8 @@ export default function DataRoomDetail() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      </div>
+      </main>
+    </div>
   );
 }
 

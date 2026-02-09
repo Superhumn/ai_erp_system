@@ -8803,6 +8803,27 @@ Ask if they received the original request and if they can provide a quote.`;
         return room;
       }),
 
+    // Get the user's data room, creating a default one if none exists
+    getOrCreate: protectedProcedure.query(async ({ ctx }) => {
+      const rooms = await db.getDataRooms(ctx.user.id);
+      if (rooms.length > 0) return rooms[0];
+
+      const slug = `data-room-${ctx.user.id}`;
+      const { id } = await db.createDataRoom({
+        name: 'Data Room',
+        slug,
+        ownerId: ctx.user.id,
+        isPublic: false,
+        requiresNda: false,
+        allowDownload: true,
+        allowPrint: true,
+      });
+
+      const room = await db.getDataRoomById(id);
+      if (!room) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to create data room' });
+      return room;
+    }),
+
     // Create a new data room
     create: protectedProcedure
       .input(z.object({
