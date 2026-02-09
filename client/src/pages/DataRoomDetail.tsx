@@ -18,7 +18,7 @@ import {
   FileText, Lock, Globe, Archive, Upload, File, Folder,
   ChevronRight, ArrowLeft, MoreVertical, Mail, Send, Cloud,
   HardDrive, RefreshCw, Shield, Activity, TrendingUp,
-  AlertCircle, CheckCircle2, XCircle
+  AlertCircle, CheckCircle2, XCircle, ChevronDown, FolderLock
 } from "lucide-react";
 import { useLocation, useParams } from "wouter";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -50,6 +50,7 @@ export default function DataRoomDetail() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: room, isLoading: roomLoading, refetch: refetchRoom } = trpc.dataRoom.getById.useQuery({ id: roomId });
+  const { data: allRooms } = trpc.dataRoom.list.useQuery();
   const { data: folders, refetch: refetchFolders } = trpc.dataRoom.folders.list.useQuery({ dataRoomId: roomId, parentId: currentFolderId });
   const { data: documents, refetch: refetchDocuments } = trpc.dataRoom.documents.list.useQuery({ dataRoomId: roomId, folderId: currentFolderId });
   const { data: links, refetch: refetchLinks } = trpc.dataRoom.links.list.useQuery({ dataRoomId: roomId });
@@ -226,12 +227,38 @@ export default function DataRoomDetail() {
     <div className="p-6 space-y-6">
         {/* Header */}
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => setLocation("/datarooms")}>
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
           <div className="flex-1">
-            <h1 className="text-2xl font-bold">{room.name}</h1>
-            <p className="text-muted-foreground">/dataroom/{room.slug}</p>
+            {allRooms && allRooms.length > 1 ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" className="h-auto p-1 -ml-1 flex items-center gap-2">
+                    <FolderLock className="h-5 w-5 text-muted-foreground" />
+                    <div className="text-left">
+                      <h1 className="text-2xl font-bold">{room.name}</h1>
+                      <p className="text-muted-foreground text-sm">/dataroom/{room.slug}</p>
+                    </div>
+                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  {allRooms.map((r) => (
+                    <DropdownMenuItem
+                      key={r.id}
+                      onClick={() => setLocation(`/dataroom/${r.id}`)}
+                      className={r.id === roomId ? "bg-accent" : ""}
+                    >
+                      <FolderLock className="h-4 w-4 mr-2" />
+                      {r.name}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <div>
+                <h1 className="text-2xl font-bold">{room.name}</h1>
+                <p className="text-muted-foreground">/dataroom/{room.slug}</p>
+              </div>
+            )}
           </div>
           <Button variant="outline" onClick={() => copyLinkUrl(room.slug)}>
             <Copy className="h-4 w-4 mr-2" />

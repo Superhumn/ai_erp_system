@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,8 +11,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { 
-  Plus, FolderOpen, Link2, Users, BarChart3, Settings, 
+import {
+  Plus, FolderOpen, Link2, Users, BarChart3, Settings,
   Eye, Download, Clock, Trash2, Copy, ExternalLink,
   FileText, Lock, Globe, Archive
 } from "lucide-react";
@@ -33,6 +33,14 @@ export default function DataRooms() {
   });
 
   const { data: dataRooms, isLoading, refetch } = trpc.dataRoom.list.useQuery();
+
+  // Auto-redirect to first data room when available
+  useEffect(() => {
+    if (!isLoading && dataRooms && dataRooms.length > 0) {
+      setLocation(`/dataroom/${dataRooms[0].id}`);
+    }
+  }, [dataRooms, isLoading, setLocation]);
+
   const createMutation = trpc.dataRoom.create.useMutation({
     onSuccess: (data) => {
       toast.success("Data room created successfully");
@@ -89,6 +97,15 @@ export default function DataRooms() {
     navigator.clipboard.writeText(url);
     toast.success("Link copied to clipboard");
   };
+
+  // Show loading while redirecting or fetching
+  if (isLoading || (dataRooms && dataRooms.length > 0)) {
+    return (
+      <div className="p-6 flex items-center justify-center h-64">
+        <div className="text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-6">
