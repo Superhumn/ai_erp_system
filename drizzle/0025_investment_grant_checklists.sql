@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS `investment_grant_checklists` (
   `description` text,
   `status` enum('not_started','in_progress','completed','on_hold') NOT NULL DEFAULT 'not_started',
   `totalCapex` decimal(15,2),
-  `grantPercentage` decimal(5,2) DEFAULT '35',
+  `grantPercentage` decimal(5,2) DEFAULT 35.00,
   `estimatedGrant` decimal(15,2),
   `currency` varchar(3) DEFAULT 'SAR',
   `startDate` timestamp,
