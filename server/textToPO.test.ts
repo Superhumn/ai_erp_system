@@ -68,7 +68,7 @@ describe("Text to PO Service", () => {
 
       vi.mocked(invokeLLM).mockResolvedValue(mockLLMResponse as any);
 
-      await expect(parseTextToPO("invalid input")).rejects.toThrow("Failed to parse PO request");
+      await expect(parseTextToPO("invalid input")).rejects.toThrow("LLM returned no content");
     });
   });
 

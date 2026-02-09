@@ -1424,7 +1424,7 @@ export const appRouter = router({
       }),
     // Parse text to PO preview
     parseText: opsProcedure
-      .input(z.object({ text: z.string().min(1) }))
+      .input(z.object({ text: z.string().min(1).max(1000) }))
       .mutation(async ({ input }) => {
         const parsed = await parseTextToPO(input.text);
         const preview = await createPOPreview(parsed);
@@ -1466,13 +1466,23 @@ export const appRouter = router({
             triggeredBy: ctx.user.id,
           });
           
+          if (!emailResult.success) {
+            // Log the error but don't fail the whole operation since PO is already created
+            console.error(`Failed to send PO email for PO ${po.id}:`, emailResult.error);
+          }
+          
           if (emailResult.success && emailResult.emailMessageId) {
             await createAuditLog(ctx.user.id, 'create', 'email_message', emailResult.emailMessageId, 'PO Email', undefined, {
               poId: po.id,
             });
           }
           
-          return { success: true, po, emailSent: emailResult.success };
+          return { 
+            success: true, 
+            po, 
+            emailSent: emailResult.success,
+            emailError: emailResult.error || undefined,
+          };
         }
         
         return { success: true, po, emailSent: false };

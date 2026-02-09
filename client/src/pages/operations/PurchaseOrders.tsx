@@ -49,6 +49,7 @@ export default function PurchaseOrders() {
   const [isOpen, setIsOpen] = useState(false);
   const [isTextPOOpen, setIsTextPOOpen] = useState(false);
   const [textInput, setTextInput] = useState("");
+  const [activeAction, setActiveAction] = useState<'draft' | 'email' | null>(null);
   const [poPreview, setPoPreview] = useState<{
     vendorId: number;
     vendorName: string;
@@ -104,18 +105,22 @@ export default function PurchaseOrders() {
 
   const createFromText = trpc.purchaseOrders.createFromText.useMutation({
     onSuccess: (data) => {
-      toast.success(
-        data.emailSent
-          ? "PO created and email sent to supplier!"
-          : "PO created successfully!"
-      );
+      if (data.emailSent) {
+        toast.success("PO created and email sent to supplier!");
+      } else if (data.emailError) {
+        toast.warning(`PO created successfully, but email failed to send: ${data.emailError}`);
+      } else {
+        toast.success("PO created successfully!");
+      }
       setIsTextPOOpen(false);
       setTextInput("");
       setPoPreview(null);
+      setActiveAction(null);
       refetch();
     },
     onError: (error) => {
       toast.error(`Failed to create PO: ${error.message}`);
+      setActiveAction(null);
     },
   });
 
@@ -161,6 +166,7 @@ export default function PurchaseOrders() {
       toast.error("Please parse the text first");
       return;
     }
+    setActiveAction(sendEmail ? 'email' : 'draft');
     createFromText.mutate({
       text: textInput,
       preview: poPreview,
@@ -181,7 +187,15 @@ export default function PurchaseOrders() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Dialog open={isTextPOOpen} onOpenChange={setIsTextPOOpen}>
+          <Dialog open={isTextPOOpen} onOpenChange={(open) => {
+            setIsTextPOOpen(open);
+            if (!open) {
+              // Clean up state when dialog is closed
+              setTextInput("");
+              setPoPreview(null);
+              setActiveAction(null);
+            }
+          }}>
             <DialogTrigger asChild>
               <Button variant="outline">
                 <Sparkles className="h-4 w-4 mr-2" />
@@ -280,7 +294,7 @@ export default function PurchaseOrders() {
                   onClick={() => handleCreateFromText(false)}
                   disabled={!poPreview || createFromText.isPending}
                 >
-                  {createFromText.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  {createFromText.isPending && activeAction === 'draft' && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                   Create Draft
                 </Button>
                 <Button
@@ -288,7 +302,7 @@ export default function PurchaseOrders() {
                   disabled={!poPreview || createFromText.isPending}
                   className="bg-green-600 hover:bg-green-700"
                 >
-                  {createFromText.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  {createFromText.isPending && activeAction === 'email' && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                   <Send className="h-4 w-4 mr-2" />
                   Create & Email
                 </Button>
