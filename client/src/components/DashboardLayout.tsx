@@ -126,6 +126,14 @@ const menuGroups = [
     ],
   },
   {
+    label: "EDI & Retail",
+    items: [
+      { icon: ArrowRightLeft, label: "EDI Hub", path: "/edi" },
+      { icon: Building2, label: "Trading Partners", path: "/edi/partners" },
+      { icon: FileText, label: "Transactions", path: "/edi/transactions" },
+    ],
+  },
+  {
     label: "People & Legal",
     items: [
       { icon: UserCog, label: "Team & Payroll", path: "/hr/employees" },

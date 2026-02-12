@@ -63,6 +63,11 @@ import InventoryManagementHub from "./pages/operations/InventoryManagementHub";
 import DocumentImport from "./pages/operations/DocumentImport";
 import SupplierPortal from "./pages/SupplierPortal";
 
+// EDI
+import EDIDashboard from "./pages/edi/EDIDashboard";
+import TradingPartners from "./pages/edi/TradingPartners";
+import EDITransactions from "./pages/edi/EDITransactions";
+
 // Freight
 import FreightDashboard from "./pages/freight/FreightDashboard";
 import Carriers from "./pages/freight/Carriers";
@@ -186,6 +191,11 @@ function Router() {
         <Route path="/operations/inventory-hub" component={InventoryHub} />
         <Route path="/operations/inventory-management" component={InventoryManagementHub} />
         <Route path="/operations/document-import" component={DocumentImport} />
+
+        {/* EDI */}
+        <Route path="/edi" component={EDIDashboard} />
+        <Route path="/edi/partners" component={TradingPartners} />
+        <Route path="/edi/transactions" component={EDITransactions} />
 
         {/* Freight */}
         <Route path="/freight" component={FreightDashboard} />
