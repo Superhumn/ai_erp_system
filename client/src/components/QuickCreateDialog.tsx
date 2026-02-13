@@ -18,11 +18,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Plus, Building, Package, FileText, Wrench, Box, Users, MapPin, Layers } from "lucide-react";
+import { Loader2, Plus, Building, Package, FileText, Wrench, Box, Users, MapPin, Layers, ClipboardList } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 
-type EntityType = "vendor" | "material" | "bom" | "workOrder" | "rfq" | "product" | "customer" | "inventory" | "location";
+type EntityType = "vendor" | "material" | "bom" | "workOrder" | "rfq" | "product" | "customer" | "inventory" | "location" | "purchaseOrder";
 
 // Product select field component
 function ProductSelectField({ value, onChange }: { value?: number; onChange: (value: number) => void }) {
@@ -157,6 +157,59 @@ function WarehouseSelectField({ value, onChange }: { value?: number; onChange: (
   );
 }
 
+// Vendor select field component
+function VendorSelectField({ value, onChange }: { value?: number; onChange: (value: number) => void }) {
+  const { data: vendors } = trpc.vendors.list.useQuery();
+  const utils = trpc.useUtils();
+  const [createOpen, setCreateOpen] = useState(false);
+
+  return (
+    <>
+      <Select
+        value={value?.toString() || ""}
+        onValueChange={(v) => onChange(parseInt(v))}
+      >
+        <SelectTrigger>
+          <SelectValue placeholder="Select a vendor..." />
+        </SelectTrigger>
+        <SelectContent>
+          <div className="p-1 border-b">
+            <button
+              type="button"
+              className="w-full text-left px-2 py-1.5 text-sm hover:bg-accent rounded-sm flex items-center gap-2"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setCreateOpen(true);
+              }}
+            >
+              <Plus className="h-4 w-4" />
+              Create New Vendor
+            </button>
+          </div>
+          {vendors?.map((vendor: any) => (
+            <SelectItem key={vendor.id} value={vendor.id.toString()}>
+              {vendor.name}
+            </SelectItem>
+          ))}
+          {(!vendors || vendors.length === 0) && (
+            <div className="p-2 text-sm text-muted-foreground text-center">No vendors found</div>
+          )}
+        </SelectContent>
+      </Select>
+      <QuickCreateDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        entityType="vendor"
+        onCreated={(entity) => {
+          utils.vendors.list.invalidate();
+          if (entity?.id) onChange(entity.id);
+        }}
+      />
+    </>
+  );
+}
+
 interface QuickCreateDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -172,7 +225,7 @@ const entityConfig: Record<EntityType, {
   fields: Array<{
     name: string;
     label: string;
-    type: "text" | "email" | "number" | "textarea" | "select" | "productSelect" | "bomSelect" | "warehouseSelect";
+    type: "text" | "email" | "number" | "textarea" | "select" | "productSelect" | "bomSelect" | "warehouseSelect" | "vendorSelect";
     placeholder?: string;
     required?: boolean;
     options?: Array<{ value: string; label: string }>;
@@ -306,6 +359,15 @@ const entityConfig: Record<EntityType, {
       { name: "capacity", label: "Capacity (units)", type: "number", placeholder: "10000" },
     ],
   },
+  purchaseOrder: {
+    title: "Create New Purchase Order",
+    description: "Create a draft purchase order for a vendor",
+    icon: <ClipboardList className="h-5 w-5" />,
+    fields: [
+      { name: "vendorId", label: "Vendor", type: "vendorSelect", required: true },
+      { name: "notes", label: "Notes", type: "textarea", placeholder: "Order notes..." },
+    ],
+  },
 };
 
 export function QuickCreateDialog({
@@ -320,21 +382,8 @@ export function QuickCreateDialog({
   const utils = trpc.useUtils();
 
   const config = entityConfig[entityType];
-  
-  if (!config) {
-    return (
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Error</DialogTitle>
-          </DialogHeader>
-          <p>Invalid entity type: {entityType}</p>
-        </DialogContent>
-      </Dialog>
-    );
-  }
 
-  // Mutations for different entity types
+  // Mutations for different entity types — all hooks must be called unconditionally
   const createVendor = trpc.vendors.create.useMutation({
     onSuccess: (data) => {
       toast.success("Vendor created successfully");
@@ -440,6 +489,33 @@ export function QuickCreateDialog({
     },
   });
 
+  const createPurchaseOrder = trpc.purchaseOrders.create.useMutation({
+    onSuccess: (data) => {
+      toast.success("Purchase order created successfully");
+      utils.purchaseOrders.list.invalidate();
+      onCreated?.(data);
+      onOpenChange(false);
+      setFormData({});
+    },
+    onError: (error) => {
+      toast.error(`Failed to create purchase order: ${error.message}`);
+    },
+  });
+
+  // Guard after all hooks to comply with React rules of hooks
+  if (!config) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Error</DialogTitle>
+          </DialogHeader>
+          <p>Invalid entity type: {entityType}</p>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   const handleSubmit = useCallback(async () => {
     setIsSubmitting(true);
     try {
@@ -530,11 +606,24 @@ export function QuickCreateDialog({
             notes: formData.capacity ? `Capacity: ${formData.capacity} units` : undefined,
           });
           break;
+        case "purchaseOrder":
+          if (!formData.vendorId) {
+            toast.error("Please select a vendor");
+            return;
+          }
+          await createPurchaseOrder.mutateAsync({
+            vendorId: formData.vendorId,
+            orderDate: new Date(),
+            subtotal: "0",
+            totalAmount: "0",
+            notes: formData.notes || undefined,
+          });
+          break;
       }
     } finally {
       setIsSubmitting(false);
     }
-  }, [entityType, formData, createVendor, createMaterial, createBom, createWorkOrder, createProduct, createCustomer, createInventory, createWarehouse]);
+  }, [entityType, formData, createVendor, createMaterial, createBom, createWorkOrder, createProduct, createCustomer, createInventory, createWarehouse, createPurchaseOrder]);
 
   const handleFieldChange = (name: string, value: any) => {
     setFormData((prev) => ({ ...prev, [name]: value }));
@@ -545,7 +634,7 @@ export function QuickCreateDialog({
     .every((f) => {
       const value = formData[f.name];
       // For select fields (productSelect, bomSelect), check for truthy value
-      if (f.type === 'productSelect' || f.type === 'bomSelect' || f.type === 'warehouseSelect' || f.type === 'select') {
+      if (f.type === 'productSelect' || f.type === 'bomSelect' || f.type === 'warehouseSelect' || f.type === 'vendorSelect' || f.type === 'select') {
         return value !== undefined && value !== null && value !== '';
       }
       // For text fields, check for non-empty string
@@ -610,6 +699,11 @@ export function QuickCreateDialog({
                   value={formData[field.name]}
                   onChange={(value) => handleFieldChange(field.name, value)}
                 />
+              ) : field.type === "vendorSelect" ? (
+                <VendorSelectField
+                  value={formData[field.name]}
+                  onChange={(value) => handleFieldChange(field.name, value)}
+                />
               ) : (
                 <Input
                   id={field.name}
@@ -667,6 +761,8 @@ export function QuickCreateButton({
   const [open, setOpen] = useState(false);
   const config = entityConfig[entityType];
 
+  if (!config) return null;
+
   return (
     <>
       <Button
@@ -704,6 +800,8 @@ export function EmptyStateWithCreate({
 }: EmptyStateWithCreateProps) {
   const [open, setOpen] = useState(false);
   const config = entityConfig[entityType];
+
+  if (!config) return null;
 
   return (
     <div className="flex flex-col items-center justify-center py-12 px-4 text-center">

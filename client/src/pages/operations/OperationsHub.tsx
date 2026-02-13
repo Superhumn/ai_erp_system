@@ -789,7 +789,7 @@ export default function OperationsHub() {
       <QuickCreateDialog
         open={showMaterialDialog}
         onOpenChange={setShowMaterialDialog}
-        entityType="rawMaterial"
+        entityType="material"
         onCreated={() => refetchMaterials()}
       />
       <QuickCreateDialog
