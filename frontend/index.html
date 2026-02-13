@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neural ERP | AI-First Enterprise</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            font-family: 'Inter', sans-serif;
+        }
+        .font-display {
+            font-family: 'Space Grotesk', sans-serif;
+        }
+        
+        /* Ultra-sleek dark theme */
+        body {
+            background: #030712;
+            color: #f8fafc;
+        }
+        
+        /* Subtle noise texture */
+        .noise-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            opacity: 0.03;
+            z-index: 0;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+        }
+        
+        /* Aurora gradient background */
+        .aurora {
+            position: fixed;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
+                        radial-gradient(circle at 80% 20%, rgba(139, 92, 246, 0.05) 0%, transparent 40%),
+                        radial-gradient(circle at 20% 80%, rgba(59, 130, 246, 0.05) 0%, transparent 40%);
+            pointer-events: none;
+            z-index: 0;
+            animation: aurora 20s ease-in-out infinite;
+        }
+        
+        @keyframes aurora {
+            0%, 100% { transform: translate(0, 0) rotate(0deg); }
+            33% { transform: translate(2%, 2%) rotate(120deg); }
+            66% { transform: translate(-2%, 1%) rotate(240deg); }
+        }
+        
+        /* Glass morphism refined */
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.4);
+            backdrop-filter: blur(20px) saturate(180%);
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
+        }
+        
+        .glass-card {
+            background: linear-gradient(135deg, rgba(30, 41, 59, 0.4) 0%, rgba(15, 23, 42, 0.6) 100%);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        }
+        
+        /* AI Command Center */
+        .ai-command {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(139, 92, 246, 0.05) 100%);
+            border: 1px solid rgba(99, 102, 241, 0.2);
+            box-shadow: 0 0 40px rgba(99, 102, 241, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        }
+        
+        .ai-command:focus-within {
+            border-color: rgba(99, 102, 241, 0.5);
+            box-shadow: 0 0 60px rgba(99, 102, 241, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        }
+        
+        /* Sleek inputs */
+        .sleek-input {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .sleek-input:focus {
+            background: rgba(0, 0, 0, 0.5);
+            border-color: rgba(99, 102, 241, 0.4);
+            outline: none;
+        }
+        
+        /* Navigation pills */
+        .nav-pill {
+            transition: all 0.3s ease;
+            border: 1px solid transparent;
+        }
+        .nav-pill:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: rgba(255, 255, 255, 0.1);
+        }
+        .nav-pill.active {
+            background: rgba(99, 102, 241, 0.15);
+            border-color: rgba(99, 102, 241, 0.3);
+            color: #818cf8;
+        }
+        
+        /* Status indicators */
+        .status-glow {
+            box-shadow: 0 0 10px currentColor;
+        }
+        
+        /* Smooth scrollbar */
+        ::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        /* Animations */
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-5px); }
+        }
+        .animate-float {
+            animation: float 6s ease-in-out infinite;
+        }
+        
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); opacity: 1; }
+            100% { transform: scale(2); opacity: 0; }
+        }
+        .pulse-ring::before {
+            content: '';
+            position: absolute;
+            inset: -4px;
+            border-radius: 50%;
+            border: 2px solid currentColor;
+            animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+        
+        /* Data grid lines */
+        .grid-lines {
+            background-image: linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+            background-size: 60px 60px;
+        }
+        
+        /* Tooltip */
+        .tooltip {
+            opacity: 0;
+            transform: translateY(10px);
+            transition: all 0.2s ease;
+        }
+        .group:hover .tooltip {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    </style>
+</head>
+<body class="antialiased overflow-hidden">
+
+    <div class="noise-bg"></div>
+    <div class="aurora"></div>
+
+    <div class="relative z-10 flex h-screen">
+        
+        <!-- Minimal Sidebar -->
+        <aside class="w-20 glass-panel border-r border-white/5 flex flex-col items-center py-8 space-y-8">
+            <!-- Logo -->
+            <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20 animate-float">
+                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                </svg>
+            </div>
+
+            <!-- Navigation -->
+            <nav class="flex-1 flex flex-col gap-2 w-full px-3">
+                <button class="nav-pill active w-full aspect-square rounded-2xl flex items-center justify-center text-indigo-400 relative group">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>
+                    </svg>
+                    <div class="tooltip absolute left-full ml-4 px-3 py-1.5 bg-slate-800 rounded-lg text-xs whitespace-nowrap border border-white/10 z-50">Dashboard</div>
+                </button>
+
+                <button class="nav-pill w-full aspect-square rounded-2xl flex items-center justify-center text-slate-400 hover:text-white relative group">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                    </svg>
+                    <div class="tooltip absolute left-full ml-4 px-3 py-1.5 bg-slate-800 rounded-lg text-xs whitespace-nowrap border border-white/10 z-50">Analytics</div>
+                </button>
+
+                <button class="nav-pill w-full aspect-square rounded-2xl flex items-center justify-center text-slate-400 hover:text-white relative group">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+                    </svg>
+                    <div class="tooltip absolute left-full ml-4 px-3 py-1.5 bg-slate-800 rounded-lg text-xs whitespace-nowrap border border-white/10 z-50">Inventory</div>
+                </button>
+
+                <button class="nav-pill w-full aspect-square rounded-2xl flex items-center justify-center text-slate-400 hover:text-white relative group">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    <div class="tooltip absolute left-full ml-4 px-3 py-1.5 bg-slate-800 rounded-lg text-xs whitespace-nowrap border border-white/10 z-50">Finance</div>
+                </button>
+
+                <div class="w-full h-px bg-white/5 my-2"></div>
+
+                <button class="nav-pill w-full aspect-square rounded-2xl flex items-center justify-center text-slate-400 hover:text-white relative group">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                    </svg>
+                    <div class="tooltip absolute left-full ml-4 px-3 py-1.5 bg-slate-800 rounded-lg text-xs whitespace-nowrap border border-white/10 z-50">Settings</div>
+                </button>
+            </nav>
+
+            <!-- User -->
+            <div class="relative group cursor-pointer">
+                <img src="https://i.pravatar.cc/150?img=11" alt="User" class="w-10 h-10 rounded-full border-2 border-white/10 hover:border-indigo-500/50 transition-colors">
+                <div class="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 rounded-full border-2 border-slate-900 status-glow"></div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 flex flex-col min-w-0">
+            
+            <!-- AI Command Center - TOP OF PAGE -->
+            <div class="glass-panel border-b border-white/5 p-6 space-y-4">
+                <div class="max-w-5xl mx-auto w-full space-y-4">
+                    
+                    <!-- AI Header -->
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <div class="relative">
+                                <div class="w-3 h-3 bg-indigo-500 rounded-full status-glow animate-pulse"></div>
+                                <div class="absolute inset-0 bg-indigo-500 rounded-full pulse-ring text-indigo-500"></div>
+                            </div>
+                            <div>
+                                <h1 class="font-display text-lg font-medium text-white tracking-tight">Neural Command</h1>
+                                <p class="text-xs text-slate-400">AI-First ERP Interface • v3.0</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                                <div class="w-1.5 h-1.5 bg-emerald-500 rounded-full status-glow"></div>
+                                <span class="text-xs text-emerald-400 font-medium mono">SYSTEM OPTIMAL</span>
+                            </div>
+                            <button class="p-2 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-colors relative">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+                                </svg>
+                                <span class="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border-2 border-slate-900"></span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Primary AI Input -->
+                    <div class="ai-command rounded-2xl p-1 transition-all duration-300">
+                        <div class="flex items-center gap-3 bg-black/20 rounded-xl px-4 py-3">
+                            <svg class="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                            </svg>
+                            <input type="text" 
+                                   placeholder="Command the ERP... 'Optimize Q4 inventory', 'Generate financial forecast', 'Analyze supply chain risks'" 
+                                   class="flex-1 bg-transparent border-none outline-none text-white placeholder-slate-500 text-lg font-light"
+                                   id="aiCommandInput"
+                                   onkeypress="handleCommand(event)">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs text-slate-600 mono hidden sm:block">⌘K</span>
+                                <button onclick="executeCommand()" class="p-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Quick Commands -->
+                    <div class="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide">
+                        <button onclick="setCommand('Deploy latest build')" class="whitespace-nowrap px-4 py-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 text-sm text-slate-300 transition-all flex items-center gap-2 group">
+                            <svg class="w-4 h-4 text-indigo-400 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                            </svg>
+                            Deploy Build
+                        </button>
+                        <button onclick="setCommand('Generate Q4 revenue forecast')" class="whitespace-nowrap px-4 py-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 text-sm text-slate-300 transition-all flex items-center gap-2 group">
+                            <svg class="w-4 h-4 text-purple-400 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
+                            </svg>
+                            Forecast Revenue
+                        </button>
+                        <button onclick="setCommand('Optimize inventory levels')" class="whitespace-nowrap px-4 py-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 text-sm text-slate-300 transition-all flex items-center gap-2 group">
+                            <svg class="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+                            </svg>
+                            Optimize Stock
+                        </button>
+                        <button onclick="setCommand('Analyze team performance')" class="whitespace-nowrap px-4 py-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 text-sm text-slate-300 transition-all flex items-center gap-2 group">
+                            <svg class="w-4 h-4 text-orange-400 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
+                            </svg>
+                            Team Analytics
+                        </button>
+                        <button onclick="setCommand('Check system health')" class="whitespace-nowrap px-4 py-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 text-sm text-slate-300 transition-all flex items-center gap-2 group">
+                            <svg class="w-4 h-4 text-blue-400 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                            Health Check
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dashboard Content -->
+            <div class="flex-1 overflow-y-auto grid-lines">
+                <div class="max-w-7xl mx-auto p-8 space-y-6">
+                    
+                    <!-- Metrics Row -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div class="glass-card rounded-2xl p-5 hover:bg-white/5 transition-all cursor-pointer group">
+                            <div class="flex justify-between items-start mb-3">
+                                <span class="text-slate-400 text-sm font-medium">Revenue</span>
+                                <span class="text-emerald-400 text-xs font-medium bg-emerald-400/10 px-2 py-1 rounded-full flex items-center gap-1">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
+                                    </svg>
+                                    12.5%
+                                </span>
+                            </div>
+                            <div class="text-3xl font-display font-light text-white mb-1 tracking-tight">$2.4M</div>
+                            <div class="text-xs text-slate-500">vs last month</div>
+                            <div class="mt-4 h-1 bg-slate-800 rounded-full overflow-hidden">
+                                <div class="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 w-3/4 rounded-full group-hover:w-full transition-all duration-1000"></div>
+                            </div>
+                        </div>
+
+                        <div class="glass-card rounded-2xl p-5 hover:bg-white/5 transition-all cursor-pointer group">
+                            <div class="flex justify-between items-start mb-3">
+                                <span class="text-slate-400 text-sm font-medium">Active Users</span>
+                                <span class="text-emerald-400 text-xs font-medium bg-emerald-400/10 px-2 py-1 rounded-full flex items-center gap-1">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
+                                    </svg>
+                                    8.2%
+                                </span>
+                            </div>
+                            <div class="text-3xl font-display font-light text-white mb-1 tracking-tight">1,429</div>
+                            <div class="text-xs text-slate-500">342 online now</div>
+                            <div class="mt-4 flex -space-x-2">
+                                <img class="w-6 h-6 rounded-full border-2 border-slate-900" src="https://i.pravatar.cc/150?img=1" alt="">
+                                <img class="w-6 h-6 rounded-full border-2 border-slate-900" src="https://i.pravatar.cc/150?img=2" alt="">
+                                <img class="w-6 h-6 rounded-full border-2 border-slate-900" src="https://i.pravatar.cc/150?img=3" alt="">
+                                <div class="w-6 h-6 rounded-full border-2 border-slate-900 bg-slate-800 flex items-center justify-center text-[10px] text-slate-400">+9</div>
+                            </div>
+                        </div>
+
+                        <div class="glass-card rounded-2xl p-5 hover:bg-white/5 transition-all cursor-pointer group">
+                            <div class="flex justify-between items-start mb-3">
+                                <span class="text-slate-400 text-sm font-medium">AI Accuracy</span>
+                                <span class="text-indigo-400 text-xs font-medium bg-indigo-400/10 px-2 py-1 rounded-full flex items-center gap-1">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                                    </svg>
+                                    94.2%
+                                </span>
+                            </div>
+                            <div class="text-3xl font-display font-light text-white mb-1 tracking-tight">98.1%</div>
+                            <div class="text-xs text-slate-500">Prediction confidence</div>
+                            <div class="mt-4 h-1 bg-slate-800 rounded-full overflow-hidden">
+                                <div class="h-full bg-gradient-to-r from-indigo-500 to-purple-500 w-[98%] rounded-full"></div>
+                            </div>
+                        </div>
+
+                        <div class="glass-card rounded-2xl p-5 hover:bg-white/5 transition-all cursor-pointer group border-indigo-500/20">
+                            <div class="flex justify-between items-start mb-3">
+                                <span class="text-slate-400 text-sm font-medium">System Health</span>
+                                <div class="flex items-center gap-1.5">
+                                    <div class="w-1.5 h-1.5 bg-emerald-500 rounded-full status-glow animate-pulse"></div>
+                                    <span class="text-emerald-400 text-xs font-medium">OPTIMAL</span>
+                                </div>
+                            </div>
+                            <div class="text-3xl font-display font-light text-white mb-1 tracking-tight">99.9%</div>
+                            <div class="text-xs text-slate-500">Uptime: 45 days</div>
+                            <div class="mt-4 flex gap-1">
+                                <div class="h-1 flex-1 bg-emerald-500 rounded-full"></div>
+                                <div class="h-1 flex-1 bg-emerald-500 rounded-full"></div>
+                                <div class="h-1 flex-1 bg-emerald-500 rounded-full"></div>
+                                <div class="h-1 flex-1 bg-emerald-500/30 rounded-full"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Main Chart Section -->
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div class="lg:col-span-2 glass-card rounded-2xl p-6">
+                            <div class="flex items-center justify-between mb-6">
+                                <div>
+                                    <h3 class="text-white font-display font-medium text-lg">Revenue Intelligence</h3>
+                                    <p class="text-slate-400 text-sm mt-0.5">AI forecast vs Actual performance</p>
+                                </div>
+                                <div class="flex gap-2">
+                                    <button class="px-3 py-1.5 rounded-lg bg-indigo-600/20 text-indigo-400 text-xs font-medium border border-indigo-500/30">Live</button>
+                                    <button class="px-3 py-1.5 rounded-lg bg-white/5 text-slate-400 text-xs font-medium border border-white/10 hover:text-white transition-colors">1H</button>
+                                    <button class="px-3 py-1.5 rounded-lg bg-white/5 text-slate-400 text-xs font-medium border border-white/10 hover:text-white transition-colors">24H</button>
+                                    <button class="px-3 py-1.5 rounded-lg bg-white/5 text-slate-400 text-xs font-medium border border-white/10 hover:text-white transition-colors">7D</button>
+                                </div>
+                            </div>
+                            <div class="h-80 w-full">
+                                <canvas id="mainChart"></canvas>
+                            </div>
+                        </div>
+
+                        <div class="glass-card rounded-2xl p-6 flex flex-col">
+                            <h3 class="text-white font-display font-medium text-lg mb-1">AI Insights</h3>
+                            <p class="text-slate-400 text-sm mb-6">Generated in last hour</p>
+                            
+                            <div class="flex-1 space-y-4 overflow-y-auto">
+                                <div class="p-4 rounded-xl bg-gradient-to-r from-indigo-500/10 to-purple-500/10 border border-indigo-500/20 hover:border-indigo-500/40 transition-colors cursor-pointer group">
+                                    <div class="flex items-start gap-3">
+                                        <div class="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center flex-shrink-0 group-hover:bg-indigo-500/30 transition-colors">
+                                            <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                                            </svg>
+                                        </div>
+                                        <div>
+                                            <p class="text-sm text-white font-medium mb-1">Inventory Optimization</p>
+                                            <p class="text-xs text-slate-400 leading-relaxed">AI suggests reducing Q4 stock by 15% based on predictive demand analysis.</p>
+                                            <div class="mt-2 flex gap-2">
+                                                <button class="text-xs text-indigo-400 hover:text-indigo-300 font-medium">Apply</button>
+                                                <button class="text-xs text-slate-500 hover:text-slate-400">Review</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="p-4 rounded-xl bg-white/5 border border-white/5 hover:border-white/10 transition-colors cursor-pointer group">
+                                    <div class="flex items-start gap-3">
+                                        <div class="w-8 h-8 rounded-lg bg-orange-500/20 flex items-center justify-center flex-shrink-0 group-hover:bg-orange-500/30 transition-colors">
+                                            <svg class="w-4 h-4 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                                            </svg>
+                                        </div>
+                                        <div>
+                                            <p class="text-sm text-white font-medium mb-1">Supply Chain Alert</p>
+                                            <p class="text-xs text-slate-400 leading-relaxed">Potential delay detected in Supplier A shipment. Alternative routes available.</p>
+                                            <div class="mt-2 flex gap-2">
+                                                <button class="text-xs text-orange-400 hover:text-orange-300 font-medium">Reroute</button>
+                                                <button class="text-xs text-slate-500 hover:text-slate-400">Ignore</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="p-4 rounded-xl bg-white/5 border border-white/5 hover:border-white/10 transition-colors cursor-pointer group">
+                                    <div class="flex items-start gap-3">
+                                        <div class="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center flex-shrink-0 group-hover:bg-emerald-500/30 transition-colors">
+                                            <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                            </svg>
+                                        </div>
+                                        <div>
+                                            <p class="text-sm text-white font-medium mb-1">Auto-Deployment</p>
+                                            <p class="text-xs text-slate-400 leading-relaxed">Build v3.2.1 passed all tests. Ready for production deployment.</p>
+                                            <div class="mt-2 flex gap-2">
+                                                <button class="text-xs text-emerald-400 hover:text-emerald-300 font-medium">Deploy</button>
+                                                <button class="text-xs text-slate-500 hover:text-slate-400">Schedule</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Bottom Section -->
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div class="glass-card rounded-2xl p-6">
+                            <h3 class="text-white font-display font-medium text-lg mb-4">Resource Allocation</h3>
+                            <div class="h-48 relative">
+                                <canvas id="resourceChart"></canvas>
+                                <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                    <div class="text-center">
+                                        <div class="text-2xl font-display font-light text-white">84%</div>
+                                        <div class="text-xs text-slate-500">Efficiency</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mt-4 grid grid-cols-2 gap-3">
+                                <div class="flex items-center gap-2">
+                                    <div class="w-2 h-2 rounded-full bg-indigo-500"></div>
+                                    <span class="text-xs text-slate-400">Engineering</span>
+                                    <span class="text-xs text-white ml-auto">42%</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <div class="w-2 h-2 rounded-full bg-purple-500"></div>
+                                    <span class="text-xs text-slate-400">Sales</span>
+                                    <span class="text-xs text-white ml-auto">28%</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <div class="w-2 h-2 rounded-full bg-emerald-500"></div>
+                                    <span class="text-xs text-slate-400">Marketing</span>
+                                    <span class="text-xs text-white ml-auto">18%</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <div class="w-2 h-2 rounded-full bg-orange-500"></div>
+                                    <span class="text-xs text-slate-400">Ops</span>
+                                    <span class="text-xs text-white ml-auto">12%</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="lg:col-span-2 glass-card rounded-2xl p-6">
+                            <div class="flex items-center justify-between mb-6">
+                                <div>
+                                    <h3 class="text-white font-display font-medium text-lg">System Activity</h3>
+                                    <p class="text-slate-400 text-sm">Real-time operations log</p>
+                                </div>
+                                <button class="text-xs text-indigo-400 hover:text-indigo-300 font-medium">View All</button>
+                            </div>
+                            
+                            <div class="space-y-3">
+                                <div class="flex items-center gap-4 p-3 rounded-xl hover:bg-white/5 transition-colors group cursor-pointer">
+                                    <div class="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center group-hover:bg-emerald-500/20 transition-colors">
+                                        <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                        </svg>
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex items-center gap-2">
+                                            <p class="text-sm text-white font-medium">Deployment Completed</p>
+                                            <span class="text-[10px] text-slate-500 mono">2m ago</span>
+                                        </div>
+                                        <p class="text-xs text-slate-400 truncate">Production environment updated to v3.2.1</p>
+                                    </div>
+                                    <button class="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-white">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                        </svg>
+                                    </button>
+                                </div>
+
+                                <div class="flex items-center gap-4 p-3 rounded-xl hover:bg-white/5 transition-colors group cursor-pointer">
+                                    <div class="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center group-hover:bg-indigo-500/20 transition-colors">
+                                        <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                                        </svg>
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex items-center gap-2">
+                                            <p class="text-sm text-white font-medium">AI Optimization</p>
+                                            <span class="text-[10px] text-slate-500 mono">15m ago</span>
+                                        </div>
+                                        <p class="text-xs text-slate-400 truncate">Auto-scaled compute resources based on load prediction</p>
+                                    </div>
+                                    <button class="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-white">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                        </svg>
+                                    </button>
+                                </div>
+
+                                <div class="flex items-center gap-4 p-3 rounded-xl hover:bg-white/5 transition-colors group cursor-pointer">
+                                    <div class="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center group-hover:bg-blue-500/20 transition-colors">
+                                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/>
+                                        </svg>
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex items-center gap-2">
+                                            <p class="text-sm text-white font-medium">Database Backup</p>
+                                            <span class="text-[10px] text-slate-500 mono">1h ago</span>
+                                        </div>
+                                        <p class="text-xs text-slate-400 truncate">Incremental backup completed • 2.4GB</p>
+                                    </div>
+                                    <button class="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-white">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                        </svg>
+                                    </button>
+                                </div>
+
+                                <div class="flex items-center gap-4 p-3 rounded-xl hover:bg-white/5 transition-colors group cursor-pointer">
+                                    <div class="w-10 h-10 rounded-xl bg-orange-500/10 flex items-center justify-center group-hover:bg-orange-500/20 transition-colors">
+                                        <svg class="w-5 h-5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                                        </svg>
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex items-center gap-2">
+                                            <p class="text-sm text-white font-medium">Security Alert</p>
+                                            <span class="text-[10px] text-slate-500 mono">3h ago</span>
+                                        </div>
+                                        <p class="text-xs text-slate-400 truncate">Unusual API access pattern detected from IP 192.168.x.x</p>
+                                    </div>
+                                    <button class="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-white">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // Command handling
+        function setCommand(text) {
+            document.getElementById('aiCommandInput').value = text;
+            document.getElementById('aiCommandInput').focus();
+        }
+
+        function handleCommand(event) {
+            if (event.key === 'Enter') {
+                executeCommand();
+            }
+        }
+
+        function executeCommand() {
+            const input = document.getElementById('aiCommandInput');
+            const command = input.value.trim();
+            if (!command) return;
+            
+            // Visual feedback
+            input.value = '';
+            input.placeholder = 'Processing...';
+            
+            setTimeout(() => {
+                input.placeholder = "Command the ERP... 'Optimize Q4 inventory', 'Generate financial forecast', 'Analyze supply chain risks'";
+            }, 1000);
+        }
+
+        // Keyboard shortcut
+        document.addEventListener('keydown', function(e) {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+                e.preventDefault();
+                document.getElementById('aiCommandInput').focus();
+            }
+        });
+
+        // Main Chart
+        const ctx1 = document.getElementById('mainChart').getContext('2d');
+        new Chart(ctx1, {
+            type: 'line',
+            data: {
+                labels: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', 'Now'],
+                datasets: [{
+                    label: 'Actual',
+                    data: [42000, 45000, 58000, 62000, 59000, 68000, 72000],
+                    borderColor: '#6366f1',
+                    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    pointBackgroundColor: '#6366f1',
+                    pointBorderColor: '#030712',
+                    pointBorderWidth: 2,
+                    pointRadius: 4
+                }, {
+                    label: 'AI Forecast',
+                    data: [41000, 44000, 56000, 64000, 61000, 67000, 71000],
+                    borderColor: '#8b5cf6',
+                    backgroundColor: 'transparent',
+                    borderWidth: 2,
+                    borderDash: [5, 5],
+                    tension: 0.4,
+                    pointBackgroundColor: '#8b5cf6',
+                    pointBorderColor: '#030712',
+                    pointBorderWidth: 2,
+                    pointRadius: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        labels: {
+                            color: '#64748b',
+                            usePointStyle: true,
+                            padding: 20,
+                            font: { size: 12 }
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(3, 7, 18, 0.9)',
+                        titleColor: '#fff',
+                        bodyColor: '#94a3b8',
+                        borderColor: 'rgba(255, 255, 255, 0.1)',
+                        borderWidth: 1,
+                        padding: 12,
+                        callbacks: {
+                            label: function(context) {
+                                return context.dataset.label + ': $' + context.parsed.y.toLocaleString();
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.03)',
+                            drawBorder: false
+                        },
+                        ticks: { color: '#475569' }
+                    },
+                    y: {
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.03)',
+                            drawBorder: false
+                        },
+                        ticks: {
+                            color: '#475569',
+                            callback: function(value) {
+                                return '$' + value / 1000 + 'k';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Resource Chart
+        const ctx2 = document.getElementById('resourceChart').getContext('2d');
+        new Chart(ctx2, {
+            type: 'doughnut',
+            data: {
+                labels: ['Engineering', 'Sales', 'Marketing', 'Operations'],
+                datasets: [{
+                    data: [42, 28, 18, 12],
+                    backgroundColor: ['#6366f1', '#8b5cf6', '#10b981', '#f97316'],
+                    borderWidth: 0,
+                    hoverOffset: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '85%',
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: 'rgba(3, 7, 18, 0.9)',
+                        bodyColor: '#fff',
+                        borderColor: 'rgba(255, 255, 255, 0.1)',
+                        borderWidth: 1
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>
