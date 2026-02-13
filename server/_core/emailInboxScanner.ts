@@ -98,6 +98,44 @@ export const IMAP_PRESETS: Record<string, Partial<EmailInboxConfig>> = {
 };
 
 /**
+ * Format an ImapFlow error into a user-friendly message
+ */
+function formatImapError(error: any): string {
+  // Check for Node.js network-level errors
+  if (error.code === "ECONNREFUSED") {
+    return `Connection refused by ${error.address || "server"}:${error.port || "unknown port"}. Check that the IMAP host and port are correct.`;
+  }
+  if (error.code === "ENOTFOUND" || error.code === "EAI_AGAIN") {
+    return `Could not resolve hostname. Check that the IMAP host is correct.`;
+  }
+  if (error.code === "ETIMEDOUT" || error.code === "ESOCKET") {
+    return `Connection timed out. Check your IMAP host, port, and that the server is reachable.`;
+  }
+  if (error.code === "ECONNRESET") {
+    return `Connection was reset by the server. The port may require a different security setting.`;
+  }
+  if (error.code === "ERR_TLS_CERT_ALTNAME_INVALID" || error.code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE" || error.code === "CERT_HAS_EXPIRED" || error.code === "DEPTH_ZERO_SELF_SIGNED_CERT" || error.code === "SELF_SIGNED_CERT_IN_CHAIN") {
+    return `TLS certificate error: ${error.message}. The server's SSL certificate could not be verified.`;
+  }
+
+  // Check for ImapFlow command errors (these have responseStatus/responseText)
+  if (error.responseStatus === "NO" || error.responseStatus === "BAD") {
+    const responseText = error.responseText || error.message;
+    if (/auth|login|credential|password/i.test(responseText)) {
+      return `Authentication failed: ${responseText}. Check your username and password. For Gmail, use an App Password instead of your regular password.`;
+    }
+    return `IMAP server rejected command: ${responseText}`;
+  }
+
+  // If the message is just "Command failed" with no useful detail, provide guidance
+  if (error.message === "Command failed") {
+    return "IMAP connection failed. This usually means authentication was rejected. Check your username and password. For Gmail/Outlook, you may need to use an App Password.";
+  }
+
+  return error.message || "Unknown connection error";
+}
+
+/**
  * Connect to IMAP server and scan inbox for emails
  */
 export async function scanInbox(
@@ -136,6 +174,11 @@ export async function scanInbox(
       secure: config.secure,
       auth: config.auth,
       logger: false, // Disable verbose logging
+      tls: {
+        rejectUnauthorized: true,
+        minVersion: "TLSv1.2",
+      },
+      connectionTimeout: 30000,
     });
 
     // Connect to server
@@ -201,7 +244,7 @@ export async function scanInbox(
 
     result.success = true;
   } catch (error: any) {
-    result.errors.push(`IMAP connection error: ${error.message}`);
+    result.errors.push(`IMAP connection error: ${formatImapError(error)}`);
   } finally {
     // Close connection
     if (client) {
@@ -434,10 +477,15 @@ export async function testImapConnection(config: EmailInboxConfig): Promise<{
       secure: config.secure,
       auth: config.auth,
       logger: false,
+      tls: {
+        rejectUnauthorized: true,
+        minVersion: "TLSv1.2",
+      },
+      connectionTimeout: 30000,
     });
 
     await client.connect();
-    
+
     // List mailboxes
     const mailboxes: string[] = [];
     const mailboxList = await client.list();
@@ -447,7 +495,7 @@ export async function testImapConnection(config: EmailInboxConfig): Promise<{
 
     return { success: true, mailboxes };
   } catch (error: any) {
-    return { success: false, error: error.message };
+    return { success: false, error: formatImapError(error) };
   } finally {
     if (client) {
       try {
