@@ -463,7 +463,7 @@ export const appRouter = router({
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const result = await db.createVendor(input);
+        const result = await db.createVendor({ ...input, companyId: ctx.user.companyId || 1 });
         await createAuditLog(ctx.user.id, 'create', 'vendor', result.id, input.name);
         return result;
       }),
