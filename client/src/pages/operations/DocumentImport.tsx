@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Upload, FileText, Truck, Package, AlertCircle, CheckCircle, Clock, Edit2, X, ChevronRight, History, Loader2, FolderOpen, Cloud, ChevronLeft, File, RefreshCw } from "lucide-react";
+import { Upload, FileText, Truck, Package, AlertCircle, CheckCircle, Clock, Edit2, X, ChevronRight, History, Loader2, FolderOpen, Cloud, ChevronLeft, File, RefreshCw, ShoppingCart, Factory, Warehouse, Users, Box, ScrollText, BookOpen } from "lucide-react";
 import { useDropzone } from "react-dropzone";
 
 interface ParsedLineItem {
@@ -119,6 +119,181 @@ interface ParsedCustomsDocument {
   confidence: number;
 }
 
+interface ParsedSalesOrder {
+  orderNumber: string;
+  customerName: string;
+  customerEmail?: string;
+  orderDate: string;
+  shippingAddress?: string;
+  billingAddress?: string;
+  lineItems: ParsedLineItem[];
+  subtotal: number;
+  taxAmount?: number;
+  shippingAmount?: number;
+  discountAmount?: number;
+  totalAmount: number;
+  currency?: string;
+  notes?: string;
+  confidence: number;
+}
+
+interface ParsedInvoice {
+  invoiceNumber: string;
+  customerName: string;
+  customerEmail?: string;
+  issueDate: string;
+  dueDate?: string;
+  type: "invoice" | "credit_note" | "quote";
+  lineItems: ParsedLineItem[];
+  subtotal: number;
+  taxAmount?: number;
+  discountAmount?: number;
+  totalAmount: number;
+  currency?: string;
+  paymentTerms?: string;
+  purchaseOrderNumber?: string;
+  notes?: string;
+  terms?: string;
+  confidence: number;
+}
+
+interface ParsedBOMComponent {
+  name: string;
+  sku?: string;
+  componentType: "raw_material" | "product" | "packaging" | "labor";
+  quantity: number;
+  unit?: string;
+  unitCost?: number;
+  wastagePercent?: number;
+  notes?: string;
+}
+
+interface ParsedBillOfMaterials {
+  productName: string;
+  productSku?: string;
+  version?: string;
+  batchSize?: number;
+  batchUnit?: string;
+  components: ParsedBOMComponent[];
+  laborCost?: number;
+  overheadCost?: number;
+  notes?: string;
+  confidence: number;
+}
+
+interface ParsedWorkOrder {
+  productName: string;
+  productSku?: string;
+  quantity: number;
+  unit?: string;
+  priority?: "low" | "normal" | "high" | "urgent";
+  scheduledStartDate?: string;
+  scheduledEndDate?: string;
+  notes?: string;
+  confidence: number;
+}
+
+interface ParsedInventoryAdjustment {
+  adjustmentType: "count" | "adjustment" | "transfer";
+  warehouseName?: string;
+  items: {
+    productName: string;
+    productSku?: string;
+    currentQuantity?: number;
+    newQuantity?: number;
+    adjustmentQuantity?: number;
+    unit?: string;
+    reason?: string;
+  }[];
+  performedDate?: string;
+  notes?: string;
+  confidence: number;
+}
+
+interface ParsedCustomer {
+  name: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  postalCode?: string;
+  type: "individual" | "business";
+  creditLimit?: number;
+  paymentTerms?: number;
+  notes?: string;
+  confidence: number;
+}
+
+interface ParsedProduct {
+  name: string;
+  sku: string;
+  description?: string;
+  category?: string;
+  type: "physical" | "digital" | "service";
+  unitPrice: number;
+  costPrice?: number;
+  currency?: string;
+  taxable?: boolean;
+  taxRate?: number;
+  notes?: string;
+  confidence: number;
+}
+
+interface ParsedContract {
+  contractNumber?: string;
+  title: string;
+  type: "customer" | "vendor" | "employment" | "nda" | "partnership" | "lease" | "service" | "other";
+  partyName: string;
+  startDate?: string;
+  endDate?: string;
+  renewalDate?: string;
+  autoRenewal?: boolean;
+  value?: number;
+  currency?: string;
+  description?: string;
+  terms?: string;
+  keyDates?: { dateType: string; date: string; description?: string }[];
+  notes?: string;
+  confidence: number;
+}
+
+interface ParsedJournalEntry {
+  description: string;
+  date: string;
+  lines: {
+    accountName: string;
+    accountNumber?: string;
+    description?: string;
+    debit: number;
+    credit: number;
+  }[];
+  totalAmount: number;
+  currency?: string;
+  referenceNumber?: string;
+  notes?: string;
+  confidence: number;
+}
+
+type UploadType = "po" | "freight" | "vendor_invoice" | "customs" | "sales_order" | "invoice" | "bom" | "work_order" | "inventory_adjustment" | "customer" | "product" | "contract" | "journal_entry";
+
+const DOCUMENT_TYPE_LABELS: Record<string, string> = {
+  purchase_order: "Purchase Order",
+  vendor_invoice: "Vendor Invoice",
+  freight_invoice: "Freight Invoice",
+  customs_document: "Customs Document",
+  sales_order: "Sales Order",
+  invoice: "Invoice",
+  bill_of_materials: "Bill of Materials",
+  work_order: "Work Order",
+  inventory_adjustment: "Inventory Adjustment",
+  customer: "Customer",
+  product: "Product",
+  contract: "Contract",
+  journal_entry: "Journal Entry",
+};
+
 interface DriveFile {
   id: string;
   name: string;
@@ -136,12 +311,21 @@ interface DriveFolder {
 
 export default function DocumentImport() {
   const [activeTab, setActiveTab] = useState("upload");
-  const [uploadType, setUploadType] = useState<"po" | "freight" | "vendor_invoice" | "customs">("po");
+  const [uploadType, setUploadType] = useState<UploadType>("po");
   const [isUploading, setIsUploading] = useState(false);
   const [parsedPO, setParsedPO] = useState<ParsedPO | null>(null);
   const [parsedFreight, setParsedFreight] = useState<ParsedFreightInvoice | null>(null);
   const [parsedVendorInvoice, setParsedVendorInvoice] = useState<ParsedVendorInvoice | null>(null);
   const [parsedCustoms, setParsedCustoms] = useState<ParsedCustomsDocument | null>(null);
+  const [parsedSalesOrder, setParsedSalesOrder] = useState<ParsedSalesOrder | null>(null);
+  const [parsedInvoice, setParsedInvoice] = useState<ParsedInvoice | null>(null);
+  const [parsedBOM, setParsedBOM] = useState<ParsedBillOfMaterials | null>(null);
+  const [parsedWorkOrder, setParsedWorkOrder] = useState<ParsedWorkOrder | null>(null);
+  const [parsedInventoryAdj, setParsedInventoryAdj] = useState<ParsedInventoryAdjustment | null>(null);
+  const [parsedCustomer, setParsedCustomer] = useState<ParsedCustomer | null>(null);
+  const [parsedProduct, setParsedProduct] = useState<ParsedProduct | null>(null);
+  const [parsedContract, setParsedContract] = useState<ParsedContract | null>(null);
+  const [parsedJournalEntry, setParsedJournalEntry] = useState<ParsedJournalEntry | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [markAsReceived, setMarkAsReceived] = useState(true);
   const [updateInventory, setUpdateInventory] = useState(true);
@@ -161,6 +345,15 @@ export default function DocumentImport() {
   const importFreightMutation = trpc.documentImport.importFreightInvoice.useMutation();
   const importVendorInvoiceMutation = trpc.documentImport.importVendorInvoice.useMutation();
   const importCustomsMutation = trpc.documentImport.importCustomsDocument.useMutation();
+  const importSalesOrderMutation = trpc.documentImport.importSalesOrder.useMutation();
+  const importInvoiceMutation = trpc.documentImport.importInvoice.useMutation();
+  const importBOMMutation = trpc.documentImport.importBillOfMaterials.useMutation();
+  const importWorkOrderMutation = trpc.documentImport.importWorkOrder.useMutation();
+  const importInventoryAdjMutation = trpc.documentImport.importInventoryAdjustment.useMutation();
+  const importCustomerMutation = trpc.documentImport.importCustomer.useMutation();
+  const importProductMutation = trpc.documentImport.importProduct.useMutation();
+  const importContractMutation = trpc.documentImport.importContract.useMutation();
+  const importJournalEntryMutation = trpc.documentImport.importJournalEntry.useMutation();
   const matchMaterialsMutation = trpc.documentImport.matchMaterials.useMutation();
   const historyQuery = trpc.documentImport.getHistory.useQuery({ limit: 50 });
   
@@ -265,15 +458,47 @@ export default function DocumentImport() {
           setParsedCustoms(result.customsDocument);
           setUploadType("customs");
           setShowPreview(true);
+        } else if (result.documentType === "sales_order" && result.salesOrder) {
+          setParsedSalesOrder(result.salesOrder);
+          setUploadType("sales_order");
+          setShowPreview(true);
+        } else if (result.documentType === "invoice" && result.invoice) {
+          setParsedInvoice(result.invoice);
+          setUploadType("invoice");
+          setShowPreview(true);
+        } else if (result.documentType === "bill_of_materials" && result.billOfMaterials) {
+          setParsedBOM(result.billOfMaterials);
+          setUploadType("bom");
+          setShowPreview(true);
+        } else if (result.documentType === "work_order" && result.workOrder) {
+          setParsedWorkOrder(result.workOrder);
+          setUploadType("work_order");
+          setShowPreview(true);
+        } else if (result.documentType === "inventory_adjustment" && result.inventoryAdjustment) {
+          setParsedInventoryAdj(result.inventoryAdjustment);
+          setUploadType("inventory_adjustment");
+          setShowPreview(true);
+        } else if (result.documentType === "customer" && result.customer) {
+          setParsedCustomer(result.customer);
+          setUploadType("customer");
+          setShowPreview(true);
+        } else if (result.documentType === "product" && result.product) {
+          setParsedProduct(result.product);
+          setUploadType("product");
+          setShowPreview(true);
+        } else if (result.documentType === "contract" && result.contract) {
+          setParsedContract(result.contract);
+          setUploadType("contract");
+          setShowPreview(true);
+        } else if (result.documentType === "journal_entry" && result.journalEntry) {
+          setParsedJournalEntry(result.journalEntry);
+          setUploadType("journal_entry");
+          setShowPreview(true);
         } else {
           console.error("[DocumentImport] Unknown document type or missing data:", {
             documentType: result.documentType,
-            hasPurchaseOrder: !!result.purchaseOrder,
-            hasFreightInvoice: !!result.freightInvoice,
-            hasCustomsDocument: !!result.customsDocument,
             success: result.success,
             error: result.error,
-            fullResult: result
           });
           toast.error(result.error || "Could not determine document type. Please try again or manually enter the data.");
         }
@@ -384,6 +609,123 @@ export default function DocumentImport() {
     }
   };
 
+  const handleImportSalesOrder = async () => {
+    if (!parsedSalesOrder) return;
+    try {
+      await importSalesOrderMutation.mutateAsync({ orderData: parsedSalesOrder });
+      toast.success(`Sales order ${parsedSalesOrder.orderNumber} imported successfully!`);
+      setParsedSalesOrder(null);
+      setShowPreview(false);
+      historyQuery.refetch();
+    } catch (error) {
+      toast.error("Failed to import sales order.");
+    }
+  };
+
+  const handleImportInvoice = async () => {
+    if (!parsedInvoice) return;
+    try {
+      await importInvoiceMutation.mutateAsync({ invoiceData: parsedInvoice });
+      toast.success(`Invoice ${parsedInvoice.invoiceNumber} imported successfully!`);
+      setParsedInvoice(null);
+      setShowPreview(false);
+      historyQuery.refetch();
+    } catch (error) {
+      toast.error("Failed to import invoice.");
+    }
+  };
+
+  const handleImportBOM = async () => {
+    if (!parsedBOM) return;
+    try {
+      await importBOMMutation.mutateAsync({ bomData: parsedBOM });
+      toast.success(`BOM for ${parsedBOM.productName} imported successfully!`);
+      setParsedBOM(null);
+      setShowPreview(false);
+      historyQuery.refetch();
+    } catch (error) {
+      toast.error("Failed to import bill of materials.");
+    }
+  };
+
+  const handleImportWorkOrder = async () => {
+    if (!parsedWorkOrder) return;
+    try {
+      await importWorkOrderMutation.mutateAsync({ workOrderData: parsedWorkOrder });
+      toast.success(`Work order for ${parsedWorkOrder.productName} imported successfully!`);
+      setParsedWorkOrder(null);
+      setShowPreview(false);
+      historyQuery.refetch();
+    } catch (error) {
+      toast.error("Failed to import work order.");
+    }
+  };
+
+  const handleImportInventoryAdj = async () => {
+    if (!parsedInventoryAdj) return;
+    try {
+      await importInventoryAdjMutation.mutateAsync({ adjustmentData: parsedInventoryAdj });
+      toast.success("Inventory adjustment imported successfully!");
+      setParsedInventoryAdj(null);
+      setShowPreview(false);
+      historyQuery.refetch();
+    } catch (error) {
+      toast.error("Failed to import inventory adjustment.");
+    }
+  };
+
+  const handleImportCustomer = async () => {
+    if (!parsedCustomer) return;
+    try {
+      await importCustomerMutation.mutateAsync({ customerData: parsedCustomer });
+      toast.success(`Customer ${parsedCustomer.name} imported successfully!`);
+      setParsedCustomer(null);
+      setShowPreview(false);
+      historyQuery.refetch();
+    } catch (error) {
+      toast.error("Failed to import customer.");
+    }
+  };
+
+  const handleImportProduct = async () => {
+    if (!parsedProduct) return;
+    try {
+      await importProductMutation.mutateAsync({ productData: parsedProduct });
+      toast.success(`Product ${parsedProduct.name} imported successfully!`);
+      setParsedProduct(null);
+      setShowPreview(false);
+      historyQuery.refetch();
+    } catch (error) {
+      toast.error("Failed to import product.");
+    }
+  };
+
+  const handleImportContract = async () => {
+    if (!parsedContract) return;
+    try {
+      await importContractMutation.mutateAsync({ contractData: parsedContract });
+      toast.success(`Contract "${parsedContract.title}" imported successfully!`);
+      setParsedContract(null);
+      setShowPreview(false);
+      historyQuery.refetch();
+    } catch (error) {
+      toast.error("Failed to import contract.");
+    }
+  };
+
+  const handleImportJournalEntry = async () => {
+    if (!parsedJournalEntry) return;
+    try {
+      await importJournalEntryMutation.mutateAsync({ entryData: parsedJournalEntry });
+      toast.success("Journal entry imported successfully!");
+      setParsedJournalEntry(null);
+      setShowPreview(false);
+      historyQuery.refetch();
+    } catch (error) {
+      toast.error("Failed to import journal entry.");
+    }
+  };
+
   const updateLineItem = (index: number, field: string, value: any) => {
     if (parsedPO) {
       const newLineItems = [...parsedPO.lineItems];
@@ -402,7 +744,7 @@ export default function DocumentImport() {
         <div>
           <h1 className="text-2xl font-bold">Document Import</h1>
           <p className="text-muted-foreground">
-            Upload purchase orders and freight invoices to import into inventory and history
+            Upload any business document to automatically extract and import structured data
           </p>
         </div>
       </div>
@@ -430,7 +772,7 @@ export default function DocumentImport() {
               <CardHeader>
                 <CardTitle>Upload Document</CardTitle>
                 <CardDescription>
-                  Drag and drop or click to upload a purchase order or freight invoice
+                  Drag and drop or click to upload any business document for AI-powered parsing
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -499,59 +841,99 @@ export default function DocumentImport() {
           <Card>
             <CardHeader>
               <CardTitle>Supported Document Types</CardTitle>
+              <CardDescription>Upload any of these document types - the AI will auto-detect and extract structured data</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 <div className="flex items-start gap-3 p-4 rounded-lg border">
-                  <Package className="h-8 w-8 text-blue-500" />
+                  <Package className="h-8 w-8 text-blue-500 flex-shrink-0" />
                   <div>
                     <h3 className="font-medium">Purchase Orders</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Import POs to create vendor records, track orders, and update inventory when received
-                    </p>
-                    <div className="flex gap-2 mt-2 flex-wrap">
-                      <Badge variant="secondary">Auto-create vendors</Badge>
-                      <Badge variant="secondary">Match materials</Badge>
-                    </div>
+                    <p className="text-sm text-muted-foreground">Import POs to create vendor records, track orders, and update inventory</p>
                   </div>
                 </div>
                 <div className="flex items-start gap-3 p-4 rounded-lg border">
-                  <FileText className="h-8 w-8 text-purple-500" />
+                  <FileText className="h-8 w-8 text-purple-500 flex-shrink-0" />
                   <div>
                     <h3 className="font-medium">Vendor Invoices</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Import invoices from suppliers with line items, pricing, and payment terms
-                    </p>
-                    <div className="flex gap-2 mt-2 flex-wrap">
-                      <Badge variant="secondary">Line item extraction</Badge>
-                      <Badge variant="secondary">Payment tracking</Badge>
-                    </div>
+                    <p className="text-sm text-muted-foreground">Import invoices from suppliers with line items and payment terms</p>
                   </div>
                 </div>
                 <div className="flex items-start gap-3 p-4 rounded-lg border">
-                  <Truck className="h-8 w-8 text-green-500" />
+                  <Truck className="h-8 w-8 text-green-500 flex-shrink-0" />
                   <div>
                     <h3 className="font-medium">Freight Invoices</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Import freight invoices to track shipping costs and link to related purchase orders
-                    </p>
-                    <div className="flex gap-2 mt-2 flex-wrap">
-                      <Badge variant="secondary">Auto-link to PO</Badge>
-                      <Badge variant="secondary">Cost tracking</Badge>
-                    </div>
+                    <p className="text-sm text-muted-foreground">Import freight invoices to track shipping costs and link to POs</p>
                   </div>
                 </div>
                 <div className="flex items-start gap-3 p-4 rounded-lg border">
-                  <FileText className="h-8 w-8 text-orange-500" />
+                  <FileText className="h-8 w-8 text-orange-500 flex-shrink-0" />
                   <div>
                     <h3 className="font-medium">Customs Documents</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Import bills of lading, customs entries, certificates of origin, and other import/export docs
-                    </p>
-                    <div className="flex gap-2 mt-2 flex-wrap">
-                      <Badge variant="secondary">HS codes</Badge>
-                      <Badge variant="secondary">Duties tracking</Badge>
-                    </div>
+                    <p className="text-sm text-muted-foreground">Bills of lading, customs entries, certificates of origin</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 p-4 rounded-lg border">
+                  <ShoppingCart className="h-8 w-8 text-indigo-500 flex-shrink-0" />
+                  <div>
+                    <h3 className="font-medium">Sales Orders</h3>
+                    <p className="text-sm text-muted-foreground">Import customer orders with line items and shipping details</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 p-4 rounded-lg border">
+                  <FileText className="h-8 w-8 text-cyan-500 flex-shrink-0" />
+                  <div>
+                    <h3 className="font-medium">Invoices & Quotes</h3>
+                    <p className="text-sm text-muted-foreground">Import outbound invoices, credit notes, and quotes to customers</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 p-4 rounded-lg border">
+                  <Factory className="h-8 w-8 text-amber-500 flex-shrink-0" />
+                  <div>
+                    <h3 className="font-medium">Bills of Materials</h3>
+                    <p className="text-sm text-muted-foreground">Import product recipes, formulas, and component lists</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 p-4 rounded-lg border">
+                  <Factory className="h-8 w-8 text-red-500 flex-shrink-0" />
+                  <div>
+                    <h3 className="font-medium">Work Orders</h3>
+                    <p className="text-sm text-muted-foreground">Import manufacturing/production work orders</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 p-4 rounded-lg border">
+                  <Warehouse className="h-8 w-8 text-teal-500 flex-shrink-0" />
+                  <div>
+                    <h3 className="font-medium">Inventory Adjustments</h3>
+                    <p className="text-sm text-muted-foreground">Import stock counts, adjustments, and transfer documents</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 p-4 rounded-lg border">
+                  <Users className="h-8 w-8 text-sky-500 flex-shrink-0" />
+                  <div>
+                    <h3 className="font-medium">Customers</h3>
+                    <p className="text-sm text-muted-foreground">Import customer/client records from documents</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 p-4 rounded-lg border">
+                  <Box className="h-8 w-8 text-pink-500 flex-shrink-0" />
+                  <div>
+                    <h3 className="font-medium">Products</h3>
+                    <p className="text-sm text-muted-foreground">Import product catalogs, spec sheets, and price lists</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 p-4 rounded-lg border">
+                  <ScrollText className="h-8 w-8 text-violet-500 flex-shrink-0" />
+                  <div>
+                    <h3 className="font-medium">Contracts</h3>
+                    <p className="text-sm text-muted-foreground">Import contracts, agreements, NDAs, and leases</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 p-4 rounded-lg border">
+                  <BookOpen className="h-8 w-8 text-emerald-500 flex-shrink-0" />
+                  <div>
+                    <h3 className="font-medium">Journal Entries</h3>
+                    <p className="text-sm text-muted-foreground">Import accounting journal entries and financial records</p>
                   </div>
                 </div>
               </div>
@@ -594,8 +976,8 @@ export default function DocumentImport() {
                           {log.fileName}
                         </TableCell>
                         <TableCell>
-                          <Badge variant={log.documentType === "purchase_order" ? "default" : log.documentType === "vendor_invoice" ? "default" : log.documentType === "customs_document" ? "default" : "secondary"}>
-                            {log.documentType === "purchase_order" ? "Purchase Order" : log.documentType === "vendor_invoice" ? "Vendor Invoice" : log.documentType === "customs_document" ? "Customs Doc" : "Freight Invoice"}
+                          <Badge variant="default">
+                            {DOCUMENT_TYPE_LABELS[log.documentType] || log.documentType}
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -878,23 +1260,21 @@ export default function DocumentImport() {
                               size="sm"
                               className="h-6 px-2"
                               onClick={() => {
-                                if (result.data.documentType === 'purchase_order' && result.data.purchaseOrder) {
-                                  setParsedPO(result.data.purchaseOrder);
-                                  setUploadType('po');
-                                  setShowPreview(true);
-                                } else if (result.data.documentType === 'vendor_invoice' && result.data.vendorInvoice) {
-                                  setParsedVendorInvoice(result.data.vendorInvoice);
-                                  setUploadType('vendor_invoice');
-                                  setShowPreview(true);
-                                } else if (result.data.documentType === 'freight_invoice' && result.data.freightInvoice) {
-                                  setParsedFreight(result.data.freightInvoice);
-                                  setUploadType('freight');
-                                  setShowPreview(true);
-                                } else if (result.data.documentType === 'customs_document' && result.data.customsDocument) {
-                                  setParsedCustoms(result.data.customsDocument);
-                                  setUploadType('customs');
-                                  setShowPreview(true);
-                                }
+                                const d = result.data;
+                                if (d.documentType === 'purchase_order' && d.purchaseOrder) { setParsedPO(d.purchaseOrder); setUploadType('po'); }
+                                else if (d.documentType === 'vendor_invoice' && d.vendorInvoice) { setParsedVendorInvoice(d.vendorInvoice); setUploadType('vendor_invoice'); }
+                                else if (d.documentType === 'freight_invoice' && d.freightInvoice) { setParsedFreight(d.freightInvoice); setUploadType('freight'); }
+                                else if (d.documentType === 'customs_document' && d.customsDocument) { setParsedCustoms(d.customsDocument); setUploadType('customs'); }
+                                else if (d.documentType === 'sales_order' && d.salesOrder) { setParsedSalesOrder(d.salesOrder); setUploadType('sales_order'); }
+                                else if (d.documentType === 'invoice' && d.invoice) { setParsedInvoice(d.invoice); setUploadType('invoice'); }
+                                else if (d.documentType === 'bill_of_materials' && d.billOfMaterials) { setParsedBOM(d.billOfMaterials); setUploadType('bom'); }
+                                else if (d.documentType === 'work_order' && d.workOrder) { setParsedWorkOrder(d.workOrder); setUploadType('work_order'); }
+                                else if (d.documentType === 'inventory_adjustment' && d.inventoryAdjustment) { setParsedInventoryAdj(d.inventoryAdjustment); setUploadType('inventory_adjustment'); }
+                                else if (d.documentType === 'customer' && d.customer) { setParsedCustomer(d.customer); setUploadType('customer'); }
+                                else if (d.documentType === 'product' && d.product) { setParsedProduct(d.product); setUploadType('product'); }
+                                else if (d.documentType === 'contract' && d.contract) { setParsedContract(d.contract); setUploadType('contract'); }
+                                else if (d.documentType === 'journal_entry' && d.journalEntry) { setParsedJournalEntry(d.journalEntry); setUploadType('journal_entry'); }
+                                setShowPreview(true);
                               }}
                             >
                               Review
@@ -1697,6 +2077,418 @@ export default function DocumentImport() {
             <Button onClick={handleImportCustoms} disabled={importCustomsMutation.isPending}>
               {importCustomsMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Import Customs Document
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Sales Order Preview Dialog */}
+      <Dialog open={showPreview && uploadType === "sales_order" && !!parsedSalesOrder} onOpenChange={(open) => !open && setShowPreview(false)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Review Sales Order</DialogTitle>
+            <DialogDescription>Review and edit the extracted sales order data before importing</DialogDescription>
+          </DialogHeader>
+          {parsedSalesOrder && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Extraction Confidence:</span>
+                <Badge variant={parsedSalesOrder.confidence > 0.8 ? "default" : "secondary"}>{Math.round(parsedSalesOrder.confidence * 100)}%</Badge>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div><Label>Order Number</Label><Input value={parsedSalesOrder.orderNumber} onChange={(e) => setParsedSalesOrder({ ...parsedSalesOrder, orderNumber: e.target.value })} /></div>
+                <div><Label>Customer Name</Label><Input value={parsedSalesOrder.customerName} onChange={(e) => setParsedSalesOrder({ ...parsedSalesOrder, customerName: e.target.value })} /></div>
+                <div><Label>Order Date</Label><Input type="date" value={parsedSalesOrder.orderDate} onChange={(e) => setParsedSalesOrder({ ...parsedSalesOrder, orderDate: e.target.value })} /></div>
+                <div><Label>Customer Email</Label><Input value={parsedSalesOrder.customerEmail || ""} onChange={(e) => setParsedSalesOrder({ ...parsedSalesOrder, customerEmail: e.target.value })} /></div>
+              </div>
+              <div>
+                <Label className="mb-2 block">Line Items</Label>
+                <Table>
+                  <TableHeader><TableRow><TableHead>Description</TableHead><TableHead>SKU</TableHead><TableHead>Qty</TableHead><TableHead>Unit Price</TableHead><TableHead>Total</TableHead></TableRow></TableHeader>
+                  <TableBody>
+                    {parsedSalesOrder.lineItems.map((item, index) => (
+                      <TableRow key={index}>
+                        <TableCell>{item.description}</TableCell>
+                        <TableCell>{item.sku || "-"}</TableCell>
+                        <TableCell>{item.quantity}</TableCell>
+                        <TableCell>${(item.unitPrice ?? 0).toFixed(2)}</TableCell>
+                        <TableCell>${(item.totalPrice ?? 0).toFixed(2)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className="flex justify-end"><div className="text-lg font-bold">Total: ${(parsedSalesOrder.totalAmount ?? 0).toFixed(2)}</div></div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPreview(false)}>Cancel</Button>
+            <Button onClick={handleImportSalesOrder} disabled={importSalesOrderMutation.isPending}>
+              {importSalesOrderMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Import Sales Order
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Invoice Preview Dialog */}
+      <Dialog open={showPreview && uploadType === "invoice" && !!parsedInvoice} onOpenChange={(open) => !open && setShowPreview(false)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Review Invoice</DialogTitle>
+            <DialogDescription>Review and edit the extracted invoice data before importing</DialogDescription>
+          </DialogHeader>
+          {parsedInvoice && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Extraction Confidence:</span>
+                <Badge variant={parsedInvoice.confidence > 0.8 ? "default" : "secondary"}>{Math.round(parsedInvoice.confidence * 100)}%</Badge>
+                <Badge variant="outline">{parsedInvoice.type.replace(/_/g, ' ').toUpperCase()}</Badge>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div><Label>Invoice Number</Label><Input value={parsedInvoice.invoiceNumber} onChange={(e) => setParsedInvoice({ ...parsedInvoice, invoiceNumber: e.target.value })} /></div>
+                <div><Label>Customer Name</Label><Input value={parsedInvoice.customerName} onChange={(e) => setParsedInvoice({ ...parsedInvoice, customerName: e.target.value })} /></div>
+                <div><Label>Issue Date</Label><Input type="date" value={parsedInvoice.issueDate} onChange={(e) => setParsedInvoice({ ...parsedInvoice, issueDate: e.target.value })} /></div>
+                <div><Label>Due Date</Label><Input type="date" value={parsedInvoice.dueDate || ""} onChange={(e) => setParsedInvoice({ ...parsedInvoice, dueDate: e.target.value })} /></div>
+                <div><Label>Payment Terms</Label><Input value={parsedInvoice.paymentTerms || ""} onChange={(e) => setParsedInvoice({ ...parsedInvoice, paymentTerms: e.target.value })} /></div>
+                <div><Label>PO Number</Label><Input value={parsedInvoice.purchaseOrderNumber || ""} onChange={(e) => setParsedInvoice({ ...parsedInvoice, purchaseOrderNumber: e.target.value })} /></div>
+              </div>
+              <div>
+                <Label className="mb-2 block">Line Items</Label>
+                <Table>
+                  <TableHeader><TableRow><TableHead>Description</TableHead><TableHead>SKU</TableHead><TableHead>Qty</TableHead><TableHead>Unit Price</TableHead><TableHead>Total</TableHead></TableRow></TableHeader>
+                  <TableBody>
+                    {parsedInvoice.lineItems.map((item, index) => (
+                      <TableRow key={index}>
+                        <TableCell>{item.description}</TableCell>
+                        <TableCell>{item.sku || "-"}</TableCell>
+                        <TableCell>{item.quantity}</TableCell>
+                        <TableCell>${(item.unitPrice ?? 0).toFixed(2)}</TableCell>
+                        <TableCell>${(item.totalPrice ?? 0).toFixed(2)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className="flex justify-end">
+                <div className="space-y-1 text-right">
+                  <div className="text-sm">Subtotal: <span className="font-medium">${(parsedInvoice.subtotal ?? 0).toFixed(2)}</span></div>
+                  <div className="text-lg font-bold">Total: ${(parsedInvoice.totalAmount ?? 0).toFixed(2)}</div>
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPreview(false)}>Cancel</Button>
+            <Button onClick={handleImportInvoice} disabled={importInvoiceMutation.isPending}>
+              {importInvoiceMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Import Invoice
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bill of Materials Preview Dialog */}
+      <Dialog open={showPreview && uploadType === "bom" && !!parsedBOM} onOpenChange={(open) => !open && setShowPreview(false)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Review Bill of Materials</DialogTitle>
+            <DialogDescription>Review and edit the extracted BOM data before importing</DialogDescription>
+          </DialogHeader>
+          {parsedBOM && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Extraction Confidence:</span>
+                <Badge variant={parsedBOM.confidence > 0.8 ? "default" : "secondary"}>{Math.round(parsedBOM.confidence * 100)}%</Badge>
+              </div>
+              <div className="grid gap-4 md:grid-cols-3">
+                <div><Label>Product Name</Label><Input value={parsedBOM.productName} onChange={(e) => setParsedBOM({ ...parsedBOM, productName: e.target.value })} /></div>
+                <div><Label>Product SKU</Label><Input value={parsedBOM.productSku || ""} onChange={(e) => setParsedBOM({ ...parsedBOM, productSku: e.target.value })} /></div>
+                <div><Label>Version</Label><Input value={parsedBOM.version || ""} onChange={(e) => setParsedBOM({ ...parsedBOM, version: e.target.value })} /></div>
+              </div>
+              <div>
+                <Label className="mb-2 block">Components</Label>
+                <Table>
+                  <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>SKU</TableHead><TableHead>Type</TableHead><TableHead>Qty</TableHead><TableHead>Unit</TableHead><TableHead>Unit Cost</TableHead></TableRow></TableHeader>
+                  <TableBody>
+                    {parsedBOM.components.map((comp, index) => (
+                      <TableRow key={index}>
+                        <TableCell>{comp.name}</TableCell>
+                        <TableCell>{comp.sku || "-"}</TableCell>
+                        <TableCell><Badge variant="outline">{comp.componentType}</Badge></TableCell>
+                        <TableCell>{comp.quantity}</TableCell>
+                        <TableCell>{comp.unit || "EA"}</TableCell>
+                        <TableCell>{comp.unitCost != null ? `$${comp.unitCost.toFixed(2)}` : "-"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPreview(false)}>Cancel</Button>
+            <Button onClick={handleImportBOM} disabled={importBOMMutation.isPending}>
+              {importBOMMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Import Bill of Materials
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Work Order Preview Dialog */}
+      <Dialog open={showPreview && uploadType === "work_order" && !!parsedWorkOrder} onOpenChange={(open) => !open && setShowPreview(false)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Review Work Order</DialogTitle>
+            <DialogDescription>Review and edit the extracted work order data before importing</DialogDescription>
+          </DialogHeader>
+          {parsedWorkOrder && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Extraction Confidence:</span>
+                <Badge variant={parsedWorkOrder.confidence > 0.8 ? "default" : "secondary"}>{Math.round(parsedWorkOrder.confidence * 100)}%</Badge>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div><Label>Product Name</Label><Input value={parsedWorkOrder.productName} onChange={(e) => setParsedWorkOrder({ ...parsedWorkOrder, productName: e.target.value })} /></div>
+                <div><Label>Product SKU</Label><Input value={parsedWorkOrder.productSku || ""} onChange={(e) => setParsedWorkOrder({ ...parsedWorkOrder, productSku: e.target.value })} /></div>
+                <div><Label>Quantity</Label><Input type="number" value={parsedWorkOrder.quantity} onChange={(e) => setParsedWorkOrder({ ...parsedWorkOrder, quantity: parseFloat(e.target.value) || 0 })} /></div>
+                <div><Label>Unit</Label><Input value={parsedWorkOrder.unit || "EA"} onChange={(e) => setParsedWorkOrder({ ...parsedWorkOrder, unit: e.target.value })} /></div>
+                <div><Label>Start Date</Label><Input type="date" value={parsedWorkOrder.scheduledStartDate || ""} onChange={(e) => setParsedWorkOrder({ ...parsedWorkOrder, scheduledStartDate: e.target.value })} /></div>
+                <div><Label>End Date</Label><Input type="date" value={parsedWorkOrder.scheduledEndDate || ""} onChange={(e) => setParsedWorkOrder({ ...parsedWorkOrder, scheduledEndDate: e.target.value })} /></div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPreview(false)}>Cancel</Button>
+            <Button onClick={handleImportWorkOrder} disabled={importWorkOrderMutation.isPending}>
+              {importWorkOrderMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Import Work Order
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Inventory Adjustment Preview Dialog */}
+      <Dialog open={showPreview && uploadType === "inventory_adjustment" && !!parsedInventoryAdj} onOpenChange={(open) => !open && setShowPreview(false)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Review Inventory Adjustment</DialogTitle>
+            <DialogDescription>Review and edit the extracted inventory data before importing</DialogDescription>
+          </DialogHeader>
+          {parsedInventoryAdj && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Extraction Confidence:</span>
+                <Badge variant={parsedInventoryAdj.confidence > 0.8 ? "default" : "secondary"}>{Math.round(parsedInventoryAdj.confidence * 100)}%</Badge>
+                <Badge variant="outline">{parsedInventoryAdj.adjustmentType.toUpperCase()}</Badge>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div><Label>Warehouse</Label><Input value={parsedInventoryAdj.warehouseName || ""} onChange={(e) => setParsedInventoryAdj({ ...parsedInventoryAdj, warehouseName: e.target.value })} /></div>
+                <div><Label>Date</Label><Input type="date" value={parsedInventoryAdj.performedDate || ""} onChange={(e) => setParsedInventoryAdj({ ...parsedInventoryAdj, performedDate: e.target.value })} /></div>
+              </div>
+              <div>
+                <Label className="mb-2 block">Items</Label>
+                <Table>
+                  <TableHeader><TableRow><TableHead>Product</TableHead><TableHead>SKU</TableHead><TableHead>Current Qty</TableHead><TableHead>New Qty</TableHead><TableHead>Adjustment</TableHead><TableHead>Reason</TableHead></TableRow></TableHeader>
+                  <TableBody>
+                    {parsedInventoryAdj.items.map((item, index) => (
+                      <TableRow key={index}>
+                        <TableCell>{item.productName}</TableCell>
+                        <TableCell>{item.productSku || "-"}</TableCell>
+                        <TableCell>{item.currentQuantity ?? "-"}</TableCell>
+                        <TableCell>{item.newQuantity ?? "-"}</TableCell>
+                        <TableCell>{item.adjustmentQuantity ?? "-"}</TableCell>
+                        <TableCell>{item.reason || "-"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPreview(false)}>Cancel</Button>
+            <Button onClick={handleImportInventoryAdj} disabled={importInventoryAdjMutation.isPending}>
+              {importInventoryAdjMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Import Inventory Adjustment
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Customer Preview Dialog */}
+      <Dialog open={showPreview && uploadType === "customer" && !!parsedCustomer} onOpenChange={(open) => !open && setShowPreview(false)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Review Customer</DialogTitle>
+            <DialogDescription>Review and edit the extracted customer data before importing</DialogDescription>
+          </DialogHeader>
+          {parsedCustomer && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Extraction Confidence:</span>
+                <Badge variant={parsedCustomer.confidence > 0.8 ? "default" : "secondary"}>{Math.round(parsedCustomer.confidence * 100)}%</Badge>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div><Label>Name</Label><Input value={parsedCustomer.name} onChange={(e) => setParsedCustomer({ ...parsedCustomer, name: e.target.value })} /></div>
+                <div><Label>Email</Label><Input value={parsedCustomer.email || ""} onChange={(e) => setParsedCustomer({ ...parsedCustomer, email: e.target.value })} /></div>
+                <div><Label>Phone</Label><Input value={parsedCustomer.phone || ""} onChange={(e) => setParsedCustomer({ ...parsedCustomer, phone: e.target.value })} /></div>
+                <div><Label>Type</Label><Input value={parsedCustomer.type} onChange={(e) => setParsedCustomer({ ...parsedCustomer, type: e.target.value as any })} /></div>
+                <div><Label>Address</Label><Input value={parsedCustomer.address || ""} onChange={(e) => setParsedCustomer({ ...parsedCustomer, address: e.target.value })} /></div>
+                <div><Label>City</Label><Input value={parsedCustomer.city || ""} onChange={(e) => setParsedCustomer({ ...parsedCustomer, city: e.target.value })} /></div>
+                <div><Label>State</Label><Input value={parsedCustomer.state || ""} onChange={(e) => setParsedCustomer({ ...parsedCustomer, state: e.target.value })} /></div>
+                <div><Label>Country</Label><Input value={parsedCustomer.country || ""} onChange={(e) => setParsedCustomer({ ...parsedCustomer, country: e.target.value })} /></div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPreview(false)}>Cancel</Button>
+            <Button onClick={handleImportCustomer} disabled={importCustomerMutation.isPending}>
+              {importCustomerMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Import Customer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Product Preview Dialog */}
+      <Dialog open={showPreview && uploadType === "product" && !!parsedProduct} onOpenChange={(open) => !open && setShowPreview(false)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Review Product</DialogTitle>
+            <DialogDescription>Review and edit the extracted product data before importing</DialogDescription>
+          </DialogHeader>
+          {parsedProduct && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Extraction Confidence:</span>
+                <Badge variant={parsedProduct.confidence > 0.8 ? "default" : "secondary"}>{Math.round(parsedProduct.confidence * 100)}%</Badge>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div><Label>Name</Label><Input value={parsedProduct.name} onChange={(e) => setParsedProduct({ ...parsedProduct, name: e.target.value })} /></div>
+                <div><Label>SKU</Label><Input value={parsedProduct.sku} onChange={(e) => setParsedProduct({ ...parsedProduct, sku: e.target.value })} /></div>
+                <div><Label>Category</Label><Input value={parsedProduct.category || ""} onChange={(e) => setParsedProduct({ ...parsedProduct, category: e.target.value })} /></div>
+                <div><Label>Type</Label><Input value={parsedProduct.type} onChange={(e) => setParsedProduct({ ...parsedProduct, type: e.target.value as any })} /></div>
+                <div><Label>Unit Price</Label><Input type="number" value={parsedProduct.unitPrice} onChange={(e) => setParsedProduct({ ...parsedProduct, unitPrice: parseFloat(e.target.value) || 0 })} /></div>
+                <div><Label>Cost Price</Label><Input type="number" value={parsedProduct.costPrice ?? ""} onChange={(e) => setParsedProduct({ ...parsedProduct, costPrice: parseFloat(e.target.value) || undefined })} /></div>
+              </div>
+              {parsedProduct.description && (
+                <div><Label>Description</Label><p className="text-sm text-muted-foreground mt-1">{parsedProduct.description}</p></div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPreview(false)}>Cancel</Button>
+            <Button onClick={handleImportProduct} disabled={importProductMutation.isPending}>
+              {importProductMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Import Product
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Contract Preview Dialog */}
+      <Dialog open={showPreview && uploadType === "contract" && !!parsedContract} onOpenChange={(open) => !open && setShowPreview(false)}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Review Contract</DialogTitle>
+            <DialogDescription>Review and edit the extracted contract data before importing</DialogDescription>
+          </DialogHeader>
+          {parsedContract && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Extraction Confidence:</span>
+                <Badge variant={parsedContract.confidence > 0.8 ? "default" : "secondary"}>{Math.round(parsedContract.confidence * 100)}%</Badge>
+                <Badge variant="outline">{parsedContract.type.replace(/_/g, ' ').toUpperCase()}</Badge>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div><Label>Title</Label><Input value={parsedContract.title} onChange={(e) => setParsedContract({ ...parsedContract, title: e.target.value })} /></div>
+                <div><Label>Party Name</Label><Input value={parsedContract.partyName} onChange={(e) => setParsedContract({ ...parsedContract, partyName: e.target.value })} /></div>
+                <div><Label>Contract Number</Label><Input value={parsedContract.contractNumber || ""} onChange={(e) => setParsedContract({ ...parsedContract, contractNumber: e.target.value })} /></div>
+                <div><Label>Value</Label><Input type="number" value={parsedContract.value ?? ""} onChange={(e) => setParsedContract({ ...parsedContract, value: parseFloat(e.target.value) || undefined })} /></div>
+                <div><Label>Start Date</Label><Input type="date" value={parsedContract.startDate || ""} onChange={(e) => setParsedContract({ ...parsedContract, startDate: e.target.value })} /></div>
+                <div><Label>End Date</Label><Input type="date" value={parsedContract.endDate || ""} onChange={(e) => setParsedContract({ ...parsedContract, endDate: e.target.value })} /></div>
+              </div>
+              {parsedContract.description && (
+                <div><Label>Description</Label><p className="text-sm text-muted-foreground mt-1">{parsedContract.description}</p></div>
+              )}
+              {parsedContract.keyDates && parsedContract.keyDates.length > 0 && (
+                <div>
+                  <Label className="mb-2 block">Key Dates</Label>
+                  <Table>
+                    <TableHeader><TableRow><TableHead>Type</TableHead><TableHead>Date</TableHead><TableHead>Description</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {parsedContract.keyDates.map((kd, index) => (
+                        <TableRow key={index}>
+                          <TableCell>{kd.dateType}</TableCell>
+                          <TableCell>{kd.date}</TableCell>
+                          <TableCell>{kd.description || "-"}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPreview(false)}>Cancel</Button>
+            <Button onClick={handleImportContract} disabled={importContractMutation.isPending}>
+              {importContractMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Import Contract
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Journal Entry Preview Dialog */}
+      <Dialog open={showPreview && uploadType === "journal_entry" && !!parsedJournalEntry} onOpenChange={(open) => !open && setShowPreview(false)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Review Journal Entry</DialogTitle>
+            <DialogDescription>Review and edit the extracted accounting data before importing</DialogDescription>
+          </DialogHeader>
+          {parsedJournalEntry && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Extraction Confidence:</span>
+                <Badge variant={parsedJournalEntry.confidence > 0.8 ? "default" : "secondary"}>{Math.round(parsedJournalEntry.confidence * 100)}%</Badge>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div><Label>Description</Label><Input value={parsedJournalEntry.description} onChange={(e) => setParsedJournalEntry({ ...parsedJournalEntry, description: e.target.value })} /></div>
+                <div><Label>Date</Label><Input type="date" value={parsedJournalEntry.date} onChange={(e) => setParsedJournalEntry({ ...parsedJournalEntry, date: e.target.value })} /></div>
+                <div><Label>Reference Number</Label><Input value={parsedJournalEntry.referenceNumber || ""} onChange={(e) => setParsedJournalEntry({ ...parsedJournalEntry, referenceNumber: e.target.value })} /></div>
+                <div><Label>Total Amount</Label><Input type="number" value={parsedJournalEntry.totalAmount} onChange={(e) => setParsedJournalEntry({ ...parsedJournalEntry, totalAmount: parseFloat(e.target.value) || 0 })} /></div>
+              </div>
+              <div>
+                <Label className="mb-2 block">Journal Lines</Label>
+                <Table>
+                  <TableHeader><TableRow><TableHead>Account Name</TableHead><TableHead>Account #</TableHead><TableHead>Description</TableHead><TableHead>Debit</TableHead><TableHead>Credit</TableHead></TableRow></TableHeader>
+                  <TableBody>
+                    {parsedJournalEntry.lines.map((line, index) => (
+                      <TableRow key={index}>
+                        <TableCell>{line.accountName}</TableCell>
+                        <TableCell>{line.accountNumber || "-"}</TableCell>
+                        <TableCell>{line.description || "-"}</TableCell>
+                        <TableCell>{line.debit > 0 ? `$${line.debit.toFixed(2)}` : "-"}</TableCell>
+                        <TableCell>{line.credit > 0 ? `$${line.credit.toFixed(2)}` : "-"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                <div className="flex justify-end gap-8 mt-2 text-sm font-medium">
+                  <span>Total Debits: ${parsedJournalEntry.lines.reduce((s, l) => s + (l.debit || 0), 0).toFixed(2)}</span>
+                  <span>Total Credits: ${parsedJournalEntry.lines.reduce((s, l) => s + (l.credit || 0), 0).toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPreview(false)}>Cancel</Button>
+            <Button onClick={handleImportJournalEntry} disabled={importJournalEntryMutation.isPending}>
+              {importJournalEntryMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Import Journal Entry
             </Button>
           </DialogFooter>
         </DialogContent>

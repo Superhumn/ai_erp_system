@@ -9,7 +9,8 @@ import { sendEmail, isEmailConfigured, formatEmailHtml } from "./_core/email";
 import { processEmailReply, analyzeEmail, generateEmailReply } from "./emailReplyService";
 import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
-import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
+import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, importSalesOrder, importInvoice, importBillOfMaterials, importWorkOrder, importInventoryAdjustment, importCustomerRecord, importProductRecord, importContract, importJournalEntry, matchLineItemsToMaterials } from "./documentImportService";
+import type { DocumentType } from "./documentImportService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import * as db from "./db";
@@ -11619,6 +11620,233 @@ Ask if they received the original request and if they can provide a quote.`;
       }))
       .mutation(async ({ input, ctx }) => {
         return importCustomsDocument(input.documentData as any, ctx.user.id);
+      }),
+
+    // Import a sales order
+    importSalesOrder: protectedProcedure
+      .input(z.object({
+        orderData: z.object({
+          orderNumber: z.string(),
+          customerName: z.string(),
+          customerEmail: z.string().optional(),
+          orderDate: z.string(),
+          shippingAddress: z.string().optional(),
+          billingAddress: z.string().optional(),
+          lineItems: z.array(z.object({
+            description: z.string(),
+            sku: z.string().optional(),
+            quantity: z.number(),
+            unit: z.string().optional(),
+            unitPrice: z.number(),
+            totalPrice: z.number(),
+          })),
+          subtotal: z.number(),
+          taxAmount: z.number().optional(),
+          shippingAmount: z.number().optional(),
+          discountAmount: z.number().optional(),
+          totalAmount: z.number(),
+          currency: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importSalesOrder(input.orderData as any, ctx.user.id);
+      }),
+
+    // Import an invoice (outbound to customer)
+    importInvoice: protectedProcedure
+      .input(z.object({
+        invoiceData: z.object({
+          invoiceNumber: z.string(),
+          customerName: z.string(),
+          customerEmail: z.string().optional(),
+          issueDate: z.string(),
+          dueDate: z.string().optional(),
+          type: z.enum(["invoice", "credit_note", "quote"]).default("invoice"),
+          lineItems: z.array(z.object({
+            description: z.string(),
+            sku: z.string().optional(),
+            quantity: z.number(),
+            unit: z.string().optional(),
+            unitPrice: z.number(),
+            totalPrice: z.number(),
+          })),
+          subtotal: z.number(),
+          taxAmount: z.number().optional(),
+          discountAmount: z.number().optional(),
+          totalAmount: z.number(),
+          currency: z.string().optional(),
+          paymentTerms: z.string().optional(),
+          purchaseOrderNumber: z.string().optional(),
+          notes: z.string().optional(),
+          terms: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importInvoice(input.invoiceData as any, ctx.user.id);
+      }),
+
+    // Import a bill of materials
+    importBillOfMaterials: protectedProcedure
+      .input(z.object({
+        bomData: z.object({
+          productName: z.string(),
+          productSku: z.string().optional(),
+          version: z.string().optional(),
+          batchSize: z.number().optional(),
+          batchUnit: z.string().optional(),
+          components: z.array(z.object({
+            name: z.string(),
+            sku: z.string().optional(),
+            componentType: z.enum(["raw_material", "product", "packaging", "labor"]),
+            quantity: z.number(),
+            unit: z.string().optional(),
+            unitCost: z.number().optional(),
+            wastagePercent: z.number().optional(),
+            notes: z.string().optional(),
+          })),
+          laborCost: z.number().optional(),
+          overheadCost: z.number().optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importBillOfMaterials(input.bomData as any, ctx.user.id);
+      }),
+
+    // Import a work order
+    importWorkOrder: protectedProcedure
+      .input(z.object({
+        workOrderData: z.object({
+          productName: z.string(),
+          productSku: z.string().optional(),
+          quantity: z.number(),
+          unit: z.string().optional(),
+          priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
+          scheduledStartDate: z.string().optional(),
+          scheduledEndDate: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importWorkOrder(input.workOrderData as any, ctx.user.id);
+      }),
+
+    // Import an inventory adjustment
+    importInventoryAdjustment: protectedProcedure
+      .input(z.object({
+        adjustmentData: z.object({
+          adjustmentType: z.enum(["count", "adjustment", "transfer"]),
+          warehouseName: z.string().optional(),
+          items: z.array(z.object({
+            productName: z.string(),
+            productSku: z.string().optional(),
+            currentQuantity: z.number().optional(),
+            newQuantity: z.number().optional(),
+            adjustmentQuantity: z.number().optional(),
+            unit: z.string().optional(),
+            reason: z.string().optional(),
+          })),
+          performedDate: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importInventoryAdjustment(input.adjustmentData as any, ctx.user.id);
+      }),
+
+    // Import a customer record
+    importCustomer: protectedProcedure
+      .input(z.object({
+        customerData: z.object({
+          name: z.string(),
+          email: z.string().optional(),
+          phone: z.string().optional(),
+          address: z.string().optional(),
+          city: z.string().optional(),
+          state: z.string().optional(),
+          country: z.string().optional(),
+          postalCode: z.string().optional(),
+          type: z.enum(["individual", "business"]).default("business"),
+          creditLimit: z.number().optional(),
+          paymentTerms: z.number().optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importCustomerRecord(input.customerData as any, ctx.user.id);
+      }),
+
+    // Import a product record
+    importProduct: protectedProcedure
+      .input(z.object({
+        productData: z.object({
+          name: z.string(),
+          sku: z.string(),
+          description: z.string().optional(),
+          category: z.string().optional(),
+          type: z.enum(["physical", "digital", "service"]).default("physical"),
+          unitPrice: z.number(),
+          costPrice: z.number().optional(),
+          currency: z.string().optional(),
+          taxable: z.boolean().optional(),
+          taxRate: z.number().optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importProductRecord(input.productData as any, ctx.user.id);
+      }),
+
+    // Import a contract
+    importContract: protectedProcedure
+      .input(z.object({
+        contractData: z.object({
+          contractNumber: z.string().optional(),
+          title: z.string(),
+          type: z.enum(["customer", "vendor", "employment", "nda", "partnership", "lease", "service", "other"]),
+          partyName: z.string(),
+          startDate: z.string().optional(),
+          endDate: z.string().optional(),
+          renewalDate: z.string().optional(),
+          autoRenewal: z.boolean().optional(),
+          value: z.number().optional(),
+          currency: z.string().optional(),
+          description: z.string().optional(),
+          terms: z.string().optional(),
+          keyDates: z.array(z.object({
+            dateType: z.string(),
+            date: z.string(),
+            description: z.string().optional(),
+          })).optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importContract(input.contractData as any, ctx.user.id);
+      }),
+
+    // Import a journal entry
+    importJournalEntry: protectedProcedure
+      .input(z.object({
+        entryData: z.object({
+          description: z.string(),
+          date: z.string(),
+          lines: z.array(z.object({
+            accountName: z.string(),
+            accountNumber: z.string().optional(),
+            description: z.string().optional(),
+            debit: z.number(),
+            credit: z.number(),
+          })),
+          totalAmount: z.number(),
+          currency: z.string().optional(),
+          referenceNumber: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importJournalEntry(input.entryData as any, ctx.user.id);
       }),
 
     // Get import history
