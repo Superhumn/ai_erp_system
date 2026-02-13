@@ -9296,7 +9296,7 @@ Ask if they received the original request and if they can provide a quote.`;
       }))
       .mutation(async ({ input, ctx }) => {
         const room = await db.getDataRoomById(input.id);
-        if (!room) throw new TRPCError({ code: 'NOT_FOUND' });
+        if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
         if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
           throw new TRPCError({ code: 'FORBIDDEN' });
         }
@@ -9944,7 +9944,7 @@ Ask if they received the original request and if they can provide a quote.`;
         }))
         .query(async ({ input }) => {
           const room = await db.getDataRoomById(input.dataRoomId);
-          if (!room) throw new TRPCError({ code: 'NOT_FOUND' });
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
 
           // Check visitor access status if visitor ID provided
           let visitor = null;

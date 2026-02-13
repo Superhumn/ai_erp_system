@@ -2480,6 +2480,119 @@ export const dataRoomInvitations = mysqlTable("data_room_invitations", {
 export type DataRoomInvitation = typeof dataRoomInvitations.$inferSelect;
 export type InsertDataRoomInvitation = typeof dataRoomInvitations.$inferInsert;
 
+// Document Page Views - granular page-level tracking
+export const documentPageViews = mysqlTable("document_page_views", {
+  id: int("id").autoincrement().primaryKey(),
+  documentId: int("documentId").notNull(),
+  visitorId: int("visitorId").notNull(),
+  viewSessionId: int("viewSessionId"),
+  linkId: int("linkId"),
+  pageNumber: int("pageNumber").notNull(),
+  pageLabel: varchar("pageLabel", { length: 255 }),
+
+  // Timing
+  entryTime: timestamp("entryTime").defaultNow().notNull(),
+  exitTime: timestamp("exitTime"),
+  durationMs: int("durationMs").default(0).notNull(),
+
+  // Interaction metrics
+  scrollDepth: decimal("scrollDepth", { precision: 5, scale: 2 }),
+  mouseMovements: int("mouseMovements").default(0),
+  clicks: int("clicks").default(0),
+  zoomLevel: decimal("zoomLevel", { precision: 5, scale: 2 }),
+
+  // Device context
+  deviceType: varchar("deviceType", { length: 32 }),
+  screenWidth: int("screenWidth"),
+  screenHeight: int("screenHeight"),
+  viewportWidth: int("viewportWidth"),
+  viewportHeight: int("viewportHeight"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DocumentPageView = typeof documentPageViews.$inferSelect;
+export type InsertDocumentPageView = typeof documentPageViews.$inferInsert;
+
+// Visitor Sessions - session-level tracking for data room visitors
+export const visitorSessions = mysqlTable("visitor_sessions", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  visitorId: int("visitorId").notNull(),
+  linkId: int("linkId"),
+  sessionToken: varchar("sessionToken", { length: 128 }).notNull().unique(),
+
+  // Device info
+  deviceType: varchar("deviceType", { length: 32 }),
+  browser: varchar("browser", { length: 64 }),
+  browserVersion: varchar("browserVersion", { length: 32 }),
+  os: varchar("os", { length: 64 }),
+  osVersion: varchar("osVersion", { length: 32 }),
+  screenResolution: varchar("screenResolution", { length: 32 }),
+  ipAddress: varchar("ipAddress", { length: 45 }),
+
+  // Referral
+  referrer: varchar("referrer", { length: 512 }),
+  utmSource: varchar("utmSource", { length: 255 }),
+  utmMedium: varchar("utmMedium", { length: 255 }),
+  utmCampaign: varchar("utmCampaign", { length: 255 }),
+
+  // Activity
+  documentsViewed: int("documentsViewed").default(0),
+  pagesViewed: int("pagesViewed").default(0),
+  totalScrollDistance: int("totalScrollDistance").default(0),
+  totalClicks: int("totalClicks").default(0),
+  downloadsCount: int("downloadsCount").default(0),
+  printsCount: int("printsCount").default(0),
+
+  // Duration
+  totalDurationMs: int("totalDurationMs").default(0),
+  activeDurationMs: int("activeDurationMs").default(0),
+  idleDurationMs: int("idleDurationMs").default(0),
+
+  isActive: boolean("isActive").default(true).notNull(),
+  sessionStartAt: timestamp("sessionStartAt").defaultNow().notNull(),
+  sessionEndAt: timestamp("sessionEndAt"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type VisitorSession = typeof visitorSessions.$inferSelect;
+export type InsertVisitorSession = typeof visitorSessions.$inferInsert;
+
+// Email Access Rules - domain/email based access control for data rooms
+export const emailAccessRules = mysqlTable("email_access_rules", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  ruleType: mysqlEnum("ruleType", ["allow_email", "allow_domain", "block_email", "block_domain"]).notNull(),
+  emailPattern: varchar("emailPattern", { length: 320 }).notNull(),
+
+  // Permissions
+  allowDownload: boolean("allowDownload").default(true).notNull(),
+  allowPrint: boolean("allowPrint").default(true).notNull(),
+  maxViews: int("maxViews"),
+  expiresAt: timestamp("expiresAt"),
+
+  // NDA and approval
+  requireNdaSignature: boolean("requireNdaSignature").default(true).notNull(),
+  autoApprove: boolean("autoApprove").default(false).notNull(),
+
+  // Notifications
+  notifyOnAccess: boolean("notifyOnAccess").default(true).notNull(),
+  notifyEmail: varchar("notifyEmail", { length: 320 }),
+
+  priority: int("priority").default(0).notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdBy: int("createdBy").notNull(),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailAccessRule = typeof emailAccessRules.$inferSelect;
+export type InsertEmailAccessRule = typeof emailAccessRules.$inferInsert;
+
 // ============================================
 // EMAIL IMAP CREDENTIALS
 // ============================================

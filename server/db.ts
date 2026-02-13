@@ -39,6 +39,7 @@ import {
   inboundEmails, emailAttachments, parsedDocuments, parsedDocumentLineItems, autoReplyRules, sentEmails,
   // Data room
   dataRooms, dataRoomFolders, dataRoomDocuments, dataRoomLinks, dataRoomVisitors, documentViews, dataRoomInvitations,
+  documentPageViews, visitorSessions, emailAccessRules,
   // NDA e-signatures
   ndaDocuments, ndaSignatures, ndaSignatureAuditLog,
   // IMAP credentials
@@ -76,6 +77,7 @@ import {
   InsertInboundEmail, InsertEmailAttachment, InsertParsedDocument, InsertParsedDocumentLineItem,
   // Data room types
   InsertDataRoom, InsertDataRoomFolder, InsertDataRoomDocument, InsertDataRoomLink, InsertDataRoomVisitor, InsertDocumentView, InsertDataRoomInvitation,
+  InsertDocumentPageView, InsertVisitorSession, InsertEmailAccessRule,
   // NDA types
   InsertNdaDocument, InsertNdaSignature, InsertNdaSignatureAuditLog,
   InsertImapCredential,
@@ -5837,6 +5839,332 @@ export async function getVisitorTimeline(visitorId: number) {
     documentName: v.document?.name || 'Unknown',
     documentType: v.document?.fileType || 'unknown',
   }));
+}
+
+// ============================================
+// DOCUMENT PAGE VIEWS (Page-Level Tracking)
+// ============================================
+
+export async function createDocumentPageView(data: InsertDocumentPageView) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(documentPageViews).values(data);
+  return result[0].insertId;
+}
+
+export async function updateDocumentPageView(id: number, data: Partial<InsertDocumentPageView>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(documentPageViews).set(data).where(eq(documentPageViews.id, id));
+}
+
+export async function getDocumentPageViews(documentId: number, visitorId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(documentPageViews.documentId, documentId)];
+  if (visitorId !== undefined) {
+    conditions.push(eq(documentPageViews.visitorId, visitorId));
+  }
+  return db.select().from(documentPageViews)
+    .where(and(...conditions))
+    .orderBy(documentPageViews.pageNumber, desc(documentPageViews.entryTime));
+}
+
+export async function getPageViewsByVisitor(visitorId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(documentPageViews)
+    .where(eq(documentPageViews.visitorId, visitorId))
+    .orderBy(desc(documentPageViews.entryTime));
+}
+
+// ============================================
+// VISITOR SESSIONS
+// ============================================
+
+export async function createVisitorSession(data: InsertVisitorSession) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(visitorSessions).values(data);
+  return result[0].insertId;
+}
+
+export async function getSessionByToken(sessionToken: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const [session] = await db.select().from(visitorSessions)
+    .where(eq(visitorSessions.sessionToken, sessionToken));
+  return session || null;
+}
+
+export async function updateVisitorSession(id: number, data: Partial<InsertVisitorSession>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(visitorSessions).set(data).where(eq(visitorSessions.id, id));
+}
+
+export async function getDataRoomSessions(dataRoomId: number, limit: number = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(visitorSessions)
+    .where(eq(visitorSessions.dataRoomId, dataRoomId))
+    .orderBy(desc(visitorSessions.sessionStartAt))
+    .limit(limit);
+}
+
+export async function getVisitorSessions(visitorId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(visitorSessions)
+    .where(eq(visitorSessions.visitorId, visitorId))
+    .orderBy(desc(visitorSessions.sessionStartAt));
+}
+
+// ============================================
+// EMAIL ACCESS RULES
+// ============================================
+
+export async function createEmailAccessRule(data: InsertEmailAccessRule) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(emailAccessRules).values(data);
+  return result[0].insertId;
+}
+
+export async function getEmailAccessRules(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailAccessRules)
+    .where(eq(emailAccessRules.dataRoomId, dataRoomId))
+    .orderBy(desc(emailAccessRules.priority));
+}
+
+export async function updateEmailAccessRule(id: number, data: Partial<InsertEmailAccessRule>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(emailAccessRules).set(data).where(eq(emailAccessRules.id, id));
+}
+
+export async function deleteEmailAccessRule(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(emailAccessRules).where(eq(emailAccessRules.id, id));
+}
+
+export async function checkEmailAccess(dataRoomId: number, email: string): Promise<{ allowed: boolean; rule?: any }> {
+  const db = await getDb();
+  if (!db) return { allowed: false };
+
+  const rules = await db.select().from(emailAccessRules)
+    .where(and(
+      eq(emailAccessRules.dataRoomId, dataRoomId),
+      eq(emailAccessRules.isActive, true),
+    ))
+    .orderBy(desc(emailAccessRules.priority));
+
+  const emailLower = email.toLowerCase();
+  const domain = emailLower.split('@')[1];
+
+  for (const rule of rules) {
+    const pattern = rule.emailPattern.toLowerCase();
+
+    if (rule.ruleType === 'block_email' && pattern === emailLower) {
+      return { allowed: false, rule };
+    }
+    if (rule.ruleType === 'block_domain' && domain === pattern) {
+      return { allowed: false, rule };
+    }
+    if (rule.ruleType === 'allow_email' && pattern === emailLower) {
+      return { allowed: true, rule };
+    }
+    if (rule.ruleType === 'allow_domain' && domain === pattern) {
+      return { allowed: true, rule };
+    }
+  }
+
+  // No matching rule found - default allow
+  return { allowed: true };
+}
+
+// ============================================
+// DETAILED DATA ROOM ANALYTICS
+// ============================================
+
+export async function getPageViewAnalytics(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const documents = await db.select().from(dataRoomDocuments)
+    .where(eq(dataRoomDocuments.dataRoomId, dataRoomId));
+  const documentIds = documents.map(d => d.id);
+  if (documentIds.length === 0) return [];
+
+  const pageViews = await db.select().from(documentPageViews)
+    .where(inArray(documentPageViews.documentId, documentIds));
+
+  // Aggregate by document and page
+  const analytics: Record<string, {
+    documentId: number;
+    documentName: string;
+    pageNumber: number;
+    views: number;
+    totalDurationMs: number;
+    uniqueVisitors: Set<number>;
+  }> = {};
+
+  for (const pv of pageViews) {
+    const key = `${pv.documentId}-${pv.pageNumber}`;
+    const doc = documents.find(d => d.id === pv.documentId);
+    if (!analytics[key]) {
+      analytics[key] = {
+        documentId: pv.documentId,
+        documentName: doc?.name || 'Unknown',
+        pageNumber: pv.pageNumber,
+        views: 0,
+        totalDurationMs: 0,
+        uniqueVisitors: new Set(),
+      };
+    }
+    analytics[key].views++;
+    analytics[key].totalDurationMs += pv.durationMs || 0;
+    analytics[key].uniqueVisitors.add(pv.visitorId);
+  }
+
+  return Object.values(analytics).map(a => ({
+    documentId: a.documentId,
+    documentName: a.documentName,
+    pageNumber: a.pageNumber,
+    views: a.views,
+    totalDurationMs: a.totalDurationMs,
+    avgDurationMs: a.views > 0 ? a.totalDurationMs / a.views : 0,
+    uniqueVisitors: a.uniqueVisitors.size,
+  }));
+}
+
+export async function getDetailedVisitorAnalytics(dataRoomId: number, visitorId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const [visitor] = await db.select().from(dataRoomVisitors)
+    .where(and(
+      eq(dataRoomVisitors.dataRoomId, dataRoomId),
+      eq(dataRoomVisitors.id, visitorId),
+    ));
+  if (!visitor) return null;
+
+  const sessions = await db.select().from(visitorSessions)
+    .where(eq(visitorSessions.visitorId, visitorId))
+    .orderBy(desc(visitorSessions.sessionStartAt));
+
+  const views = await db.select({
+    view: documentViews,
+    document: dataRoomDocuments,
+  })
+  .from(documentViews)
+  .leftJoin(dataRoomDocuments, eq(documentViews.documentId, dataRoomDocuments.id))
+  .where(eq(documentViews.visitorId, visitorId))
+  .orderBy(desc(documentViews.startedAt));
+
+  const pageViews = await db.select().from(documentPageViews)
+    .where(eq(documentPageViews.visitorId, visitorId))
+    .orderBy(desc(documentPageViews.entryTime));
+
+  return {
+    visitor,
+    sessions,
+    documentViews: views.map(v => ({
+      ...v.view,
+      documentName: v.document?.name || 'Unknown',
+      documentType: v.document?.fileType || 'unknown',
+    })),
+    pageViews,
+    summary: {
+      totalSessions: sessions.length,
+      totalDocumentViews: views.length,
+      totalPageViews: pageViews.length,
+      totalTimeMs: sessions.reduce((sum, s) => sum + (s.totalDurationMs || 0), 0),
+      documentsDownloaded: views.filter(v => v.view.downloaded).length,
+    },
+  };
+}
+
+export async function getDataRoomEngagementReport(dataRoomId: number, startDate?: Date, endDate?: Date) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const room = await db.select().from(dataRooms).where(eq(dataRooms.id, dataRoomId));
+  if (room.length === 0) return null;
+
+  // Get visitors
+  const visitors = await db.select().from(dataRoomVisitors)
+    .where(eq(dataRoomVisitors.dataRoomId, dataRoomId));
+
+  // Get documents
+  const documents = await db.select().from(dataRoomDocuments)
+    .where(eq(dataRoomDocuments.dataRoomId, dataRoomId));
+  const documentIds = documents.map(d => d.id);
+
+  // Get all views for this data room's documents
+  let allViews: any[] = [];
+  if (documentIds.length > 0) {
+    const conditions: any[] = [inArray(documentViews.documentId, documentIds)];
+    if (startDate) conditions.push(gte(documentViews.startedAt, startDate));
+    if (endDate) conditions.push(lte(documentViews.startedAt, endDate));
+    allViews = await db.select().from(documentViews).where(and(...conditions));
+  }
+
+  // Get sessions
+  const sessionConditions: any[] = [eq(visitorSessions.dataRoomId, dataRoomId)];
+  if (startDate) sessionConditions.push(gte(visitorSessions.sessionStartAt, startDate));
+  if (endDate) sessionConditions.push(lte(visitorSessions.sessionStartAt, endDate));
+  const sessions = await db.select().from(visitorSessions).where(and(...sessionConditions));
+
+  // Build visitor engagement data
+  const visitorEngagement = visitors.map(v => {
+    const visitorViews = allViews.filter(view => view.visitorId === v.id);
+    const visitorSess = sessions.filter(s => s.visitorId === v.id);
+    return {
+      id: v.id,
+      email: v.email,
+      name: v.name,
+      company: v.company,
+      accessStatus: v.accessStatus,
+      ndaAcceptedAt: v.ndaAcceptedAt,
+      sessionsCount: visitorSess.length,
+      totalTimeMs: visitorSess.reduce((sum, s) => sum + (s.totalDurationMs || 0), 0),
+      documentsViewed: new Set(visitorViews.map(view => view.documentId)).size,
+      pagesViewed: visitorViews.reduce((sum, view) => sum + (view.totalPagesViewed || 0), 0),
+      lastActivity: visitorSess.length > 0
+        ? visitorSess[0].sessionStartAt
+        : v.lastViewedAt,
+    };
+  });
+
+  // Build document engagement data
+  const documentEngagement = documents.map(doc => {
+    const docViews = allViews.filter(view => view.documentId === doc.id);
+    return {
+      documentId: doc.id,
+      documentName: doc.name,
+      pageCount: doc.pageCount || 0,
+      views: docViews.length,
+      uniqueVisitors: new Set(docViews.map(view => view.visitorId)).size,
+      totalTimeMs: docViews.reduce((sum, view) => sum + (view.duration || 0) * 1000, 0),
+      avgTimePerPageMs: docViews.length > 0 && (doc.pageCount || 1) > 0
+        ? (docViews.reduce((sum, view) => sum + (view.duration || 0) * 1000, 0)) / (docViews.length * (doc.pageCount || 1))
+        : 0,
+      downloads: docViews.filter(view => view.downloaded).length,
+    };
+  });
+
+  return {
+    dataRoomId,
+    totalVisitors: visitors.length,
+    totalSessions: sessions.length,
+    totalDocumentViews: allViews.length,
+    visitorEngagement,
+    documentEngagement,
+  };
 }
 
 
