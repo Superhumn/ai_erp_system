@@ -857,17 +857,17 @@ export async function importFreightInvoice(
   const warnings: string[] = [];
 
   try {
-    // 1. Find or create carrier as vendor
-    let carrier = await db.getVendorByName(invoice.carrierName);
+    // 1. Find or create carrier in freightCarriers table
+    let carrier = await db.getFreightCarrierByName(invoice.carrierName);
     if (!carrier) {
-      const carrierResult = await db.createVendor({
+      const carrierResult = await db.createFreightCarrier({
         name: invoice.carrierName,
         email: invoice.carrierEmail || "",
-        type: "service", // Use 'service' for carriers since 'carrier' is not a valid type
-        status: "active"
-      });
-      carrier = await db.getVendorById(carrierResult.id) || null;
-      createdRecords.push({ type: "vendor", id: carrierResult.id, name: invoice.carrierName });
+        type: "ground", // Default type; will be visible in freight management
+        isActive: true
+      } as any);
+      carrier = await db.getFreightCarrierById(carrierResult.id) || null;
+      createdRecords.push({ type: "freight_carrier", id: carrierResult.id, name: invoice.carrierName });
     }
 
     // 2. Try to find related PO if specified
@@ -1071,7 +1071,7 @@ export async function importCustomsDocument(
   const warnings: string[] = [];
 
   try {
-    // 1. Find or create the shipper as a vendor
+    // 1. Find or create the shipper as a vendor (for accounting/supplier records)
     let shipper = await db.getVendorByName(doc.shipperName);
     if (!shipper) {
       const shipperResult = await db.createVendor({
@@ -1083,6 +1083,18 @@ export async function importCustomsDocument(
       });
       shipper = await db.getVendorById(shipperResult.id) || null;
       createdRecords.push({ type: "vendor", id: shipperResult.id, name: doc.shipperName });
+    }
+
+    // 1b. Find or create shipper as a freight carrier (for freight booking records)
+    let shipperCarrier = await db.getFreightCarrierByName(doc.shipperName);
+    if (!shipperCarrier) {
+      const carrierResult = await db.createFreightCarrier({
+        name: doc.shipperName,
+        type: "ocean", // Default for customs/international shipments
+        isActive: true
+      } as any);
+      shipperCarrier = await db.getFreightCarrierById(carrierResult.id) || null;
+      createdRecords.push({ type: "freight_carrier", id: carrierResult.id, name: doc.shipperName });
     }
 
     // 2. Find or create customs broker as a vendor (if specified)
@@ -1115,7 +1127,7 @@ export async function importCustomsDocument(
     // 4. Create customs entry record in freight history (using it to track customs docs)
     const freightId = await db.createFreightHistory({
       invoiceNumber: doc.documentNumber,
-      carrierId: shipper!.id, // Using shipper as carrier for customs docs
+      carrierId: shipperCarrier!.id, // Use freight carrier ID, not vendor ID
       invoiceDate: new Date(doc.entryDate).getTime(),
       origin: doc.portOfExit || doc.shipperCountry,
       destination: doc.portOfEntry || doc.consigneeCountry,

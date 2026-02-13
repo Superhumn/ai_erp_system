@@ -1533,6 +1533,25 @@ export async function createFreightCarrier(data: InsertFreightCarrier) {
   return { id: result[0].insertId };
 }
 
+export async function getFreightCarrierByName(name: string) {
+  const db = await getDb();
+  if (!db) return null;
+
+  // Try exact match first
+  const exact = await db.select().from(freightCarriers).where(
+    sql`LOWER(${freightCarriers.name}) = ${name.toLowerCase()}`
+  ).limit(1);
+  if (exact.length > 0) return exact[0];
+
+  // Try partial match
+  const partial = await db.select().from(freightCarriers).where(
+    sql`LOWER(${freightCarriers.name}) LIKE ${`%${name.toLowerCase()}%`}`
+  ).limit(1);
+  if (partial.length > 0) return partial[0];
+
+  return null;
+}
+
 export async function updateFreightCarrier(id: number, data: Partial<InsertFreightCarrier>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -6993,17 +7012,23 @@ export interface FreightHistoryData {
 export async function createFreightHistory(data: FreightHistoryData) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
+
+  // Generate a booking number for the imported invoice
+  const countResult = await db.select({ count: count() }).from(freightBookings);
+  const bookingCount = countResult[0]?.count || 0;
+  const bookingNumber = `BK-${new Date().getFullYear()}-${String(bookingCount + 1).padStart(5, '0')}`;
+
   // Store as a freight booking with invoice data
   const result = await db.insert(freightBookings).values({
+    bookingNumber,
     rfqId: 0, // No RFQ for imported invoices
     quoteId: 0, // No quote for imported invoices
     carrierId: data.carrierId,
-    status: "completed",
-    bookingDate: data.invoiceDate,
-    pickupDate: data.shipmentDate,
-    deliveryDate: data.deliveryDate,
-    totalCost: data.totalAmount,
+    status: "delivered",
+    bookingDate: data.invoiceDate ? new Date(data.invoiceDate) : null,
+    pickupDate: data.shipmentDate ? new Date(data.shipmentDate) : null,
+    deliveryDate: data.deliveryDate ? new Date(data.deliveryDate) : null,
+    actualCost: data.totalAmount,
     trackingNumber: data.trackingNumber,
     notes: JSON.stringify({
       invoiceNumber: data.invoiceNumber,
@@ -7018,9 +7043,8 @@ export async function createFreightHistory(data: FreightHistoryData) {
       relatedPoId: data.relatedPoId,
       importedInvoice: true
     }),
-    createdBy: data.createdBy
   } as any);
-  
+
   return result[0].insertId;
 }
 
