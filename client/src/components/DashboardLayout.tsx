@@ -364,6 +364,7 @@ function DashboardLayoutContent({
 
   return (
     <>
+      {/* z-10 positions sidebar and content above aurora (z-0) and noise (z-0) backgrounds */}
       <div className="relative z-10" ref={sidebarRef}>
         <Sidebar
           collapsible="icon"
