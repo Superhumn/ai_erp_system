@@ -1400,13 +1400,13 @@ function NdaManagement({ dataRoomId, requiresNda }: { dataRoomId: number; requir
 function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
   const [selectedVisitor, setSelectedVisitor] = useState<number | null>(null);
 
-  const { data: report, isLoading } = trpc.dataRoom.detailedAnalytics.getEngagementReport.useQuery({ dataRoomId });
-  const { data: visitorDetails } = trpc.dataRoom.detailedAnalytics.getVisitorDetails.useQuery(
+  const { data: report, isLoading } = trpc.nda.detailedAnalytics.getEngagementReport.useQuery({ dataRoomId });
+  const { data: visitorDetails } = trpc.nda.detailedAnalytics.getVisitorDetails.useQuery(
     { dataRoomId, visitorId: selectedVisitor! },
     { enabled: !!selectedVisitor }
   );
 
-  const exportCsvMutation = trpc.dataRoom.detailedAnalytics.exportCsv.useMutation({
+  const exportCsvMutation = trpc.nda.detailedAnalytics.exportCsv.useMutation({
     onSuccess: (data) => {
       const blob = new Blob([data.csv], { type: 'text/csv' });
       const url = window.URL.createObjectURL(blob);
@@ -1637,14 +1637,14 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
   const [currentParentId, setCurrentParentId] = useState<string | undefined>(undefined);
   const [folderPath, setFolderPath] = useState<{ id: string; name: string }[]>([]);
 
-  const { data: syncConfig, refetch: refetchConfig } = trpc.dataRoom.driveSync.getConfig.useQuery({ dataRoomId });
-  const { data: syncLogs, refetch: refetchLogs } = trpc.dataRoom.driveSync.getLogs.useQuery({ dataRoomId, limit: 10 });
-  const { data: driveFolders, isLoading: foldersLoading } = trpc.dataRoom.driveSync.listDriveFolders.useQuery(
+  const { data: syncConfig, refetch: refetchConfig } = trpc.nda.driveSync.getConfig.useQuery({ dataRoomId });
+  const { data: syncLogs, refetch: refetchLogs } = trpc.nda.driveSync.getLogs.useQuery({ dataRoomId, limit: 10 });
+  const { data: driveFolders, isLoading: foldersLoading } = trpc.nda.driveSync.listDriveFolders.useQuery(
     { parentId: currentParentId },
     { enabled: folderPickerOpen }
   );
 
-  const saveConfigMutation = trpc.dataRoom.driveSync.saveConfig.useMutation({
+  const saveConfigMutation = trpc.nda.driveSync.saveConfig.useMutation({
     onSuccess: () => {
       toast.success("Sync configuration saved");
       refetchConfig();
@@ -1655,7 +1655,7 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
     },
   });
 
-  const syncNowMutation = trpc.dataRoom.driveSync.syncNow.useMutation({
+  const syncNowMutation = trpc.nda.driveSync.syncNow.useMutation({
     onSuccess: (result) => {
       toast.success(`Sync completed: ${result.filesAdded} added, ${result.filesUpdated} updated`);
       refetchConfig();
@@ -1666,7 +1666,7 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
     },
   });
 
-  const deleteConfigMutation = trpc.dataRoom.driveSync.deleteConfig.useMutation({
+  const deleteConfigMutation = trpc.nda.driveSync.deleteConfig.useMutation({
     onSuccess: () => {
       toast.success("Sync configuration removed");
       refetchConfig();
@@ -1921,9 +1921,9 @@ function EmailAccessRulesManager({ dataRoomId }: { dataRoomId: number }) {
     notifyOnAccess: true,
   });
 
-  const { data: rules, refetch } = trpc.dataRoom.emailRules.list.useQuery({ dataRoomId });
+  const { data: rules, refetch } = trpc.nda.emailRules.list.useQuery({ dataRoomId });
 
-  const createMutation = trpc.dataRoom.emailRules.create.useMutation({
+  const createMutation = trpc.nda.emailRules.create.useMutation({
     onSuccess: () => {
       toast.success("Rule created");
       setCreateOpen(false);
@@ -1942,14 +1942,14 @@ function EmailAccessRulesManager({ dataRoomId }: { dataRoomId: number }) {
     },
   });
 
-  const deleteMutation = trpc.dataRoom.emailRules.delete.useMutation({
+  const deleteMutation = trpc.nda.emailRules.delete.useMutation({
     onSuccess: () => {
       toast.success("Rule deleted");
       refetch();
     },
   });
 
-  const toggleMutation = trpc.dataRoom.emailRules.update.useMutation({
+  const toggleMutation = trpc.nda.emailRules.update.useMutation({
     onSuccess: () => {
       refetch();
     },

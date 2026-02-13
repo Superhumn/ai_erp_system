@@ -68,8 +68,8 @@ export default function DataRoomDocumentViewer({
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Mutations for tracking
-  const recordPageViewMutation = trpc.dataRoom.pageTracking.recordPageView.useMutation();
-  const updatePageViewMutation = trpc.dataRoom.pageTracking.updatePageView.useMutation();
+  const recordPageViewMutation = trpc.nda.pageTracking.recordPageView.useMutation();
+  const updatePageViewMutation = trpc.nda.pageTracking.updatePageView.useMutation();
 
   // Get device info
   const getDeviceInfo = useCallback(() => {

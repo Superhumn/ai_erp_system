@@ -40,6 +40,7 @@ import {
   // Data room
   dataRooms, dataRoomFolders, dataRoomDocuments, dataRoomLinks, dataRoomVisitors, documentViews, dataRoomInvitations,
   documentPageViews, visitorSessions, emailAccessRules,
+  driveSyncConfigs, driveSyncLogs,
   // NDA e-signatures
   ndaDocuments, ndaSignatures, ndaSignatureAuditLog,
   // IMAP credentials
@@ -78,6 +79,7 @@ import {
   // Data room types
   InsertDataRoom, InsertDataRoomFolder, InsertDataRoomDocument, InsertDataRoomLink, InsertDataRoomVisitor, InsertDocumentView, InsertDataRoomInvitation,
   InsertDocumentPageView, InsertVisitorSession, InsertEmailAccessRule,
+  InsertDriveSyncConfig, InsertDriveSyncLog,
   // NDA types
   InsertNdaDocument, InsertNdaSignature, InsertNdaSignatureAuditLog,
   InsertImapCredential,
@@ -1454,6 +1456,9 @@ export async function deleteGoogleOAuthToken(userId: number) {
   if (!db) return;
   await db.delete(googleOAuthTokens).where(eq(googleOAuthTokens.userId, userId));
 }
+
+// Alias used by data room driveSync router
+export const getGoogleOAuthTokenByUserId = getGoogleOAuthToken;
 
 // QuickBooks OAuth token management
 export async function getQuickBooksOAuthToken(userId: number) {
@@ -6069,6 +6074,30 @@ export async function getDetailedVisitorAnalytics(dataRoomId: number, visitorId:
     .where(eq(documentPageViews.visitorId, visitorId))
     .orderBy(desc(documentPageViews.entryTime));
 
+  // Group views by document for engagement breakdown
+  const docMap: Record<number, { views: typeof views; doc: typeof views[0]['document'] }> = {};
+  for (const v of views) {
+    const docId = v.view.documentId;
+    if (!docMap[docId]) {
+      docMap[docId] = { views: [], doc: v.document };
+    }
+    docMap[docId].views.push(v);
+  }
+
+  const documentEngagement = Object.entries(docMap).map(([docId, { views: docViews, doc }]) => {
+    const totalPagesViewed = docViews.reduce((sum, v) => sum + (v.view.totalPagesViewed || 0), 0);
+    const pageCount = doc?.pageCount || 1;
+    return {
+      documentId: parseInt(docId),
+      documentName: doc?.name || 'Unknown',
+      pageCount: doc?.pageCount || 0,
+      totalViews: docViews.length,
+      pagesViewed: totalPagesViewed,
+      percentViewed: pageCount > 0 ? Math.round((totalPagesViewed / (pageCount * docViews.length)) * 100) : 0,
+      totalDurationMs: docViews.reduce((sum, v) => sum + (v.view.duration || 0) * 1000, 0),
+    };
+  });
+
   return {
     visitor,
     sessions,
@@ -6077,9 +6106,11 @@ export async function getDetailedVisitorAnalytics(dataRoomId: number, visitorId:
       documentName: v.document?.name || 'Unknown',
       documentType: v.document?.fileType || 'unknown',
     })),
+    documentEngagement,
     pageViews,
     summary: {
       totalSessions: sessions.length,
+      totalDocuments: new Set(views.map(v => v.view.documentId)).size,
       totalDocumentViews: views.length,
       totalPageViews: pageViews.length,
       totalTimeMs: sessions.reduce((sum, s) => sum + (s.totalDurationMs || 0), 0),
@@ -6125,6 +6156,7 @@ export async function getDataRoomEngagementReport(dataRoomId: number, startDate?
     const visitorSess = sessions.filter(s => s.visitorId === v.id);
     return {
       id: v.id,
+      visitorId: v.id,
       email: v.email,
       name: v.name,
       company: v.company,
@@ -6157,14 +6189,78 @@ export async function getDataRoomEngagementReport(dataRoomId: number, startDate?
     };
   });
 
+  const totalEngagementTimeMs = sessions.reduce((sum, s) => sum + (s.totalDurationMs || 0), 0);
+  const activeVisitors = visitors.filter(v => v.accessStatus === 'active').length;
+
   return {
     dataRoomId,
     totalVisitors: visitors.length,
     totalSessions: sessions.length,
     totalDocumentViews: allViews.length,
+    summary: {
+      totalVisitors: visitors.length,
+      activeVisitors,
+      totalSessions: sessions.length,
+      totalPageViews: allViews.reduce((sum, v) => sum + (v.totalPagesViewed || 0), 0),
+      totalEngagementTimeMs,
+    },
     visitorEngagement,
     documentEngagement,
   };
+}
+
+
+// ============================================
+// GOOGLE DRIVE SYNC
+// ============================================
+
+export async function getDriveSyncConfig(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [config] = await db.select().from(driveSyncConfigs)
+    .where(eq(driveSyncConfigs.dataRoomId, dataRoomId));
+  return config || null;
+}
+
+export async function createDriveSyncConfig(data: InsertDriveSyncConfig) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(driveSyncConfigs).values(data);
+  return result[0].insertId;
+}
+
+export async function updateDriveSyncConfig(id: number, data: Partial<InsertDriveSyncConfig>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(driveSyncConfigs).set(data).where(eq(driveSyncConfigs.id, id));
+}
+
+export async function deleteDriveSyncConfig(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(driveSyncConfigs).where(eq(driveSyncConfigs.dataRoomId, dataRoomId));
+}
+
+export async function getDriveSyncLogs(dataRoomId: number, limit: number = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(driveSyncLogs)
+    .where(eq(driveSyncLogs.dataRoomId, dataRoomId))
+    .orderBy(desc(driveSyncLogs.createdAt))
+    .limit(limit);
+}
+
+export async function createDriveSyncLog(data: InsertDriveSyncLog) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(driveSyncLogs).values(data);
+  return result[0].insertId;
+}
+
+export async function updateDriveSyncLog(id: number, data: Partial<InsertDriveSyncLog>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(driveSyncLogs).set(data).where(eq(driveSyncLogs.id, id));
 }
 
 

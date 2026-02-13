@@ -2593,6 +2593,64 @@ export const emailAccessRules = mysqlTable("email_access_rules", {
 export type EmailAccessRule = typeof emailAccessRules.$inferSelect;
 export type InsertEmailAccessRule = typeof emailAccessRules.$inferInsert;
 
+// Google Drive Sync Configurations
+export const driveSyncConfigs = mysqlTable("drive_sync_configs", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  googleDriveFolderId: varchar("googleDriveFolderId", { length: 255 }).notNull(),
+  googleDriveFolderName: varchar("googleDriveFolderName", { length: 255 }),
+  googleDriveFolderUrl: text("googleDriveFolderUrl"),
+
+  syncEnabled: boolean("syncEnabled").default(true).notNull(),
+  syncFrequencyMinutes: int("syncFrequencyMinutes").default(60).notNull(),
+  syncMode: mysqlEnum("syncMode", ["one_way_import", "one_way_export", "bidirectional"]).default("one_way_import").notNull(),
+  syncSubfolders: boolean("syncSubfolders").default(true).notNull(),
+  includeFileTypes: text("includeFileTypes"),
+  excludeFileTypes: text("excludeFileTypes"),
+  maxFileSizeMb: int("maxFileSizeMb").default(100),
+
+  syncUserId: int("syncUserId").notNull(),
+
+  lastSyncAt: timestamp("lastSyncAt"),
+  lastSyncStatus: varchar("lastSyncStatus", { length: 32 }),
+  lastSyncError: text("lastSyncError"),
+  lastSyncFilesAdded: int("lastSyncFilesAdded"),
+  lastSyncFilesUpdated: int("lastSyncFilesUpdated"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DriveSyncConfig = typeof driveSyncConfigs.$inferSelect;
+export type InsertDriveSyncConfig = typeof driveSyncConfigs.$inferInsert;
+
+// Google Drive Sync Logs
+export const driveSyncLogs = mysqlTable("drive_sync_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  syncConfigId: int("syncConfigId").notNull(),
+  syncType: mysqlEnum("syncType", ["manual", "scheduled", "webhook"]).default("manual").notNull(),
+  status: mysqlEnum("status", ["started", "completed", "failed"]).default("started").notNull(),
+  triggeredBy: int("triggeredBy"),
+
+  filesScanned: int("filesScanned").default(0),
+  filesAdded: int("filesAdded").default(0),
+  filesUpdated: int("filesUpdated").default(0),
+  filesSkipped: int("filesSkipped").default(0),
+  foldersCreated: int("foldersCreated").default(0),
+  durationMs: int("durationMs"),
+
+  warnings: text("warnings"),
+  errors: text("errors"),
+
+  startedAt: timestamp("startedAt").defaultNow().notNull(),
+  completedAt: timestamp("completedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DriveSyncLog = typeof driveSyncLogs.$inferSelect;
+export type InsertDriveSyncLog = typeof driveSyncLogs.$inferInsert;
+
 // ============================================
 // EMAIL IMAP CREDENTIALS
 // ============================================
