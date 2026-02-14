@@ -7094,13 +7094,15 @@ export async function getDocumentImportLogs(limit: number = 50) {
   
   return result.map(log => {
     const importData = (log.newValues as any) || {};
+    const createdRecords = importData.createdRecords;
+    const updatedRecords = importData.updatedRecords;
     return {
       id: log.id,
-      fileName: importData.fileName || log.entityName || 'Unknown',
+      fileName: importData.filename || importData.fileName || log.entityName || 'Unknown',
       documentType: log.entityType?.replace('document_import_', '') || 'unknown',
-      status: importData.status || (log.action === 'create' ? 'completed' : 'pending'),
-      recordsCreated: importData.recordsCreated || 0,
-      recordsUpdated: importData.recordsUpdated || 0,
+      status: importData.status === 'success' ? 'completed' : importData.status || (log.action === 'create' ? 'completed' : 'pending'),
+      recordsCreated: Array.isArray(createdRecords) ? createdRecords.length : (createdRecords || 0),
+      recordsUpdated: Array.isArray(updatedRecords) ? updatedRecords.length : (updatedRecords || 0),
       createdAt: log.createdAt,
       importData,
     };

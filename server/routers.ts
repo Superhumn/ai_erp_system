@@ -11512,7 +11512,19 @@ Ask if they received the original request and if they can provide a quote.`;
         updateInventory: z.boolean().default(true),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importPurchaseOrder(input.poData as any, ctx.user.id, input.markAsReceived);
+        const result = await importPurchaseOrder(input.poData as any, ctx.user.id, input.markAsReceived);
+        await db.createDocumentImportLog({
+          filename: input.poData.poNumber,
+          documentType: "purchase_order",
+          status: result.success ? "success" : "failed",
+          createdRecords: JSON.stringify(result.createdRecords),
+          updatedRecords: JSON.stringify(result.updatedRecords),
+          warnings: JSON.stringify(result.warnings),
+          error: result.error,
+          importedBy: ctx.user.id,
+          importedAt: Date.now(),
+        });
+        return result;
       }),
 
     // Import a freight invoice
@@ -11541,7 +11553,19 @@ Ask if they received the original request and if they can provide a quote.`;
         linkToPO: z.boolean().default(true),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importFreightInvoice(input.invoiceData as any, ctx.user.id);
+        const result = await importFreightInvoice(input.invoiceData as any, ctx.user.id);
+        await db.createDocumentImportLog({
+          filename: input.invoiceData.invoiceNumber,
+          documentType: "freight_invoice",
+          status: result.success ? "success" : "failed",
+          createdRecords: JSON.stringify(result.createdRecords),
+          updatedRecords: JSON.stringify(result.updatedRecords),
+          warnings: JSON.stringify(result.warnings),
+          error: result.error,
+          importedBy: ctx.user.id,
+          importedAt: Date.now(),
+        });
+        return result;
       }),
 
     // Import a vendor invoice
@@ -11574,7 +11598,19 @@ Ask if they received the original request and if they can provide a quote.`;
         updateInventory: z.boolean().default(true),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importVendorInvoice(input.invoiceData as any, ctx.user.id, input.markAsReceived);
+        const result = await importVendorInvoice(input.invoiceData as any, ctx.user.id, input.markAsReceived);
+        await db.createDocumentImportLog({
+          filename: input.invoiceData.invoiceNumber,
+          documentType: "vendor_invoice",
+          status: result.success ? "success" : "failed",
+          createdRecords: JSON.stringify(result.createdRecords),
+          updatedRecords: JSON.stringify(result.updatedRecords),
+          warnings: JSON.stringify(result.warnings),
+          error: result.error,
+          importedBy: ctx.user.id,
+          importedAt: Date.now(),
+        });
+        return result;
       }),
 
     // Import a customs document
@@ -11618,7 +11654,19 @@ Ask if they received the original request and if they can provide a quote.`;
         linkToPO: z.boolean().default(true),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importCustomsDocument(input.documentData as any, ctx.user.id);
+        const result = await importCustomsDocument(input.documentData as any, ctx.user.id);
+        await db.createDocumentImportLog({
+          filename: input.documentData.documentNumber,
+          documentType: "customs_document",
+          status: result.success ? "success" : "failed",
+          createdRecords: JSON.stringify(result.createdRecords),
+          updatedRecords: JSON.stringify(result.updatedRecords),
+          warnings: JSON.stringify(result.warnings),
+          error: result.error,
+          importedBy: ctx.user.id,
+          importedAt: Date.now(),
+        });
+        return result;
       }),
 
     // Get import history
