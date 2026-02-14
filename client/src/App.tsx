@@ -102,6 +102,9 @@ import VendorPortal from "./pages/portal/VendorPortal";
 // SOPs
 import SOPs from "./pages/SOPs";
 
+// Equity
+import ShareholderEquity from "./pages/equity/ShareholderEquity";
+
 // Data Room
 import DataRooms from "./pages/DataRooms";
 import DataRoomDetail from "./pages/DataRoomDetail";
@@ -219,6 +222,9 @@ function Router() {
 
         {/* SOPs */}
         <Route path="/sops" component={SOPs} />
+
+        {/* Equity */}
+        <Route path="/equity" component={ShareholderEquity} />
 
         {/* Data Room */}
         <Route path="/datarooms" component={DataRooms} />

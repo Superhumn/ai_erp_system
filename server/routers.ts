@@ -13324,6 +13324,179 @@ Ask if they received the original request and if they can provide a quote.`;
         return { taskId: taskResult.id };
       }),
   }),
+
+  // ============================================
+  // SHAREHOLDER EQUITY & CAP TABLE
+  // ============================================
+  equity: router({
+    // --- Share Classes ---
+    shareClasses: router({
+      list: protectedProcedure.query(() => db.getShareClasses()),
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          type: z.enum(["common", "preferred", "options", "warrants", "safe", "convertible_note"]),
+          authorizedShares: z.string().optional(),
+          pricePerShare: z.string().optional(),
+          liquidationPreference: z.string().optional(),
+          participatingPreferred: z.boolean().optional(),
+          dividendRate: z.string().optional(),
+          votingRights: z.boolean().optional(),
+          conversionRatio: z.string().optional(),
+          seniorityOrder: z.number().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(({ input }) => db.createShareClass(input)),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          type: z.enum(["common", "preferred", "options", "warrants", "safe", "convertible_note"]).optional(),
+          authorizedShares: z.string().optional(),
+          pricePerShare: z.string().optional(),
+          liquidationPreference: z.string().optional(),
+          participatingPreferred: z.boolean().optional(),
+          dividendRate: z.string().optional(),
+          votingRights: z.boolean().optional(),
+          conversionRatio: z.string().optional(),
+          seniorityOrder: z.number().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(({ input: { id, ...data } }) => db.updateShareClass(id, data)),
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(({ input }) => db.deleteShareClass(input.id)),
+    }),
+
+    // --- Shareholders ---
+    shareholders: router({
+      list: protectedProcedure.query(() => db.getShareholders()),
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getShareholderById(input.id)),
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          email: z.string().optional(),
+          type: z.enum(["founder", "investor", "employee", "advisor", "board_member", "institution", "other"]),
+          organization: z.string().optional(),
+          title: z.string().optional(),
+          phone: z.string().optional(),
+          linkedinUrl: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(({ input }) => db.createShareholder(input)),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          email: z.string().optional(),
+          type: z.enum(["founder", "investor", "employee", "advisor", "board_member", "institution", "other"]).optional(),
+          organization: z.string().optional(),
+          title: z.string().optional(),
+          phone: z.string().optional(),
+          linkedinUrl: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(({ input: { id, ...data } }) => db.updateShareholder(id, data)),
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(({ input }) => db.deleteShareholder(input.id)),
+    }),
+
+    // --- Equity Grants ---
+    grants: router({
+      list: protectedProcedure.query(() => db.getEquityGrants()),
+      listByShareholder: protectedProcedure
+        .input(z.object({ shareholderId: z.number() }))
+        .query(({ input }) => db.getEquityGrantsByShareholder(input.shareholderId)),
+      create: protectedProcedure
+        .input(z.object({
+          shareholderId: z.number(),
+          shareClassId: z.number(),
+          grantType: z.enum(["issued", "option", "rsu", "safe", "convertible_note", "warrant"]),
+          shares: z.string(),
+          pricePerShare: z.string(),
+          vestingStartDate: z.string().optional(),
+          vestingDurationMonths: z.number().optional(),
+          cliffMonths: z.number().optional(),
+          vestingSchedule: z.enum(["immediate", "monthly", "quarterly", "annual"]).optional(),
+          sharesVested: z.string().optional(),
+          exercised: z.string().optional(),
+          status: z.enum(["active", "fully_vested", "exercised", "cancelled", "expired"]).optional(),
+          grantDate: z.string(),
+          expirationDate: z.string().optional(),
+          boardApprovalDate: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(({ input }) => {
+          const data: any = { ...input };
+          if (input.grantDate) data.grantDate = new Date(input.grantDate);
+          if (input.vestingStartDate) data.vestingStartDate = new Date(input.vestingStartDate);
+          if (input.expirationDate) data.expirationDate = new Date(input.expirationDate);
+          if (input.boardApprovalDate) data.boardApprovalDate = new Date(input.boardApprovalDate);
+          return db.createEquityGrant(data);
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          shares: z.string().optional(),
+          pricePerShare: z.string().optional(),
+          sharesVested: z.string().optional(),
+          exercised: z.string().optional(),
+          status: z.enum(["active", "fully_vested", "exercised", "cancelled", "expired"]).optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(({ input: { id, ...data } }) => db.updateEquityGrant(id, data)),
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(({ input }) => db.deleteEquityGrant(input.id)),
+    }),
+
+    // --- Funding Rounds ---
+    rounds: router({
+      list: protectedProcedure.query(() => db.getFundingRounds()),
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          type: z.enum(["pre_seed", "seed", "series_a", "series_b", "series_c", "series_d", "bridge", "secondary", "other"]),
+          status: z.enum(["planned", "open", "closed", "cancelled"]).optional(),
+          preMoneyValuation: z.string().optional(),
+          postMoneyValuation: z.string().optional(),
+          targetRaise: z.string().optional(),
+          amountRaised: z.string().optional(),
+          pricePerShare: z.string().optional(),
+          shareClassId: z.number().optional(),
+          openDate: z.string().optional(),
+          closeDate: z.string().optional(),
+          leadInvestor: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(({ input }) => {
+          const data: any = { ...input };
+          if (input.openDate) data.openDate = new Date(input.openDate);
+          if (input.closeDate) data.closeDate = new Date(input.closeDate);
+          return db.createFundingRound(data);
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          status: z.enum(["planned", "open", "closed", "cancelled"]).optional(),
+          preMoneyValuation: z.string().optional(),
+          postMoneyValuation: z.string().optional(),
+          targetRaise: z.string().optional(),
+          amountRaised: z.string().optional(),
+          pricePerShare: z.string().optional(),
+          leadInvestor: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(({ input: { id, ...data } }) => db.updateFundingRound(id, data)),
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(({ input }) => db.deleteFundingRound(input.id)),
+    }),
+  }),
 });
 
 // Helper function to calculate next generation date for recurring invoices

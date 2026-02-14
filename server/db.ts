@@ -93,7 +93,10 @@ import {
   InsertFirefliesMeeting, InsertFirefliesActionItem, InsertFirefliesContactMapping,
   // Copacker portal
   copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
-  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument
+  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
+  // Shareholder equity
+  shareClasses, shareholders, equityGrants, fundingRounds,
+  InsertShareClass, InsertShareholder, InsertEquityGrant, InsertFundingRound
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8302,4 +8305,141 @@ export async function updateCopackerShippingDocument(id: number, data: Partial<I
   const db = await getDb();
   if (!db) return;
   await db.update(copackerShippingDocuments).set(data).where(eq(copackerShippingDocuments.id, id));
+}
+
+// ============================================
+// SHAREHOLDER EQUITY & CAP TABLE
+// ============================================
+
+// --- Share Classes ---
+
+export async function getShareClasses(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) {
+    return db.select().from(shareClasses).where(eq(shareClasses.companyId, companyId)).orderBy(shareClasses.seniorityOrder);
+  }
+  return db.select().from(shareClasses).orderBy(shareClasses.seniorityOrder);
+}
+
+export async function createShareClass(data: InsertShareClass) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(shareClasses).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateShareClass(id: number, data: Partial<InsertShareClass>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(shareClasses).set(data).where(eq(shareClasses.id, id));
+}
+
+export async function deleteShareClass(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(shareClasses).where(eq(shareClasses.id, id));
+}
+
+// --- Shareholders ---
+
+export async function getShareholders(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) {
+    return db.select().from(shareholders).where(eq(shareholders.companyId, companyId)).orderBy(shareholders.name);
+  }
+  return db.select().from(shareholders).orderBy(shareholders.name);
+}
+
+export async function getShareholderById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(shareholders).where(eq(shareholders.id, id));
+  return result[0] || null;
+}
+
+export async function createShareholder(data: InsertShareholder) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(shareholders).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateShareholder(id: number, data: Partial<InsertShareholder>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(shareholders).set(data).where(eq(shareholders.id, id));
+}
+
+export async function deleteShareholder(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(shareholders).where(eq(shareholders.id, id));
+}
+
+// --- Equity Grants ---
+
+export async function getEquityGrants(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) {
+    return db.select().from(equityGrants).where(eq(equityGrants.companyId, companyId)).orderBy(desc(equityGrants.grantDate));
+  }
+  return db.select().from(equityGrants).orderBy(desc(equityGrants.grantDate));
+}
+
+export async function getEquityGrantsByShareholder(shareholderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(equityGrants).where(eq(equityGrants.shareholderId, shareholderId)).orderBy(desc(equityGrants.grantDate));
+}
+
+export async function createEquityGrant(data: InsertEquityGrant) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(equityGrants).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEquityGrant(id: number, data: Partial<InsertEquityGrant>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(equityGrants).set(data).where(eq(equityGrants.id, id));
+}
+
+export async function deleteEquityGrant(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(equityGrants).where(eq(equityGrants.id, id));
+}
+
+// --- Funding Rounds ---
+
+export async function getFundingRounds(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) {
+    return db.select().from(fundingRounds).where(eq(fundingRounds.companyId, companyId)).orderBy(desc(fundingRounds.createdAt));
+  }
+  return db.select().from(fundingRounds).orderBy(desc(fundingRounds.createdAt));
+}
+
+export async function createFundingRound(data: InsertFundingRound) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(fundingRounds).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateFundingRound(id: number, data: Partial<InsertFundingRound>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(fundingRounds).set(data).where(eq(fundingRounds.id, id));
+}
+
+export async function deleteFundingRound(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(fundingRounds).where(eq(fundingRounds.id, id));
 }

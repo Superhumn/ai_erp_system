@@ -4471,3 +4471,100 @@ export const copackerShippingDocuments = mysqlTable("copacker_shipping_documents
 
 export type CopackerShippingDocument = typeof copackerShippingDocuments.$inferSelect;
 export type InsertCopackerShippingDocument = typeof copackerShippingDocuments.$inferInsert;
+
+// ============================================
+// SHAREHOLDER EQUITY & CAP TABLE
+// ============================================
+
+// Share classes (Common, Preferred A, Preferred B, etc.)
+export const shareClasses = mysqlTable("share_classes", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  type: mysqlEnum("type", ["common", "preferred", "options", "warrants", "safe", "convertible_note"]).notNull(),
+  authorizedShares: decimal("authorizedShares", { precision: 15, scale: 2 }),
+  pricePerShare: decimal("pricePerShare", { precision: 15, scale: 6 }),
+  liquidationPreference: decimal("liquidationPreference", { precision: 5, scale: 2 }),
+  participatingPreferred: boolean("participatingPreferred").default(false),
+  dividendRate: decimal("dividendRate", { precision: 5, scale: 2 }),
+  votingRights: boolean("votingRights").default(true),
+  conversionRatio: decimal("conversionRatio", { precision: 10, scale: 4 }).default("1.0000"),
+  seniorityOrder: int("seniorityOrder").default(0),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ShareClass = typeof shareClasses.$inferSelect;
+export type InsertShareClass = typeof shareClasses.$inferInsert;
+
+// Shareholders (founders, investors, employees, advisors)
+export const shareholders = mysqlTable("shareholders", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  email: varchar("email", { length: 320 }),
+  type: mysqlEnum("type", ["founder", "investor", "employee", "advisor", "board_member", "institution", "other"]).notNull(),
+  organization: varchar("organization", { length: 255 }),
+  title: varchar("title", { length: 255 }),
+  phone: varchar("phone", { length: 32 }),
+  linkedinUrl: varchar("linkedinUrl", { length: 512 }),
+  notes: text("notes"),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Shareholder = typeof shareholders.$inferSelect;
+export type InsertShareholder = typeof shareholders.$inferInsert;
+
+// Equity grants (individual share issuances)
+export const equityGrants = mysqlTable("equity_grants", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  shareholderId: int("shareholderId").notNull(),
+  shareClassId: int("shareClassId").notNull(),
+  grantType: mysqlEnum("grantType", ["issued", "option", "rsu", "safe", "convertible_note", "warrant"]).notNull(),
+  shares: decimal("shares", { precision: 15, scale: 2 }).notNull(),
+  pricePerShare: decimal("pricePerShare", { precision: 15, scale: 6 }).notNull(),
+  vestingStartDate: timestamp("vestingStartDate"),
+  vestingDurationMonths: int("vestingDurationMonths"),
+  cliffMonths: int("cliffMonths"),
+  vestingSchedule: mysqlEnum("vestingSchedule", ["immediate", "monthly", "quarterly", "annual"]).default("monthly"),
+  sharesVested: decimal("sharesVested", { precision: 15, scale: 2 }).default("0"),
+  exercised: decimal("exercised", { precision: 15, scale: 2 }).default("0"),
+  status: mysqlEnum("status", ["active", "fully_vested", "exercised", "cancelled", "expired"]).default("active").notNull(),
+  grantDate: timestamp("grantDate").notNull(),
+  expirationDate: timestamp("expirationDate"),
+  boardApprovalDate: timestamp("boardApprovalDate"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EquityGrant = typeof equityGrants.$inferSelect;
+export type InsertEquityGrant = typeof equityGrants.$inferInsert;
+
+// Funding rounds
+export const fundingRounds = mysqlTable("funding_rounds", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  type: mysqlEnum("type", ["pre_seed", "seed", "series_a", "series_b", "series_c", "series_d", "bridge", "secondary", "other"]).notNull(),
+  status: mysqlEnum("status", ["planned", "open", "closed", "cancelled"]).default("planned").notNull(),
+  preMoneyValuation: decimal("preMoneyValuation", { precision: 15, scale: 2 }),
+  postMoneyValuation: decimal("postMoneyValuation", { precision: 15, scale: 2 }),
+  targetRaise: decimal("targetRaise", { precision: 15, scale: 2 }),
+  amountRaised: decimal("amountRaised", { precision: 15, scale: 2 }).default("0"),
+  pricePerShare: decimal("pricePerShare", { precision: 15, scale: 6 }),
+  shareClassId: int("shareClassId"),
+  openDate: timestamp("openDate"),
+  closeDate: timestamp("closeDate"),
+  leadInvestor: varchar("leadInvestor", { length: 255 }),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FundingRound = typeof fundingRounds.$inferSelect;
+export type InsertFundingRound = typeof fundingRounds.$inferInsert;

@@ -69,6 +69,7 @@ import {
   Heart,
   Mic,
   BookOpen,
+  PieChart,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -100,6 +101,7 @@ const menuGroups = [
       { icon: Heart, label: "Fundraising CRM", path: "/crm" },
       { icon: Users, label: "Investors", path: "/crm/investors" },
       { icon: Target, label: "Campaigns", path: "/crm/campaigns" },
+      { icon: PieChart, label: "Equity", path: "/equity" },
       { icon: DollarSign, label: "Accounts", path: "/finance/accounts" },
       { icon: TrendingUp, label: "Transactions", path: "/finance/transactions" },
     ],
