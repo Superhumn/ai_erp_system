@@ -356,8 +356,8 @@ describe("Webhook Event Processing", () => {
 });
 
 describe("Email Config Validation", () => {
-  it("should pass when all required config is present", () => {
-    const { validateEmailConfig } = require("./_core/env");
+  it("should pass when all required config is present", async () => {
+    const { validateEmailConfig } = await import("./_core/env");
     const result = validateEmailConfig();
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);

@@ -905,6 +905,13 @@ export async function getShipments(filters?: { companyId?: number; status?: stri
   return db.select().from(shipments).orderBy(desc(shipments.createdAt));
 }
 
+export async function getShipmentById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [shipment] = await db.select().from(shipments).where(eq(shipments.id, id));
+  return shipment;
+}
+
 export async function createShipment(data: typeof shipments.$inferInsert) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -3065,6 +3072,12 @@ export async function getPurchaseOrderItems(purchaseOrderId: number) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
+}
+
+export async function updatePurchaseOrderItem(id: number, data: Partial<typeof purchaseOrderItems.$inferInsert>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(purchaseOrderItems).set(data).where(eq(purchaseOrderItems.id, id));
 }
 
 
