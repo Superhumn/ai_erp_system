@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -292,7 +293,11 @@ export default function Products() {
                 {filteredProducts.map((product) => (
                   <TableRow key={product.id}>
                     <TableCell className="font-mono">{product.sku}</TableCell>
-                    <TableCell className="font-medium">{product.name}</TableCell>
+                    <TableCell className="font-medium">
+                      <Link href={`/operations/products/${product.id}`}>
+                        <span className="text-primary hover:underline cursor-pointer">{product.name}</span>
+                      </Link>
+                    </TableCell>
                     <TableCell>{product.category || "-"}</TableCell>
                     <TableCell>
                       <Badge className={typeColors[product.type]}>{product.type}</Badge>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -279,7 +280,11 @@ export default function PurchaseOrders() {
               <TableBody>
                 {filteredPOs.map((po) => (
                   <TableRow key={po.id}>
-                    <TableCell className="font-mono">{po.poNumber}</TableCell>
+                    <TableCell className="font-mono">
+                      <Link href={`/operations/purchase-orders/${po.id}`}>
+                        <span className="text-primary hover:underline cursor-pointer">{po.poNumber}</span>
+                      </Link>
+                    </TableCell>
                     <TableCell className="font-medium">Vendor #{po.vendorId || "-"}</TableCell>
                     <TableCell>
                       {po.orderDate

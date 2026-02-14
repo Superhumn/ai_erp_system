@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -303,7 +304,9 @@ export default function People() {
                 {filteredPeople.map((person) => (
                   <TableRow key={person.id}>
                     <TableCell className="font-medium">
-                      {person.firstName} {person.lastName}
+                      <Link href={`/hr/employees/${person.id}`}>
+                        <span className="text-primary hover:underline cursor-pointer">{person.firstName} {person.lastName}</span>
+                      </Link>
                     </TableCell>
                     <TableCell>{person.email || "-"}</TableCell>
                     <TableCell>

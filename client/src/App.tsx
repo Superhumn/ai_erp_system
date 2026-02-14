@@ -16,12 +16,15 @@ import Notifications from "./pages/Notifications";
 // Finance
 import Accounts from "./pages/finance/Accounts";
 import Invoices from "./pages/finance/Invoices";
+import InvoiceDetail from "./pages/finance/InvoiceDetail";
 import Payments from "./pages/finance/Payments";
 import Transactions from "./pages/finance/Transactions";
 
 // Sales
 import Orders from "./pages/sales/Orders";
+import OrderDetail from "./pages/sales/OrderDetail";
 import Customers from "./pages/sales/Customers";
+import CustomerDetail from "./pages/sales/CustomerDetail";
 import SalesHub from "./pages/sales/SalesHub";
 
 // CRM
@@ -29,10 +32,14 @@ import CRMHub from "./pages/crm/CRMHub";
 
 // Operations
 import Products from "./pages/operations/Products";
+import ProductDetail from "./pages/operations/ProductDetail";
 import Inventory from "./pages/operations/Inventory";
 import Vendors from "./pages/operations/Vendors";
+import VendorDetail from "./pages/operations/VendorDetail";
 import PurchaseOrders from "./pages/operations/PurchaseOrders";
+import PurchaseOrderDetail from "./pages/operations/PurchaseOrderDetail";
 import Shipments from "./pages/operations/Shipments";
+import ShipmentDetail from "./pages/operations/ShipmentDetail";
 import Locations from "./pages/operations/Locations";
 import Transfers from "./pages/operations/Transfers";
 import TransferDetail from "./pages/operations/TransferDetail";
@@ -65,10 +72,12 @@ import CustomsDetail from "./pages/freight/CustomsDetail";
 
 // HR
 import Employees from "./pages/hr/Employees";
+import EmployeeDetail from "./pages/hr/EmployeeDetail";
 import Payroll from "./pages/hr/Payroll";
 
 // Legal
 import Contracts from "./pages/legal/Contracts";
+import ContractDetail from "./pages/legal/ContractDetail";
 import Disputes from "./pages/legal/Disputes";
 import Documents from "./pages/legal/Documents";
 
@@ -113,12 +122,15 @@ function Router() {
 
         {/* Finance */}
         <Route path="/finance/accounts" component={Accounts} />
+        <Route path="/finance/invoices/:id" component={InvoiceDetail} />
         <Route path="/finance/invoices" component={Invoices} />
         <Route path="/finance/payments" component={Payments} />
         <Route path="/finance/transactions" component={Transactions} />
 
         {/* Sales */}
+        <Route path="/sales/orders/:id" component={OrderDetail} />
         <Route path="/sales/orders" component={Orders} />
+        <Route path="/sales/customers/:id" component={CustomerDetail} />
         <Route path="/sales/customers" component={Customers} />
         <Route path="/sales/hub" component={SalesHub} />
 
@@ -128,10 +140,14 @@ function Router() {
 
         {/* Operations */}
         <Route path="/operations" component={OperationsHub} />
+        <Route path="/operations/products/:id" component={ProductDetail} />
         <Route path="/operations/products" component={Products} />
         <Route path="/operations/inventory" component={Inventory} />
+        <Route path="/operations/vendors/:id" component={VendorDetail} />
         <Route path="/operations/vendors" component={Vendors} />
+        <Route path="/operations/purchase-orders/:id" component={PurchaseOrderDetail} />
         <Route path="/operations/purchase-orders" component={PurchaseOrders} />
+        <Route path="/operations/shipments/:id" component={ShipmentDetail} />
         <Route path="/operations/shipments" component={Shipments} />
         <Route path="/operations/locations" component={Locations} />
         <Route path="/operations/transfers" component={Transfers} />
@@ -162,10 +178,12 @@ function Router() {
         <Route path="/freight/customs/:id" component={CustomsDetail} />
 
         {/* HR */}
+        <Route path="/hr/employees/:id" component={EmployeeDetail} />
         <Route path="/hr/employees" component={Employees} />
         <Route path="/hr/payroll" component={Payroll} />
 
         {/* Legal */}
+        <Route path="/legal/contracts/:id" component={ContractDetail} />
         <Route path="/legal/contracts" component={Contracts} />
         <Route path="/legal/disputes" component={Disputes} />
         <Route path="/legal/documents" component={Documents} />

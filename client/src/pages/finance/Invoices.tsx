@@ -45,6 +45,7 @@ import {
 } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { Link } from "wouter";
 
 function formatCurrency(value: string | null | undefined) {
   const num = parseFloat(value || "0");
@@ -896,7 +897,11 @@ export default function Invoices() {
               <TableBody>
                 {filteredInvoices?.map((invoice) => (
                   <TableRow key={invoice.id}>
-                    <TableCell className="font-medium">{invoice.invoiceNumber}</TableCell>
+                    <TableCell className="font-medium">
+                      <Link href={`/finance/invoices/${invoice.id}`}>
+                        <span className="text-primary hover:underline cursor-pointer">{invoice.invoiceNumber}</span>
+                      </Link>
+                    </TableCell>
                     <TableCell>{invoice.customer?.name || "-"}</TableCell>
                     <TableCell>
                       {invoice.issueDate ? format(new Date(invoice.issueDate), "MMM d, yyyy") : "-"}

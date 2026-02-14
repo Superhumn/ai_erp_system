@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -305,7 +306,11 @@ export default function Shipments() {
               <TableBody>
                 {filteredShipments.map((shipment: Shipment) => (
                   <TableRow key={shipment.id}>
-                    <TableCell className="font-mono">{shipment.shipmentNumber}</TableCell>
+                    <TableCell className="font-mono">
+                      <Link href={`/operations/shipments/${shipment.id}`}>
+                        <span className="text-primary hover:underline cursor-pointer">{shipment.shipmentNumber}</span>
+                      </Link>
+                    </TableCell>
                     <TableCell>
                       <Badge className={typeColors[shipment.type]}>{shipment.type}</Badge>
                     </TableCell>

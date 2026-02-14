@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/table";
 import { Users, Plus, Search, Loader2, RefreshCw, ShoppingBag, Database } from "lucide-react";
 import { toast } from "sonner";
+import { Link } from "wouter";
 
 export default function Customers() {
   const [search, setSearch] = useState("");
@@ -506,7 +507,11 @@ export default function Customers() {
               <TableBody>
                 {filteredCustomers?.map((customer) => (
                   <TableRow key={customer.id}>
-                    <TableCell className="font-medium">{customer.name}</TableCell>
+                    <TableCell className="font-medium">
+                      <Link href={`/sales/customers/${customer.id}`}>
+                        <span className="text-primary hover:underline cursor-pointer">{customer.name}</span>
+                      </Link>
+                    </TableCell>
                     <TableCell>{customer.email || "-"}</TableCell>
                     <TableCell>{customer.phone || "-"}</TableCell>
                     <TableCell className="capitalize">{customer.type}</TableCell>

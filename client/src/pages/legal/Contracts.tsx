@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -291,7 +292,11 @@ export default function Contracts() {
                 {filteredContracts.map((contract) => (
                   <TableRow key={contract.id}>
                     <TableCell className="font-mono">{contract.contractNumber}</TableCell>
-                    <TableCell className="font-medium max-w-xs truncate">{contract.title}</TableCell>
+                    <TableCell className="font-medium max-w-xs truncate">
+                      <Link href={`/legal/contracts/${contract.id}`}>
+                        <span className="text-primary hover:underline cursor-pointer">{contract.title}</span>
+                      </Link>
+                    </TableCell>
                     <TableCell>{contract.partyName || "-"}</TableCell>
                     <TableCell>
                       <Badge className={typeColors[contract.type]}>{contract.type}</Badge>

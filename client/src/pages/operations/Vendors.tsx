@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -545,7 +546,11 @@ export default function Vendors() {
                   <TableBody>
                     {filteredVendors.map((vendor) => (
                       <TableRow key={vendor.id}>
-                        <TableCell className="font-medium">{vendor.name}</TableCell>
+                        <TableCell className="font-medium">
+                          <Link href={`/operations/vendors/${vendor.id}`}>
+                            <span className="text-primary hover:underline cursor-pointer">{vendor.name}</span>
+                          </Link>
+                        </TableCell>
                         <TableCell>
                           <div>
                             <p>{vendor.contactName || "-"}</p>
