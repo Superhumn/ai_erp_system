@@ -21,6 +21,7 @@ import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolde
 import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo } from "./_core/quickbooks";
 import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
+import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -13619,6 +13620,45 @@ Ask if they received the original request and if they can provide a quote.`;
           await db.updateEdiShipToLocation(id, data);
           await createAuditLog(ctx.user.id, 'update', 'edi_ship_to_location', id);
           return { success: true };
+        }),
+    }),
+
+    // Transport & Connectivity
+    transport: router({
+      testConnection: opsProcedure
+        .input(z.object({ partnerId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await testConnection(input.partnerId);
+          await createAuditLog(ctx.user.id, 'update', 'edi_trading_partner', input.partnerId, `Connection test: ${result.success ? 'success' : 'failed'}`);
+          return result;
+        }),
+      deliverOutbound: opsProcedure
+        .input(z.object({
+          partnerId: z.number(),
+          transactionSetCode: z.enum(["855", "810", "856"]),
+          sourceData: z.string(),
+          controlNumber: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const sourceData = JSON.parse(input.sourceData);
+          const result = await generateAndDeliver(input.partnerId, input.transactionSetCode, sourceData, input.controlNumber);
+          await createAuditLog(ctx.user.id, 'create', 'edi_transaction', result.transactionId, `Generated & delivered ${input.transactionSetCode}`);
+          return result;
+        }),
+      pollPartner: opsProcedure
+        .input(z.object({ partnerId: z.number(), remoteDir: z.string().optional() }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await pollSftpForInbound(input.partnerId, input.remoteDir);
+          await createAuditLog(ctx.user.id, 'update', 'edi_trading_partner', input.partnerId, `Polled: ${result.filesFound} files found, ${result.filesProcessed} processed`);
+          return result;
+        }),
+      pollAll: adminProcedure
+        .mutation(async ({ ctx }) => {
+          const results = await pollAllPartners();
+          const totalFound = results.reduce((sum, r) => sum + r.filesFound, 0);
+          const totalProcessed = results.reduce((sum, r) => sum + r.filesProcessed, 0);
+          await createAuditLog(ctx.user.id, 'update', 'edi_trading_partner', 0, `Poll all: ${totalFound} files found, ${totalProcessed} processed`);
+          return { partners: results.length, totalFound, totalProcessed, results };
         }),
     }),
 

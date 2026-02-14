@@ -27,6 +27,10 @@ import {
   MapPin,
   Package,
   BarChart3,
+  Plug,
+  RefreshCw,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
@@ -77,6 +81,35 @@ export default function TradingPartners() {
     onSuccess: () => {
       toast.success("Trading partner updated");
       refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const testConnection = trpc.edi.transport.testConnection.useMutation({
+    onSuccess: (result) => {
+      if (result.success) {
+        toast.success(result.message);
+      } else {
+        toast.error(result.message);
+      }
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const pollPartner = trpc.edi.transport.pollPartner.useMutation({
+    onSuccess: (result) => {
+      if (result.filesFound > 0) {
+        toast.success(`Found ${result.filesFound} files, processed ${result.filesProcessed}`);
+      } else {
+        toast.success("No new inbound files found");
+      }
+      if (result.errors.length > 0) {
+        toast.error(`Errors: ${result.errors.join(", ")}`);
+      }
     },
     onError: (error) => {
       toast.error(error.message);
@@ -243,6 +276,76 @@ export default function TradingPartners() {
                     <div className="mt-3">
                       <p className="text-sm text-muted-foreground">Notes:</p>
                       <p className="text-sm">{selectedPartner.notes}</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="md:col-span-2">
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Plug className="h-4 w-4" />
+                    Transport Actions
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex flex-wrap gap-3">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => testConnection.mutate({ partnerId: selectedPartner.id })}
+                      disabled={testConnection.isPending}
+                    >
+                      {testConnection.isPending ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Plug className="h-4 w-4 mr-2" />
+                      )}
+                      Test Connection
+                    </Button>
+                    {(selectedPartner.connectionType === "sftp" || selectedPartner.connectionType === "van") && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => pollPartner.mutate({ partnerId: selectedPartner.id })}
+                        disabled={pollPartner.isPending}
+                      >
+                        {pollPartner.isPending ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-4 w-4 mr-2" />
+                        )}
+                        Poll for Inbound Files
+                      </Button>
+                    )}
+                  </div>
+                  {testConnection.data && (
+                    <div className={`mt-3 p-3 rounded-md text-sm ${testConnection.data.success ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"}`}>
+                      <div className="flex items-center gap-2">
+                        {testConnection.data.success ? (
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                        ) : (
+                          <XCircle className="h-4 w-4 text-red-600" />
+                        )}
+                        <span className={testConnection.data.success ? "text-green-700" : "text-red-700"}>
+                          {testConnection.data.message}
+                        </span>
+                      </div>
+                      {testConnection.data.latencyMs !== undefined && (
+                        <p className="text-xs text-muted-foreground mt-1">Latency: {testConnection.data.latencyMs}ms</p>
+                      )}
+                    </div>
+                  )}
+                  {pollPartner.data && (
+                    <div className="mt-3 p-3 rounded-md text-sm bg-blue-50 border border-blue-200">
+                      <p className="text-blue-700">
+                        Files found: {pollPartner.data.filesFound} | Processed: {pollPartner.data.filesProcessed}
+                      </p>
+                      {pollPartner.data.errors.length > 0 && (
+                        <ul className="text-red-600 text-xs mt-1 list-disc list-inside">
+                          {pollPartner.data.errors.map((err: string, i: number) => <li key={i}>{err}</li>)}
+                        </ul>
+                      )}
                     </div>
                   )}
                 </CardContent>

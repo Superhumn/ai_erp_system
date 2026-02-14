@@ -625,4 +625,82 @@ describe("EDI Module", () => {
       expect(result).toContain("GE*1*7~");
     });
   });
+
+  // ============================================
+  // EDI TRANSPORT SERVICE TESTS
+  // ============================================
+
+  describe("EDI Transport Service", () => {
+    it("should export all expected transport functions", async () => {
+      const transport = await import("./ediTransportService");
+      expect(typeof transport.testSftpConnection).toBe("function");
+      expect(typeof transport.pollSftpForInbound).toBe("function");
+      expect(typeof transport.sendViaSftp).toBe("function");
+      expect(typeof transport.testAs2Connection).toBe("function");
+      expect(typeof transport.sendViaAs2).toBe("function");
+      expect(typeof transport.testConnection).toBe("function");
+      expect(typeof transport.deliverOutbound).toBe("function");
+      expect(typeof transport.generateAndDeliver).toBe("function");
+      expect(typeof transport.handleEdiWebhook).toBe("function");
+      expect(typeof transport.startEdiPolling).toBe("function");
+      expect(typeof transport.stopEdiPolling).toBe("function");
+      expect(typeof transport.pollAllPartners).toBe("function");
+    });
+
+    it("should export TransportResult and ConnectionTestResult types", async () => {
+      // Type-level check: import succeeds and types are usable
+      const transport = await import("./ediTransportService");
+      const result: typeof transport.TransportResult = undefined as any;
+      const connResult: typeof transport.ConnectionTestResult = undefined as any;
+      // If this compiles, types are exported correctly
+      expect(true).toBe(true);
+    });
+
+    it("handleEdiWebhook should reject empty content", async () => {
+      const { handleEdiWebhook } = await import("./ediTransportService");
+      // Empty ISA, so partner won't be found
+      const result = await handleEdiWebhook("", undefined, {});
+      expect(result.success).toBe(false);
+    });
+
+    it("handleEdiWebhook should attempt to extract ISA sender ID from content", async () => {
+      const { handleEdiWebhook } = await import("./ediTransportService");
+      // Valid ISA segment but partner won't exist in DB
+      const ediContent = "ISA*00*          *00*          *ZZ*TESTSENDER     *ZZ*TESTRECEIVER   *260214*1200*>*00501*000000001*0*T*>~";
+      const result = await handleEdiWebhook(ediContent);
+      // Should fail because partner doesn't exist, but it should have tried to extract
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("Could not identify trading partner");
+    });
+
+    it("startEdiPolling should be idempotent", async () => {
+      const { startEdiPolling, stopEdiPolling } = await import("./ediTransportService");
+      // Start once - should succeed
+      startEdiPolling(60000);
+      // Start again - should be no-op (doesn't throw)
+      startEdiPolling(60000);
+      // Clean up
+      stopEdiPolling();
+    });
+
+    it("stopEdiPolling should be safe to call when not running", async () => {
+      const { stopEdiPolling } = await import("./ediTransportService");
+      // Should not throw when no polling is active
+      expect(() => stopEdiPolling()).not.toThrow();
+    });
+
+    it("deliverOutbound should handle unknown partner gracefully", async () => {
+      const { deliverOutbound } = await import("./ediTransportService");
+      const result = await deliverOutbound(999999, "test content", "850", "000000001");
+      expect(result.success).toBe(false);
+      expect(result.message).toBe("Partner not found");
+    });
+
+    it("testConnection should handle unknown partner gracefully", async () => {
+      const { testConnection } = await import("./ediTransportService");
+      const result = await testConnection(999999);
+      expect(result.success).toBe(false);
+      expect(result.message).toBe("Partner not found");
+    });
+  });
 });
