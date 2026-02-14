@@ -167,7 +167,7 @@ export default function FundraisingDashboard() {
     { enabled: !!selectedRoundId }
   );
   const { data: complianceRecords } = trpc.fundraising.compliance.list.useQuery(
-    { fundingRoundId: selectedRoundId || undefined },
+    undefined,
     { enabled: !!selectedRoundId }
   );
   const { data: formDFilings } = trpc.fundraising.formD.list.useQuery(
@@ -228,23 +228,57 @@ export default function FundraisingDashboard() {
     onError: (error) => toast.error(error.message),
   });
 
+  // CRM Sync Summary
+  const { data: crmSyncSummary, refetch: refetchCrmSummary } = trpc.fundraising.crmIntegration.getSyncSummary.useQuery(
+    { fundingRoundId: selectedRoundId || 0 },
+    { enabled: !!selectedRoundId }
+  );
+
+  // Auto-populate recipients from CRM
+  const populateRecipients = trpc.fundraising.updates.populateRecipientsFromCrm.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Added ${data.added} investor recipients from CRM`);
+      refetchUpdates();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   // Mutations
   const createCommitment = trpc.fundraising.commitments.create.useMutation({
-    onSuccess: () => {
-      toast.success("Commitment added");
+    onSuccess: (data: any) => {
+      const syncInfo = data?._sync;
+      if (syncInfo) {
+        toast.success(
+          `Commitment added — auto-created CRM contact, deal, and ${syncInfo.checklistItemsCreated} checklist items`
+        );
+      } else {
+        toast.success("Commitment added");
+      }
       setCommitmentDialogOpen(false);
       resetCommitmentForm();
       refetchCommitments();
       refetchStats();
+      refetchChecklist();
+      refetchCrmSummary();
+      refetchContacts();
     },
     onError: (error) => toast.error(error.message),
   });
 
   const updateCommitment = trpc.fundraising.commitments.update.useMutation({
-    onSuccess: () => {
-      toast.success("Commitment updated");
+    onSuccess: (data: any) => {
+      const syncInfo = data?._sync;
+      if (syncInfo?.equityCreated) {
+        toast.success("Commitment updated — equity holdings and cap table auto-updated");
+      } else if (syncInfo?.crmSynced) {
+        toast.success("Commitment updated — CRM deal auto-synced");
+      } else {
+        toast.success("Commitment updated");
+      }
       refetchCommitments();
       refetchStats();
+      refetchChecklist();
+      refetchCrmSummary();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -766,6 +800,59 @@ export default function FundraisingDashboard() {
                     </div>
                   </CardContent>
                 </Card>
+
+                {/* CRM Integration Status */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <LinkIcon className="h-5 w-5" />
+                      System Integration Status
+                    </CardTitle>
+                    <CardDescription>
+                      Auto-sync connections between Fundraising, CRM, and Cap Table
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between p-3 border rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                          <span className="text-sm">CRM Contacts Linked</span>
+                        </div>
+                        <Badge variant="outline">{crmSyncSummary?.totalContacts || 0} contacts</Badge>
+                      </div>
+                      <div className="flex items-center justify-between p-3 border rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                          <span className="text-sm">CRM Deals Created</span>
+                        </div>
+                        <Badge variant="outline">{crmSyncSummary?.totalDeals || 0} deals</Badge>
+                      </div>
+                      <div className="flex items-center justify-between p-3 border rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                          <span className="text-sm">Auto-Generated Checklist</span>
+                        </div>
+                        <Badge variant="outline">{checklist?.length || 0} items</Badge>
+                      </div>
+                      <div className="flex items-center justify-between p-3 border rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                          <span className="text-sm">Compliance Records</span>
+                        </div>
+                        <Badge variant="outline">{complianceRecords?.length || 0} records</Badge>
+                      </div>
+                      <div className="mt-3 p-3 bg-muted/50 rounded-lg">
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          All systems auto-sync: Adding a commitment creates a CRM contact, deal, checklist items,
+                          and compliance record. Updating commitment status syncs to CRM deals. Wired funds
+                          auto-create equity holdings and update the cap table. Investor updates auto-populate
+                          recipients from CRM contacts.
+                        </p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
             </TabsContent>
 
@@ -988,10 +1075,15 @@ export default function FundraisingDashboard() {
                       return (
                         <TableRow key={commitment.id}>
                           <TableCell>
-                            <div className="font-medium">
+                            <div className="font-medium flex items-center gap-1">
                               {commitment.investorName}
                               {commitment.isLeadInvestor && (
-                                <Badge className="ml-2 bg-amber-500/10 text-amber-600" variant="outline">Lead</Badge>
+                                <Badge className="ml-1 bg-amber-500/10 text-amber-600" variant="outline">Lead</Badge>
+                              )}
+                              {commitment.crmContactId && (
+                                <Badge className="ml-1 bg-blue-500/10 text-blue-600" variant="outline">
+                                  <LinkIcon className="h-3 w-3 mr-0.5" />CRM
+                                </Badge>
                               )}
                             </div>
                             <div className="text-sm text-muted-foreground">{commitment.investorEmail}</div>
@@ -1569,6 +1661,21 @@ export default function FundraisingDashboard() {
                           }>
                             {update.status}
                           </Badge>
+                          {update.status !== "sent" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => populateRecipients.mutate({ id: update.id })}
+                              disabled={populateRecipients.isPending}
+                            >
+                              {populateRecipients.isPending ? (
+                                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                              ) : (
+                                <UserPlus className="h-3 w-3 mr-1" />
+                              )}
+                              Add CRM Recipients
+                            </Button>
+                          )}
                           {update.status === "draft" && (
                             <Button
                               size="sm"

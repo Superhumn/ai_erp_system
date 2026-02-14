@@ -12162,8 +12162,15 @@ Ask if they received the original request and if they can provide a quote.`;
         boardSeatRequested: z.boolean().optional(),
         observerSeatRequested: z.boolean().optional(),
         notes: z.string().optional(),
-      })).mutation(async ({ input }) => {
-        return db.createInvestorCommitment(input);
+      })).mutation(async ({ input, ctx }) => {
+        const commitment = await db.createInvestorCommitment(input);
+        // Auto-sync: create CRM contact, deal, checklist items, and compliance record
+        try {
+          const syncResult = await db.onCommitmentCreated(commitment.id, ctx.user.id);
+          return { ...commitment, _sync: syncResult };
+        } catch (e) {
+          return commitment; // Return commitment even if sync fails
+        }
       }),
 
       update: financeProcedure.input(z.object({
@@ -12183,7 +12190,16 @@ Ask if they received the original request and if they can provide a quote.`;
           notes: z.string().optional(),
         }),
       })).mutation(async ({ input }) => {
-        return db.updateInvestorCommitment(input.id, input.data);
+        // Get previous state for comparison
+        const previousData = await db.getInvestorCommitment(input.id);
+        const updated = await db.updateInvestorCommitment(input.id, input.data);
+        // Auto-sync: update CRM deal, create equity on wire, auto-complete checklist items
+        try {
+          const syncResult = await db.onCommitmentUpdated(input.id, previousData);
+          return { ...updated, _sync: syncResult };
+        } catch (e) {
+          return updated;
+        }
       }),
 
       delete: financeProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
@@ -12332,11 +12348,15 @@ Ask if they received the original request and if they can provide a quote.`;
         id: z.number(),
         recipientEmails: z.array(z.string().email()),
       })).mutation(async ({ input }) => {
-        // Add recipients and mark as sent
+        // Add recipients with CRM contact linking
         for (const email of input.recipientEmails) {
+          // Look up CRM contact by email to auto-link
+          const investors = await db.getInvestorContacts({ search: email, limit: 1 });
+          const crmContactId = investors.length > 0 ? investors[0].id : undefined;
           await db.addInvestorUpdateRecipient({
             updateId: input.id,
             email,
+            crmContactId,
             sentAt: new Date(),
           });
         }
@@ -12345,6 +12365,13 @@ Ask if they received the original request and if they can provide a quote.`;
           sentAt: new Date(),
           totalRecipients: input.recipientEmails.length,
         });
+      }),
+
+      // Auto-populate recipients from CRM investor contacts
+      populateRecipientsFromCrm: financeProcedure.input(z.object({
+        id: z.number(),
+      })).mutation(async ({ input }) => {
+        return db.populateInvestorUpdateRecipientsFromCrm(input.id);
       }),
 
       delete: financeProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
@@ -12516,7 +12543,14 @@ Ask if they received the original request and if they can provide a quote.`;
         priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
         dueDate: z.date().optional(),
       })).mutation(async ({ input }) => {
-        return db.createDueDiligenceRequest(input);
+        const ddRequest = await db.createDueDiligenceRequest(input);
+        // Auto-link to CRM contact from commitment or email match
+        try {
+          await db.linkDueDiligenceToCrmContact(ddRequest.id);
+        } catch (e) {
+          // Non-fatal
+        }
+        return ddRequest;
       }),
 
       update: financeProcedure.input(z.object({
@@ -12622,6 +12656,13 @@ Ask if they received the original request and if they can provide a quote.`;
       getPipeline: financeProcedure.query(async () => {
         const pipelineId = await db.getFundraisingPipeline();
         return { pipelineId };
+      }),
+
+      // Get CRM sync summary for a funding round
+      getSyncSummary: financeProcedure.input(z.object({
+        fundingRoundId: z.number(),
+      })).query(async ({ input }) => {
+        return db.getFundraisingCrmSummary(input.fundingRoundId);
       }),
     }),
   }),

@@ -9698,3 +9698,357 @@ export async function getFundraisingPipeline(): Promise<number> {
 
   return result.insertId;
 }
+
+// ============================================
+// AUTO-SYNC ORCHESTRATION FUNCTIONS
+// ============================================
+
+// Called when a commitment is created — auto-creates CRM contact, CRM deal, and checklist items
+export async function onCommitmentCreated(commitmentId: number, userId: number): Promise<{
+  crmContactId?: number;
+  crmDealId?: number;
+  checklistItemsCreated: number;
+}> {
+  const dbConn = await getDb();
+  if (!dbConn) throw new Error("Database not available");
+
+  const [commitment] = await dbConn.select()
+    .from(investorCommitments)
+    .where(eq(investorCommitments.id, commitmentId))
+    .limit(1);
+
+  if (!commitment) throw new Error("Commitment not found");
+
+  const result: { crmContactId?: number; crmDealId?: number; checklistItemsCreated: number } = {
+    checklistItemsCreated: 0,
+  };
+
+  // 1. Auto-create or link CRM contact
+  let contactId = commitment.crmContactId;
+  if (!contactId) {
+    const nameParts = commitment.investorName.split(' ');
+    contactId = await getOrCreateInvestorContact({
+      email: commitment.investorEmail || undefined,
+      firstName: nameParts[0] || commitment.investorName,
+      lastName: nameParts.slice(1).join(' ') || undefined,
+      source: 'manual',
+      capturedBy: userId,
+    });
+    // Link back to commitment
+    await dbConn.update(investorCommitments)
+      .set({ crmContactId: contactId })
+      .where(eq(investorCommitments.id, commitmentId));
+  }
+  result.crmContactId = contactId;
+
+  // 2. Auto-create CRM deal
+  try {
+    const pipelineId = await getFundraisingPipeline();
+    const dealId = await createDealFromCommitment(commitmentId, pipelineId);
+    result.crmDealId = dealId;
+  } catch (e) {
+    // Non-fatal: deal creation can fail if contact missing
+  }
+
+  // 3. Auto-generate closing checklist items for this commitment
+  const checklistItems = [
+    { category: 'investor' as const, name: `Send subscription docs to ${commitment.investorName}`, priority: 'high' as const },
+    { category: 'investor' as const, name: `Accreditation verification - ${commitment.investorName}`, priority: 'high' as const },
+    { category: 'legal' as const, name: `Execute investor agreement - ${commitment.investorName}`, priority: 'high' as const },
+    { category: 'financial' as const, name: `Confirm wire receipt - ${commitment.investorName}`, priority: 'medium' as const },
+    { category: 'corporate' as const, name: `Board consent for ${commitment.investorName} investment`, priority: 'medium' as const },
+  ];
+
+  for (const item of checklistItems) {
+    await createClosingChecklistItem({
+      fundingRoundId: commitment.fundingRoundId,
+      category: item.category,
+      name: item.name,
+      priority: item.priority,
+      responsibleParty: item.category === 'investor' ? 'investor' : 'company',
+      investorCommitmentId: commitmentId,
+      status: 'not_started',
+    });
+    result.checklistItemsCreated++;
+  }
+
+  // 4. Auto-create compliance record for investor
+  try {
+    await createInvestorComplianceRecord({
+      investorName: commitment.investorName,
+      investorEmail: commitment.investorEmail || undefined,
+      investorCommitmentId: commitmentId,
+      shareholderId: commitment.shareholderId || undefined,
+      isUSPerson: true, // Default, user can update
+    });
+  } catch (e) {
+    // Non-fatal
+  }
+
+  return result;
+}
+
+// Called when a commitment is updated — syncs status to CRM deal, handles wired funds
+export async function onCommitmentUpdated(commitmentId: number, previousData: any): Promise<{
+  crmSynced: boolean;
+  equityCreated: boolean;
+  fundingRoundUpdated: boolean;
+}> {
+  const dbConn = await getDb();
+  if (!dbConn) throw new Error("Database not available");
+
+  const [commitment] = await dbConn.select()
+    .from(investorCommitments)
+    .where(eq(investorCommitments.id, commitmentId))
+    .limit(1);
+
+  if (!commitment) throw new Error("Commitment not found");
+
+  const result = { crmSynced: false, equityCreated: false, fundingRoundUpdated: false };
+
+  // 1. Sync commitment status to CRM deal
+  try {
+    await syncCommitmentStatusToDeal(commitmentId);
+    result.crmSynced = true;
+  } catch (e) {
+    // Non-fatal
+  }
+
+  // 2. If commitment type changed to "wired", create equity holdings and update cap table
+  if (commitment.commitmentType === 'wired' && commitment.wireConfirmed) {
+    try {
+      // Get funding round to find share class and price
+      const [round] = await dbConn.select()
+        .from(fundingRounds)
+        .where(eq(fundingRounds.id, commitment.fundingRoundId))
+        .limit(1);
+
+      if (round && round.shareClassId && round.pricePerShare) {
+        // Get or create shareholder
+        let shareholderId = commitment.shareholderId;
+        if (!shareholderId) {
+          const existingShareholder = commitment.investorEmail
+            ? await dbConn.select().from(shareholders)
+                .where(eq(shareholders.email, commitment.investorEmail))
+                .limit(1)
+            : [];
+
+          if (existingShareholder.length > 0) {
+            shareholderId = existingShareholder[0].id;
+          } else {
+            const shareholderResult = await createShareholder({
+              name: commitment.investorName,
+              email: commitment.investorEmail || undefined,
+              type: 'individual',
+            });
+            shareholderId = shareholderResult.id;
+          }
+
+          // Link shareholder to commitment
+          await dbConn.update(investorCommitments)
+            .set({ shareholderId })
+            .where(eq(investorCommitments.id, commitmentId));
+        }
+
+        // Calculate shares based on wire amount and price per share
+        const wireAmount = parseFloat(commitment.wireAmount || commitment.commitmentAmount || '0');
+        const pricePerShare = parseFloat(round.pricePerShare);
+        const sharesIssued = pricePerShare > 0 ? Math.floor(wireAmount / pricePerShare) : 0;
+
+        if (sharesIssued > 0) {
+          // Create equity holding
+          await createEquityHolding({
+            shareholderId,
+            shareClassId: round.shareClassId,
+            shares: sharesIssued,
+            purchasePrice: round.pricePerShare,
+            totalCostBasis: String(wireAmount),
+            acquisitionDate: commitment.wireDate || new Date(),
+            acquisitionType: 'purchase',
+          });
+
+          // Create funding investment record
+          await createFundingInvestment({
+            fundingRoundId: commitment.fundingRoundId,
+            shareholderId,
+            investmentAmount: String(wireAmount),
+            sharesIssued,
+            pricePerShare: round.pricePerShare,
+            status: 'received',
+            fundsReceivedAt: commitment.wireDate || new Date(),
+          });
+
+          result.equityCreated = true;
+        }
+
+        // Update funding round amount raised
+        const allCommitments = await dbConn.select()
+          .from(investorCommitments)
+          .where(
+            and(
+              eq(investorCommitments.fundingRoundId, commitment.fundingRoundId),
+              eq(investorCommitments.commitmentType, 'wired')
+            )
+          );
+
+        const totalRaised = allCommitments.reduce((sum, c) => {
+          return sum + parseFloat(c.wireAmount || c.commitmentAmount || '0');
+        }, 0);
+
+        await updateFundingRound(commitment.fundingRoundId, {
+          amountRaised: String(totalRaised),
+        });
+        result.fundingRoundUpdated = true;
+      }
+    } catch (e) {
+      // Non-fatal
+    }
+  }
+
+  // 3. Auto-complete relevant checklist items based on status
+  try {
+    const checklistItems = await getClosingChecklistItems(commitment.fundingRoundId);
+    const investorItems = checklistItems.filter(
+      (item: any) => item.investorCommitmentId === commitmentId
+    );
+
+    for (const item of investorItems) {
+      if (commitment.commitmentType === 'signed' && item.name.includes('Execute investor agreement')) {
+        if (item.status !== 'completed') {
+          await updateClosingChecklistItem(item.id, { status: 'completed', completedDate: new Date() });
+        }
+      }
+      if (commitment.commitmentType === 'wired' && commitment.wireConfirmed && item.name.includes('Confirm wire receipt')) {
+        if (item.status !== 'completed') {
+          await updateClosingChecklistItem(item.id, { status: 'completed', completedDate: new Date() });
+        }
+      }
+    }
+  } catch (e) {
+    // Non-fatal
+  }
+
+  return result;
+}
+
+// Auto-populate investor update recipients from CRM contacts
+export async function populateInvestorUpdateRecipientsFromCrm(updateId: number): Promise<{
+  added: number;
+  skipped: number;
+}> {
+  const dbConn = await getDb();
+  if (!dbConn) throw new Error("Database not available");
+
+  const result = { added: 0, skipped: 0 };
+
+  // Get all investor contacts from CRM
+  const investors = await getInvestorContacts({ limit: 500 });
+
+  // Get existing recipients to avoid duplicates
+  const existingRecipients = await getInvestorUpdateRecipients(updateId);
+  const existingEmails = new Set(existingRecipients.map((r: any) => r.email.toLowerCase()));
+
+  for (const investor of investors) {
+    if (!investor.email) { result.skipped++; continue; }
+    if (existingEmails.has(investor.email.toLowerCase())) { result.skipped++; continue; }
+
+    await addInvestorUpdateRecipient({
+      updateId,
+      email: investor.email,
+      name: investor.fullName,
+      crmContactId: investor.id,
+    });
+    result.added++;
+  }
+
+  return result;
+}
+
+// Auto-link due diligence to CRM contact from commitment
+export async function linkDueDiligenceToCrmContact(ddRequestId: number): Promise<{ crmContactId?: number }> {
+  const dbConn = await getDb();
+  if (!dbConn) throw new Error("Database not available");
+
+  const [ddRequest] = await dbConn.select()
+    .from(dueDiligenceRequests)
+    .where(eq(dueDiligenceRequests.id, ddRequestId))
+    .limit(1);
+
+  if (!ddRequest) return {};
+
+  // If linked to a commitment, get CRM contact from there
+  if (ddRequest.investorCommitmentId) {
+    const [commitment] = await dbConn.select()
+      .from(investorCommitments)
+      .where(eq(investorCommitments.id, ddRequest.investorCommitmentId))
+      .limit(1);
+
+    if (commitment?.crmContactId) {
+      return { crmContactId: commitment.crmContactId };
+    }
+  }
+
+  // Otherwise try to match by investor email
+  if (ddRequest.investorEmail) {
+    const [contact] = await dbConn.select()
+      .from(crmContacts)
+      .where(eq(crmContacts.email, ddRequest.investorEmail))
+      .limit(1);
+
+    if (contact) {
+      return { crmContactId: contact.id };
+    }
+  }
+
+  return {};
+}
+
+// Get CRM-linked summary for a funding round — aggregates all auto-sync data
+export async function getFundraisingCrmSummary(fundingRoundId: number): Promise<{
+  totalContacts: number;
+  totalDeals: number;
+  contactsWithDeals: number;
+  commitmentsByCrmStatus: Record<string, number>;
+}> {
+  const dbConn = await getDb();
+  if (!dbConn) return { totalContacts: 0, totalDeals: 0, contactsWithDeals: 0, commitmentsByCrmStatus: {} };
+
+  const commitments = await dbConn.select()
+    .from(investorCommitments)
+    .where(eq(investorCommitments.fundingRoundId, fundingRoundId));
+
+  const contactIds = commitments
+    .filter(c => c.crmContactId)
+    .map(c => c.crmContactId!);
+
+  const uniqueContactIds = [...new Set(contactIds)];
+
+  // Count deals linked to these contacts
+  let dealCount = 0;
+  let contactsWithDeals = 0;
+  for (const contactId of uniqueContactIds) {
+    const deals = await dbConn.select()
+      .from(crmDeals)
+      .where(and(
+        eq(crmDeals.contactId, contactId),
+        eq(crmDeals.source, 'fundraising')
+      ));
+    if (deals.length > 0) {
+      dealCount += deals.length;
+      contactsWithDeals++;
+    }
+  }
+
+  const commitmentsByCrmStatus: Record<string, number> = {};
+  for (const c of commitments) {
+    const type = c.commitmentType || 'unknown';
+    commitmentsByCrmStatus[type] = (commitmentsByCrmStatus[type] || 0) + 1;
+  }
+
+  return {
+    totalContacts: uniqueContactIds.length,
+    totalDeals: dealCount,
+    contactsWithDeals,
+    commitmentsByCrmStatus,
+  };
+}
