@@ -31,8 +31,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SelectWithCreate } from "@/components/ui/select-with-create";
-import { ClipboardList, Plus, Search, Loader2 } from "lucide-react";
+import { ClipboardList, Plus, Search, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { format } from "date-fns";
 
 function formatCurrency(value: string | null | undefined) {
@@ -47,6 +48,7 @@ export default function PurchaseOrders() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [formData, setFormData] = useState({
     vendorId: 0,
     subtotal: "",
@@ -112,6 +114,11 @@ export default function PurchaseOrders() {
             Manage vendor orders and track deliveries.
           </p>
         </div>
+        <div className="flex gap-2">
+        <Button variant="outline" onClick={() => setIsImportOpen(true)}>
+          <Upload className="h-4 w-4 mr-2" />
+          Bulk Import
+        </Button>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button>
@@ -225,6 +232,7 @@ export default function PurchaseOrders() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <Card>
@@ -306,6 +314,13 @@ export default function PurchaseOrders() {
           )}
         </CardContent>
       </Card>
+
+      <BulkImportDialog
+        open={isImportOpen}
+        onOpenChange={setIsImportOpen}
+        module="purchaseOrders"
+        onImportComplete={() => refetch()}
+      />
     </div>
   );
 }

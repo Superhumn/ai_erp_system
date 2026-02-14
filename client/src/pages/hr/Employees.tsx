@@ -30,14 +30,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { UserCircle, Plus, Search, Loader2 } from "lucide-react";
+import { UserCircle, Plus, Search, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { format } from "date-fns";
 
 export default function People() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [formData, setFormData] = useState({
     firstName: "",
     lastName: "",
@@ -116,6 +118,11 @@ export default function People() {
             Manage employees, contractors, and consultants.
           </p>
         </div>
+        <div className="flex gap-2">
+        <Button variant="outline" onClick={() => setIsImportOpen(true)}>
+          <Upload className="h-4 w-4 mr-2" />
+          Bulk Import
+        </Button>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button>
@@ -247,6 +254,7 @@ export default function People() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <Card>
@@ -326,6 +334,13 @@ export default function People() {
           )}
         </CardContent>
       </Card>
+
+      <BulkImportDialog
+        open={isImportOpen}
+        onOpenChange={setIsImportOpen}
+        module="employees"
+        onImportComplete={() => refetch()}
+      />
     </div>
   );
 }

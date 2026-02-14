@@ -32,8 +32,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Building2, Plus, Search, Loader2, Ship, Star, Truck } from "lucide-react";
+import { Building2, Plus, Search, Loader2, Ship, Star, Truck, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
 
 export default function Vendors() {
   const [activeTab, setActiveTab] = useState("suppliers");
@@ -41,6 +42,7 @@ export default function Vendors() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
   const [carrierDialogOpen, setCarrierDialogOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   
   // Vendor form
   const [formData, setFormData] = useState({
@@ -213,6 +215,10 @@ export default function Vendors() {
             </TabsTrigger>
           </TabsList>
           
+          <Button variant="outline" onClick={() => setIsImportOpen(true)}>
+            <Upload className="h-4 w-4 mr-2" />
+            Bulk Import
+          </Button>
           {activeTab === "suppliers" ? (
             <Dialog open={isOpen} onOpenChange={setIsOpen}>
               <DialogTrigger asChild>
@@ -665,6 +671,16 @@ export default function Vendors() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <BulkImportDialog
+        open={isImportOpen}
+        onOpenChange={setIsImportOpen}
+        module="vendors"
+        onImportComplete={() => {
+          utils.vendors.list.invalidate();
+          utils.freight.carriers.list.invalidate();
+        }}
+      />
     </div>
   );
 }

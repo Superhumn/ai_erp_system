@@ -30,8 +30,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Truck, Plus, Search, Loader2, Package } from "lucide-react";
+import { Truck, Plus, Search, Loader2, Package, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { format } from "date-fns";
 
 type Shipment = {
@@ -51,6 +52,7 @@ export default function Shipments() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [formData, setFormData] = useState({
     type: "outbound" as "inbound" | "outbound",
     carrier: "",
@@ -126,6 +128,11 @@ export default function Shipments() {
             Track shipments and logistics.
           </p>
         </div>
+        <div className="flex gap-2">
+        <Button variant="outline" onClick={() => setIsImportOpen(true)}>
+          <Upload className="h-4 w-4 mr-2" />
+          Bulk Import
+        </Button>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button>
@@ -221,6 +228,7 @@ export default function Shipments() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -331,6 +339,13 @@ export default function Shipments() {
           )}
         </CardContent>
       </Card>
+
+      <BulkImportDialog
+        open={isImportOpen}
+        onOpenChange={setIsImportOpen}
+        module="shipments"
+        onImportComplete={() => refetch()}
+      />
     </div>
   );
 }

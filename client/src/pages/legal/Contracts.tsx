@@ -30,8 +30,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { FileText, Plus, Search, Loader2, Calendar } from "lucide-react";
+import { FileText, Plus, Search, Loader2, Calendar, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { format } from "date-fns";
 
 function formatCurrency(value: string | null | undefined) {
@@ -46,6 +47,7 @@ export default function Contracts() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [formData, setFormData] = useState({
     title: "",
     type: "customer" as "customer" | "vendor" | "employment" | "nda" | "partnership" | "other",
@@ -124,6 +126,11 @@ export default function Contracts() {
             Manage contract lifecycle and key dates.
           </p>
         </div>
+        <div className="flex gap-2">
+        <Button variant="outline" onClick={() => setIsImportOpen(true)}>
+          <Upload className="h-4 w-4 mr-2" />
+          Bulk Import
+        </Button>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button>
@@ -234,6 +241,7 @@ export default function Contracts() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <Card>
@@ -323,6 +331,13 @@ export default function Contracts() {
           )}
         </CardContent>
       </Card>
+
+      <BulkImportDialog
+        open={isImportOpen}
+        onOpenChange={setIsImportOpen}
+        module="contracts"
+        onImportComplete={() => refetch()}
+      />
     </div>
   );
 }

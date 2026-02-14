@@ -29,8 +29,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ShoppingCart, Plus, Search, Loader2 } from "lucide-react";
+import { ShoppingCart, Plus, Search, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { format } from "date-fns";
 import { Link } from "wouter";
 
@@ -46,6 +47,7 @@ export default function Orders() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [formData, setFormData] = useState({
     customerId: 0,
     subtotal: "",
@@ -106,6 +108,11 @@ export default function Orders() {
             Manage customer orders and track fulfillment.
           </p>
         </div>
+        <div className="flex gap-2">
+        <Button variant="outline" onClick={() => setIsImportOpen(true)}>
+          <Upload className="h-4 w-4 mr-2" />
+          Bulk Import
+        </Button>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button>
@@ -200,6 +207,7 @@ export default function Orders() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <Card>
@@ -280,6 +288,13 @@ export default function Orders() {
           )}
         </CardContent>
       </Card>
+
+      <BulkImportDialog
+        open={isImportOpen}
+        onOpenChange={setIsImportOpen}
+        module="salesOrders"
+        onImportComplete={() => refetch()}
+      />
     </div>
   );
 }

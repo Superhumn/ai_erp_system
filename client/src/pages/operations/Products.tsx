@@ -30,9 +30,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Package, Plus, Search, Loader2 } from "lucide-react";
+import { Package, Plus, Search, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "wouter";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
 
 function formatCurrency(value: string | null | undefined) {
   const num = parseFloat(value || "0");
@@ -46,6 +47,7 @@ export default function Products() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [formData, setFormData] = useState({
     sku: "",
     name: "",
@@ -119,13 +121,18 @@ export default function Products() {
             Manage your product catalog.
           </p>
         </div>
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Product
-            </Button>
-          </DialogTrigger>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setIsImportOpen(true)}>
+            <Upload className="h-4 w-4 mr-2" />
+            Bulk Import
+          </Button>
+          <Dialog open={isOpen} onOpenChange={setIsOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="h-4 w-4 mr-2" />
+                Add Product
+              </Button>
+            </DialogTrigger>
           <DialogContent className="max-w-lg">
             <form onSubmit={handleSubmit}>
               <DialogHeader>
@@ -239,6 +246,7 @@ export default function Products() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <Card>
@@ -315,6 +323,13 @@ export default function Products() {
           )}
         </CardContent>
       </Card>
+
+      <BulkImportDialog
+        open={isImportOpen}
+        onOpenChange={setIsImportOpen}
+        module="products"
+        onImportComplete={() => refetch()}
+      />
     </div>
   );
 }

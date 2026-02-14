@@ -29,8 +29,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { DollarSign, Plus, Search, Loader2 } from "lucide-react";
+import { DollarSign, Plus, Search, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
 
 function formatCurrency(value: string | null | undefined) {
   const num = parseFloat(value || "0");
@@ -43,6 +44,7 @@ function formatCurrency(value: string | null | undefined) {
 export default function Accounts() {
   const [search, setSearch] = useState("");
   const [isOpen, setIsOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [formData, setFormData] = useState({
     code: "",
     name: "",
@@ -95,6 +97,11 @@ export default function Accounts() {
             Manage your general ledger accounts.
           </p>
         </div>
+        <div className="flex gap-2">
+        <Button variant="outline" onClick={() => setIsImportOpen(true)}>
+          <Upload className="h-4 w-4 mr-2" />
+          Bulk Import
+        </Button>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button>
@@ -182,6 +189,7 @@ export default function Accounts() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <Card>
@@ -245,6 +253,13 @@ export default function Accounts() {
           )}
         </CardContent>
       </Card>
+
+      <BulkImportDialog
+        open={isImportOpen}
+        onOpenChange={setIsImportOpen}
+        module="accounts"
+        onImportComplete={() => refetch()}
+      />
     </div>
   );
 }

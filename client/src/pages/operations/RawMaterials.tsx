@@ -9,13 +9,15 @@ import { SelectWithCreate } from "@/components/ui/select-with-create";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
 
 export default function RawMaterials() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState<any>(null);
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [isImportOpen, setIsImportOpen] = useState(false);
   
   const { data: materials, isLoading, refetch } = trpc.rawMaterials.list.useQuery(
     categoryFilter !== "all" ? { category: categoryFilter } : undefined
@@ -88,6 +90,11 @@ export default function RawMaterials() {
             <h1 className="text-2xl font-bold">Raw Materials</h1>
             <p className="text-muted-foreground">Manage ingredients and packaging materials for BOMs</p>
           </div>
+          <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setIsImportOpen(true)}>
+            <Upload className="h-4 w-4 mr-2" />
+            Bulk Import
+          </Button>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
               <Button>
@@ -224,8 +231,9 @@ export default function RawMaterials() {
               </div>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
-        
+
         {/* Filters */}
         <div className="flex gap-4">
           <Select value={categoryFilter} onValueChange={setCategoryFilter}>
@@ -387,6 +395,13 @@ export default function RawMaterials() {
             )}
           </DialogContent>
         </Dialog>
+
+        <BulkImportDialog
+          open={isImportOpen}
+          onOpenChange={setIsImportOpen}
+          module="rawMaterials"
+          onImportComplete={() => refetch()}
+        />
       </div>
   );
 }

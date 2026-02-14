@@ -3003,7 +3003,7 @@ export const appRouter = router({
     // Import data into a specific module
     importData: adminProcedure
       .input(z.object({
-        targetModule: z.enum(['customers', 'vendors', 'products', 'invoices', 'employees', 'contracts', 'projects']),
+        targetModule: z.enum(['customers', 'vendors', 'products', 'invoices', 'employees', 'contracts', 'projects', 'rawMaterials', 'purchaseOrders', 'salesOrders', 'accounts', 'payments', 'shipments', 'carriers', 'workOrders']),
         data: z.array(z.record(z.string(), z.string())),
         columnMapping: z.record(z.string(), z.string()), // Maps sheet column to ERP field
       }))
@@ -3135,11 +3135,146 @@ export const appRouter = router({
                   continue;
                 }
                 const projectNumber = generateNumber('PROJ');
-                await db.createProject({ 
-                  ...mappedData, 
+                await db.createProject({
+                  ...mappedData,
                   projectNumber,
                   name: mappedData.name,
                 });
+                break;
+
+              case 'rawMaterials':
+                if (!mappedData.name) {
+                  results.errors.push(`Row missing required field: name`);
+                  results.failed++;
+                  continue;
+                }
+                const rmSku = mappedData.sku || generateNumber('RM');
+                await db.createRawMaterial({
+                  name: mappedData.name,
+                  sku: rmSku,
+                  description: mappedData.description || null,
+                  category: mappedData.category || null,
+                  unit: (mappedData.unit as any) || 'EA',
+                  unitCost: mappedData.unitCost || '0',
+                  currency: mappedData.currency || 'USD',
+                  minOrderQty: mappedData.minOrderQty ? parseInt(mappedData.minOrderQty) : null,
+                  leadTimeDays: mappedData.leadTimeDays ? parseInt(mappedData.leadTimeDays) : null,
+                });
+                break;
+
+              case 'purchaseOrders':
+                if (!mappedData.vendorId) {
+                  results.errors.push(`Row missing required field: vendorId`);
+                  results.failed++;
+                  continue;
+                }
+                await db.createPurchaseOrder({
+                  poNumber: generateNumber('PO'),
+                  vendorId: parseInt(mappedData.vendorId),
+                  orderDate: mappedData.orderDate ? new Date(mappedData.orderDate) : new Date(),
+                  expectedDate: mappedData.expectedDate ? new Date(mappedData.expectedDate) : null,
+                  subtotal: mappedData.subtotal || '0',
+                  taxAmount: mappedData.taxAmount || '0',
+                  totalAmount: mappedData.totalAmount || mappedData.subtotal || '0',
+                  notes: mappedData.notes || null,
+                } as any);
+                break;
+
+              case 'salesOrders':
+                if (!mappedData.customerId) {
+                  results.errors.push(`Row missing required field: customerId`);
+                  results.failed++;
+                  continue;
+                }
+                await db.createSalesOrder({
+                  customerId: parseInt(mappedData.customerId),
+                  orderDate: mappedData.orderDate ? new Date(mappedData.orderDate) : new Date(),
+                  subtotal: mappedData.subtotal || '0',
+                  tax: mappedData.tax || '0',
+                  totalAmount: mappedData.totalAmount || mappedData.subtotal || '0',
+                  notes: mappedData.notes || null,
+                } as any);
+                break;
+
+              case 'accounts':
+                if (!mappedData.code || !mappedData.name || !mappedData.type) {
+                  results.errors.push(`Row missing required fields: code, name, type`);
+                  results.failed++;
+                  continue;
+                }
+                await db.createAccount({
+                  code: mappedData.code,
+                  name: mappedData.name,
+                  type: mappedData.type as any,
+                  subtype: mappedData.subtype || null,
+                  description: mappedData.description || null,
+                } as any);
+                break;
+
+              case 'payments':
+                if (!mappedData.amount || !mappedData.paymentMethod) {
+                  results.errors.push(`Row missing required fields: amount, paymentMethod`);
+                  results.failed++;
+                  continue;
+                }
+                await db.createPayment({
+                  paymentNumber: generateNumber('PAY'),
+                  type: (mappedData.type as any) || 'received',
+                  amount: mappedData.amount,
+                  paymentMethod: mappedData.paymentMethod as any,
+                  paymentDate: mappedData.paymentDate ? new Date(mappedData.paymentDate) : new Date(),
+                  referenceNumber: mappedData.referenceNumber || null,
+                  notes: mappedData.notes || null,
+                } as any);
+                break;
+
+              case 'shipments':
+                if (!mappedData.type) {
+                  results.errors.push(`Row missing required field: type`);
+                  results.failed++;
+                  continue;
+                }
+                await db.createShipment({
+                  shipmentNumber: generateNumber('SHP'),
+                  type: mappedData.type as any,
+                  carrier: mappedData.carrier || null,
+                  trackingNumber: mappedData.trackingNumber || null,
+                  shipDate: mappedData.shipDate ? new Date(mappedData.shipDate) : null,
+                  deliveryDate: mappedData.deliveryDate ? new Date(mappedData.deliveryDate) : null,
+                  notes: mappedData.notes || null,
+                } as any);
+                break;
+
+              case 'carriers':
+                if (!mappedData.name) {
+                  results.errors.push(`Row missing required field: name`);
+                  results.failed++;
+                  continue;
+                }
+                await db.createFreightCarrier({
+                  name: mappedData.name,
+                  type: (mappedData.type as any) || 'ground',
+                  contactName: mappedData.contactName || null,
+                  email: mappedData.email || null,
+                  phone: mappedData.phone || null,
+                  country: mappedData.country || null,
+                  website: mappedData.website || null,
+                  notes: mappedData.notes || null,
+                } as any);
+                break;
+
+              case 'workOrders':
+                if (!mappedData.bomId || !mappedData.quantity) {
+                  results.errors.push(`Row missing required fields: bomId, quantity`);
+                  results.failed++;
+                  continue;
+                }
+                await db.createWorkOrder({
+                  bomId: parseInt(mappedData.bomId),
+                  quantity: parseInt(mappedData.quantity),
+                  priority: (mappedData.priority as any) || 'medium',
+                  notes: mappedData.notes || null,
+                } as any);
                 break;
             }
             

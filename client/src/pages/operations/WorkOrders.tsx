@@ -9,12 +9,14 @@ import { SelectWithCreate } from "@/components/ui/select-with-create";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Play, CheckCircle, Eye, Factory } from "lucide-react";
+import { Plus, Play, CheckCircle, Eye, Factory, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { Link } from "wouter";
 
 export default function WorkOrders() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [newWorkOrder, setNewWorkOrder] = useState({
     bomId: 0,
     productId: 0,
@@ -84,6 +86,11 @@ export default function WorkOrders() {
             <h1 className="text-2xl font-bold">Work Orders</h1>
             <p className="text-muted-foreground">Manage production runs and material consumption</p>
           </div>
+          <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setIsImportOpen(true)}>
+            <Upload className="h-4 w-4 mr-2" />
+            Bulk Import
+          </Button>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
               <Button><Plus className="w-4 h-4 mr-2" /> New Work Order</Button>
@@ -168,6 +175,7 @@ export default function WorkOrders() {
               </div>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
 
         {/* Summary Cards */}
@@ -287,6 +295,13 @@ export default function WorkOrders() {
             </Table>
           </CardContent>
         </Card>
+
+        <BulkImportDialog
+          open={isImportOpen}
+          onOpenChange={setIsImportOpen}
+          module="workOrders"
+          onImportComplete={() => refetch()}
+        />
       </div>
   );
 }

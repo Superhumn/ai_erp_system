@@ -77,6 +77,46 @@ const MODULE_FIELDS: Record<string, { required: string[]; optional: string[]; de
     optional: ["description", "type", "priority", "startDate", "targetEndDate", "budget"],
     description: "Import project records with timelines",
   },
+  rawMaterials: {
+    required: ["name"],
+    optional: ["sku", "description", "category", "unit", "unitCost", "currency", "minOrderQty", "leadTimeDays"],
+    description: "Import raw material inventory items",
+  },
+  purchaseOrders: {
+    required: ["vendorId"],
+    optional: ["orderDate", "expectedDate", "notes"],
+    description: "Import purchase orders (requires existing vendor IDs)",
+  },
+  salesOrders: {
+    required: ["customerId"],
+    optional: ["orderDate", "notes"],
+    description: "Import sales orders (requires existing customer IDs)",
+  },
+  accounts: {
+    required: ["code", "name", "type"],
+    optional: ["subtype", "description"],
+    description: "Import chart of accounts entries",
+  },
+  payments: {
+    required: ["amount", "paymentMethod"],
+    optional: ["type", "paymentDate", "referenceNumber", "notes"],
+    description: "Import payment records",
+  },
+  shipments: {
+    required: ["type"],
+    optional: ["carrier", "trackingNumber", "shipDate", "deliveryDate", "notes"],
+    description: "Import shipment tracking records",
+  },
+  carriers: {
+    required: ["name"],
+    optional: ["type", "contactName", "email", "phone", "country", "website", "notes"],
+    description: "Import freight carrier records",
+  },
+  workOrders: {
+    required: ["bomId", "quantity"],
+    optional: ["priority", "notes"],
+    description: "Import work/manufacturing orders",
+  },
 };
 
 export default function Import() {

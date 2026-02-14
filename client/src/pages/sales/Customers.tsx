@@ -31,9 +31,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Users, Plus, Search, Loader2, RefreshCw, ShoppingBag, Database } from "lucide-react";
+import { Users, Plus, Search, Loader2, RefreshCw, ShoppingBag, Database, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "wouter";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
 
 export default function Customers() {
   const [search, setSearch] = useState("");
@@ -47,6 +48,7 @@ export default function Customers() {
     shopifyStoreDomain: "",
     hubspotAccessToken: "",
   });
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -178,6 +180,10 @@ export default function Customers() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setIsImportOpen(true)}>
+            <Upload className="h-4 w-4 mr-2" />
+            Bulk Import
+          </Button>
           <Dialog open={isSyncOpen} onOpenChange={setIsSyncOpen}>
             <DialogTrigger asChild>
               <Button variant="outline">
@@ -533,6 +539,13 @@ export default function Customers() {
           )}
         </CardContent>
       </Card>
+
+      <BulkImportDialog
+        open={isImportOpen}
+        onOpenChange={setIsImportOpen}
+        module="customers"
+        onImportComplete={() => refetch()}
+      />
     </div>
   );
 }

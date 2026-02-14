@@ -45,7 +45,9 @@ import {
   Mail,
   Phone,
   Globe,
+  Upload,
 } from "lucide-react";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
 
 const carrierTypeIcons: Record<string, React.ReactNode> = {
   ocean: <Ship className="h-4 w-4" />,
@@ -57,6 +59,7 @@ const carrierTypeIcons: Record<string, React.ReactNode> = {
 
 export default function Carriers() {
   const [isOpen, setIsOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [formData, setFormData] = useState({
@@ -140,6 +143,11 @@ export default function Carriers() {
           <h1 className="text-2xl font-bold">Carriers & Forwarders</h1>
           <p className="text-muted-foreground">Manage your freight carrier network</p>
         </div>
+        <div className="flex gap-2">
+        <Button variant="outline" onClick={() => setIsImportOpen(true)}>
+          <Upload className="h-4 w-4 mr-2" />
+          Bulk Import
+        </Button>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button>
@@ -262,6 +270,7 @@ export default function Carriers() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {/* Filters */}
@@ -428,6 +437,13 @@ export default function Carriers() {
           )}
         </CardContent>
       </Card>
+
+      <BulkImportDialog
+        open={isImportOpen}
+        onOpenChange={setIsImportOpen}
+        module="carriers"
+        onImportComplete={() => utils.freight.carriers.list.invalidate()}
+      />
     </div>
   );
 }

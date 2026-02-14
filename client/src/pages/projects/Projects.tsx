@@ -31,8 +31,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { FolderKanban, Plus, Search, Loader2, Calendar } from "lucide-react";
+import { FolderKanban, Plus, Search, Loader2, Calendar, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
 import { format } from "date-fns";
 
 type Project = {
@@ -61,6 +62,7 @@ export default function Projects() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
     priority: "medium" as "low" | "medium" | "high" | "critical",
@@ -137,6 +139,11 @@ export default function Projects() {
             Manage initiatives, timelines, and budgets.
           </p>
         </div>
+        <div className="flex gap-2">
+        <Button variant="outline" onClick={() => setIsImportOpen(true)}>
+          <Upload className="h-4 w-4 mr-2" />
+          Bulk Import
+        </Button>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button>
@@ -236,6 +243,7 @@ export default function Projects() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -358,6 +366,13 @@ export default function Projects() {
           )}
         </CardContent>
       </Card>
+
+      <BulkImportDialog
+        open={isImportOpen}
+        onOpenChange={setIsImportOpen}
+        module="projects"
+        onImportComplete={() => refetch()}
+      />
     </div>
   );
 }

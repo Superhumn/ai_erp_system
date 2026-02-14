@@ -30,7 +30,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { FileText, Plus, Search, Loader2, Trash2, Mail, Send, Download, DollarSign, RefreshCw, Calendar, MoreHorizontal } from "lucide-react";
+import { FileText, Plus, Search, Loader2, Trash2, Mail, Send, Download, DollarSign, RefreshCw, Calendar, MoreHorizontal, Upload } from "lucide-react";
+import { BulkImportDialog } from "@/components/BulkImportDialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -68,6 +69,7 @@ export default function Invoices() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [isEmailDialogOpen, setIsEmailDialogOpen] = useState(false);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<number | null>(null);
   const [emailMessage, setEmailMessage] = useState("");
@@ -432,6 +434,10 @@ export default function Invoices() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setIsImportOpen(true)}>
+            <Upload className="h-4 w-4 mr-2" />
+            Bulk Import
+          </Button>
           <Button variant="outline" onClick={() => setIsRecurringDialogOpen(true)}>
             <RefreshCw className="h-4 w-4 mr-2" />
             Recurring
@@ -1116,6 +1122,13 @@ export default function Invoices() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <BulkImportDialog
+        open={isImportOpen}
+        onOpenChange={setIsImportOpen}
+        module="invoices"
+        onImportComplete={() => refetch()}
+      />
     </div>
   );
 }
