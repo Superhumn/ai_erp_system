@@ -5824,6 +5824,7 @@ export async function createEmailCredential(data: {
 
 export async function updateEmailCredential(id: number, data: Partial<{
   name: string;
+  email: string;
   imapHost: string;
   imapPort: number;
   imapSecure: boolean;
