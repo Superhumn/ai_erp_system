@@ -63,6 +63,8 @@ import {
   Brain,
   Plug,
   FolderLock,
+  Sparkles,
+  BarChart3,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -83,7 +85,9 @@ const menuGroups = [
     label: "Overview",
     items: [
       { icon: LayoutDashboard, label: "Dashboard", path: "/" },
-      { icon: Bot, label: "AI Assistant", path: "/ai" },
+      { icon: Brain, label: "AI Command Center", path: "/ai/hub" },
+      { icon: Sparkles, label: "AI Assistant", path: "/ai" },
+      { icon: BarChart3, label: "AI Insights", path: "/ai/insights" },
       { icon: ClipboardList, label: "Approval Queue", path: "/ai/approvals" },
     ],
   },

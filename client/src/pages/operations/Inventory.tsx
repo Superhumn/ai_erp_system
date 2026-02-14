@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -34,14 +35,17 @@ export default function Inventory() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-          <Warehouse className="h-8 w-8" />
-          Inventory
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          Track stock levels and manage inventory across locations.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+            <Warehouse className="h-8 w-8" />
+            Inventory
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            Track stock levels and manage inventory across locations.
+          </p>
+        </div>
+        <AITriggerButton message="Analyze inventory levels - show low stock items, total value, and reorder recommendations" label="AI Analysis" />
       </div>
 
       {/* Summary Cards */}

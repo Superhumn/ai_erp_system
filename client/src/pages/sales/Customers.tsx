@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -177,6 +178,7 @@ export default function Customers() {
           </p>
         </div>
         <div className="flex gap-2">
+          <AITriggerButton message="Analyze my customer base - show me top customers, ordering patterns, and any customers at risk of churning" label="AI Analysis" />
           <Dialog open={isSyncOpen} onOpenChange={setIsSyncOpen}>
             <DialogTrigger asChild>
               <Button variant="outline">

@@ -94,6 +94,8 @@ import DataRoomPublic from "./pages/DataRoomPublic";
 
 // AI Agent
 import ApprovalQueue from "./pages/ai/ApprovalQueue";
+import AIHub from "./pages/ai/AIHub";
+import AIInsights from "./pages/ai/AIInsights";
 
 function Router() {
   return (
@@ -102,6 +104,8 @@ function Router() {
         {/* Overview */}
         <Route path="/" component={Home} />
         <Route path="/ai" component={AIAssistant} />
+        <Route path="/ai/hub" component={AIHub} />
+        <Route path="/ai/insights" component={AIInsights} />
         <Route path="/ai/approvals" component={ApprovalQueue} />
         <Route path="/search" component={GlobalSearch} />
         <Route path="/notifications" component={Notifications} />

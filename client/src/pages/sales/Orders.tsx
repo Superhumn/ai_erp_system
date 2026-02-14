@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -105,13 +106,15 @@ export default function Orders() {
             Manage customer orders and track fulfillment.
           </p>
         </div>
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              Create Order
-            </Button>
-          </DialogTrigger>
+        <div className="flex gap-2">
+          <AITriggerButton message="Analyze all sales orders - show pending orders, revenue trends, and fulfillment status" label="AI Analysis" />
+          <Dialog open={isOpen} onOpenChange={setIsOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="h-4 w-4 mr-2" />
+                Create Order
+              </Button>
+            </DialogTrigger>
           <DialogContent>
             <form onSubmit={handleSubmit}>
               <DialogHeader>
@@ -199,6 +202,7 @@ export default function Orders() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <Card>

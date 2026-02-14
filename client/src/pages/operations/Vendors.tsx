@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -197,6 +198,9 @@ export default function Vendors() {
           <p className="text-muted-foreground mt-1">
             Manage suppliers, service providers, and freight carriers.
           </p>
+        </div>
+        <div className="flex gap-2">
+          <AITriggerButton message="Give me an overview of all vendors, their performance, and any issues that need attention" label="AI Analysis" />
         </div>
       </div>
 

@@ -1,6 +1,8 @@
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAIAgent } from "@/contexts/AIAgentContext";
 import {
   Users,
   Building2,
@@ -12,6 +14,12 @@ import {
   TrendingUp,
   ShoppingCart,
   UserCog,
+  Sparkles,
+  Bot,
+  BarChart3,
+  Mail,
+  Truck,
+  Factory,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -64,6 +72,22 @@ function KPICard({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function AIQuickButton({ icon: Icon, label, message }: { icon: React.ElementType; label: string; message: string }) {
+  const { openAssistant, sendMessage } = useAIAgent();
+  return (
+    <button
+      onClick={() => {
+        openAssistant();
+        setTimeout(() => sendMessage(message), 150);
+      }}
+      className="w-full text-left text-sm p-2 rounded-md hover:bg-muted transition-colors flex items-center gap-2"
+    >
+      <Icon className="h-4 w-4 text-primary" />
+      {label}
+    </button>
   );
 }
 
@@ -200,32 +224,41 @@ export default function Home() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="border-primary/20">
           <CardHeader>
-            <CardTitle className="text-lg">Quick Actions</CardTitle>
-            <CardDescription>Common tasks and shortcuts</CardDescription>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              AI Quick Actions
+            </CardTitle>
+            <CardDescription>Ask AI to analyze, email, track, or manage</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
+            <AIQuickButton
+              icon={BarChart3}
+              label="Analyze sales trends"
+              message="Analyze sales data for this month and show key metrics and trends"
+            />
+            <AIQuickButton
+              icon={Package}
+              label="Check low stock items"
+              message="Show me all inventory items that are low in stock and recommend reorder quantities"
+            />
+            <AIQuickButton
+              icon={Mail}
+              label="Draft vendor follow-up"
+              message="Help me draft follow-up emails to vendors with pending purchase orders"
+            />
+            <AIQuickButton
+              icon={Truck}
+              label="Track shipments"
+              message="Show me the status of all active shipments and any delayed deliveries"
+            />
             <button
-              onClick={() => setLocation('/finance/invoices')}
-              className="w-full text-left text-sm p-2 rounded-md hover:bg-muted transition-colors flex items-center gap-2"
+              onClick={() => setLocation('/ai/hub')}
+              className="w-full text-left text-sm p-2 rounded-md bg-primary/5 hover:bg-primary/10 transition-colors flex items-center gap-2 text-primary font-medium"
             >
-              <FileText className="h-4 w-4" />
-              Create Invoice
-            </button>
-            <button
-              onClick={() => setLocation('/operations/purchase-orders')}
-              className="w-full text-left text-sm p-2 rounded-md hover:bg-muted transition-colors flex items-center gap-2"
-            >
-              <ShoppingCart className="h-4 w-4" />
-              New Purchase Order
-            </button>
-            <button
-              onClick={() => setLocation('/ai')}
-              className="w-full text-left text-sm p-2 rounded-md hover:bg-muted transition-colors flex items-center gap-2"
-            >
-              <TrendingUp className="h-4 w-4" />
-              Ask AI Assistant
+              <Bot className="h-4 w-4" />
+              Open AI Command Center
             </button>
           </CardContent>
         </Card>
