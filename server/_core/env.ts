@@ -5,8 +5,10 @@ export const ENV = {
   oAuthServerUrl: process.env.OAUTH_SERVER_URL ?? "",
   ownerOpenId: process.env.OWNER_OPEN_ID ?? "",
   isProduction: process.env.NODE_ENV === "production",
-  forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
-  forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
+  // LLM Configuration (supports OpenAI, Kimi/Moonshot, or any OpenAI-compatible API)
+  llmApiUrl: process.env.LLM_API_URL ?? process.env.OPENAI_API_BASE_URL ?? "",
+  llmApiKey: process.env.LLM_API_KEY ?? process.env.OPENAI_API_KEY ?? "",
+  llmModel: process.env.LLM_MODEL ?? "gpt-4o",
   // SendGrid email configuration
   sendgridApiKey: process.env.SENDGRID_API_KEY ?? "",
   sendgridFromEmail: process.env.SENDGRID_FROM_EMAIL ?? "",  // MAIL_FROM - e.g., quotes@yourdomain.com
