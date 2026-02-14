@@ -520,6 +520,14 @@ function DashboardLayoutContent({
                   <FileText className="mr-2 h-4 w-4" />
                   RFQ (Request for Quote)
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLocation("/operations?action=new-vendor")} className="cursor-pointer">
+                  <Building2 className="mr-2 h-4 w-4" />
+                  Vendor
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLocation("/operations?action=new-product")} className="cursor-pointer">
+                  <Package className="mr-2 h-4 w-4" />
+                  Product
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuLabel>Logistics</DropdownMenuLabel>
                 <DropdownMenuItem onClick={() => setLocation("/operations/logistics-hub?action=new-freight")} className="cursor-pointer">
@@ -539,16 +547,6 @@ function DashboardLayoutContent({
                 <DropdownMenuItem onClick={() => setLocation("/sales/hub?action=new")} className="cursor-pointer">
                   <FileCheck className="mr-2 h-4 w-4" />
                   Sales Order
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuLabel>Other</DropdownMenuLabel>
-                <DropdownMenuItem onClick={() => setLocation("/operations?action=new-vendor")} className="cursor-pointer">
-                  <Building2 className="mr-2 h-4 w-4" />
-                  Vendor
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setLocation("/operations?action=new-product")} className="cursor-pointer">
-                  <Package className="mr-2 h-4 w-4" />
-                  Product
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
