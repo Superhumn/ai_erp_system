@@ -93,7 +93,9 @@ import {
   InsertFirefliesMeeting, InsertFirefliesActionItem, InsertFirefliesContactMapping,
   // Copacker portal
   copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
-  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument
+  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
+  // Sync settings
+  syncSettings, InsertSyncSetting,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -4534,6 +4536,97 @@ export async function clearSyncHistory() {
   const db = await getDb();
   if (!db) return;
   await db.delete(syncLogs);
+}
+
+// ============================================
+// SALESFORCE / AIRTABLE CUSTOMER LOOKUP
+// ============================================
+
+export async function getCustomerBySalesforceId(salesforceId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(customers).where(eq(customers.salesforceContactId, salesforceId)).limit(1);
+  return result[0];
+}
+
+export async function getCustomerByAirtableId(airtableId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(customers).where(eq(customers.airtableRecordId, airtableId)).limit(1);
+  return result[0];
+}
+
+export async function getCrmContactBySalesforceId(salesforceId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(crmContacts).where(eq(crmContacts.salesforceContactId, salesforceId)).limit(1);
+  return result[0];
+}
+
+export async function getCrmContactByAirtableId(airtableId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(crmContacts).where(eq(crmContacts.airtableRecordId, airtableId)).limit(1);
+  return result[0];
+}
+
+// ============================================
+// SYNC SETTINGS
+// ============================================
+
+export async function getSyncSettings() {
+  const db = await getDb();
+  if (!db) return [];
+  return await db.select().from(syncSettings).orderBy(syncSettings.integration);
+}
+
+export async function getSyncSettingByIntegration(integration: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(syncSettings).where(eq(syncSettings.integration, integration)).limit(1);
+  return result[0];
+}
+
+export async function upsertSyncSetting(integration: string, data: Partial<InsertSyncSetting>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = await getSyncSettingByIntegration(integration);
+  if (existing) {
+    await db.update(syncSettings).set({ ...data, updatedAt: new Date() }).where(eq(syncSettings.id, existing.id));
+    return existing.id;
+  } else {
+    const [result] = await db.insert(syncSettings).values({ integration, ...data });
+    return result.insertId;
+  }
+}
+
+export async function getEnabledSyncSettings() {
+  const db = await getDb();
+  if (!db) return [];
+  return await db.select().from(syncSettings).where(eq(syncSettings.isEnabled, true));
+}
+
+export async function updateSyncTimestamp(integration: string) {
+  const db = await getDb();
+  if (!db) return;
+  const setting = await getSyncSettingByIntegration(integration);
+  if (setting) {
+    const nextSync = new Date(Date.now() + (setting.intervalMinutes || 15) * 60 * 1000);
+    await db.update(syncSettings).set({ lastSyncAt: new Date(), nextSyncAt: nextSync }).where(eq(syncSettings.id, setting.id));
+  }
+}
+
+// Get customers modified since a given date (for outbound sync)
+export async function getCustomersModifiedSince(since: Date) {
+  const db = await getDb();
+  if (!db) return [];
+  return await db.select().from(customers).where(gte(customers.updatedAt, since));
+}
+
+export async function getCrmContactsModifiedSince(since: Date) {
+  const db = await getDb();
+  if (!db) return [];
+  return await db.select().from(crmContacts).where(gte(crmContacts.updatedAt, since));
 }
 
 

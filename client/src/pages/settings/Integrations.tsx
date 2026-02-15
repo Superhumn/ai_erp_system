@@ -12,14 +12,14 @@ import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { useSearch } from "wouter";
-import { 
-  Mail, 
-  ShoppingBag, 
-  FileSpreadsheet, 
-  Calculator, 
-  RefreshCw, 
-  CheckCircle2, 
-  XCircle, 
+import {
+  Mail,
+  ShoppingBag,
+  FileSpreadsheet,
+  Calculator,
+  RefreshCw,
+  CheckCircle2,
+  XCircle,
   AlertCircle,
   Plus,
   Trash2,
@@ -27,8 +27,19 @@ import {
   History,
   Settings,
   Loader2,
-  ExternalLink
+  ExternalLink,
+  Cloud,
+  Database,
+  ArrowLeftRight,
+  Play,
 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export default function IntegrationsPage() {
   const searchParams = useSearch();
@@ -37,6 +48,19 @@ export default function IntegrationsPage() {
   const [shopifyShopDomain, setShopifyShopDomain] = useState("");
   const [shopifyConnecting, setShopifyConnecting] = useState(false);
   const [activeTab, setActiveTab] = useState("connections");
+
+  // Salesforce state
+  const [sfAccessToken, setSfAccessToken] = useState("");
+  const [sfInstanceUrl, setSfInstanceUrl] = useState("");
+  // Airtable state
+  const [atApiKey, setAtApiKey] = useState("");
+  const [atBaseId, setAtBaseId] = useState("");
+  const [atTableId, setAtTableId] = useState("");
+  // HubSpot state
+  const [hsAccessToken, setHsAccessToken] = useState("");
+  // Auto-sync state
+  const [syncDirection, setSyncDirection] = useState<Record<string, string>>({});
+  const [syncInterval, setSyncInterval] = useState<Record<string, number>>({});
 
   const { data: status, isLoading, refetch } = trpc.integrations.getStatus.useQuery();
   const { data: syncHistory } = trpc.integrations.getSyncHistory.useQuery({ limit: 20 });
@@ -125,6 +149,23 @@ export default function IntegrationsPage() {
     onError: (error) => {
       toast.error(error.message);
     },
+  });
+
+  // Salesforce & Airtable sync mutations
+  const saveSyncSettingMutation = trpc.integrations.saveSyncSetting.useMutation({
+    onSuccess: () => {
+      toast.success("Sync settings saved");
+      refetch();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const triggerSyncMutation = trpc.integrations.triggerSync.useMutation({
+    onSuccess: (data) => {
+      toast.success("Sync completed");
+      refetch();
+    },
+    onError: (error) => toast.error(error.message),
   });
 
   // Check for OAuth callback success/error in URL
@@ -244,9 +285,11 @@ export default function IntegrationsPage() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-          <TabsList>
+          <TabsList className="flex-wrap">
             <TabsTrigger value="connections">Connections</TabsTrigger>
             <TabsTrigger value="shopify">Shopify</TabsTrigger>
+            <TabsTrigger value="salesforce">Salesforce</TabsTrigger>
+            <TabsTrigger value="airtable">Airtable</TabsTrigger>
             <TabsTrigger value="email">Email (SendGrid)</TabsTrigger>
             <TabsTrigger value="gmail">Gmail</TabsTrigger>
             <TabsTrigger value="workspace">Google Workspace</TabsTrigger>
@@ -304,19 +347,132 @@ export default function IntegrationsPage() {
                   {getStatusBadge(status?.shopify?.status || "not_configured")}
                 </CardHeader>
                 <CardContent>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    {status?.shopify?.configured 
+                  <p className="text-sm text-muted-foreground mb-2">
+                    {status?.shopify?.configured
                       ? `${status.shopify.storeCount} store(s) connected for order and inventory sync.`
                       : "Connect your Shopify store to sync orders and inventory."}
                   </p>
-                  <Button 
-                    variant="outline" 
+                  {(status as any)?.shopify?.autoSync?.enabled && (
+                    <div className="flex items-center gap-2 mb-3">
+                      <ArrowLeftRight className="w-3 h-3 text-green-500" />
+                      <span className="text-xs text-green-600">Auto-sync every {(status as any).shopify.autoSync.interval}m ({(status as any).shopify.autoSync.direction})</span>
+                    </div>
+                  )}
+                  <Button
+                    variant="outline"
                     size="sm"
                     onClick={() => setActiveTab("shopify")}
                   >
                     <Settings className="w-4 h-4 mr-2" />
                     Configure
                   </Button>
+                </CardContent>
+              </Card>
+
+              {/* HubSpot Card */}
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-orange-500/10 rounded-lg">
+                      <RefreshCw className="w-5 h-5 text-orange-500" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg">HubSpot</CardTitle>
+                      <CardDescription>CRM & marketing</CardDescription>
+                    </div>
+                  </div>
+                  {getStatusBadge((status as any)?.hubspot?.status || "not_configured")}
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground mb-2">
+                    {(status as any)?.hubspot?.configured
+                      ? "HubSpot connected. Bidirectional contact sync enabled."
+                      : "Connect HubSpot for automatic two-way contact sync."}
+                  </p>
+                  {(status as any)?.hubspot?.autoSync?.enabled && (
+                    <div className="flex items-center gap-2 mb-3">
+                      <ArrowLeftRight className="w-3 h-3 text-green-500" />
+                      <span className="text-xs text-green-600">Auto-sync every {(status as any).hubspot.autoSync.interval}m ({(status as any).hubspot.autoSync.direction})</span>
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button variant="outline" size="sm">
+                          <Settings className="w-4 h-4 mr-2" />
+                          Configure
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>HubSpot Auto-Sync</DialogTitle>
+                          <DialogDescription>Configure automatic bidirectional HubSpot contact sync</DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4 py-4">
+                          <div className="space-y-2">
+                            <Label>HubSpot Access Token</Label>
+                            <Input
+                              type="password"
+                              placeholder="pat-..."
+                              value={hsAccessToken}
+                              onChange={(e) => setHsAccessToken(e.target.value)}
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <Label>Sync Direction</Label>
+                              <Select value={syncDirection.hubspot || "bidirectional"} onValueChange={(v) => setSyncDirection({ ...syncDirection, hubspot: v })}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="bidirectional">Bidirectional</SelectItem>
+                                  <SelectItem value="inbound">Inbound only</SelectItem>
+                                  <SelectItem value="outbound">Outbound only</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Interval</Label>
+                              <Select value={String(syncInterval.hubspot || 15)} onValueChange={(v) => setSyncInterval({ ...syncInterval, hubspot: Number(v) })}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="5">5 min</SelectItem>
+                                  <SelectItem value="15">15 min</SelectItem>
+                                  <SelectItem value="30">30 min</SelectItem>
+                                  <SelectItem value="60">1 hour</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+                        </div>
+                        <DialogFooter>
+                          <Button
+                            onClick={() => saveSyncSettingMutation.mutate({
+                              integration: 'hubspot',
+                              isEnabled: true,
+                              direction: (syncDirection.hubspot as any) || 'bidirectional',
+                              intervalMinutes: syncInterval.hubspot || 15,
+                              accessToken: hsAccessToken,
+                            })}
+                            disabled={!hsAccessToken || saveSyncSettingMutation.isPending}
+                          >
+                            {saveSyncSettingMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                            Save & Enable
+                          </Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
+                    {(status as any)?.hubspot?.configured && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => triggerSyncMutation.mutate({ integration: 'hubspot' })}
+                        disabled={triggerSyncMutation.isPending}
+                      >
+                        {triggerSyncMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Play className="w-3 h-3 mr-1" />}
+                        Sync Now
+                      </Button>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
 
@@ -467,6 +623,72 @@ export default function IntegrationsPage() {
                       if (tab) (tab as HTMLElement).click();
                     }}
                   >
+                    <Settings className="w-4 h-4 mr-2" />
+                    Configure
+                  </Button>
+                </CardContent>
+              </Card>
+
+              {/* Salesforce Card */}
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-blue-600/10 rounded-lg">
+                      <Cloud className="w-5 h-5 text-blue-600" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg">Salesforce</CardTitle>
+                      <CardDescription>CRM platform</CardDescription>
+                    </div>
+                  </div>
+                  {getStatusBadge((status as any)?.salesforce?.status || "not_configured")}
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground mb-2">
+                    {(status as any)?.salesforce?.configured
+                      ? `Connected to ${(status as any).salesforce.instanceUrl}. Bidirectional contact sync enabled.`
+                      : "Connect Salesforce for automatic two-way contact sync."}
+                  </p>
+                  {(status as any)?.salesforce?.autoSync?.enabled && (
+                    <div className="flex items-center gap-2 mb-3">
+                      <ArrowLeftRight className="w-3 h-3 text-green-500" />
+                      <span className="text-xs text-green-600">Auto-sync every {(status as any).salesforce.autoSync.interval}m ({(status as any).salesforce.autoSync.direction})</span>
+                    </div>
+                  )}
+                  <Button variant="outline" size="sm" onClick={() => setActiveTab("salesforce")}>
+                    <Settings className="w-4 h-4 mr-2" />
+                    Configure
+                  </Button>
+                </CardContent>
+              </Card>
+
+              {/* Airtable Card */}
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-yellow-500/10 rounded-lg">
+                      <Database className="w-5 h-5 text-yellow-600" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg">Airtable</CardTitle>
+                      <CardDescription>Database & spreadsheet</CardDescription>
+                    </div>
+                  </div>
+                  {getStatusBadge((status as any)?.airtable?.status || "not_configured")}
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground mb-2">
+                    {(status as any)?.airtable?.configured
+                      ? `Connected to base ${(status as any).airtable.baseId}. Bidirectional contact sync enabled.`
+                      : "Connect Airtable for automatic two-way contact sync."}
+                  </p>
+                  {(status as any)?.airtable?.autoSync?.enabled && (
+                    <div className="flex items-center gap-2 mb-3">
+                      <ArrowLeftRight className="w-3 h-3 text-green-500" />
+                      <span className="text-xs text-green-600">Auto-sync every {(status as any).airtable.autoSync.interval}m ({(status as any).airtable.autoSync.direction})</span>
+                    </div>
+                  )}
+                  <Button variant="outline" size="sm" onClick={() => setActiveTab("airtable")}>
                     <Settings className="w-4 h-4 mr-2" />
                     Configure
                   </Button>
@@ -649,9 +871,9 @@ export default function IntegrationsPage() {
                 )}
 
                 <div className="mt-6 p-4 bg-muted/50 rounded-lg">
-                  <h4 className="font-medium mb-2">Sync Settings</h4>
+                  <h4 className="font-medium mb-2">Auto-Sync Settings</h4>
                   <p className="text-xs text-muted-foreground mb-3">
-                    Default settings for new store connections. Editing existing store settings coming soon.
+                    Configure automatic bidirectional sync for Shopify.
                   </p>
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
@@ -663,10 +885,22 @@ export default function IntegrationsPage() {
                     </div>
                     <div className="flex items-center justify-between">
                       <div>
-                        <Label>Sync Inventory</Label>
-                        <p className="text-xs text-muted-foreground">Push inventory levels to Shopify</p>
+                        <Label>Sync Inventory (bidirectional)</Label>
+                        <p className="text-xs text-muted-foreground">Push inventory levels to Shopify and pull updates</p>
                       </div>
                       <Switch defaultChecked disabled />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label>Sync Customers (bidirectional)</Label>
+                        <p className="text-xs text-muted-foreground">Two-way customer data sync with Shopify</p>
+                      </div>
+                      <Switch
+                        checked={(status as any)?.shopify?.autoSync?.enabled || false}
+                        onCheckedChange={(checked) => {
+                          saveSyncSettingMutation.mutate({ integration: 'shopify', isEnabled: checked, direction: 'bidirectional', intervalMinutes: 15 });
+                        }}
+                      />
                     </div>
                     <div className="flex items-center justify-between">
                       <div>
@@ -676,7 +910,325 @@ export default function IntegrationsPage() {
                       <Switch disabled />
                     </div>
                   </div>
+                  {(status as any)?.shopify?.autoSync?.enabled && (
+                    <div className="flex items-center gap-2 mt-3">
+                      <ArrowLeftRight className="w-3 h-3 text-green-500" />
+                      <span className="text-xs text-green-600">Auto-sync active (every {(status as any).shopify.autoSync.interval || 15}m)</span>
+                    </div>
+                  )}
                 </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Salesforce Tab */}
+          <TabsContent value="salesforce" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Cloud className="w-5 h-5 text-blue-600" />
+                  Salesforce Integration
+                </CardTitle>
+                <CardDescription>
+                  Connect Salesforce for automatic bidirectional contact sync
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
+                  <div className={`p-3 rounded-full ${(status as any)?.salesforce?.configured ? 'bg-green-500/10' : 'bg-yellow-500/10'}`}>
+                    {(status as any)?.salesforce?.configured ? (
+                      <CheckCircle2 className="w-6 h-6 text-green-500" />
+                    ) : (
+                      <AlertCircle className="w-6 h-6 text-yellow-500" />
+                    )}
+                  </div>
+                  <div>
+                    <h4 className="font-medium">
+                      {(status as any)?.salesforce?.configured ? 'Salesforce Connected' : 'Salesforce Not Connected'}
+                    </h4>
+                    <p className="text-sm text-muted-foreground">
+                      {(status as any)?.salesforce?.configured
+                        ? `Connected to ${(status as any).salesforce.instanceUrl}`
+                        : 'Enter your Salesforce credentials to enable contact sync'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-4 p-4 border rounded-lg">
+                  <h4 className="font-medium">Connection Settings</h4>
+                  <div className="space-y-2">
+                    <Label>Access Token</Label>
+                    <Input
+                      type="password"
+                      placeholder="Salesforce access token or session ID"
+                      value={sfAccessToken}
+                      onChange={(e) => setSfAccessToken(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Instance URL</Label>
+                    <Input
+                      placeholder="https://yourorg.my.salesforce.com"
+                      value={sfInstanceUrl}
+                      onChange={(e) => setSfInstanceUrl(e.target.value)}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Sync Direction</Label>
+                      <Select value={syncDirection.salesforce || "bidirectional"} onValueChange={(v) => setSyncDirection({ ...syncDirection, salesforce: v })}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="bidirectional">Bidirectional</SelectItem>
+                          <SelectItem value="inbound">Inbound only (SF to ERP)</SelectItem>
+                          <SelectItem value="outbound">Outbound only (ERP to SF)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Auto-sync Interval</Label>
+                      <Select value={String(syncInterval.salesforce || 15)} onValueChange={(v) => setSyncInterval({ ...syncInterval, salesforce: Number(v) })}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="5">Every 5 minutes</SelectItem>
+                          <SelectItem value="15">Every 15 minutes</SelectItem>
+                          <SelectItem value="30">Every 30 minutes</SelectItem>
+                          <SelectItem value="60">Every hour</SelectItem>
+                          <SelectItem value="360">Every 6 hours</SelectItem>
+                          <SelectItem value="1440">Daily</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => saveSyncSettingMutation.mutate({
+                        integration: 'salesforce',
+                        isEnabled: true,
+                        direction: (syncDirection.salesforce as any) || 'bidirectional',
+                        intervalMinutes: syncInterval.salesforce || 15,
+                        accessToken: sfAccessToken,
+                        instanceUrl: sfInstanceUrl,
+                      })}
+                      disabled={!sfAccessToken || !sfInstanceUrl || saveSyncSettingMutation.isPending}
+                    >
+                      {saveSyncSettingMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+                      Save & Enable Auto-Sync
+                    </Button>
+                    {(status as any)?.salesforce?.configured && (
+                      <Button
+                        variant="outline"
+                        onClick={() => triggerSyncMutation.mutate({ integration: 'salesforce' })}
+                        disabled={triggerSyncMutation.isPending}
+                      >
+                        {triggerSyncMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
+                        Sync Now
+                      </Button>
+                    )}
+                    {(status as any)?.salesforce?.configured && (
+                      <Button
+                        variant="outline"
+                        className="text-destructive"
+                        onClick={() => saveSyncSettingMutation.mutate({
+                          integration: 'salesforce',
+                          isEnabled: false,
+                        })}
+                      >
+                        Disable
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {(status as any)?.salesforce?.autoSync && (
+                  <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-lg">
+                    <h4 className="font-medium text-blue-600 dark:text-blue-400 mb-2">Current Sync Status</h4>
+                    <div className="grid grid-cols-3 gap-4 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">Direction:</span>
+                        <span className="ml-2 capitalize font-medium">{(status as any).salesforce.autoSync.direction}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Interval:</span>
+                        <span className="ml-2 font-medium">{(status as any).salesforce.autoSync.interval}m</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Last Sync:</span>
+                        <span className="ml-2 font-medium">{(status as any).salesforce.autoSync.lastSync ? new Date((status as any).salesforce.autoSync.lastSync).toLocaleString() : 'Never'}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Airtable Tab */}
+          <TabsContent value="airtable" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Database className="w-5 h-5 text-yellow-600" />
+                  Airtable Integration
+                </CardTitle>
+                <CardDescription>
+                  Connect Airtable for automatic bidirectional contact sync
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
+                  <div className={`p-3 rounded-full ${(status as any)?.airtable?.configured ? 'bg-green-500/10' : 'bg-yellow-500/10'}`}>
+                    {(status as any)?.airtable?.configured ? (
+                      <CheckCircle2 className="w-6 h-6 text-green-500" />
+                    ) : (
+                      <AlertCircle className="w-6 h-6 text-yellow-500" />
+                    )}
+                  </div>
+                  <div>
+                    <h4 className="font-medium">
+                      {(status as any)?.airtable?.configured ? 'Airtable Connected' : 'Airtable Not Connected'}
+                    </h4>
+                    <p className="text-sm text-muted-foreground">
+                      {(status as any)?.airtable?.configured
+                        ? `Connected to base ${(status as any).airtable.baseId}`
+                        : 'Enter your Airtable credentials to enable contact sync'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-4 p-4 border rounded-lg">
+                  <h4 className="font-medium">Connection Settings</h4>
+                  <div className="space-y-2">
+                    <Label>Personal Access Token</Label>
+                    <Input
+                      type="password"
+                      placeholder="pat..."
+                      value={atApiKey}
+                      onChange={(e) => setAtApiKey(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">Generate at airtable.com/create/tokens</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Base ID</Label>
+                      <Input
+                        placeholder="appXXXXXXXXXXXXXX"
+                        value={atBaseId}
+                        onChange={(e) => setAtBaseId(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Table Name or ID</Label>
+                      <Input
+                        placeholder="Contacts"
+                        value={atTableId}
+                        onChange={(e) => setAtTableId(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Sync Direction</Label>
+                      <Select value={syncDirection.airtable || "bidirectional"} onValueChange={(v) => setSyncDirection({ ...syncDirection, airtable: v })}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="bidirectional">Bidirectional</SelectItem>
+                          <SelectItem value="inbound">Inbound only (Airtable to ERP)</SelectItem>
+                          <SelectItem value="outbound">Outbound only (ERP to Airtable)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Auto-sync Interval</Label>
+                      <Select value={String(syncInterval.airtable || 15)} onValueChange={(v) => setSyncInterval({ ...syncInterval, airtable: Number(v) })}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="5">Every 5 minutes</SelectItem>
+                          <SelectItem value="15">Every 15 minutes</SelectItem>
+                          <SelectItem value="30">Every 30 minutes</SelectItem>
+                          <SelectItem value="60">Every hour</SelectItem>
+                          <SelectItem value="360">Every 6 hours</SelectItem>
+                          <SelectItem value="1440">Daily</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-muted/50 rounded-lg">
+                    <h5 className="text-sm font-medium mb-1">Expected Airtable Fields</h5>
+                    <p className="text-xs text-muted-foreground">
+                      Your table should have columns like: <code>Name</code>, <code>First Name</code>, <code>Last Name</code>, <code>Email</code>, <code>Phone</code>, <code>Company</code>, <code>Title</code>, <code>Address</code>, <code>City</code>, <code>State</code>, <code>Country</code>, <code>Zip</code>. Field matching is case-insensitive.
+                    </p>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => saveSyncSettingMutation.mutate({
+                        integration: 'airtable',
+                        isEnabled: true,
+                        direction: (syncDirection.airtable as any) || 'bidirectional',
+                        intervalMinutes: syncInterval.airtable || 15,
+                        accessToken: atApiKey,
+                        baseId: atBaseId,
+                        tableId: atTableId,
+                      })}
+                      disabled={!atApiKey || !atBaseId || !atTableId || saveSyncSettingMutation.isPending}
+                    >
+                      {saveSyncSettingMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+                      Save & Enable Auto-Sync
+                    </Button>
+                    {(status as any)?.airtable?.configured && (
+                      <Button
+                        variant="outline"
+                        onClick={() => triggerSyncMutation.mutate({ integration: 'airtable' })}
+                        disabled={triggerSyncMutation.isPending}
+                      >
+                        {triggerSyncMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
+                        Sync Now
+                      </Button>
+                    )}
+                    {(status as any)?.airtable?.configured && (
+                      <Button
+                        variant="outline"
+                        className="text-destructive"
+                        onClick={() => saveSyncSettingMutation.mutate({
+                          integration: 'airtable',
+                          isEnabled: false,
+                        })}
+                      >
+                        Disable
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {(status as any)?.airtable?.autoSync && (
+                  <div className="p-4 bg-yellow-500/5 border border-yellow-500/20 rounded-lg">
+                    <h4 className="font-medium text-yellow-600 dark:text-yellow-400 mb-2">Current Sync Status</h4>
+                    <div className="grid grid-cols-3 gap-4 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">Direction:</span>
+                        <span className="ml-2 capitalize font-medium">{(status as any).airtable.autoSync.direction}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Interval:</span>
+                        <span className="ml-2 font-medium">{(status as any).airtable.autoSync.interval}m</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Last Sync:</span>
+                        <span className="ml-2 font-medium">{(status as any).airtable.autoSync.lastSync ? new Date((status as any).airtable.autoSync.lastSync).toLocaleString() : 'Never'}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

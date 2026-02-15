@@ -418,17 +418,378 @@ export const appRouter = router({
         return { imported, updated, skipped, total: hubspotContacts.length };
       }),
     
+    // Salesforce sync (bidirectional)
+    syncFromSalesforce: adminProcedure
+      .input(z.object({ accessToken: z.string(), instanceUrl: z.string() }))
+      .mutation(async ({ input, ctx }) => {
+        const { accessToken, instanceUrl } = input;
+
+        // Fetch contacts from Salesforce SOQL
+        const response = await fetch(
+          `${instanceUrl}/services/data/v59.0/query/?q=` +
+            encodeURIComponent('SELECT Id, FirstName, LastName, Email, Phone, MailingStreet, MailingCity, MailingState, MailingCountry, MailingPostalCode, Account.Name, Title, Department FROM Contact ORDER BY LastModifiedDate DESC LIMIT 200'),
+          {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+          },
+        );
+
+        if (!response.ok) {
+          const err = await response.text();
+          await db.createSyncLog({ integration: 'salesforce', action: 'contact_sync_inbound', status: 'error', errorMessage: err });
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Failed to fetch Salesforce contacts' });
+        }
+
+        const data = await response.json();
+        const sfContacts = data.records || [];
+
+        let imported = 0;
+        let updated = 0;
+
+        for (const sc of sfContacts) {
+          const existing = await db.getCustomerBySalesforceId(sc.Id);
+
+          const customerData = {
+            name: `${sc.FirstName || ''} ${sc.LastName || ''}`.trim() || sc.Email || 'Unknown',
+            email: sc.Email || undefined,
+            phone: sc.Phone || undefined,
+            address: sc.MailingStreet || undefined,
+            city: sc.MailingCity || undefined,
+            state: sc.MailingState || undefined,
+            country: sc.MailingCountry || undefined,
+            postalCode: sc.MailingPostalCode || undefined,
+            type: sc.Account?.Name ? ('business' as const) : ('individual' as const),
+            salesforceContactId: sc.Id,
+            syncSource: 'salesforce' as const,
+            lastSyncedAt: new Date(),
+            salesforceData: JSON.stringify(sc),
+          };
+
+          if (existing) {
+            await db.updateCustomer(existing.id, customerData);
+            updated++;
+          } else {
+            await db.createCustomer(customerData);
+            imported++;
+          }
+
+          // Also upsert into CRM contacts
+          const existingCrm = await db.getCrmContactBySalesforceId(sc.Id);
+          const crmData: any = {
+            firstName: sc.FirstName || 'Unknown',
+            lastName: sc.LastName || undefined,
+            fullName: `${sc.FirstName || ''} ${sc.LastName || ''}`.trim() || 'Unknown',
+            email: sc.Email || undefined,
+            phone: sc.Phone || undefined,
+            organization: sc.Account?.Name || undefined,
+            jobTitle: sc.Title || undefined,
+            department: sc.Department || undefined,
+            salesforceContactId: sc.Id,
+            source: 'import' as const,
+          };
+          if (existingCrm) {
+            await db.updateCrmContact(existingCrm.id, crmData);
+          } else {
+            crmData.capturedBy = ctx.user.id;
+            await db.createCrmContact(crmData);
+          }
+        }
+
+        await db.createSyncLog({
+          integration: 'salesforce',
+          action: 'contact_sync_inbound',
+          status: 'success',
+          details: `Imported ${imported}, Updated ${updated} of ${sfContacts.length} contacts`,
+          recordsProcessed: imported + updated,
+        });
+        await db.updateSyncTimestamp('salesforce');
+        await createAuditLog(ctx.user.id, 'create', 'salesforce_sync', 0, `Imported ${imported}, Updated ${updated}`);
+
+        return { imported, updated, total: sfContacts.length };
+      }),
+
+    // Push local contacts to Salesforce
+    pushToSalesforce: adminProcedure
+      .input(z.object({ accessToken: z.string(), instanceUrl: z.string() }))
+      .mutation(async ({ input, ctx }) => {
+        const { accessToken, instanceUrl } = input;
+        const setting = await db.getSyncSettingByIntegration('salesforce');
+        const since = setting?.lastSyncAt || new Date(0);
+        const modifiedCustomers = await db.getCustomersModifiedSince(since);
+
+        let pushed = 0;
+        let failed = 0;
+
+        for (const c of modifiedCustomers) {
+          const nameParts = (c.name || '').split(' ');
+          const sfBody = {
+            FirstName: nameParts[0] || '',
+            LastName: nameParts.slice(1).join(' ') || nameParts[0] || 'Unknown',
+            Email: c.email || undefined,
+            Phone: c.phone || undefined,
+            MailingStreet: c.address || undefined,
+            MailingCity: c.city || undefined,
+            MailingState: c.state || undefined,
+            MailingCountry: c.country || undefined,
+            MailingPostalCode: c.postalCode || undefined,
+          };
+
+          try {
+            if (c.salesforceContactId) {
+              // Update existing Salesforce contact
+              const res = await fetch(`${instanceUrl}/services/data/v59.0/sobjects/Contact/${c.salesforceContactId}`, {
+                method: 'PATCH',
+                headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(sfBody),
+              });
+              if (res.ok || res.status === 204) pushed++;
+              else failed++;
+            } else {
+              // Create new contact in Salesforce
+              const res = await fetch(`${instanceUrl}/services/data/v59.0/sobjects/Contact`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(sfBody),
+              });
+              if (res.ok) {
+                const result = await res.json();
+                await db.updateCustomer(c.id, { salesforceContactId: result.id });
+                pushed++;
+              } else {
+                failed++;
+              }
+            }
+          } catch {
+            failed++;
+          }
+        }
+
+        await db.createSyncLog({
+          integration: 'salesforce',
+          action: 'contact_sync_outbound',
+          status: failed > 0 ? 'warning' : 'success',
+          details: `Pushed ${pushed} contacts to Salesforce${failed > 0 ? `, ${failed} failed` : ''}`,
+          recordsProcessed: pushed,
+          recordsFailed: failed,
+        });
+        await db.updateSyncTimestamp('salesforce');
+
+        return { pushed, failed, total: modifiedCustomers.length };
+      }),
+
+    // Airtable sync (bidirectional)
+    syncFromAirtable: adminProcedure
+      .input(z.object({ apiKey: z.string(), baseId: z.string(), tableId: z.string() }))
+      .mutation(async ({ input, ctx }) => {
+        const { apiKey, baseId, tableId } = input;
+
+        const response = await fetch(
+          `https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableId)}?maxRecords=200`,
+          {
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+            },
+          },
+        );
+
+        if (!response.ok) {
+          const err = await response.text();
+          await db.createSyncLog({ integration: 'airtable', action: 'contact_sync_inbound', status: 'error', errorMessage: err });
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Failed to fetch Airtable records' });
+        }
+
+        const data = await response.json();
+        const records = data.records || [];
+
+        let imported = 0;
+        let updated = 0;
+
+        for (const rec of records) {
+          const f = rec.fields || {};
+          const existing = await db.getCustomerByAirtableId(rec.id);
+
+          // Map common Airtable field names (case-insensitive match)
+          const getField = (...names: string[]) => {
+            for (const n of names) {
+              const key = Object.keys(f).find((k) => k.toLowerCase() === n.toLowerCase());
+              if (key && f[key]) return String(f[key]);
+            }
+            return undefined;
+          };
+
+          const name = getField('Name', 'Full Name', 'FullName', 'Contact Name') ||
+            [getField('First Name', 'FirstName', 'First'), getField('Last Name', 'LastName', 'Last')].filter(Boolean).join(' ') ||
+            getField('Email') || 'Unknown';
+
+          const customerData = {
+            name,
+            email: getField('Email', 'E-mail', 'Email Address') || undefined,
+            phone: getField('Phone', 'Phone Number', 'Mobile') || undefined,
+            address: getField('Address', 'Street', 'Street Address') || undefined,
+            city: getField('City') || undefined,
+            state: getField('State', 'Province') || undefined,
+            country: getField('Country') || undefined,
+            postalCode: getField('Zip', 'Postal Code', 'Zip Code', 'PostalCode') || undefined,
+            type: getField('Company', 'Organization') ? ('business' as const) : ('individual' as const),
+            airtableRecordId: rec.id,
+            syncSource: 'airtable' as const,
+            lastSyncedAt: new Date(),
+            airtableData: JSON.stringify(rec),
+          };
+
+          if (existing) {
+            await db.updateCustomer(existing.id, customerData);
+            updated++;
+          } else {
+            await db.createCustomer(customerData);
+            imported++;
+          }
+
+          // Also upsert into CRM contacts
+          const existingCrm = await db.getCrmContactByAirtableId(rec.id);
+          const firstName = getField('First Name', 'FirstName', 'First') || name.split(' ')[0] || 'Unknown';
+          const lastName = getField('Last Name', 'LastName', 'Last') || name.split(' ').slice(1).join(' ') || undefined;
+          const crmData: any = {
+            firstName,
+            lastName,
+            fullName: name,
+            email: customerData.email,
+            phone: customerData.phone,
+            organization: getField('Company', 'Organization') || undefined,
+            jobTitle: getField('Title', 'Job Title', 'Role') || undefined,
+            airtableRecordId: rec.id,
+            source: 'import' as const,
+          };
+          if (existingCrm) {
+            await db.updateCrmContact(existingCrm.id, crmData);
+          } else {
+            crmData.capturedBy = ctx.user.id;
+            await db.createCrmContact(crmData);
+          }
+        }
+
+        await db.createSyncLog({
+          integration: 'airtable',
+          action: 'contact_sync_inbound',
+          status: 'success',
+          details: `Imported ${imported}, Updated ${updated} of ${records.length} records`,
+          recordsProcessed: imported + updated,
+        });
+        await db.updateSyncTimestamp('airtable');
+        await createAuditLog(ctx.user.id, 'create', 'airtable_sync', 0, `Imported ${imported}, Updated ${updated}`);
+
+        return { imported, updated, total: records.length };
+      }),
+
+    // Push local contacts to Airtable
+    pushToAirtable: adminProcedure
+      .input(z.object({ apiKey: z.string(), baseId: z.string(), tableId: z.string() }))
+      .mutation(async ({ input, ctx }) => {
+        const { apiKey, baseId, tableId } = input;
+        const setting = await db.getSyncSettingByIntegration('airtable');
+        const since = setting?.lastSyncAt || new Date(0);
+        const modifiedCustomers = await db.getCustomersModifiedSince(since);
+
+        let pushed = 0;
+        let failed = 0;
+
+        // Airtable batch supports up to 10 records at a time
+        const batches: any[][] = [];
+        for (let i = 0; i < modifiedCustomers.length; i += 10) {
+          batches.push(modifiedCustomers.slice(i, i + 10));
+        }
+
+        for (const batch of batches) {
+          const records = batch.map((c) => {
+            const nameParts = (c.name || '').split(' ');
+            const rec: any = {
+              fields: {
+                'Name': c.name || '',
+                'First Name': nameParts[0] || '',
+                'Last Name': nameParts.slice(1).join(' ') || '',
+                'Email': c.email || '',
+                'Phone': c.phone || '',
+                'Address': c.address || '',
+                'City': c.city || '',
+                'State': c.state || '',
+                'Country': c.country || '',
+                'Zip': c.postalCode || '',
+              },
+            };
+            if (c.airtableRecordId) rec.id = c.airtableRecordId;
+            return rec;
+          });
+
+          try {
+            const toUpdate = records.filter((r) => r.id);
+            const toCreate = records.filter((r) => !r.id);
+
+            if (toUpdate.length > 0) {
+              const res = await fetch(`https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableId)}`, {
+                method: 'PATCH',
+                headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ records: toUpdate }),
+              });
+              if (res.ok) pushed += toUpdate.length;
+              else failed += toUpdate.length;
+            }
+
+            if (toCreate.length > 0) {
+              const res = await fetch(`https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableId)}`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ records: toCreate }),
+              });
+              if (res.ok) {
+                const result = await res.json();
+                // Store the Airtable record IDs back
+                for (let i = 0; i < (result.records || []).length; i++) {
+                  const batchIndex = batch.findIndex((c) => !c.airtableRecordId);
+                  if (batchIndex >= 0 && result.records[i]?.id) {
+                    await db.updateCustomer(batch[batchIndex].id, { airtableRecordId: result.records[i].id });
+                  }
+                }
+                pushed += toCreate.length;
+              } else {
+                failed += toCreate.length;
+              }
+            }
+          } catch {
+            failed += batch.length;
+          }
+        }
+
+        await db.createSyncLog({
+          integration: 'airtable',
+          action: 'contact_sync_outbound',
+          status: failed > 0 ? 'warning' : 'success',
+          details: `Pushed ${pushed} contacts to Airtable${failed > 0 ? `, ${failed} failed` : ''}`,
+          recordsProcessed: pushed,
+          recordsFailed: failed,
+        });
+        await db.updateSyncTimestamp('airtable');
+
+        return { pushed, failed, total: modifiedCustomers.length };
+      }),
+
     // Get sync status
     getSyncStatus: protectedProcedure.query(async () => {
       const customers = await db.getCustomers();
       const shopifyCount = customers.filter(c => c.shopifyCustomerId).length;
       const hubspotCount = customers.filter(c => c.hubspotContactId).length;
-      const manualCount = customers.filter(c => !c.shopifyCustomerId && !c.hubspotContactId).length;
-      
+      const salesforceCount = customers.filter(c => c.salesforceContactId).length;
+      const airtableCount = customers.filter(c => c.airtableRecordId).length;
+      const manualCount = customers.filter(c => !c.shopifyCustomerId && !c.hubspotContactId && !c.salesforceContactId && !c.airtableRecordId).length;
+
       return {
         total: customers.length,
         shopify: shopifyCount,
         hubspot: hubspotCount,
+        salesforce: salesforceCount,
+        airtable: airtableCount,
         manual: manualCount,
       };
     }),
@@ -2325,15 +2686,23 @@ export const appRouter = router({
       const shopifyStores = await db.getShopifyStores();
       const activeShopifyStores = shopifyStores.filter(s => s.isEnabled);
       const syncHistory = await db.getSyncHistory(10);
-      
+
       // Check Google OAuth connection
       const googleToken = await db.getGoogleOAuthToken(ctx.user.id);
       const googleConnected = googleToken && (!googleToken.expiresAt || new Date(googleToken.expiresAt) > new Date());
-      
+
       // Check QuickBooks OAuth connection
       const quickbooksToken = await db.getQuickBooksOAuthToken(ctx.user.id);
       const quickbooksConnected = quickbooksToken && (!quickbooksToken.expiresAt || new Date(quickbooksToken.expiresAt) > new Date());
-      
+
+      // Check Salesforce & Airtable sync settings
+      const salesforceSetting = await db.getSyncSettingByIntegration('salesforce');
+      const salesforceConnected = !!(salesforceSetting?.accessToken && salesforceSetting?.instanceUrl);
+      const airtableSetting = await db.getSyncSettingByIntegration('airtable');
+      const airtableConnected = !!(airtableSetting?.accessToken && airtableSetting?.baseId);
+      const hubspotSetting = await db.getSyncSettingByIntegration('hubspot');
+      const shopifySetting = await db.getSyncSettingByIntegration('shopify');
+
       return {
         sendgrid: {
           configured: sendgridConfigured,
@@ -2344,6 +2713,7 @@ export const appRouter = router({
           status: activeShopifyStores.length > 0 ? 'connected' : 'not_configured',
           storeCount: activeShopifyStores.length,
           stores: shopifyStores,
+          autoSync: shopifySetting ? { enabled: shopifySetting.isEnabled, direction: shopifySetting.direction, interval: shopifySetting.intervalMinutes, lastSync: shopifySetting.lastSyncAt } : null,
         },
         google: {
           configured: googleConnected,
@@ -2364,6 +2734,24 @@ export const appRouter = router({
           configured: quickbooksConnected,
           status: quickbooksConnected ? 'connected' : 'not_configured',
           realmId: quickbooksToken?.realmId,
+        },
+        salesforce: {
+          configured: salesforceConnected,
+          status: salesforceConnected ? 'connected' : 'not_configured',
+          instanceUrl: salesforceSetting?.instanceUrl,
+          autoSync: salesforceSetting ? { enabled: salesforceSetting.isEnabled, direction: salesforceSetting.direction, interval: salesforceSetting.intervalMinutes, lastSync: salesforceSetting.lastSyncAt } : null,
+        },
+        airtable: {
+          configured: airtableConnected,
+          status: airtableConnected ? 'connected' : 'not_configured',
+          baseId: airtableSetting?.baseId,
+          tableId: airtableSetting?.tableId,
+          autoSync: airtableSetting ? { enabled: airtableSetting.isEnabled, direction: airtableSetting.direction, interval: airtableSetting.intervalMinutes, lastSync: airtableSetting.lastSyncAt } : null,
+        },
+        hubspot: {
+          configured: !!(hubspotSetting?.accessToken),
+          status: hubspotSetting?.accessToken ? 'connected' : 'not_configured',
+          autoSync: hubspotSetting ? { enabled: hubspotSetting.isEnabled, direction: hubspotSetting.direction, interval: hubspotSetting.intervalMinutes, lastSync: hubspotSetting.lastSyncAt } : null,
         },
         syncHistory,
       };
@@ -2409,6 +2797,190 @@ export const appRouter = router({
       await db.clearSyncHistory();
       return { success: true };
     }),
+
+    // --- AUTO SYNC SETTINGS ---
+    getSyncSettings: protectedProcedure.query(async () => {
+      return await db.getSyncSettings();
+    }),
+
+    saveSyncSetting: adminProcedure
+      .input(z.object({
+        integration: z.enum(['shopify', 'hubspot', 'salesforce', 'airtable']),
+        isEnabled: z.boolean(),
+        direction: z.enum(['inbound', 'outbound', 'bidirectional']).optional(),
+        intervalMinutes: z.number().min(5).max(1440).optional(),
+        accessToken: z.string().optional(),
+        refreshToken: z.string().optional(),
+        instanceUrl: z.string().optional(),
+        baseId: z.string().optional(),
+        tableId: z.string().optional(),
+        config: z.any().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { integration, ...data } = input;
+        const nextSyncAt = data.isEnabled ? new Date(Date.now() + (data.intervalMinutes || 15) * 60 * 1000) : null;
+        await db.upsertSyncSetting(integration, { ...data, nextSyncAt } as any);
+        await createAuditLog(ctx.user.id, 'update', 'sync_setting', 0, `${integration} auto-sync ${data.isEnabled ? 'enabled' : 'disabled'}`);
+        await db.createSyncLog({
+          integration,
+          action: 'sync_settings_updated',
+          status: 'success',
+          details: `Auto ${data.direction || 'bidirectional'} sync ${data.isEnabled ? 'enabled' : 'disabled'} (every ${data.intervalMinutes || 15}m)`,
+        });
+        return { success: true };
+      }),
+
+    // Trigger a manual bidirectional sync for any integration
+    triggerSync: adminProcedure
+      .input(z.object({ integration: z.enum(['shopify', 'hubspot', 'salesforce', 'airtable']) }))
+      .mutation(async ({ input, ctx }) => {
+        const setting = await db.getSyncSettingByIntegration(input.integration);
+        if (!setting?.accessToken) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: `No credentials configured for ${input.integration}. Please save your access token first.` });
+        }
+
+        const results: any = { inbound: null, outbound: null };
+
+        // Helper to call the sync endpoints internally
+        if (input.integration === 'salesforce') {
+          if (!setting.instanceUrl) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Salesforce instance URL not configured' });
+          // Inbound
+          if (setting.direction !== 'outbound') {
+            try {
+              const inRes = await fetch(`${setting.instanceUrl}/services/data/v59.0/query/?q=` +
+                encodeURIComponent('SELECT Id, FirstName, LastName, Email, Phone, MailingStreet, MailingCity, MailingState, MailingCountry, MailingPostalCode, Account.Name, Title, Department FROM Contact ORDER BY LastModifiedDate DESC LIMIT 200'), {
+                headers: { Authorization: `Bearer ${setting.accessToken}`, 'Content-Type': 'application/json' },
+              });
+              if (inRes.ok) {
+                const data = await inRes.json();
+                let imported = 0, updated = 0;
+                for (const sc of (data.records || [])) {
+                  const existing = await db.getCustomerBySalesforceId(sc.Id);
+                  const custData = {
+                    name: `${sc.FirstName || ''} ${sc.LastName || ''}`.trim() || sc.Email || 'Unknown',
+                    email: sc.Email || undefined, phone: sc.Phone || undefined,
+                    salesforceContactId: sc.Id, syncSource: 'salesforce' as const, lastSyncedAt: new Date(),
+                    salesforceData: JSON.stringify(sc),
+                  };
+                  if (existing) { await db.updateCustomer(existing.id, custData); updated++; }
+                  else { await db.createCustomer(custData); imported++; }
+                }
+                results.inbound = { imported, updated, total: (data.records || []).length };
+              }
+            } catch (e: any) {
+              results.inbound = { error: e.message };
+            }
+          }
+          // Outbound
+          if (setting.direction !== 'inbound') {
+            const since = setting.lastSyncAt || new Date(0);
+            const modified = await db.getCustomersModifiedSince(since);
+            let pushed = 0, failed = 0;
+            for (const c of modified.filter(m => m.salesforceContactId)) {
+              try {
+                const nameParts = (c.name || '').split(' ');
+                const res = await fetch(`${setting.instanceUrl}/services/data/v59.0/sobjects/Contact/${c.salesforceContactId}`, {
+                  method: 'PATCH',
+                  headers: { Authorization: `Bearer ${setting.accessToken}`, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ FirstName: nameParts[0], LastName: nameParts.slice(1).join(' ') || nameParts[0], Email: c.email, Phone: c.phone }),
+                });
+                if (res.ok || res.status === 204) pushed++; else failed++;
+              } catch { failed++; }
+            }
+            results.outbound = { pushed, failed, total: modified.length };
+          }
+        } else if (input.integration === 'airtable') {
+          if (!setting.baseId || !setting.tableId) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Airtable base/table ID not configured' });
+          // Inbound
+          if (setting.direction !== 'outbound') {
+            try {
+              const res = await fetch(`https://api.airtable.com/v0/${setting.baseId}/${encodeURIComponent(setting.tableId)}?maxRecords=200`, {
+                headers: { Authorization: `Bearer ${setting.accessToken}`, 'Content-Type': 'application/json' },
+              });
+              if (res.ok) {
+                const data = await res.json();
+                let imported = 0, updated = 0;
+                for (const rec of (data.records || [])) {
+                  const f = rec.fields || {};
+                  const getF = (...names: string[]) => { for (const n of names) { const k = Object.keys(f).find(k => k.toLowerCase() === n.toLowerCase()); if (k && f[k]) return String(f[k]); } return undefined; };
+                  const name = getF('Name', 'Full Name') || [getF('First Name'), getF('Last Name')].filter(Boolean).join(' ') || getF('Email') || 'Unknown';
+                  const existing = await db.getCustomerByAirtableId(rec.id);
+                  const custData = {
+                    name, email: getF('Email') || undefined, phone: getF('Phone') || undefined,
+                    airtableRecordId: rec.id, syncSource: 'airtable' as const, lastSyncedAt: new Date(), airtableData: JSON.stringify(rec),
+                  };
+                  if (existing) { await db.updateCustomer(existing.id, custData); updated++; }
+                  else { await db.createCustomer(custData); imported++; }
+                }
+                results.inbound = { imported, updated, total: (data.records || []).length };
+              }
+            } catch (e: any) {
+              results.inbound = { error: e.message };
+            }
+          }
+          // Outbound
+          if (setting.direction !== 'inbound') {
+            const since = setting.lastSyncAt || new Date(0);
+            const modified = await db.getCustomersModifiedSince(since);
+            let pushed = 0, failed = 0;
+            const toUpdate = modified.filter(c => c.airtableRecordId);
+            if (toUpdate.length > 0) {
+              for (let i = 0; i < toUpdate.length; i += 10) {
+                const batch = toUpdate.slice(i, i + 10).map(c => ({
+                  id: c.airtableRecordId,
+                  fields: { 'Name': c.name, 'Email': c.email || '', 'Phone': c.phone || '' },
+                }));
+                try {
+                  const res = await fetch(`https://api.airtable.com/v0/${setting.baseId}/${encodeURIComponent(setting.tableId!)}`, {
+                    method: 'PATCH',
+                    headers: { Authorization: `Bearer ${setting.accessToken}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ records: batch }),
+                  });
+                  if (res.ok) pushed += batch.length; else failed += batch.length;
+                } catch { failed += batch.length; }
+              }
+            }
+            results.outbound = { pushed, failed, total: modified.length };
+          }
+        } else if (input.integration === 'hubspot') {
+          if (setting.direction !== 'outbound') {
+            try {
+              const res = await fetch('https://api.hubapi.com/crm/v3/objects/contacts?limit=100&properties=email,firstname,lastname,phone,address,city,state,country,zip,company', {
+                headers: { Authorization: `Bearer ${setting.accessToken}`, 'Content-Type': 'application/json' },
+              });
+              if (res.ok) {
+                const data = await res.json();
+                let imported = 0, updated = 0;
+                for (const hc of (data.results || [])) {
+                  const props = hc.properties || {};
+                  const existing = await db.getCustomerByHubspotId(hc.id.toString());
+                  const custData = {
+                    name: `${props.firstname || ''} ${props.lastname || ''}`.trim() || props.email || 'Unknown',
+                    email: props.email || undefined, phone: props.phone || undefined,
+                    hubspotContactId: hc.id.toString(), syncSource: 'hubspot' as const, lastSyncedAt: new Date(), hubspotData: JSON.stringify(hc),
+                  };
+                  if (existing) { await db.updateCustomer(existing.id, custData); updated++; }
+                  else { await db.createCustomer(custData); imported++; }
+                }
+                results.inbound = { imported, updated, total: (data.results || []).length };
+              }
+            } catch (e: any) { results.inbound = { error: e.message }; }
+          }
+        } else if (input.integration === 'shopify') {
+          // Shopify uses store-based OAuth, handled through shopify router
+          results.inbound = { message: 'Shopify sync is managed through the Shopify store connection' };
+        }
+
+        await db.updateSyncTimestamp(input.integration);
+        await db.createSyncLog({
+          integration: input.integration,
+          action: 'manual_bidirectional_sync',
+          status: 'success',
+          details: JSON.stringify(results),
+        });
+
+        return results;
+      }),
   }),
 
   // ============================================

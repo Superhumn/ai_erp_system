@@ -12,6 +12,7 @@ import * as sendgridProvider from "./sendgridProvider";
 import * as emailService from "./emailService";
 import * as db from "../db";
 import { startEmailQueueWorker } from "../emailQueueWorker";
+import { startAutoSync } from "../autoSync";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -495,6 +496,9 @@ async function startServer() {
 
     // Start the email queue worker
     startEmailQueueWorker();
+
+    // Start the auto-sync scheduler for bidirectional integrations
+    startAutoSync();
   });
 }
 

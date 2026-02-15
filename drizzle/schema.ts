@@ -138,10 +138,14 @@ export const customers = mysqlTable("customers", {
   shopifyCustomerId: varchar("shopifyCustomerId", { length: 64 }),
   quickbooksCustomerId: varchar("quickbooksCustomerId", { length: 64 }),
   hubspotContactId: varchar("hubspotContactId", { length: 64 }),
-  syncSource: mysqlEnum("syncSource", ["manual", "shopify", "hubspot", "quickbooks"]).default("manual"),
+  salesforceContactId: varchar("salesforceContactId", { length: 64 }),
+  airtableRecordId: varchar("airtableRecordId", { length: 128 }),
+  syncSource: mysqlEnum("syncSource", ["manual", "shopify", "hubspot", "quickbooks", "salesforce", "airtable"]).default("manual"),
   lastSyncedAt: timestamp("lastSyncedAt"),
   shopifyData: text("shopifyData"),
   hubspotData: text("hubspotData"),
+  salesforceData: text("salesforceData"),
+  airtableData: text("airtableData"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -2215,6 +2219,27 @@ export const syncLogs = mysqlTable("syncLogs", {
 export type SyncLog = typeof syncLogs.$inferSelect;
 export type InsertSyncLog = typeof syncLogs.$inferInsert;
 
+// Auto-sync configuration per integration
+export const syncSettings = mysqlTable("syncSettings", {
+  id: int("id").autoincrement().primaryKey(),
+  integration: varchar("integration", { length: 64 }).notNull(), // shopify, hubspot, salesforce, airtable
+  direction: mysqlEnum("direction", ["inbound", "outbound", "bidirectional"]).default("bidirectional").notNull(),
+  isEnabled: boolean("isEnabled").default(false).notNull(),
+  intervalMinutes: int("intervalMinutes").default(15).notNull(),
+  lastSyncAt: timestamp("lastSyncAt"),
+  nextSyncAt: timestamp("nextSyncAt"),
+  accessToken: text("accessToken"),
+  refreshToken: text("refreshToken"),
+  instanceUrl: varchar("instanceUrl", { length: 512 }), // Salesforce instance URL
+  baseId: varchar("baseId", { length: 128 }), // Airtable base ID
+  tableId: varchar("tableId", { length: 128 }), // Airtable table ID
+  config: json("config"), // Additional config per integration
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SyncSetting = typeof syncSettings.$inferSelect;
+export type InsertSyncSetting = typeof syncSettings.$inferInsert;
 
 // Email scanning types
 export type InboundEmail = typeof inboundEmails.$inferSelect;
@@ -3254,6 +3279,7 @@ export const crmContacts = mysqlTable("crm_contacts", {
   customerId: int("customerId"), // Link to customer if converted
   hubspotContactId: varchar("hubspotContactId", { length: 64 }),
   salesforceContactId: varchar("salesforceContactId", { length: 64 }),
+  airtableRecordId: varchar("airtableRecordId", { length: 128 }),
 
   // Capture metadata
   captureDeviceId: varchar("captureDeviceId", { length: 128 }),
