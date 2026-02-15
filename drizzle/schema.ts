@@ -832,7 +832,7 @@ export const notificationPreferences = mysqlTable("notification_preferences", {
 export const integrationConfigs = mysqlTable("integration_configs", {
   id: int("id").autoincrement().primaryKey(),
   companyId: int("companyId"),
-  type: mysqlEnum("type", ["quickbooks", "shopify", "stripe", "slack", "email", "webhook", "fireflies"]).notNull(),
+  type: mysqlEnum("type", ["quickbooks", "shopify", "stripe", "slack", "email", "webhook", "fireflies", "google_chat"]).notNull(),
   name: varchar("name", { length: 255 }).notNull(),
   config: json("config"),
   credentials: json("credentials"),
@@ -4471,3 +4471,97 @@ export const copackerShippingDocuments = mysqlTable("copacker_shipping_documents
 
 export type CopackerShippingDocument = typeof copackerShippingDocuments.$inferSelect;
 export type InsertCopackerShippingDocument = typeof copackerShippingDocuments.$inferInsert;
+
+// ============================================
+// GOOGLE CHAT INTEGRATION
+// ============================================
+
+export const googleChatSpaces = mysqlTable("google_chat_spaces", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  spaceName: varchar("spaceName", { length: 255 }).notNull().unique(),
+  displayName: varchar("displayName", { length: 500 }),
+  spaceType: varchar("spaceType", { length: 64 }),
+  isSyncEnabled: boolean("isSyncEnabled").default(true),
+  lastSyncAt: timestamp("lastSyncAt"),
+  lastSyncMessageTimestamp: timestamp("lastSyncMessageTimestamp"),
+  totalMessagesSynced: int("totalMessagesSynced").default(0),
+  totalTasksExtracted: int("totalTasksExtracted").default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GoogleChatSpaceRecord = typeof googleChatSpaces.$inferSelect;
+export type InsertGoogleChatSpace = typeof googleChatSpaces.$inferInsert;
+
+export const googleChatMessages = mysqlTable("google_chat_messages", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  spaceName: varchar("spaceName", { length: 255 }).notNull(),
+  spaceDisplayName: varchar("spaceDisplayName", { length: 500 }),
+  spaceType: varchar("spaceType", { length: 64 }),
+  messageName: varchar("messageName", { length: 500 }).notNull().unique(),
+  senderName: varchar("senderName", { length: 255 }),
+  senderDisplayName: varchar("senderDisplayName", { length: 255 }),
+  senderType: varchar("senderType", { length: 64 }),
+  text: text("text"),
+  threadName: varchar("threadName", { length: 500 }),
+  messageTimestamp: timestamp("messageTimestamp"),
+  syncedAt: timestamp("syncedAt").defaultNow().notNull(),
+  hasExtractedTasks: boolean("hasExtractedTasks").default(false),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GoogleChatMessageRecord = typeof googleChatMessages.$inferSelect;
+export type InsertGoogleChatMessage = typeof googleChatMessages.$inferInsert;
+
+// ============================================
+// EMAIL-TO-TASK & CHAT-TO-TASK EXTRACTION
+// ============================================
+
+export const emailExtractedTasks = mysqlTable("email_extracted_tasks", {
+  id: int("id").autoincrement().primaryKey(),
+  emailId: int("emailId").notNull(),
+  projectTaskId: int("projectTaskId"),
+  taskText: varchar("taskText", { length: 255 }).notNull(),
+  taskDescription: text("taskDescription"),
+  priority: mysqlEnum("priority", ["low", "medium", "high", "critical"]).default("medium"),
+  dueDate: timestamp("dueDate"),
+  assignee: varchar("assignee", { length: 255 }),
+  emailCategory: varchar("emailCategory", { length: 64 }),
+  extractionMethod: mysqlEnum("extractionMethod", ["pattern", "ai"]).default("pattern"),
+  confidence: decimal("confidence", { precision: 5, scale: 2 }),
+  status: mysqlEnum("status", ["pending", "converted_to_task", "skipped", "completed"]).default("pending").notNull(),
+  convertedAt: timestamp("convertedAt"),
+  convertedBy: int("convertedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailExtractedTask = typeof emailExtractedTasks.$inferSelect;
+export type InsertEmailExtractedTask = typeof emailExtractedTasks.$inferInsert;
+
+export const chatExtractedTasks = mysqlTable("chat_extracted_tasks", {
+  id: int("id").autoincrement().primaryKey(),
+  spaceName: varchar("spaceName", { length: 255 }).notNull(),
+  messageName: varchar("messageName", { length: 500 }),
+  projectTaskId: int("projectTaskId"),
+  taskText: varchar("taskText", { length: 255 }).notNull(),
+  taskDescription: text("taskDescription"),
+  priority: mysqlEnum("priority", ["low", "medium", "high", "critical"]).default("medium"),
+  dueDate: timestamp("dueDate"),
+  assignee: varchar("assignee", { length: 255 }),
+  senderName: varchar("senderName", { length: 255 }),
+  messageTimestamp: timestamp("messageTimestamp"),
+  extractionMethod: mysqlEnum("extractionMethod", ["pattern", "ai"]).default("pattern"),
+  confidence: decimal("confidence", { precision: 5, scale: 2 }),
+  status: mysqlEnum("status", ["pending", "converted_to_task", "skipped", "completed"]).default("pending").notNull(),
+  convertedAt: timestamp("convertedAt"),
+  convertedBy: int("convertedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ChatExtractedTask = typeof chatExtractedTasks.$inferSelect;
+export type InsertChatExtractedTask = typeof chatExtractedTasks.$inferInsert;

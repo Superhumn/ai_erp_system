@@ -93,7 +93,13 @@ import {
   InsertFirefliesMeeting, InsertFirefliesActionItem, InsertFirefliesContactMapping,
   // Copacker portal
   copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
-  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument
+  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
+  // Google Chat integration
+  googleChatSpaces, googleChatMessages,
+  InsertGoogleChatSpace, InsertGoogleChatMessage,
+  // Email-to-Task & Chat-to-Task extraction
+  emailExtractedTasks, chatExtractedTasks,
+  InsertEmailExtractedTask, InsertChatExtractedTask
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8302,4 +8308,166 @@ export async function updateCopackerShippingDocument(id: number, data: Partial<I
   const db = await getDb();
   if (!db) return;
   await db.update(copackerShippingDocuments).set(data).where(eq(copackerShippingDocuments.id, id));
+}
+
+// ============================================
+// GOOGLE CHAT INTEGRATION
+// ============================================
+
+export async function getGoogleChatSpaces() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(googleChatSpaces).orderBy(desc(googleChatSpaces.updatedAt));
+}
+
+export async function getGoogleChatSpaceByName(spaceName: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(googleChatSpaces).where(eq(googleChatSpaces.spaceName, spaceName)).limit(1);
+  return result[0] || null;
+}
+
+export async function createGoogleChatSpace(data: InsertGoogleChatSpace) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(googleChatSpaces).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateGoogleChatSpace(id: number, data: Partial<InsertGoogleChatSpace>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(googleChatSpaces).set(data).where(eq(googleChatSpaces.id, id));
+}
+
+export async function getGoogleChatMessages(spaceName?: string, limit = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  if (spaceName) {
+    return db.select().from(googleChatMessages)
+      .where(eq(googleChatMessages.spaceName, spaceName))
+      .orderBy(desc(googleChatMessages.messageTimestamp))
+      .limit(limit);
+  }
+  return db.select().from(googleChatMessages).orderBy(desc(googleChatMessages.messageTimestamp)).limit(limit);
+}
+
+export async function getGoogleChatMessageByName(messageName: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(googleChatMessages).where(eq(googleChatMessages.messageName, messageName)).limit(1);
+  return result[0] || null;
+}
+
+export async function createGoogleChatMessage(data: InsertGoogleChatMessage) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(googleChatMessages).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateGoogleChatMessage(id: number, data: Partial<InsertGoogleChatMessage>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(googleChatMessages).set(data).where(eq(googleChatMessages.id, id));
+}
+
+// ============================================
+// EMAIL-TO-TASK EXTRACTION
+// ============================================
+
+export async function getEmailExtractedTasks(options?: { emailId?: number; status?: string; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (options?.emailId) conditions.push(eq(emailExtractedTasks.emailId, options.emailId));
+  if (options?.status) conditions.push(eq(emailExtractedTasks.status, options.status as any));
+
+  const query = conditions.length
+    ? db.select().from(emailExtractedTasks).where(and(...conditions))
+    : db.select().from(emailExtractedTasks);
+
+  return query.orderBy(desc(emailExtractedTasks.createdAt)).limit(options?.limit || 100);
+}
+
+export async function getEmailExtractedTaskById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(emailExtractedTasks).where(eq(emailExtractedTasks.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function createEmailExtractedTask(data: InsertEmailExtractedTask) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(emailExtractedTasks).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEmailExtractedTask(id: number, data: Partial<InsertEmailExtractedTask>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailExtractedTasks).set(data).where(eq(emailExtractedTasks.id, id));
+}
+
+export async function getEmailExtractedTaskStats() {
+  const db = await getDb();
+  if (!db) return { total: 0, pending: 0, converted: 0, skipped: 0 };
+  const result = await db.select({
+    total: count(),
+    pending: sql<number>`SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END)`,
+    converted: sql<number>`SUM(CASE WHEN status = 'converted_to_task' THEN 1 ELSE 0 END)`,
+    skipped: sql<number>`SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END)`,
+  }).from(emailExtractedTasks);
+  return result[0] || { total: 0, pending: 0, converted: 0, skipped: 0 };
+}
+
+// ============================================
+// CHAT-TO-TASK EXTRACTION
+// ============================================
+
+export async function getChatExtractedTasks(options?: { spaceName?: string; status?: string; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (options?.spaceName) conditions.push(eq(chatExtractedTasks.spaceName, options.spaceName));
+  if (options?.status) conditions.push(eq(chatExtractedTasks.status, options.status as any));
+
+  const query = conditions.length
+    ? db.select().from(chatExtractedTasks).where(and(...conditions))
+    : db.select().from(chatExtractedTasks);
+
+  return query.orderBy(desc(chatExtractedTasks.createdAt)).limit(options?.limit || 100);
+}
+
+export async function getChatExtractedTaskById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(chatExtractedTasks).where(eq(chatExtractedTasks.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function createChatExtractedTask(data: InsertChatExtractedTask) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(chatExtractedTasks).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateChatExtractedTask(id: number, data: Partial<InsertChatExtractedTask>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(chatExtractedTasks).set(data).where(eq(chatExtractedTasks.id, id));
+}
+
+export async function getChatExtractedTaskStats() {
+  const db = await getDb();
+  if (!db) return { total: 0, pending: 0, converted: 0, skipped: 0 };
+  const result = await db.select({
+    total: count(),
+    pending: sql<number>`SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END)`,
+    converted: sql<number>`SUM(CASE WHEN status = 'converted_to_task' THEN 1 ELSE 0 END)`,
+    skipped: sql<number>`SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END)`,
+  }).from(chatExtractedTasks);
+  return result[0] || { total: 0, pending: 0, converted: 0, skipped: 0 };
 }

@@ -20,6 +20,8 @@ import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, create
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo } from "./_core/quickbooks";
 import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
+import { listSpaces as listGoogleChatSpaces, listMessages as listGoogleChatMessages, sendMessage as sendGoogleChatMessage, extractTasksFromMessages, extractTasksWithAI as extractChatTasksWithAI, validateGoogleChatAccess, getGoogleChatAuthUrl } from "./_core/googleChat";
+import { quickExtractTasks, extractTasksWithAI as extractEmailTasksWithAI } from "./_core/emailTaskExtractor";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -13322,6 +13324,566 @@ Ask if they received the original request and if they can provide a quote.`;
         });
 
         return { taskId: taskResult.id };
+      }),
+  }),
+
+  // ============================================
+  // GOOGLE CHAT INTEGRATION
+  // ============================================
+  googleChat: router({
+    // Get OAuth URL for Google Chat access
+    getAuthUrl: protectedProcedure.query(({ ctx }) => {
+      return { url: getGoogleChatAuthUrl(ctx.user.id) };
+    }),
+
+    // Validate Google Chat access with existing OAuth token
+    validateAccess: protectedProcedure.mutation(async ({ ctx }) => {
+      const token = await db.getGoogleOAuthToken(ctx.user.id);
+      if (!token?.accessToken) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'No Google OAuth token found. Please connect Google Chat first.' });
+      }
+      return validateGoogleChatAccess(token.accessToken);
+    }),
+
+    // Configure Google Chat integration
+    configure: adminProcedure
+      .input(z.object({
+        autoSyncEnabled: z.boolean().optional(),
+        autoExtractTasks: z.boolean().optional(),
+        useAiExtraction: z.boolean().optional(),
+        syncIntervalMinutes: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const existing = await db.getIntegrationConfigs();
+        const gchatConfig = existing.find((c: any) => c.type === 'google_chat');
+
+        const config = {
+          autoSyncEnabled: input.autoSyncEnabled ?? true,
+          autoExtractTasks: input.autoExtractTasks ?? true,
+          useAiExtraction: input.useAiExtraction ?? false,
+          syncIntervalMinutes: input.syncIntervalMinutes ?? 30,
+        };
+
+        if (gchatConfig) {
+          await db.updateIntegrationConfig(gchatConfig.id, { config, isActive: true });
+          await createAuditLog(ctx.user.id, 'update', 'integration', gchatConfig.id, 'Google Chat');
+          return { id: gchatConfig.id, updated: true };
+        } else {
+          const result = await db.createIntegrationConfig({
+            type: 'google_chat',
+            name: 'Google Chat',
+            config: config as any,
+            isActive: true,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'integration', result.id, 'Google Chat');
+          return { id: result.id, updated: false };
+        }
+      }),
+
+    // Get Google Chat configuration status
+    getConfig: protectedProcedure.query(async () => {
+      const existing = await db.getIntegrationConfigs();
+      const gchatConfig = existing.find((c: any) => c.type === 'google_chat');
+      if (!gchatConfig) return { configured: false };
+      return {
+        configured: true,
+        isActive: gchatConfig.isActive,
+        config: gchatConfig.config,
+        lastSyncAt: gchatConfig.lastSyncAt,
+      };
+    }),
+
+    // Disconnect Google Chat
+    disconnect: adminProcedure.mutation(async ({ ctx }) => {
+      const existing = await db.getIntegrationConfigs();
+      const gchatConfig = existing.find((c: any) => c.type === 'google_chat');
+      if (gchatConfig) {
+        await db.updateIntegrationConfig(gchatConfig.id, { isActive: false });
+        await createAuditLog(ctx.user.id, 'update', 'integration', gchatConfig.id, 'Google Chat disconnected');
+      }
+      return { success: true };
+    }),
+
+    // List Google Chat spaces
+    listSpaces: protectedProcedure.mutation(async ({ ctx }) => {
+      const token = await db.getGoogleOAuthToken(ctx.user.id);
+      if (!token?.accessToken) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'No Google OAuth token found.' });
+      }
+      const result = await listGoogleChatSpaces(token.accessToken);
+      if (!result.success) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to list spaces' });
+      }
+      return result.result;
+    }),
+
+    // Sync messages from a Google Chat space
+    syncMessages: protectedProcedure
+      .input(z.object({
+        spaceName: z.string().min(1),
+        pageSize: z.number().optional(),
+        sinceTimestamp: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const token = await db.getGoogleOAuthToken(ctx.user.id);
+        if (!token?.accessToken) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'No Google OAuth token found.' });
+        }
+
+        // Build filter for messages since last sync
+        let filter: string | undefined;
+        if (input.sinceTimestamp) {
+          filter = `createTime > "${input.sinceTimestamp}"`;
+        }
+
+        const result = await listGoogleChatMessages(token.accessToken, input.spaceName, {
+          pageSize: input.pageSize || 100,
+          filter,
+        });
+
+        if (!result.success) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to list messages' });
+        }
+
+        const messages = result.result?.messages || [];
+        let synced = 0;
+        let skipped = 0;
+
+        for (const msg of messages) {
+          // Check if already synced
+          const existing = await db.getGoogleChatMessageByName(msg.name);
+          if (existing) {
+            skipped++;
+            continue;
+          }
+
+          await db.createGoogleChatMessage({
+            spaceName: input.spaceName,
+            spaceDisplayName: msg.space?.displayName || undefined,
+            spaceType: msg.space?.type || undefined,
+            messageName: msg.name,
+            senderName: msg.sender?.name || undefined,
+            senderDisplayName: msg.sender?.displayName || undefined,
+            senderType: msg.sender?.type || undefined,
+            text: msg.text || undefined,
+            threadName: msg.thread?.name || undefined,
+            messageTimestamp: msg.createTime ? new Date(msg.createTime) : undefined,
+          });
+          synced++;
+        }
+
+        // Update or create space record
+        const existingSpace = await db.getGoogleChatSpaceByName(input.spaceName);
+        if (existingSpace) {
+          await db.updateGoogleChatSpace(existingSpace.id, {
+            lastSyncAt: new Date(),
+            totalMessagesSynced: (existingSpace.totalMessagesSynced || 0) + synced,
+          });
+        } else {
+          const firstMsg = messages[0];
+          await db.createGoogleChatSpace({
+            spaceName: input.spaceName,
+            displayName: firstMsg?.space?.displayName || input.spaceName,
+            spaceType: firstMsg?.space?.type || undefined,
+            lastSyncAt: new Date(),
+            totalMessagesSynced: synced,
+          });
+        }
+
+        await createAuditLog(ctx.user.id, 'create', 'google_chat_sync', 0, `Synced ${synced} messages from ${input.spaceName}`);
+        return { synced, skipped, total: messages.length };
+      }),
+
+    // Extract tasks from synced Google Chat messages
+    extractTasks: protectedProcedure
+      .input(z.object({
+        spaceName: z.string().min(1),
+        useAi: z.boolean().default(false),
+        limit: z.number().default(100),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Get unprocessed messages from this space
+        const messages = await db.getGoogleChatMessages(input.spaceName, input.limit);
+        const unprocessed = messages.filter((m: any) => !m.hasExtractedTasks);
+
+        if (unprocessed.length === 0) {
+          return { tasksExtracted: 0, messagesProcessed: 0 };
+        }
+
+        // Convert DB messages to the format expected by the extraction functions
+        const chatMessages = unprocessed.map((m: any) => ({
+          name: m.messageName,
+          sender: {
+            name: m.senderName || '',
+            displayName: m.senderDisplayName || 'Unknown',
+            type: (m.senderType || 'HUMAN') as "HUMAN" | "BOT",
+          },
+          createTime: m.messageTimestamp?.toISOString() || new Date().toISOString(),
+          text: m.text || '',
+          thread: m.threadName ? { name: m.threadName } : undefined,
+          space: {
+            name: m.spaceName,
+            displayName: m.spaceDisplayName || '',
+            type: (m.spaceType || 'ROOM') as "ROOM" | "DM" | "GROUP_CHAT",
+          },
+        }));
+
+        let extractedTasks;
+        const extractionMethod = input.useAi ? 'ai' : 'pattern';
+
+        if (input.useAi) {
+          extractedTasks = await extractChatTasksWithAI(chatMessages);
+        } else {
+          extractedTasks = extractTasksFromMessages(chatMessages);
+        }
+
+        let tasksCreated = 0;
+        for (const task of extractedTasks) {
+          await db.createChatExtractedTask({
+            spaceName: input.spaceName,
+            messageName: task.sourceMessage || undefined,
+            taskText: task.text.substring(0, 255),
+            taskDescription: `From Google Chat (${input.spaceName})\nSender: ${task.senderName}\nTimestamp: ${task.messageTimestamp}`,
+            priority: task.priority as any,
+            dueDate: task.dueDate ? new Date(task.dueDate) : undefined,
+            assignee: task.assignee || undefined,
+            senderName: task.senderName || undefined,
+            messageTimestamp: task.messageTimestamp ? new Date(task.messageTimestamp) : undefined,
+            extractionMethod: extractionMethod as any,
+            confidence: extractionMethod === 'ai' ? '80' : '65' as any,
+            status: 'pending',
+          });
+          tasksCreated++;
+        }
+
+        // Mark messages as processed
+        for (const msg of unprocessed) {
+          await db.updateGoogleChatMessage((msg as any).id, { hasExtractedTasks: true });
+        }
+
+        // Update space stats
+        const space = await db.getGoogleChatSpaceByName(input.spaceName);
+        if (space) {
+          await db.updateGoogleChatSpace(space.id, {
+            totalTasksExtracted: (space.totalTasksExtracted || 0) + tasksCreated,
+          });
+        }
+
+        return { tasksExtracted: tasksCreated, messagesProcessed: unprocessed.length };
+      }),
+
+    // Send a message to a Google Chat space
+    sendMessage: protectedProcedure
+      .input(z.object({
+        spaceName: z.string().min(1),
+        text: z.string().min(1),
+        threadName: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const token = await db.getGoogleOAuthToken(ctx.user.id);
+        if (!token?.accessToken) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'No Google OAuth token found.' });
+        }
+        const result = await sendGoogleChatMessage(token.accessToken, input.spaceName, input.text, input.threadName);
+        if (!result.success) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to send message' });
+        }
+        return { message: result.message };
+      }),
+
+    // List synced spaces
+    spaces: router({
+      list: protectedProcedure.query(() => db.getGoogleChatSpaces()),
+      get: protectedProcedure
+        .input(z.object({ spaceName: z.string() }))
+        .query(({ input }) => db.getGoogleChatSpaceByName(input.spaceName)),
+    }),
+
+    // List extracted tasks from chat
+    tasks: router({
+      list: protectedProcedure
+        .input(z.object({
+          spaceName: z.string().optional(),
+          status: z.string().optional(),
+          limit: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getChatExtractedTasks(input)),
+
+      getStats: protectedProcedure.query(() => db.getChatExtractedTaskStats()),
+
+      // Convert a chat extracted task to a project task
+      convertToProjectTask: protectedProcedure
+        .input(z.object({
+          chatTaskId: z.number(),
+          projectId: z.number(),
+          assigneeId: z.number().optional(),
+          priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+          dueDate: z.date().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const chatTask = await db.getChatExtractedTaskById(input.chatTaskId);
+          if (!chatTask) throw new TRPCError({ code: 'NOT_FOUND', message: 'Chat task not found' });
+          if (chatTask.status === 'converted_to_task') {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Task already converted' });
+          }
+
+          const taskResult = await db.createProjectTask({
+            projectId: input.projectId,
+            name: chatTask.taskText,
+            description: `Converted from Google Chat task\n\n${chatTask.taskDescription || chatTask.taskText}`,
+            assigneeId: input.assigneeId || ctx.user.id,
+            status: 'todo',
+            priority: input.priority || (chatTask.priority as any) || 'medium',
+            dueDate: input.dueDate || chatTask.dueDate || undefined,
+            createdBy: ctx.user.id,
+          });
+
+          await db.updateChatExtractedTask(chatTask.id, {
+            projectTaskId: taskResult.id,
+            status: 'converted_to_task',
+            convertedAt: new Date(),
+            convertedBy: ctx.user.id,
+          });
+
+          return { taskId: taskResult.id };
+        }),
+
+      // Skip a chat extracted task
+      skip: protectedProcedure
+        .input(z.object({ chatTaskId: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.updateChatExtractedTask(input.chatTaskId, { status: 'skipped' });
+          return { success: true };
+        }),
+    }),
+  }),
+
+  // ============================================
+  // EMAIL-TO-TASK PIPELINE
+  // ============================================
+  emailTasks: router({
+    // Extract tasks from a specific inbound email
+    extractFromEmail: protectedProcedure
+      .input(z.object({
+        emailId: z.number(),
+        useAi: z.boolean().default(false),
+      }))
+      .mutation(async ({ input }) => {
+        const email = await db.getInboundEmailById(input.emailId);
+        if (!email) throw new TRPCError({ code: 'NOT_FOUND', message: 'Email not found' });
+
+        const categorization = {
+          category: (email.category || 'general') as any,
+          confidence: parseFloat(email.categoryConfidence as any) || 50,
+          keywords: (email.categoryKeywords as string[]) || [],
+          suggestedAction: email.suggestedAction || undefined,
+          priority: (email.priority || 'medium') as 'high' | 'medium' | 'low',
+        };
+
+        let tasks;
+        const extractionMethod = input.useAi ? 'ai' : 'pattern';
+
+        if (input.useAi) {
+          const result = await extractEmailTasksWithAI(
+            email.id, email.subject || '', email.bodyText || '',
+            email.fromEmail, email.fromName || undefined, categorization
+          );
+          tasks = result.tasks;
+        } else {
+          tasks = quickExtractTasks(
+            email.id, email.subject || '', email.bodyText || '',
+            email.fromEmail, email.fromName || undefined, categorization
+          );
+        }
+
+        let created = 0;
+        for (const task of tasks) {
+          await db.createEmailExtractedTask({
+            emailId: email.id,
+            taskText: task.text.substring(0, 255),
+            taskDescription: task.description,
+            priority: task.priority as any,
+            dueDate: task.dueDate ? new Date(task.dueDate) : undefined,
+            assignee: task.assignee || undefined,
+            emailCategory: task.category || undefined,
+            extractionMethod: extractionMethod as any,
+            confidence: task.confidence?.toString() as any,
+            status: 'pending',
+          });
+          created++;
+        }
+
+        return { tasksExtracted: created, emailId: email.id };
+      }),
+
+    // Bulk extract tasks from all uncategorized or unprocessed emails
+    bulkExtract: protectedProcedure
+      .input(z.object({
+        useAi: z.boolean().default(false),
+        limit: z.number().default(50),
+        categories: z.array(z.string()).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        // Get recent inbound emails that haven't had tasks extracted yet
+        const allEmails = await db.getInboundEmails({ limit: input.limit });
+
+        // Filter to emails we haven't extracted tasks from
+        let processed = 0;
+        let totalTasks = 0;
+        const errors: string[] = [];
+
+        for (const email of allEmails) {
+          // Check if tasks already extracted for this email
+          const existingTasks = await db.getEmailExtractedTasks({ emailId: email.id });
+          if (existingTasks.length > 0) continue;
+
+          // Filter by category if specified
+          if (input.categories && input.categories.length > 0) {
+            if (!input.categories.includes(email.category || 'general')) continue;
+          }
+
+          try {
+            const categorization = {
+              category: (email.category || 'general') as any,
+              confidence: parseFloat(email.categoryConfidence as any) || 50,
+              keywords: (email.categoryKeywords as string[]) || [],
+              suggestedAction: email.suggestedAction || undefined,
+              priority: (email.priority || 'medium') as 'high' | 'medium' | 'low',
+            };
+
+            let tasks;
+            if (input.useAi) {
+              const result = await extractEmailTasksWithAI(
+                email.id, email.subject || '', email.bodyText || '',
+                email.fromEmail, email.fromName || undefined, categorization
+              );
+              tasks = result.tasks;
+            } else {
+              tasks = quickExtractTasks(
+                email.id, email.subject || '', email.bodyText || '',
+                email.fromEmail, email.fromName || undefined, categorization
+              );
+            }
+
+            for (const task of tasks) {
+              await db.createEmailExtractedTask({
+                emailId: email.id,
+                taskText: task.text.substring(0, 255),
+                taskDescription: task.description,
+                priority: task.priority as any,
+                dueDate: task.dueDate ? new Date(task.dueDate) : undefined,
+                assignee: task.assignee || undefined,
+                emailCategory: task.category || undefined,
+                extractionMethod: input.useAi ? 'ai' as any : 'pattern' as any,
+                confidence: task.confidence?.toString() as any,
+                status: 'pending',
+              });
+              totalTasks++;
+            }
+            processed++;
+          } catch (error: any) {
+            errors.push(`Email ${email.id}: ${error.message}`);
+          }
+        }
+
+        return { emailsProcessed: processed, tasksExtracted: totalTasks, errors };
+      }),
+
+    // List extracted email tasks
+    list: protectedProcedure
+      .input(z.object({
+        emailId: z.number().optional(),
+        status: z.string().optional(),
+        limit: z.number().optional(),
+      }).optional())
+      .query(({ input }) => db.getEmailExtractedTasks(input)),
+
+    // Get stats
+    getStats: protectedProcedure.query(() => db.getEmailExtractedTaskStats()),
+
+    // Convert an email extracted task to a project task
+    convertToProjectTask: protectedProcedure
+      .input(z.object({
+        emailTaskId: z.number(),
+        projectId: z.number(),
+        assigneeId: z.number().optional(),
+        priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+        dueDate: z.date().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const emailTask = await db.getEmailExtractedTaskById(input.emailTaskId);
+        if (!emailTask) throw new TRPCError({ code: 'NOT_FOUND', message: 'Email task not found' });
+        if (emailTask.status === 'converted_to_task') {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Task already converted' });
+        }
+
+        const taskResult = await db.createProjectTask({
+          projectId: input.projectId,
+          name: emailTask.taskText,
+          description: `Converted from email task\n\n${emailTask.taskDescription || emailTask.taskText}`,
+          assigneeId: input.assigneeId || ctx.user.id,
+          status: 'todo',
+          priority: input.priority || (emailTask.priority as any) || 'medium',
+          dueDate: input.dueDate || emailTask.dueDate || undefined,
+          createdBy: ctx.user.id,
+        });
+
+        await db.updateEmailExtractedTask(emailTask.id, {
+          projectTaskId: taskResult.id,
+          status: 'converted_to_task',
+          convertedAt: new Date(),
+          convertedBy: ctx.user.id,
+        });
+
+        return { taskId: taskResult.id };
+      }),
+
+    // Bulk convert all pending email tasks to project tasks
+    bulkConvert: protectedProcedure
+      .input(z.object({
+        projectId: z.number(),
+        assigneeId: z.number().optional(),
+        categories: z.array(z.string()).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const pendingTasks = await db.getEmailExtractedTasks({ status: 'pending' });
+        let converted = 0;
+
+        for (const emailTask of pendingTasks) {
+          // Filter by category if specified
+          if (input.categories && input.categories.length > 0) {
+            if (!input.categories.includes(emailTask.emailCategory || 'general')) continue;
+          }
+
+          const taskResult = await db.createProjectTask({
+            projectId: input.projectId,
+            name: emailTask.taskText,
+            description: `Converted from email task\n\n${emailTask.taskDescription || emailTask.taskText}`,
+            assigneeId: input.assigneeId || ctx.user.id,
+            status: 'todo',
+            priority: (emailTask.priority as any) || 'medium',
+            dueDate: emailTask.dueDate || undefined,
+            createdBy: ctx.user.id,
+          });
+
+          await db.updateEmailExtractedTask(emailTask.id, {
+            projectTaskId: taskResult.id,
+            status: 'converted_to_task',
+            convertedAt: new Date(),
+            convertedBy: ctx.user.id,
+          });
+          converted++;
+        }
+
+        return { converted };
+      }),
+
+    // Skip an email extracted task
+    skip: protectedProcedure
+      .input(z.object({ emailTaskId: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.updateEmailExtractedTask(input.emailTaskId, { status: 'skipped' });
+        return { success: true };
       }),
   }),
 });
