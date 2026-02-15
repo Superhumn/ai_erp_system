@@ -264,6 +264,79 @@ async function startServer() {
     }
   });
 
+  // Google OAuth callback for Gmail, Workspace, and Drive integrations
+  // (This is the redirect URI used by gmail.ts, googleDrive.ts, and googleWorkspace.ts)
+  app.get('/api/oauth/google/callback', async (req, res) => {
+    const { code, state } = req.query;
+
+    if (!code || !state) {
+      return res.redirect('/settings/integrations?error=missing_params');
+    }
+
+    const userId = parseInt(state as string, 10);
+    if (isNaN(userId) || userId <= 0) {
+      return res.redirect('/settings/integrations?error=invalid_state');
+    }
+
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret) {
+      return res.redirect('/settings/integrations?error=not_configured');
+    }
+
+    try {
+      const redirectUri = process.env.GOOGLE_REDIRECT_URI
+        || `${process.env.APP_URL || 'http://localhost:3000'}/api/oauth/google/callback`;
+
+      const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          code: code as string,
+          grant_type: 'authorization_code',
+          redirect_uri: redirectUri,
+        }),
+      });
+
+      if (!tokenResponse.ok) {
+        console.error('Google OAuth token exchange failed:', await tokenResponse.text());
+        return res.redirect('/settings/integrations?error=token_exchange_failed');
+      }
+
+      const tokens = await tokenResponse.json();
+
+      // Get user info from Google
+      const userInfoResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+        headers: { Authorization: `Bearer ${tokens.access_token}` },
+      });
+
+      let googleEmail = null;
+      if (userInfoResponse.ok) {
+        const userInfo = await userInfoResponse.json();
+        googleEmail = userInfo.email;
+      }
+
+      const { upsertGoogleOAuthToken } = await import('../db');
+
+      await upsertGoogleOAuthToken({
+        userId,
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+        expiresAt: new Date(Date.now() + tokens.expires_in * 1000),
+        scope: tokens.scope,
+        googleEmail,
+      });
+
+      res.redirect('/settings/integrations?success=connected');
+    } catch (error) {
+      console.error('Google OAuth callback error:', error);
+      res.redirect('/settings/integrations?error=oauth_failed');
+    }
+  });
+
   // Shopify OAuth callback
   app.get('/api/shopify/callback', async (req, res) => {
     const { code, shop, state } = req.query;
