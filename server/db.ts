@@ -1540,6 +1540,15 @@ export async function updateFreightCarrier(id: number, data: Partial<InsertFreig
   return { success: true };
 }
 
+export async function getFreightCarrierByName(name: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(freightCarriers)
+    .where(eq(freightCarriers.name, name))
+    .limit(1);
+  return result[0];
+}
+
 // ============================================
 // FREIGHT RFQs
 // ============================================

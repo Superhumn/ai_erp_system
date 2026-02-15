@@ -57,12 +57,29 @@ export interface ParsedDocumentData {
   // Freight-specific
   trackingNumber?: string;
   carrierName?: string;
+  carrierType?: "ocean" | "air" | "ground" | "rail" | "multimodal";
   shipmentDate?: string;
   deliveryDate?: string;
   origin?: string;
   destination?: string;
+  portOfLoading?: string;
+  portOfDischarge?: string;
+  containerNumber?: string;
+  vesselName?: string;
+  voyageNumber?: string;
+  shippingMode?: string;
+  incoterms?: string;
   weight?: string;
+  weightKg?: number;
+  volume?: string;
   dimensions?: string;
+  fuelSurcharge?: number;
+  originCharges?: number;
+  destinationCharges?: number;
+  customsFees?: number;
+  insuranceCost?: number;
+  accessorialCharges?: number;
+  hsCode?: string;
   
   // Line items
   lineItems?: ParsedLineItem[];
@@ -341,7 +358,7 @@ INSTRUCTIONS:
 2. For each document, extract as much structured data as possible
 3. Determine the document type based on content
 4. Extract vendor information, amounts, dates, line items, and tracking numbers
-5. For freight documents, extract carrier, tracking, origin/destination
+5. For freight documents, extract carrier name and type (ocean/air/ground/rail/multimodal), tracking number, container number, vessel/voyage, origin/destination, ports of loading/discharge, shipping mode, incoterms, weight (with kg), volume, HS codes, and full charges breakdown (freight, fuel surcharge, origin/destination charges, customs fees, insurance, accessorial)
 6. Assign a confidence score (0-100) based on how complete the extraction is
 
 Return a JSON object with this exact structure:
@@ -415,12 +432,29 @@ Only include fields that have actual values - omit null/empty fields.`;
                     paymentMethod: { type: "string" },
                     trackingNumber: { type: "string" },
                     carrierName: { type: "string" },
+                    carrierType: { type: "string", enum: ["ocean", "air", "ground", "rail", "multimodal"] },
                     shipmentDate: { type: "string" },
                     deliveryDate: { type: "string" },
                     origin: { type: "string" },
                     destination: { type: "string" },
+                    portOfLoading: { type: "string" },
+                    portOfDischarge: { type: "string" },
+                    containerNumber: { type: "string" },
+                    vesselName: { type: "string" },
+                    voyageNumber: { type: "string" },
+                    shippingMode: { type: "string" },
+                    incoterms: { type: "string" },
                     weight: { type: "string" },
+                    weightKg: { type: "number" },
+                    volume: { type: "string" },
                     dimensions: { type: "string" },
+                    fuelSurcharge: { type: "number" },
+                    originCharges: { type: "number" },
+                    destinationCharges: { type: "number" },
+                    customsFees: { type: "number" },
+                    insuranceCost: { type: "number" },
+                    accessorialCharges: { type: "number" },
+                    hsCode: { type: "string" },
                     lineItems: {
                       type: "array",
                       items: {
@@ -546,6 +580,29 @@ Return a JSON object with this exact structure:
                     currency: { type: "string" },
                     trackingNumber: { type: "string" },
                     carrierName: { type: "string" },
+                    carrierType: { type: "string", enum: ["ocean", "air", "ground", "rail", "multimodal"] },
+                    shipmentDate: { type: "string" },
+                    deliveryDate: { type: "string" },
+                    origin: { type: "string" },
+                    destination: { type: "string" },
+                    portOfLoading: { type: "string" },
+                    portOfDischarge: { type: "string" },
+                    containerNumber: { type: "string" },
+                    vesselName: { type: "string" },
+                    voyageNumber: { type: "string" },
+                    shippingMode: { type: "string" },
+                    incoterms: { type: "string" },
+                    weight: { type: "string" },
+                    weightKg: { type: "number" },
+                    volume: { type: "string" },
+                    dimensions: { type: "string" },
+                    fuelSurcharge: { type: "number" },
+                    originCharges: { type: "number" },
+                    destinationCharges: { type: "number" },
+                    customsFees: { type: "number" },
+                    insuranceCost: { type: "number" },
+                    accessorialCharges: { type: "number" },
+                    hsCode: { type: "string" },
                     lineItems: {
                       type: "array",
                       items: {

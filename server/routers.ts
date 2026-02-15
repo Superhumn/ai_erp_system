@@ -8607,6 +8607,37 @@ Ask if they received the original request and if they can provide a quote.`;
             }
 
             createdDocs.push({ id: docId, type: doc.documentType, vendorId, purchaseOrderId, shipmentId });
+
+            // Auto-import freight documents into the freight data model
+            const isFreightType = doc.documentType === "freight_quote" || doc.documentType === "bill_of_lading" || doc.documentType === "shipping_label";
+            if (isFreightType && (doc.carrierName || doc.vendorName) && doc.confidence >= 70) {
+              try {
+                const freightData = {
+                  invoiceNumber: doc.documentNumber || `EMAIL-${emailId}-${Date.now()}`,
+                  carrierName: doc.carrierName || doc.vendorName || "Unknown Carrier",
+                  carrierEmail: doc.vendorEmail || undefined,
+                  invoiceDate: doc.documentDate || new Date().toISOString().split("T")[0],
+                  shipmentDate: doc.shipmentDate || undefined,
+                  deliveryDate: doc.deliveryDate || undefined,
+                  origin: doc.origin || undefined,
+                  destination: doc.destination || undefined,
+                  trackingNumber: doc.trackingNumber || undefined,
+                  weight: doc.weight || undefined,
+                  dimensions: doc.dimensions || undefined,
+                  freightCharges: doc.totalAmount || 0,
+                  totalAmount: doc.totalAmount || 0,
+                  currency: doc.currency || "USD",
+                  notes: doc.summary || undefined,
+                  confidence: doc.confidence || 0,
+                };
+                const freightResult = await importFreightInvoice(freightData as any, ctx.user.id);
+                if (freightResult.success) {
+                  console.log(`[EmailImport] Auto-imported freight document ${doc.documentNumber} into freight data model`);
+                }
+              } catch (freightErr) {
+                console.warn("[EmailImport] Auto freight import failed, document saved for manual review:", freightErr);
+              }
+            }
           }
 
           // Update with AI categorization if available (more accurate than quick categorize)
@@ -8669,12 +8700,15 @@ Ask if they received the original request and if they can provide a quote.`;
         id: z.number(),
         createVendor: z.boolean().optional(),
         createTransaction: z.boolean().optional(),
+        importAsFreight: z.boolean().optional(),
         linkToPO: z.number().optional(),
         linkToShipment: z.number().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const doc = await db.getParsedDocumentById(input.id);
         if (!doc) throw new TRPCError({ code: "NOT_FOUND" });
+
+        let freightImportResult = null;
 
         // Create vendor if requested
         if (input.createVendor && doc.vendorName && !doc.vendorId) {
@@ -8684,6 +8718,49 @@ Ask if they received the original request and if they can provide a quote.`;
             status: "active",
           });
           await db.setCreatedVendor(input.id, vendorId);
+        }
+
+        // For freight-type documents, import into the freight data model
+        const isFreightDoc = doc.documentType === "freight_quote" || doc.documentType === "bill_of_lading" || doc.documentType === "shipping_label";
+        if ((input.importAsFreight || isFreightDoc) && (doc.carrierName || doc.vendorName)) {
+          const rawData = doc.rawExtractedData as any || {};
+          const freightInvoiceData = {
+            invoiceNumber: doc.documentNumber || `EMAIL-${doc.id}-${Date.now()}`,
+            carrierName: doc.carrierName || doc.vendorName || "Unknown Carrier",
+            carrierEmail: doc.vendorEmail || undefined,
+            carrierType: rawData.carrierType as any || undefined,
+            invoiceDate: doc.documentDate ? doc.documentDate.toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+            shipmentDate: rawData.shipmentDate || undefined,
+            deliveryDate: rawData.deliveryDate || undefined,
+            origin: rawData.origin || undefined,
+            destination: rawData.destination || undefined,
+            portOfLoading: rawData.portOfLoading || undefined,
+            portOfDischarge: rawData.portOfDischarge || undefined,
+            trackingNumber: doc.trackingNumber || rawData.trackingNumber || undefined,
+            containerNumber: rawData.containerNumber || undefined,
+            vesselName: rawData.vesselName || undefined,
+            voyageNumber: rawData.voyageNumber || undefined,
+            shippingMode: rawData.shippingMode || undefined,
+            incoterms: rawData.incoterms || undefined,
+            weight: rawData.weight || undefined,
+            weightKg: rawData.weightKg || undefined,
+            volume: rawData.volume || undefined,
+            dimensions: rawData.dimensions || undefined,
+            freightCharges: parseFloat(doc.totalAmount?.toString() || "0") - parseFloat(doc.shippingAmount?.toString() || "0"),
+            fuelSurcharge: rawData.fuelSurcharge || undefined,
+            originCharges: rawData.originCharges || undefined,
+            destinationCharges: rawData.destinationCharges || undefined,
+            customsFees: rawData.customsFees || undefined,
+            insuranceCost: rawData.insuranceCost || undefined,
+            accessorialCharges: rawData.accessorialCharges || undefined,
+            totalAmount: parseFloat(doc.totalAmount?.toString() || "0"),
+            currency: doc.currency || "USD",
+            hsCode: rawData.hsCode || undefined,
+            notes: rawData.summary || undefined,
+            confidence: parseFloat(doc.confidence?.toString() || "0"),
+          };
+
+          freightImportResult = await importFreightInvoice(freightInvoiceData, ctx.user.id);
         }
 
         // Create transaction if requested (for receipts/invoices)
@@ -8718,10 +8795,18 @@ Ask if they received the original request and if they can provide a quote.`;
           action: "approve",
           entityType: "parsed_document",
           entityId: input.id,
-          newValues: { createVendor: input.createVendor, createTransaction: input.createTransaction },
+          newValues: {
+            createVendor: input.createVendor,
+            createTransaction: input.createTransaction,
+            importAsFreight: input.importAsFreight || isFreightDoc,
+            freightImportResult: freightImportResult ? {
+              success: freightImportResult.success,
+              createdRecords: freightImportResult.createdRecords,
+            } : undefined,
+          },
         });
 
-        return { success: true };
+        return { success: true, freightImportResult };
       }),
 
     // Reject parsed document
@@ -8898,6 +8983,34 @@ Ask if they received the original request and if they can provide a quote.`;
               lineItems: doc.lineItems || null,
               rawExtractedData: doc as any,
             });
+
+            // Auto-import freight documents into freight data model
+            const isFreightType = doc.documentType === "freight_quote" || doc.documentType === "bill_of_lading" || doc.documentType === "shipping_label";
+            if (isFreightType && (doc.carrierName || doc.vendorName) && doc.confidence >= 70) {
+              try {
+                const freightData = {
+                  invoiceNumber: doc.documentNumber || `EMAIL-${input.id}-${Date.now()}`,
+                  carrierName: doc.carrierName || doc.vendorName || "Unknown Carrier",
+                  carrierEmail: doc.vendorEmail || undefined,
+                  invoiceDate: doc.documentDate || new Date().toISOString().split("T")[0],
+                  shipmentDate: doc.shipmentDate || undefined,
+                  deliveryDate: doc.deliveryDate || undefined,
+                  origin: doc.origin || undefined,
+                  destination: doc.destination || undefined,
+                  trackingNumber: doc.trackingNumber || undefined,
+                  weight: doc.weight || undefined,
+                  dimensions: doc.dimensions || undefined,
+                  freightCharges: doc.totalAmount || 0,
+                  totalAmount: doc.totalAmount || 0,
+                  currency: doc.currency || "USD",
+                  notes: doc.summary || undefined,
+                  confidence: doc.confidence || 0,
+                };
+                await importFreightInvoice(freightData as any, ctx.user.id);
+              } catch (freightErr) {
+                console.warn("[EmailReparse] Auto freight import failed:", freightErr);
+              }
+            }
           }
 
           await db.updateInboundEmailStatus(input.id, "parsed");
@@ -11522,20 +11635,35 @@ Ask if they received the original request and if they can provide a quote.`;
           invoiceNumber: z.string(),
           carrierName: z.string(),
           carrierEmail: z.string().optional(),
+          carrierType: z.enum(["ocean", "air", "ground", "rail", "multimodal"]).optional(),
           invoiceDate: z.string(),
           shipmentDate: z.string().optional(),
           deliveryDate: z.string().optional(),
           origin: z.string().optional(),
           destination: z.string().optional(),
+          portOfLoading: z.string().optional(),
+          portOfDischarge: z.string().optional(),
           trackingNumber: z.string().optional(),
+          containerNumber: z.string().optional(),
+          vesselName: z.string().optional(),
+          voyageNumber: z.string().optional(),
+          shippingMode: z.string().optional(),
+          incoterms: z.string().optional(),
           weight: z.string().optional(),
+          weightKg: z.number().optional(),
+          volume: z.string().optional(),
           dimensions: z.string().optional(),
           freightCharges: z.number(),
           fuelSurcharge: z.number().optional(),
+          originCharges: z.number().optional(),
+          destinationCharges: z.number().optional(),
+          customsFees: z.number().optional(),
+          insuranceCost: z.number().optional(),
           accessorialCharges: z.number().optional(),
           totalAmount: z.number(),
           currency: z.string().optional(),
           relatedPoNumber: z.string().optional(),
+          hsCode: z.string().optional(),
           notes: z.string().optional(),
         }),
         linkToPO: z.boolean().default(true),

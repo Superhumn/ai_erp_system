@@ -44,20 +44,35 @@ export interface ImportedFreightInvoice {
   invoiceNumber: string;
   carrierName: string;
   carrierEmail?: string;
+  carrierType?: "ocean" | "air" | "ground" | "rail" | "multimodal";
   invoiceDate: string;
   shipmentDate?: string;
   deliveryDate?: string;
   origin?: string;
   destination?: string;
+  portOfLoading?: string;
+  portOfDischarge?: string;
   trackingNumber?: string;
+  containerNumber?: string;
+  vesselName?: string;
+  voyageNumber?: string;
+  shippingMode?: string;
+  incoterms?: string;
   weight?: string;
+  weightKg?: number;
+  volume?: string;
   dimensions?: string;
   freightCharges: number;
   fuelSurcharge?: number;
+  originCharges?: number;
+  destinationCharges?: number;
+  customsFees?: number;
+  insuranceCost?: number;
   accessorialCharges?: number;
   totalAmount: number;
   currency?: string;
   relatedPoNumber?: string;
+  hsCode?: string;
   notes?: string;
   confidence: number;
 }
@@ -171,7 +186,7 @@ INSTRUCTIONS:
 2. Extract all relevant structured data
 3. For Purchase Orders: extract PO number, vendor info, line items with quantities/prices, dates, totals
 4. For Vendor Invoices: extract invoice number, vendor info, line items with quantities/prices, due date, totals
-5. For Freight Invoices: extract invoice number, carrier info, shipment details, charges breakdown
+5. For Freight Invoices: extract invoice number, carrier info (name, email, type like ocean/air/ground/rail), shipment details (origin, destination, ports of loading/discharge, tracking number, container number, vessel/voyage, shipping mode, incoterms), cargo details (weight in kg, volume, dimensions, HS code), and full charges breakdown (freight, fuel surcharge, origin/destination charges, customs fees, insurance, accessorial charges)
 6. For Customs Documents: extract document number, shipper/consignee info, country of origin, port info, HS codes, duties/taxes
 7. Match line item descriptions to common raw materials if possible
 8. Assign a confidence score (0-100) based on extraction completeness
@@ -233,20 +248,35 @@ Return a JSON object with this structure:
     "invoiceNumber": "FI-98765",
     "carrierName": "FastFreight Logistics",
     "carrierEmail": "billing@fastfreight.com",
+    "carrierType": "ocean",
     "invoiceDate": "2025-01-15",
     "shipmentDate": "2025-01-10",
     "deliveryDate": "2025-01-14",
     "origin": "Los Angeles, CA",
     "destination": "Chicago, IL",
+    "portOfLoading": "Port of Los Angeles",
+    "portOfDischarge": "Port of Chicago",
     "trackingNumber": "FF123456789",
+    "containerNumber": "MSKU1234567",
+    "vesselName": "Pacific Voyager",
+    "voyageNumber": "V-2025-001",
+    "shippingMode": "ocean_fcl",
+    "incoterms": "FOB",
     "weight": "5000 lbs",
+    "weightKg": 2268,
+    "volume": "50 cbm",
     "dimensions": "48x40x48 in",
     "freightCharges": 1200.00,
     "fuelSurcharge": 180.00,
+    "originCharges": 50.00,
+    "destinationCharges": 75.00,
+    "customsFees": 0,
+    "insuranceCost": 0,
     "accessorialCharges": 75.00,
     "totalAmount": 1455.00,
     "currency": "USD",
     "relatedPoNumber": "PO-12345",
+    "hsCode": "1513.11.00",
     "notes": "Liftgate delivery"
   },
   "customsDocument": {
@@ -568,20 +598,35 @@ If document type is unknown, return all as null.`;
                     invoiceNumber: { type: "string" },
                     carrierName: { type: "string" },
                     carrierEmail: { type: "string" },
+                    carrierType: { type: "string", enum: ["ocean", "air", "ground", "rail", "multimodal"] },
                     invoiceDate: { type: "string" },
                     shipmentDate: { type: "string" },
                     deliveryDate: { type: "string" },
                     origin: { type: "string" },
                     destination: { type: "string" },
+                    portOfLoading: { type: "string" },
+                    portOfDischarge: { type: "string" },
                     trackingNumber: { type: "string" },
+                    containerNumber: { type: "string" },
+                    vesselName: { type: "string" },
+                    voyageNumber: { type: "string" },
+                    shippingMode: { type: "string" },
+                    incoterms: { type: "string" },
                     weight: { type: "string" },
+                    weightKg: { type: "number" },
+                    volume: { type: "string" },
                     dimensions: { type: "string" },
                     freightCharges: { type: "number" },
                     fuelSurcharge: { type: "number" },
+                    originCharges: { type: "number" },
+                    destinationCharges: { type: "number" },
+                    customsFees: { type: "number" },
+                    insuranceCost: { type: "number" },
                     accessorialCharges: { type: "number" },
                     totalAmount: { type: "number" },
                     currency: { type: "string" },
                     relatedPoNumber: { type: "string" },
+                    hsCode: { type: "string" },
                     notes: { type: "string" }
                   },
                   required: ["invoiceNumber", "carrierName", "invoiceDate", "totalAmount"],
@@ -846,7 +891,9 @@ export async function importPurchaseOrder(
 }
 
 /**
- * Import a parsed freight invoice into the system
+ * Import a parsed freight invoice into the system.
+ * Creates proper freight data model records: freight carrier, shipment,
+ * freight booking, and invoice with freight fields populated.
  */
 export async function importFreightInvoice(
   invoice: ImportedFreightInvoice,
@@ -857,20 +904,34 @@ export async function importFreightInvoice(
   const warnings: string[] = [];
 
   try {
-    // 1. Find or create carrier as vendor
-    let carrier = await db.getVendorByName(invoice.carrierName);
-    if (!carrier) {
-      const carrierResult = await db.createVendor({
+    // 1. Find or create a proper freight carrier record
+    let freightCarrier = await db.getFreightCarrierByName(invoice.carrierName);
+    if (!freightCarrier) {
+      const carrierType = invoice.carrierType || inferCarrierType(invoice);
+      const carrierResult = await db.createFreightCarrier({
         name: invoice.carrierName,
-        email: invoice.carrierEmail || "",
-        type: "service", // Use 'service' for carriers since 'carrier' is not a valid type
-        status: "active"
+        type: carrierType,
+        email: invoice.carrierEmail || null,
+        isActive: true,
       });
-      carrier = await db.getVendorById(carrierResult.id) || null;
-      createdRecords.push({ type: "vendor", id: carrierResult.id, name: invoice.carrierName });
+      freightCarrier = await db.getFreightCarrierById(carrierResult.id);
+      createdRecords.push({ type: "freight_carrier", id: carrierResult.id, name: invoice.carrierName });
     }
 
-    // 2. Try to find related PO if specified
+    // 2. Also find or create carrier as a vendor for financial tracking
+    let carrierVendor = await db.getVendorByName(invoice.carrierName);
+    if (!carrierVendor) {
+      const vendorResult = await db.createVendor({
+        name: invoice.carrierName,
+        email: invoice.carrierEmail || "",
+        type: "service",
+        status: "active"
+      });
+      carrierVendor = await db.getVendorById(vendorResult.id) || null;
+      createdRecords.push({ type: "vendor", id: vendorResult.id, name: invoice.carrierName });
+    }
+
+    // 3. Try to find related PO if specified
     let relatedPoId: number | undefined;
     if (invoice.relatedPoNumber) {
       const po = await db.findPurchaseOrderByNumber(invoice.relatedPoNumber);
@@ -881,30 +942,103 @@ export async function importFreightInvoice(
       }
     }
 
-    // 3. Create freight history record
-    const freightId = await db.createFreightHistory({
+    // 4. Create a shipment record with structured freight data
+    const shipmentStatus = invoice.deliveryDate ? "delivered" : (invoice.shipmentDate ? "in_transit" : "pending");
+    const shipmentResult = await db.createShipment({
+      shipmentNumber: `FRT-${invoice.invoiceNumber}`,
+      type: "inbound",
+      purchaseOrderId: relatedPoId || null,
+      carrier: invoice.carrierName,
+      trackingNumber: invoice.trackingNumber || null,
+      status: shipmentStatus,
+      shipDate: invoice.shipmentDate ? new Date(invoice.shipmentDate) : null,
+      deliveryDate: invoice.deliveryDate ? new Date(invoice.deliveryDate) : null,
+      fromAddress: invoice.origin || null,
+      toAddress: invoice.destination || null,
+      weight: invoice.weightKg ? invoice.weightKg.toString() : null,
+      cost: invoice.totalAmount.toString(),
+      notes: [
+        invoice.containerNumber ? `Container: ${invoice.containerNumber}` : null,
+        invoice.vesselName ? `Vessel: ${invoice.vesselName}` : null,
+        invoice.voyageNumber ? `Voyage: ${invoice.voyageNumber}` : null,
+        invoice.notes,
+      ].filter(Boolean).join(". ") || null,
+    });
+    createdRecords.push({ type: "shipment", id: shipmentResult.id, name: `FRT-${invoice.invoiceNumber}` });
+
+    // 5. Create a freight booking record with structured fields
+    const bookingResult = await db.createFreightBooking({
+      quoteId: 0, // No quote for imported invoices
+      rfqId: 0,   // No RFQ for imported invoices
+      carrierId: freightCarrier!.id,
+      status: shipmentStatus === "delivered" ? "delivered" : (shipmentStatus === "in_transit" ? "in_transit" : "confirmed"),
+      trackingNumber: invoice.trackingNumber || null,
+      containerNumber: invoice.containerNumber || null,
+      vesselName: invoice.vesselName || null,
+      voyageNumber: invoice.voyageNumber || null,
+      bookingDate: new Date(invoice.invoiceDate),
+      pickupDate: invoice.shipmentDate ? new Date(invoice.shipmentDate) : null,
+      deliveryDate: invoice.deliveryDate ? new Date(invoice.deliveryDate) : null,
+      agreedCost: invoice.totalAmount.toString(),
+      actualCost: invoice.totalAmount.toString(),
+      currency: invoice.currency || "USD",
+      notes: [
+        `Imported from freight invoice ${invoice.invoiceNumber}`,
+        invoice.origin ? `Origin: ${invoice.origin}` : null,
+        invoice.destination ? `Destination: ${invoice.destination}` : null,
+        invoice.shippingMode ? `Mode: ${invoice.shippingMode}` : null,
+        invoice.incoterms ? `Incoterms: ${invoice.incoterms}` : null,
+        invoice.notes,
+      ].filter(Boolean).join(". "),
+    } as any);
+    createdRecords.push({ type: "freight_booking", id: bookingResult.id, name: bookingResult.bookingNumber });
+
+    // 6. Create an invoice record with freight fields populated
+    const invoiceResult = await db.createInvoice({
       invoiceNumber: invoice.invoiceNumber,
-      carrierId: carrier!.id,
-      invoiceDate: new Date(invoice.invoiceDate).getTime(),
-      shipmentDate: invoice.shipmentDate ? new Date(invoice.shipmentDate).getTime() : undefined,
-      deliveryDate: invoice.deliveryDate ? new Date(invoice.deliveryDate).getTime() : undefined,
-      origin: invoice.origin,
-      destination: invoice.destination,
-      trackingNumber: invoice.trackingNumber,
-      weight: invoice.weight,
-      dimensions: invoice.dimensions,
-      freightCharges: invoice.freightCharges.toString(),
-      fuelSurcharge: invoice.fuelSurcharge?.toString(),
-      accessorialCharges: invoice.accessorialCharges?.toString(),
+      type: "invoice",
+      status: "sent",
+      issueDate: new Date(invoice.invoiceDate),
+      subtotal: invoice.freightCharges.toString(),
+      taxAmount: "0",
       totalAmount: invoice.totalAmount.toString(),
       currency: invoice.currency || "USD",
-      relatedPoId,
-      notes: invoice.notes,
-      createdBy: userId
-    });
-    createdRecords.push({ type: "freight_history", id: freightId, name: invoice.invoiceNumber });
+      incoterms: invoice.incoterms || null,
+      portOfLoading: invoice.portOfLoading || null,
+      portOfDischarge: invoice.portOfDischarge || null,
+      freightAmount: invoice.freightCharges.toString(),
+      insuranceAmount: (invoice.insuranceCost || 0).toString(),
+      customsDuties: (invoice.customsFees || 0).toString(),
+      purchaseOrderNumber: invoice.relatedPoNumber || null,
+      shippingInstructions: invoice.notes || null,
+      notes: `Freight invoice from ${invoice.carrierName}. ${invoice.shippingMode ? `Shipping mode: ${invoice.shippingMode}.` : ""} ${invoice.weight ? `Weight: ${invoice.weight}.` : ""}`.trim(),
+      createdBy: userId,
+    } as any);
+    createdRecords.push({ type: "invoice", id: invoiceResult.id, name: invoice.invoiceNumber });
 
-    // 4. If related to a PO, update the PO with freight cost
+    // 7. Create invoice line items for the charges breakdown
+    const chargeItems: { description: string; amount: number }[] = [
+      { description: "Freight charges", amount: invoice.freightCharges },
+    ];
+    if (invoice.fuelSurcharge) chargeItems.push({ description: "Fuel surcharge", amount: invoice.fuelSurcharge });
+    if (invoice.originCharges) chargeItems.push({ description: "Origin charges", amount: invoice.originCharges });
+    if (invoice.destinationCharges) chargeItems.push({ description: "Destination charges", amount: invoice.destinationCharges });
+    if (invoice.customsFees) chargeItems.push({ description: "Customs fees", amount: invoice.customsFees });
+    if (invoice.insuranceCost) chargeItems.push({ description: "Insurance", amount: invoice.insuranceCost });
+    if (invoice.accessorialCharges) chargeItems.push({ description: "Accessorial charges", amount: invoice.accessorialCharges });
+
+    for (const item of chargeItems) {
+      await db.createInvoiceItem({
+        invoiceId: invoiceResult.id,
+        description: item.description,
+        quantity: "1",
+        unitPrice: item.amount.toString(),
+        amount: item.amount.toString(),
+        hsCode: invoice.hsCode || null,
+      } as any);
+    }
+
+    // 8. If related to a PO, update the PO with freight cost
     if (relatedPoId) {
       await db.updatePurchaseOrder(relatedPoId, { freightCost: invoice.totalAmount.toString() } as any);
       updatedRecords.push({
@@ -932,6 +1066,25 @@ export async function importFreightInvoice(
       error: error instanceof Error ? error.message : "Import failed"
     };
   }
+}
+
+/**
+ * Infer carrier type from invoice data when not explicitly provided
+ */
+function inferCarrierType(invoice: ImportedFreightInvoice): "ocean" | "air" | "ground" | "rail" | "multimodal" {
+  const text = [
+    invoice.shippingMode,
+    invoice.notes,
+    invoice.carrierName,
+    invoice.vesselName,
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  if (text.match(/ocean|sea|fcl|lcl|container|vessel|port|maritime|ship/)) return "ocean";
+  if (text.match(/air|flight|airway|express|airline/)) return "air";
+  if (text.match(/rail|train|intermodal/)) return "rail";
+  if (text.match(/truck|ground|road|ltl|ftl|drayage/)) return "ground";
+  if (invoice.containerNumber || invoice.vesselName) return "ocean";
+  return "ground"; // Default to ground as most common
 }
 
 /**
