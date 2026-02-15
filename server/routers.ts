@@ -76,6 +76,154 @@ async function createAuditLog(userId: number, action: 'create' | 'update' | 'del
   });
 }
 
+// Helper to send a freight RFQ to all active carriers with email
+// Used by both the manual sendToCarriers endpoint and the automated completeSubmission flow
+async function sendRfqToCarriers(rfqId: number): Promise<{ sent: number; failed: number; emails: any[]; emailConfigured: boolean }> {
+  const rfq = await db.getFreightRfqById(rfqId);
+  if (!rfq) return { sent: 0, failed: 0, emails: [], emailConfigured: false };
+
+  // Get supplier documents and freight info if PO is linked
+  let supplierDocs: any[] = [];
+  let freightInfo: any = null;
+  if (rfq.purchaseOrderId) {
+    supplierDocs = await db.getSupplierDocuments({ purchaseOrderId: rfq.purchaseOrderId });
+    freightInfo = await db.getSupplierFreightInfo(rfq.purchaseOrderId);
+  }
+
+  // Get all active carriers with email
+  const allCarriers = await db.getFreightCarriers({ isActive: true });
+  const carriers = allCarriers.filter((c: any) => c.email);
+  if (carriers.length === 0) return { sent: 0, failed: 0, emails: [], emailConfigured: isEmailConfigured() };
+
+  const results = { sent: 0, failed: 0, emails: [] as any[] };
+
+  for (const carrier of carriers) {
+    // Build supplier documentation info for email
+    let supplierDocsInfo = '';
+    if (freightInfo) {
+      supplierDocsInfo = `\n\nSHIPMENT DETAILS FROM SUPPLIER:\n`;
+      supplierDocsInfo += `Total Packages: ${freightInfo.totalPackages || 'TBD'}\n`;
+      supplierDocsInfo += `Gross Weight: ${freightInfo.totalGrossWeight || 'TBD'} ${freightInfo.weightUnit || 'kg'}\n`;
+      supplierDocsInfo += `Net Weight: ${freightInfo.totalNetWeight || 'TBD'} ${freightInfo.weightUnit || 'kg'}\n`;
+      supplierDocsInfo += `Volume: ${freightInfo.totalVolume || 'TBD'} ${freightInfo.volumeUnit || 'CBM'}\n`;
+      if (freightInfo.packageDimensions) {
+        try {
+          const dims = JSON.parse(freightInfo.packageDimensions);
+          supplierDocsInfo += `Package Dimensions: ${dims.map((d: any) => `${d.length}x${d.width}x${d.height}cm (${d.quantity} pcs)`).join(', ')}\n`;
+        } catch {}
+      }
+      if (freightInfo.hsCodes) {
+        try {
+          const codes = JSON.parse(freightInfo.hsCodes);
+          supplierDocsInfo += `HS Codes: ${codes.map((c: any) => c.code).join(', ')}\n`;
+        } catch {}
+      }
+      if (freightInfo.hasDangerousGoods) {
+        supplierDocsInfo += `DANGEROUS GOODS: Class ${freightInfo.dangerousGoodsClass}, UN ${freightInfo.unNumber}\n`;
+      }
+      if (freightInfo.specialInstructions) {
+        supplierDocsInfo += `Special Instructions: ${freightInfo.specialInstructions}\n`;
+      }
+    }
+
+    let attachmentsInfo = '';
+    if (supplierDocs.length > 0) {
+      attachmentsInfo = `\n\nATTACHED DOCUMENTATION:\n`;
+      supplierDocs.forEach((doc: any) => {
+        attachmentsInfo += `- ${doc.documentType.replace(/_/g, ' ').toUpperCase()}: ${doc.fileName}\n`;
+      });
+    }
+
+    // Generate AI email content
+    const emailPrompt = `Generate a professional freight quote request email for the following shipment:
+
+RFQ Number: ${rfq.rfqNumber}
+Title: ${rfq.title}
+Origin: ${rfq.originCity || ''}, ${rfq.originCountry || ''}
+Destination: ${rfq.destinationCity || ''}, ${rfq.destinationCountry || ''}
+Cargo: ${rfq.cargoDescription || 'General cargo'}
+Weight: ${rfq.totalWeight || freightInfo?.totalGrossWeight || 'TBD'} ${freightInfo?.weightUnit || 'kg'}
+Volume: ${rfq.totalVolume || freightInfo?.totalVolume || 'TBD'} ${freightInfo?.volumeUnit || 'CBM'}
+Packages: ${rfq.numberOfPackages || freightInfo?.totalPackages || 'TBD'}
+Preferred Mode: ${rfq.preferredMode || 'Any'}
+Incoterms: ${rfq.incoterms || freightInfo?.incoterms || 'TBD'}
+Required Pickup: ${rfq.requiredPickupDate ? new Date(rfq.requiredPickupDate).toLocaleDateString() : freightInfo?.preferredShipDate ? new Date(freightInfo.preferredShipDate).toLocaleDateString() : 'Flexible'}
+Required Delivery: ${rfq.requiredDeliveryDate ? new Date(rfq.requiredDeliveryDate).toLocaleDateString() : 'Flexible'}
+Insurance Required: ${rfq.insuranceRequired ? 'Yes' : 'No'}
+Customs Clearance Required: ${rfq.customsClearanceRequired ? 'Yes' : 'No'}${supplierDocsInfo}${attachmentsInfo}
+
+Please provide:
+1. Freight cost breakdown
+2. Transit time
+3. Routing
+4. Quote validity period
+
+Format the email professionally and request a response by ${rfq.quoteDueDate ? new Date(rfq.quoteDueDate).toLocaleDateString() : '5 business days'}.`;
+
+    try {
+      const response = await invokeLLM({
+        messages: [
+          { role: 'system', content: 'You are a logistics coordinator drafting freight quote request emails. Be professional, clear, and include all relevant shipment details.' },
+          { role: 'user', content: emailPrompt },
+        ],
+      });
+
+      const rawEmailBody = response.choices[0]?.message?.content;
+      const emailBody = typeof rawEmailBody === 'string' ? rawEmailBody : 'Unable to generate email content.';
+
+      const emailSubject = `Request for Quote: ${rfq.rfqNumber} - ${rfq.title}`;
+      let emailStatus: 'draft' | 'sent' | 'failed' = 'draft';
+
+      if (isEmailConfigured()) {
+        const sendResult = await sendEmail({
+          to: carrier.email!,
+          subject: emailSubject,
+          text: emailBody,
+          html: formatEmailHtml(emailBody),
+        });
+        emailStatus = sendResult.success ? 'sent' : 'failed';
+      }
+
+      const emailResult = await db.createFreightEmail({
+        rfqId,
+        carrierId: carrier.id,
+        direction: 'outbound',
+        emailType: 'rfq_request',
+        fromEmail: process.env.SENDGRID_FROM_EMAIL || 'logistics@company.com',
+        toEmail: carrier.email!,
+        subject: emailSubject,
+        body: emailBody,
+        aiGenerated: true,
+        status: emailStatus,
+      });
+
+      if (emailStatus === 'sent') {
+        results.sent++;
+      } else {
+        results.failed++;
+      }
+      results.emails.push({
+        carrierId: carrier.id,
+        carrierName: carrier.name,
+        emailId: emailResult.id,
+        status: emailStatus,
+      });
+    } catch (err) {
+      results.failed++;
+      results.emails.push({
+        carrierId: carrier.id,
+        carrierName: carrier.name,
+        status: 'failed',
+        error: String(err),
+      });
+    }
+  }
+
+  // Update RFQ status
+  await db.updateFreightRfq(rfqId, { status: 'sent' });
+  return { ...results, emailConfigured: isEmailConfigured() };
+}
+
 // Helper to refresh Google OAuth token
 async function refreshGoogleToken(refreshToken: string): Promise<{ accessToken?: string; expiresAt?: Date; error?: string }> {
   const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -4514,154 +4662,15 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
         .mutation(async ({ input, ctx }) => {
           const rfq = await db.getFreightRfqById(input.rfqId);
           if (!rfq) throw new TRPCError({ code: 'NOT_FOUND', message: 'RFQ not found' });
-          
-          // Get supplier documents if PO is linked
-          let supplierDocs: any[] = [];
-          let freightInfo: any = null;
-          if (rfq.purchaseOrderId && input.includeSupplierDocs) {
-            supplierDocs = await db.getSupplierDocuments({ purchaseOrderId: rfq.purchaseOrderId });
-            freightInfo = await db.getSupplierFreightInfo(rfq.purchaseOrderId);
-          }
-          
-          const results = { sent: 0, failed: 0, emails: [] as any[] };
-          
-          for (const carrierId of input.carrierIds) {
-            const carrier = await db.getFreightCarrierById(carrierId);
-            if (!carrier || !carrier.email) {
-              results.failed++;
-              continue;
-            }
-            
-            // Build supplier documentation info for email
-            let supplierDocsInfo = '';
-            if (freightInfo) {
-              supplierDocsInfo = `\n\nSHIPMENT DETAILS FROM SUPPLIER:\n`;
-              supplierDocsInfo += `Total Packages: ${freightInfo.totalPackages || 'TBD'}\n`;
-              supplierDocsInfo += `Gross Weight: ${freightInfo.totalGrossWeight || 'TBD'} ${freightInfo.weightUnit || 'kg'}\n`;
-              supplierDocsInfo += `Net Weight: ${freightInfo.totalNetWeight || 'TBD'} ${freightInfo.weightUnit || 'kg'}\n`;
-              supplierDocsInfo += `Volume: ${freightInfo.totalVolume || 'TBD'} ${freightInfo.volumeUnit || 'CBM'}\n`;
-              if (freightInfo.packageDimensions) {
-                try {
-                  const dims = JSON.parse(freightInfo.packageDimensions);
-                  supplierDocsInfo += `Package Dimensions: ${dims.map((d: any) => `${d.length}x${d.width}x${d.height}cm (${d.quantity} pcs)`).join(', ')}\n`;
-                } catch {}
-              }
-              if (freightInfo.hsCodes) {
-                try {
-                  const codes = JSON.parse(freightInfo.hsCodes);
-                  supplierDocsInfo += `HS Codes: ${codes.map((c: any) => c.code).join(', ')}\n`;
-                } catch {}
-              }
-              if (freightInfo.hasDangerousGoods) {
-                supplierDocsInfo += `DANGEROUS GOODS: Class ${freightInfo.dangerousGoodsClass}, UN ${freightInfo.unNumber}\n`;
-              }
-              if (freightInfo.specialInstructions) {
-                supplierDocsInfo += `Special Instructions: ${freightInfo.specialInstructions}\n`;
-              }
-            }
-            
-            let attachmentsInfo = '';
-            if (supplierDocs.length > 0) {
-              attachmentsInfo = `\n\nATTACHED DOCUMENTATION:\n`;
-              supplierDocs.forEach((doc: any) => {
-                attachmentsInfo += `- ${doc.documentType.replace(/_/g, ' ').toUpperCase()}: ${doc.fileName}\n`;
-              });
-            }
-            
-            // Generate AI email content
-            const emailPrompt = `Generate a professional freight quote request email for the following shipment:
 
-RFQ Number: ${rfq.rfqNumber}
-Title: ${rfq.title}
-Origin: ${rfq.originCity || ''}, ${rfq.originCountry || ''}
-Destination: ${rfq.destinationCity || ''}, ${rfq.destinationCountry || ''}
-Cargo: ${rfq.cargoDescription || 'General cargo'}
-Weight: ${rfq.totalWeight || freightInfo?.totalGrossWeight || 'TBD'} ${freightInfo?.weightUnit || 'kg'}
-Volume: ${rfq.totalVolume || freightInfo?.totalVolume || 'TBD'} ${freightInfo?.volumeUnit || 'CBM'}
-Packages: ${rfq.numberOfPackages || freightInfo?.totalPackages || 'TBD'}
-Preferred Mode: ${rfq.preferredMode || 'Any'}
-Incoterms: ${rfq.incoterms || freightInfo?.incoterms || 'TBD'}
-Required Pickup: ${rfq.requiredPickupDate ? new Date(rfq.requiredPickupDate).toLocaleDateString() : freightInfo?.preferredShipDate ? new Date(freightInfo.preferredShipDate).toLocaleDateString() : 'Flexible'}
-Required Delivery: ${rfq.requiredDeliveryDate ? new Date(rfq.requiredDeliveryDate).toLocaleDateString() : 'Flexible'}
-Insurance Required: ${rfq.insuranceRequired ? 'Yes' : 'No'}
-Customs Clearance Required: ${rfq.customsClearanceRequired ? 'Yes' : 'No'}${supplierDocsInfo}${attachmentsInfo}
+          const results = await sendRfqToCarriers(input.rfqId);
 
-Please provide:
-1. Freight cost breakdown
-2. Transit time
-3. Routing
-4. Quote validity period
-
-Format the email professionally and request a response by ${rfq.quoteDueDate ? new Date(rfq.quoteDueDate).toLocaleDateString() : '5 business days'}.`;
-
-            const response = await invokeLLM({
-              messages: [
-                { role: 'system', content: 'You are a logistics coordinator drafting freight quote request emails. Be professional, clear, and include all relevant shipment details.' },
-                { role: 'user', content: emailPrompt },
-              ],
-            });
-            
-            const rawEmailBody = response.choices[0]?.message?.content;
-            const emailBody = typeof rawEmailBody === 'string' ? rawEmailBody : 'Unable to generate email content.';
-            
-            const emailSubject = `Request for Quote: ${rfq.rfqNumber} - ${rfq.title}`;
-            let emailStatus: 'draft' | 'sent' | 'failed' = 'draft';
-            let deliveryError: string | undefined;
-            
-            // Try to send via SendGrid if configured
-            if (isEmailConfigured()) {
-              const sendResult = await sendEmail({
-                to: carrier.email,
-                subject: emailSubject,
-                text: emailBody,
-                html: formatEmailHtml(emailBody),
-              });
-              
-              if (sendResult.success) {
-                emailStatus = 'sent';
-              } else {
-                emailStatus = 'failed';
-                deliveryError = sendResult.error;
-              }
-            }
-            
-            // Save the email record
-            const emailResult = await db.createFreightEmail({
-              rfqId: input.rfqId,
-              carrierId,
-              direction: 'outbound',
-              emailType: 'rfq_request',
-              fromEmail: process.env.SENDGRID_FROM_EMAIL || 'logistics@company.com',
-              toEmail: carrier.email,
-              subject: emailSubject,
-              body: emailBody,
-              aiGenerated: true,
-              status: emailStatus,
-            });
-            
-            if (emailStatus === 'sent') {
-              results.sent++;
-            } else {
-              results.failed++;
-            }
-            results.emails.push({ 
-              carrierId, 
-              carrierName: carrier.name, 
-              emailId: emailResult.id,
-              status: emailStatus,
-              error: deliveryError,
-            });
-          }
-          
-          // Update RFQ status
-          await db.updateFreightRfq(input.rfqId, { status: 'sent' });
-          const emailConfigured = isEmailConfigured();
-          const auditMessage = emailConfigured 
-            ? `Emails sent to ${results.sent} carriers` 
+          const auditMessage = results.emailConfigured
+            ? `Emails sent to ${results.sent} carriers`
             : `Email drafts created for ${results.sent + results.failed} carriers (SendGrid not configured)`;
           await createAuditLog(ctx.user.id, 'update', 'freight_rfq', input.rfqId, auditMessage);
-          
-          return { ...results, emailConfigured };
+
+          return results;
         }),
     }),
     
@@ -10914,7 +10923,31 @@ Ask if they received the original request and if they can provide a quote.`;
         await db.updateSupplierPortalSession(session.id, { status: 'completed', completedAt: new Date() });
         // Update PO status
         await db.updatePurchaseOrder(session.purchaseOrderId, { status: 'confirmed' });
-        return { success: true };
+
+        // Auto-send freight RFQs linked to this PO to all active carriers
+        let rfqResults: { sent: number; failed: number } | null = null;
+        try {
+          const linkedRfqs = await db.getFreightRfqsByPurchaseOrderId(session.purchaseOrderId);
+          const draftRfqs = linkedRfqs.filter((r: any) => r.status === 'draft');
+          for (const rfq of draftRfqs) {
+            // Update RFQ with supplier freight info before sending
+            const freightInfo = await db.getSupplierFreightInfo(session.purchaseOrderId);
+            if (freightInfo) {
+              await db.updateFreightRfq(rfq.id, {
+                totalWeight: freightInfo.totalGrossWeight || undefined,
+                totalVolume: freightInfo.totalVolume || undefined,
+                numberOfPackages: freightInfo.totalPackages || undefined,
+                incoterms: freightInfo.incoterms || undefined,
+              });
+            }
+            rfqResults = await sendRfqToCarriers(rfq.id);
+          }
+        } catch (err) {
+          // Log but don't fail the submission if RFQ auto-send fails
+          console.error('Auto-send freight RFQ failed:', err);
+        }
+
+        return { success: true, rfqAutoSent: rfqResults };
       }),
   }),
 

@@ -1522,6 +1522,12 @@ export async function createFreightRfq(data: Omit<InsertFreightRfq, 'rfqNumber'>
   return { id: result[0].insertId, rfqNumber };
 }
 
+export async function getFreightRfqsByPurchaseOrderId(purchaseOrderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(freightRfqs).where(eq(freightRfqs.purchaseOrderId, purchaseOrderId));
+}
+
 export async function updateFreightRfq(id: number, data: Partial<InsertFreightRfq>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
