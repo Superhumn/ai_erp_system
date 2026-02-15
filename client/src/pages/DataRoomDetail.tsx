@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -2157,6 +2157,8 @@ function EmailAccessRulesManager({ dataRoomId }: { dataRoomId: number }) {
 function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [createOpen, setCreateOpen] = useState(false);
+  const [showMissingOnly, setShowMissingOnly] = useState(false);
+  const [hasAutoMatched, setHasAutoMatched] = useState(false);
 
   const { data: summary, refetch: refetchSummary } = trpc.dataRoom.dueDiligence.getSummary.useQuery({ dataRoomId });
   const { data: checklistData, refetch: refetchChecklist } = trpc.dataRoom.dueDiligence.getById.useQuery(
@@ -2167,7 +2169,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
 
   const createStandardMutation = trpc.dataRoom.dueDiligence.createStandard.useMutation({
     onSuccess: () => {
-      toast.success("Checklist created");
+      toast.success("Checklist created - scanning documents...");
       setCreateOpen(false);
       refetchSummary();
     },
@@ -2178,7 +2180,11 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
 
   const autoMatchMutation = trpc.dataRoom.dueDiligence.autoMatch.useMutation({
     onSuccess: (result) => {
-      toast.success(`Auto-matched ${result.matched} items`);
+      if (result.matched > 0) {
+        toast.success(`Matched ${result.matched} documents to checklist items`);
+      } else {
+        toast.info("No new matches found");
+      }
       refetchSummary();
       refetchChecklist();
     },
@@ -2202,6 +2208,21 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
     },
   });
 
+  // Auto-parse documents on initial load when checklist exists
+  useEffect(() => {
+    if (summary?.checklist?.id && !hasAutoMatched && documents && documents.length > 0) {
+      setHasAutoMatched(true);
+      autoMatchMutation.mutate({ checklistId: summary.checklist.id });
+    }
+  }, [summary?.checklist?.id, documents]);
+
+  // Expand all categories by default when data loads
+  useEffect(() => {
+    if (checklistData?.categories && expandedCategories.size === 0) {
+      setExpandedCategories(new Set(checklistData.categories.map(c => c.name)));
+    }
+  }, [checklistData]);
+
   const toggleCategory = (name: string) => {
     const newSet = new Set(expandedCategories);
     if (newSet.has(name)) {
@@ -2212,20 +2233,13 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
     setExpandedCategories(newSet);
   };
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'complete':
-        return <CheckCircle2 className="h-5 w-5 text-green-600" />;
-      case 'partial':
-        return <AlertTriangle className="h-5 w-5 text-yellow-600" />;
-      case 'waived':
-        return <XCircle className="h-5 w-5 text-gray-400" />;
-      case 'not_applicable':
-        return <Square className="h-5 w-5 text-gray-400" />;
-      default:
-        return <Square className="h-5 w-5 text-red-400" />;
+  const handleCheckboxToggle = useCallback((item: any) => {
+    if (item.status === 'complete') {
+      updateItemMutation.mutate({ id: item.id, status: 'missing' });
+    } else {
+      updateItemMutation.mutate({ id: item.id, status: 'complete' });
     }
-  };
+  }, [updateItemMutation]);
 
   // No checklist yet
   if (!summary) {
@@ -2322,206 +2336,290 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
     );
   }
 
+  // Collect all missing items across categories for the missing panel
+  const allItems = checklistData?.categories.flatMap(c => c.items) || [];
+  const missingItems = allItems.filter((i: any) => i.status === 'missing');
+  const completeItems = allItems.filter((i: any) => i.status === 'complete');
+
   return (
     <div className="space-y-6">
-      {/* Progress Summary */}
+      {/* Progress Header */}
       <Card>
-        <CardHeader>
+        <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="flex items-center gap-2">
                 <ClipboardList className="h-5 w-5" />
                 {summary.checklist.name}
               </CardTitle>
-              <CardDescription>
-                {summary.completionPercent}% complete - {summary.missingItems} items missing
+              <CardDescription className="mt-1">
+                {summary.completionPercent}% complete &middot; {completeItems.length} found &middot; {missingItems.length} missing
               </CardDescription>
             </div>
-            <Button
-              variant="outline"
-              onClick={() => autoMatchMutation.mutate({ checklistId: summary.checklist.id })}
-              disabled={autoMatchMutation.isPending}
-            >
-              <Wand2 className={`h-4 w-4 mr-2 ${autoMatchMutation.isPending ? 'animate-spin' : ''}`} />
-              {autoMatchMutation.isPending ? 'Matching...' : 'Auto-Match Documents'}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant={showMissingOnly ? "default" : "outline"}
+                size="sm"
+                onClick={() => setShowMissingOnly(!showMissingOnly)}
+              >
+                <AlertCircle className="h-4 w-4 mr-1" />
+                {showMissingOnly ? 'Show All' : `${missingItems.length} Missing`}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => autoMatchMutation.mutate({ checklistId: summary.checklist.id })}
+                disabled={autoMatchMutation.isPending}
+              >
+                <Wand2 className={`h-4 w-4 mr-1 ${autoMatchMutation.isPending ? 'animate-spin' : ''}`} />
+                {autoMatchMutation.isPending ? 'Scanning...' : 'Re-scan'}
+              </Button>
+            </div>
           </div>
         </CardHeader>
-        <CardContent>
-          <div className="mb-6">
-            <div className="flex justify-between text-sm mb-2">
-              <span className="text-muted-foreground">{summary.totalItems} total items</span>
-              <span className="font-medium">{summary.completionPercent}%</span>
+        <CardContent className="pt-0">
+          {/* Progress bar */}
+          <div className="mb-4">
+            <div className="h-2.5 bg-muted rounded-full overflow-hidden">
+              <div className="h-full bg-green-500 transition-all duration-500" style={{ width: `${summary.completionPercent}%` }} />
             </div>
-            <div className="h-3 bg-muted rounded-full overflow-hidden">
-              <div className="h-full bg-green-500 transition-all" style={{ width: `${summary.completionPercent}%` }} />
-            </div>
-            <div className="flex gap-4 mt-2 text-sm">
-              <span className="flex items-center gap-1">
-                <div className="h-3 w-3 bg-green-500 rounded" />
-                {summary.completedItems} complete
-              </span>
-              <span className="flex items-center gap-1">
-                <div className="h-3 w-3 bg-yellow-500 rounded" />
-                {summary.partialItems} partial
-              </span>
-              <span className="flex items-center gap-1">
-                <div className="h-3 w-3 bg-red-400 rounded" />
-                {summary.missingItems} missing
-              </span>
+            <div className="flex justify-between mt-1.5 text-xs text-muted-foreground">
+              <span>{summary.completedItems} of {summary.totalItems} items</span>
+              <span>{summary.completionPercent}%</span>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {Object.entries(summary.byCategory).map(([name, stats]) => (
-              <div key={name} className="p-3 border rounded-lg">
-                <div className="font-medium text-sm truncate">{name}</div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {stats.complete}/{stats.total} complete
-                </div>
-                <div className="mt-1 h-1.5 bg-muted rounded-full overflow-hidden">
-                  <div className="h-full bg-green-500" style={{ width: `${(stats.complete / stats.total) * 100}%` }} />
-                </div>
-              </div>
-            ))}
+          {/* Category progress chips */}
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(summary.byCategory).map(([name, stats]) => {
+              const pct = Math.round((stats.complete / stats.total) * 100);
+              return (
+                <Badge
+                  key={name}
+                  variant={pct === 100 ? 'default' : 'outline'}
+                  className={`cursor-pointer ${pct === 100 ? 'bg-green-600' : pct > 0 ? 'border-yellow-400 text-yellow-700' : 'border-red-300 text-red-600'}`}
+                  onClick={() => {
+                    const newSet = new Set(expandedCategories);
+                    // Collapse all, expand just this one
+                    newSet.clear();
+                    newSet.add(name);
+                    setExpandedCategories(newSet);
+                  }}
+                >
+                  {name}: {stats.complete}/{stats.total}
+                </Badge>
+              );
+            })}
           </div>
         </CardContent>
       </Card>
 
-      {/* Missing Required Items Alert */}
-      {summary.requiredMissing.length > 0 && (
-        <Card className="border-red-200 bg-red-50/50">
+      {/* Missing Items Panel */}
+      {showMissingOnly && missingItems.length > 0 && (
+        <Card className="border-red-200">
           <CardHeader className="pb-2">
             <CardTitle className="text-red-700 flex items-center gap-2 text-base">
               <AlertCircle className="h-5 w-5" />
-              {summary.requiredMissing.length} Required Items Missing
+              {missingItems.length} Documents Still Needed
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex flex-wrap gap-2">
-              {summary.requiredMissing.slice(0, 5).map((item) => (
-                <Badge key={item.id} variant="outline" className="border-red-300 text-red-700">
-                  {item.itemName}
-                </Badge>
+            <div className="space-y-1">
+              {missingItems.map((item: any) => (
+                <div key={item.id} className="flex items-center gap-3 py-2 px-3 rounded hover:bg-red-50 group">
+                  <button
+                    className="flex-shrink-0 h-5 w-5 border-2 border-red-300 rounded hover:border-red-500 transition-colors"
+                    onClick={() => handleCheckboxToggle(item)}
+                    title="Mark as complete"
+                  />
+                  <span className="text-sm flex-1">{item.itemName}</span>
+                  <span className="text-xs text-muted-foreground">{item.categoryName}</span>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="sm" className="h-7 px-2 opacity-0 group-hover:opacity-100">
+                        <Plus className="h-3.5 w-3.5 mr-1" />
+                        Link
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-64">
+                      <ScrollArea className="h-48">
+                        {documents?.map((doc) => (
+                          <DropdownMenuItem
+                            key={doc.id}
+                            onClick={() => linkDocumentMutation.mutate({ itemId: item.id, documentId: doc.id })}
+                          >
+                            <File className="h-4 w-4 mr-2 flex-shrink-0" />
+                            <span className="truncate">{doc.name}</span>
+                          </DropdownMenuItem>
+                        ))}
+                      </ScrollArea>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               ))}
-              {summary.requiredMissing.length > 5 && (
-                <Badge variant="outline" className="border-red-300 text-red-700">
-                  +{summary.requiredMissing.length - 5} more
-                </Badge>
-              )}
             </div>
           </CardContent>
         </Card>
       )}
 
       {/* Checklist Items by Category */}
-      {checklistData?.categories.map((category) => (
-        <Card key={category.name}>
-          <CardHeader className="cursor-pointer" onClick={() => toggleCategory(category.name)}>
-            <div className="flex items-center justify-between">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <ChevronDown className={`h-5 w-5 transition-transform ${expandedCategories.has(category.name) ? '' : '-rotate-90'}`} />
-                {category.name}
-              </CardTitle>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <span>{category.items.filter((i: any) => i.status === 'complete').length}/{category.items.length}</span>
-                <Badge variant={
-                  category.items.every((i: any) => i.status === 'complete') ? 'default' :
-                  category.items.some((i: any) => i.status === 'complete') ? 'secondary' : 'outline'
-                }>
-                  {category.items.every((i: any) => i.status === 'complete') ? 'Complete' :
-                   category.items.some((i: any) => i.status === 'complete') ? 'In Progress' : 'Not Started'}
-                </Badge>
-              </div>
-            </div>
-          </CardHeader>
-          {expandedCategories.has(category.name) && (
-            <CardContent>
-              <div className="space-y-2">
-                {category.items.map((item: any) => (
-                  <div
-                    key={item.id}
-                    className={`flex items-center justify-between p-3 border rounded-lg ${
-                      item.status === 'missing' && item.requirement === 'required' ? 'border-red-200 bg-red-50/30' : ''
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      {getStatusIcon(item.status)}
-                      <div>
-                        <div className="font-medium flex items-center gap-2">
-                          {item.itemName}
-                          {item.requirement === 'required' && <Badge variant="outline" className="text-xs">Required</Badge>}
-                          {item.requirement === 'optional' && <Badge variant="outline" className="text-xs text-muted-foreground">Optional</Badge>}
-                        </div>
-                        {item.linkedDocuments?.length > 0 && (
-                          <div className="text-sm text-muted-foreground mt-1">
-                            {item.linkedDocuments.map((doc: any) => doc.name).join(', ')}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="outline" size="sm">
-                            <Plus className="h-4 w-4 mr-1" />
-                            Link Doc
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-64">
-                          <ScrollArea className="h-48">
-                            {documents?.filter(d => !item.linkedDocuments?.some((ld: any) => ld.id === d.id)).map((doc) => (
-                              <DropdownMenuItem
-                                key={doc.id}
-                                onClick={() => linkDocumentMutation.mutate({ itemId: item.id, documentId: doc.id })}
-                              >
-                                <File className="h-4 w-4 mr-2" />
-                                <span className="truncate">{doc.name}</span>
-                              </DropdownMenuItem>
-                            ))}
-                          </ScrollArea>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => updateItemMutation.mutate({ id: item.id, status: 'complete' })}>
-                            <CheckCircle2 className="h-4 w-4 mr-2 text-green-600" />
-                            Mark Complete
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => updateItemMutation.mutate({ id: item.id, status: 'not_applicable' })}>
-                            <Square className="h-4 w-4 mr-2" />
-                            Mark N/A
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => {
-                              const reason = prompt('Enter waiver reason:');
-                              if (reason) {
-                                updateItemMutation.mutate({ id: item.id, status: 'waived', waiverReason: reason });
-                              }
-                            }}
-                          >
-                            <XCircle className="h-4 w-4 mr-2 text-gray-500" />
-                            Waive Requirement
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => updateItemMutation.mutate({ id: item.id, status: 'missing' })}>
-                            <AlertCircle className="h-4 w-4 mr-2 text-red-500" />
-                            Reset to Missing
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
+      {!showMissingOnly && checklistData?.categories.map((category) => {
+        const catComplete = category.items.filter((i: any) => i.status === 'complete').length;
+        const catTotal = category.items.length;
+        const catPct = Math.round((catComplete / catTotal) * 100);
+
+        return (
+          <Card key={category.name}>
+            <CardHeader className="cursor-pointer py-3" onClick={() => toggleCategory(category.name)}>
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <ChevronDown className={`h-4 w-4 transition-transform ${expandedCategories.has(category.name) ? '' : '-rotate-90'}`} />
+                  {category.name}
+                </CardTitle>
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-muted-foreground">{catComplete}/{catTotal}</span>
+                  <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${catPct === 100 ? 'bg-green-500' : catPct > 0 ? 'bg-yellow-500' : 'bg-red-400'}`}
+                      style={{ width: `${catPct}%` }}
+                    />
                   </div>
-                ))}
+                </div>
               </div>
-            </CardContent>
-          )}
-        </Card>
-      ))}
+            </CardHeader>
+            {expandedCategories.has(category.name) && (
+              <CardContent className="pt-0">
+                <div className="divide-y">
+                  {category.items.map((item: any) => {
+                    const isComplete = item.status === 'complete';
+                    const isMissing = item.status === 'missing';
+                    const isWaived = item.status === 'waived';
+                    const isNA = item.status === 'not_applicable';
+                    const linkedDocs = item.linkedDocuments || [];
+
+                    return (
+                      <div
+                        key={item.id}
+                        className={`flex items-start gap-3 py-2.5 px-1 group ${
+                          isMissing && item.requirement === 'required' ? 'bg-red-50/40' : ''
+                        }`}
+                      >
+                        {/* Checkbox */}
+                        <button
+                          className={`flex-shrink-0 mt-0.5 h-5 w-5 rounded border-2 transition-all ${
+                            isComplete
+                              ? 'bg-green-500 border-green-500 text-white'
+                              : isWaived || isNA
+                              ? 'bg-gray-200 border-gray-300'
+                              : 'border-gray-300 hover:border-green-500'
+                          }`}
+                          onClick={() => handleCheckboxToggle(item)}
+                          title={isComplete ? 'Mark as missing' : 'Mark as complete'}
+                        >
+                          {isComplete && <CheckCircle2 className="h-4 w-4 -m-[1px]" />}
+                          {(isWaived || isNA) && <span className="text-xs text-gray-500 block leading-4">—</span>}
+                        </button>
+
+                        {/* Item name + linked doc link */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`text-sm font-medium ${isComplete ? 'text-green-700 line-through decoration-green-300' : isWaived || isNA ? 'text-gray-400 line-through' : ''}`}>
+                              {item.itemName}
+                            </span>
+                            {item.requirement === 'required' && isMissing && (
+                              <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-4">Required</Badge>
+                            )}
+                          </div>
+
+                          {/* Linked document links - shown inline */}
+                          {linkedDocs.length > 0 && (
+                            <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                              {linkedDocs.map((doc: any) => (
+                                <a
+                                  key={doc.id}
+                                  href={doc.fileUrl || doc.storageKey ? `/api/data-room/documents/${doc.id}/view` : '#'}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                                >
+                                  <FileText className="h-3 w-3" />
+                                  {doc.name}
+                                </a>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Missing indicator */}
+                          {isMissing && linkedDocs.length === 0 && (
+                            <span className="text-xs text-red-500 mt-0.5 block">Not found in data room</span>
+                          )}
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs">
+                                <Plus className="h-3.5 w-3.5 mr-1" />
+                                Link
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-64">
+                              <ScrollArea className="h-48">
+                                {documents?.filter(d => !linkedDocs.some((ld: any) => ld.id === d.id)).map((doc) => (
+                                  <DropdownMenuItem
+                                    key={doc.id}
+                                    onClick={() => linkDocumentMutation.mutate({ itemId: item.id, documentId: doc.id })}
+                                  >
+                                    <File className="h-4 w-4 mr-2 flex-shrink-0" />
+                                    <span className="truncate">{doc.name}</span>
+                                  </DropdownMenuItem>
+                                ))}
+                              </ScrollArea>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+                                <MoreVertical className="h-3.5 w-3.5" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => updateItemMutation.mutate({ id: item.id, status: 'complete' })}>
+                                <CheckCircle2 className="h-4 w-4 mr-2 text-green-600" />
+                                Mark Complete
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => updateItemMutation.mutate({ id: item.id, status: 'not_applicable' })}>
+                                <Square className="h-4 w-4 mr-2" />
+                                Mark N/A
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  const reason = prompt('Enter waiver reason:');
+                                  if (reason) {
+                                    updateItemMutation.mutate({ id: item.id, status: 'waived', waiverReason: reason });
+                                  }
+                                }}
+                              >
+                                <XCircle className="h-4 w-4 mr-2 text-gray-500" />
+                                Waive Requirement
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => updateItemMutation.mutate({ id: item.id, status: 'missing' })}>
+                                <AlertCircle className="h-4 w-4 mr-2 text-red-500" />
+                                Reset to Missing
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            )}
+          </Card>
+        );
+      })}
     </div>
   );
 }

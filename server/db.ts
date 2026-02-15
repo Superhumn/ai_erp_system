@@ -8211,7 +8211,58 @@ export async function getChecklistWithItems(checklistId: number) {
   };
 }
 
-// Auto-match documents against checklist items
+// Normalize a filename for matching: strip extension, split camelCase, replace separators
+function normalizeForMatching(name: string): string {
+  return name
+    .replace(/\.[^.]+$/, '')           // strip file extension
+    .replace(/[-_./\\]+/g, ' ')        // separators to spaces
+    .replace(/([a-z])([A-Z])/g, '$1 $2') // split camelCase
+    .toLowerCase()
+    .trim();
+}
+
+// Score how well a document matches a checklist item's keywords
+function scoreDocumentMatch(docName: string, docDescription: string | null | undefined, keywords: string[]): number {
+  const normalizedName = normalizeForMatching(docName);
+  const nameTokens = normalizedName.split(/\s+/).filter(t => t.length > 1);
+  const descNorm = docDescription ? normalizeForMatching(docDescription) : '';
+
+  let score = 0;
+
+  for (const keyword of keywords) {
+    const kwLower = keyword.toLowerCase();
+
+    // Exact phrase in normalized name (strongest signal)
+    if (normalizedName.includes(kwLower)) {
+      score += 10;
+      continue;
+    }
+
+    // Exact phrase in description
+    if (descNorm.includes(kwLower)) {
+      score += 5;
+      continue;
+    }
+
+    // Token overlap: split keyword into words, check how many appear in doc name tokens
+    const kwTokens = kwLower.split(/\s+/).filter(t => t.length > 1);
+    if (kwTokens.length === 0) continue;
+
+    const hits = kwTokens.filter(kt =>
+      nameTokens.some(nt => nt === kt || nt.includes(kt) || kt.includes(nt))
+    ).length;
+
+    if (hits === kwTokens.length) {
+      score += 7; // all keyword tokens matched
+    } else if (hits > 0) {
+      score += hits * 2; // partial
+    }
+  }
+
+  return score;
+}
+
+// Auto-match documents against checklist items using keyword scoring
 export async function autoMatchChecklistDocuments(checklistId: number) {
   const db = await getDb();
   if (!db) return { matched: 0, items: [] };
@@ -8226,6 +8277,9 @@ export async function autoMatchChecklistDocuments(checklistId: number) {
   const matchedItems: any[] = [];
 
   for (const item of items) {
+    // Skip items manually set to waived or n/a
+    if (item.status === 'waived' || item.status === 'not_applicable') continue;
+
     let keywords: string[] = [];
     try {
       keywords = item.matchKeywords ? JSON.parse(item.matchKeywords) : [];
@@ -8235,18 +8289,17 @@ export async function autoMatchChecklistDocuments(checklistId: number) {
 
     if (keywords.length === 0) continue;
 
-    // Find matching documents
-    const matchingDocs = documents.filter(doc => {
-      const docName = doc.name.toLowerCase();
-      return keywords.some(kw => docName.includes(kw.toLowerCase()));
-    });
+    // Score every document against this item
+    const scored = documents
+      .map(doc => ({ doc, score: scoreDocumentMatch(doc.name, doc.description, keywords) }))
+      .filter(s => s.score >= 5)
+      .sort((a, b) => b.score - a.score);
 
-    if (matchingDocs.length > 0) {
-      const linkedDocIds = matchingDocs.map(d => d.id);
-      const newStatus = matchingDocs.length >= 1 ? 'complete' : 'partial';
+    if (scored.length > 0) {
+      const linkedDocIds = scored.map(s => s.doc.id);
 
       await updateChecklistItem(item.id, {
-        status: newStatus,
+        status: 'complete',
         linkedDocumentIds: JSON.stringify(linkedDocIds),
         linkedDocumentCount: linkedDocIds.length,
       });
@@ -8255,8 +8308,8 @@ export async function autoMatchChecklistDocuments(checklistId: number) {
       matchedItems.push({
         itemId: item.id,
         itemName: item.itemName,
-        matchedDocuments: matchingDocs.map(d => ({ id: d.id, name: d.name })),
-        status: newStatus,
+        matchedDocuments: scored.map(s => ({ id: s.doc.id, name: s.doc.name, score: s.score })),
+        status: 'complete',
       });
     }
   }
