@@ -753,6 +753,8 @@ cp .env.example .env
 
 Edit `.env` with your configuration (see [Environment Variables](#environment-variables) below).
 
+**Important:** The system now uses local email/password authentication by default. No external OAuth provider (like manus.ai) is required. Simply set a strong `JWT_SECRET` and you're ready to go.
+
 ### 3. Database Setup
 
 ```bash
@@ -769,6 +771,52 @@ pnpm run dev
 
 The application starts at `http://localhost:3000`.
 
+### 5. Create Your First User
+
+On first run, navigate to `http://localhost:3000/login` and sign up with an email and password. The first user you create will have admin access.
+
+---
+
+## Authentication
+
+The system uses a standalone, self-hosted authentication system with the following features:
+
+- **Email/Password Authentication:** Users can sign up and log in with email and password
+- **Secure Password Storage:** Passwords are hashed using PBKDF2 with 100,000 iterations
+- **JWT Sessions:** Session tokens are signed with HS256 and stored in secure HTTP-only cookies
+- **Role-Based Access Control:** Users can have roles like admin, finance, ops, legal, vendor, copacker, etc.
+
+### Authentication Endpoints
+
+- **POST `/api/auth/signup`** - Create a new user account
+  ```json
+  {
+    "email": "user@example.com",
+    "password": "secure-password",
+    "name": "John Doe" // optional
+  }
+  ```
+
+- **POST `/api/auth/login`** - Log in with email and password
+  ```json
+  {
+    "email": "user@example.com",
+    "password": "secure-password"
+  }
+  ```
+
+- **POST `/api/auth/change-password`** - Change password (requires authentication)
+  ```json
+  {
+    "currentPassword": "old-password",
+    "newPassword": "new-secure-password"
+  }
+  ```
+
+### External OAuth (Optional)
+
+While the system works completely standalone with email/password authentication, you can optionally configure external OAuth providers by setting the `OAUTH_SERVER_URL` environment variable. This is not required for deployment.
+
 ---
 
 ## Environment Variables
@@ -776,12 +824,12 @@ The application starts at `http://localhost:3000`.
 | Variable | Required | Description |
 |---|---|---|
 | `DATABASE_URL` | Yes | MySQL connection string (e.g., `mysql://user:pass@localhost:3306/ai_erp_system`) |
-| `JWT_SECRET` | Yes | Secure secret key, minimum 32 characters |
+| `JWT_SECRET` | Yes | Secure secret key, minimum 32 characters (used for signing session tokens) |
 | `NODE_ENV` | No | `development` or `production` (default: `development`) |
 | `PORT` | No | Server port (default: `3000`) |
 | `APP_URL` | No | Application URL (default: `http://localhost:3000`) |
 | `VITE_APP_TITLE` | No | Application title shown in the UI |
-| `OAUTH_SERVER_URL` | No | External OAuth server URL |
+| `OAUTH_SERVER_URL` | No | External OAuth server URL (optional, for third-party OAuth providers) |
 | `GOOGLE_CLIENT_ID` | No | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | No | Google OAuth client secret |
 | `GOOGLE_REDIRECT_URI` | No | Google OAuth redirect URI |
