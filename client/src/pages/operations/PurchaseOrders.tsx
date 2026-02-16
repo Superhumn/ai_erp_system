@@ -95,18 +95,35 @@ export default function PurchaseOrders() {
 
   const updateLineItem = (index: number, field: keyof LineItem, value: string | number | undefined) => {
     const updated = [...lineItems];
-    updated[index] = { ...updated[index], [field]: value };
     
+    if (field === "quantity") {
+      let numericValue =
+        typeof value === "number"
+          ? value
+          : parseFloat((value ?? "").toString() || "0");
+
+      if (Number.isNaN(numericValue)) {
+        numericValue = 0;
+      }
+
+      if (numericValue < 0) {
+        toast.warning("Quantity cannot be negative. It has been reset to 0.");
+        numericValue = 0;
+      }
+
+      updated[index] = {
+        ...updated[index],
+        quantity: numericValue.toString(),
+      };
+    } else {
+      updated[index] = { ...updated[index], [field]: value };
+    }
+
     // Recalculate total
     const qty = parseFloat(updated[index].quantity) || 0;
     const price = parseFloat(updated[index].unitPrice) || 0;
-    
-    // Ensure quantity is positive
-    if (field === "quantity" && qty < 0) {
-      updated[index].quantity = "0";
-    }
-    
-    updated[index].totalAmount = (Math.max(0, qty) * price).toFixed(2);
+
+    updated[index].totalAmount = (qty * price).toFixed(2);
     
     setLineItems(updated);
   };
@@ -160,10 +177,37 @@ export default function PurchaseOrders() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Validate vendor selection
+    if (formData.vendorId === 0) {
+      toast.error("Please select a vendor");
+      return;
+    }
+    
+    // Validate at least one line item exists
     if (lineItems.length === 0) {
       toast.error("Please add at least one line item");
       return;
     }
+    
+    // Validate each line item has required fields
+    const hasInvalidItems = lineItems.some((item) => {
+      const description = (item.description || "").trim();
+      const quantity = parseFloat(item.quantity);
+      const unitPrice = parseFloat(item.unitPrice);
+      return (
+        !description ||
+        !Number.isFinite(quantity) ||
+        quantity <= 0 ||
+        !Number.isFinite(unitPrice) ||
+        unitPrice <= 0
+      );
+    });
+    if (hasInvalidItems) {
+      toast.error("All line items must have a description, quantity greater than 0, and unit price greater than 0");
+      return;
+    }
+    
     const totals = calculateTotals();
     createPO.mutate({
       vendorId: formData.vendorId,
