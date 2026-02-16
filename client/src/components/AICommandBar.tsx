@@ -521,28 +521,18 @@ function parseIntent(query: string): ParsedIntent {
   }
   
   // Check for invoice creation intent
-  if ((lowerQuery.includes("create") || lowerQuery.includes("generate") || lowerQuery.includes("send")) && 
-      (lowerQuery.includes("invoice") || lowerQuery.includes("bill"))) {
-    return {
-      taskType: "generate_invoice",
-      taskData: { text: query },
-      description: "Create invoice from text"
-    };
-  }
+  const isInvoiceIntent = 
+    // Explicit invoice creation: "create/generate/send invoice/bill"
+    ((lowerQuery.includes("create") || lowerQuery.includes("generate") || lowerQuery.includes("send")) && 
+     (lowerQuery.includes("invoice") || lowerQuery.includes("bill"))) ||
+    // Direct invoice patterns: "$500 invoice to...", "invoice for...", etc.
+    (lowerQuery.includes("invoice") && 
+     (lowerQuery.includes("$") || lowerQuery.includes("for") || lowerQuery.includes("to") || 
+      lowerQuery.includes("bill to") || lowerQuery.includes("net"))) ||
+    // "bill to" with amount: "bill to customer $500"
+    (lowerQuery.includes("bill") && lowerQuery.includes("to") && lowerQuery.includes("$"));
   
-  // Check for direct invoice patterns (e.g., "$500 invoice to...", "invoice for...")
-  if (lowerQuery.includes("invoice") && 
-      (lowerQuery.includes("$") || lowerQuery.includes("for") || lowerQuery.includes("to") || 
-       lowerQuery.includes("bill to") || lowerQuery.includes("net"))) {
-    return {
-      taskType: "generate_invoice",
-      taskData: { text: query },
-      description: "Create invoice from text"
-    };
-  }
-  
-  // Check for "bill to" pattern with amount
-  if (lowerQuery.includes("bill") && lowerQuery.includes("to") && lowerQuery.includes("$")) {
+  if (isInvoiceIntent) {
     return {
       taskType: "generate_invoice",
       taskData: { text: query },
