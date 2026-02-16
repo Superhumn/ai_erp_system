@@ -270,8 +270,14 @@ async function downloadAndUploadFile(
       return null;
     }
 
-    // Upload to our storage
-    const key = `dataroom/${options.dataRoomId}/drive-sync/${Date.now()}-${file.name}`;
+    // Upload to our storage with sanitized filename
+    // Remove path separators and limit length to prevent issues
+    const sanitizedName = file.name
+      .replace(/[\/\\]/g, '_')  // Replace slashes with underscores
+      .replace(/[^\w\s.-]/g, '') // Remove special characters except alphanumeric, spaces, dots, dashes
+      .substring(0, 200);        // Limit filename length
+    
+    const key = `dataroom/${options.dataRoomId}/drive-sync/${Date.now()}-${sanitizedName}`;
 
     const result = await storagePut(key, content, file.mimeType);
 

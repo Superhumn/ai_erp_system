@@ -6268,7 +6268,12 @@ export async function checkEmailAccess(dataRoomId: number, email: string): Promi
   const rules = await db.select().from(dataRoomEmailAccessRules)
     .where(and(
       eq(dataRoomEmailAccessRules.dataRoomId, dataRoomId),
-      eq(dataRoomEmailAccessRules.isActive, true)
+      eq(dataRoomEmailAccessRules.isActive, true),
+      // Filter out expired rules
+      or(
+        isNull(dataRoomEmailAccessRules.expiresAt),
+        gte(dataRoomEmailAccessRules.expiresAt, new Date())
+      )
     ))
     .orderBy(desc(dataRoomEmailAccessRules.priority));
 
@@ -6454,28 +6459,31 @@ export async function getDataRoomEngagementReport(dataRoomId: number, startDate?
   const documents = await db.select().from(dataRoomDocuments)
     .where(eq(dataRoomDocuments.dataRoomId, dataRoomId));
 
-  // Get all sessions with date filter
-  let sessionsQuery = db.select().from(dataRoomVisitorSessions)
-    .where(eq(dataRoomVisitorSessions.dataRoomId, dataRoomId));
+  // Get all sessions with date filter applied in SQL
+  const sessionsConditions = [eq(dataRoomVisitorSessions.dataRoomId, dataRoomId)];
+  if (startDate) {
+    sessionsConditions.push(gte(dataRoomVisitorSessions.sessionStartAt, startDate));
+  }
+  if (endDate) {
+    sessionsConditions.push(lte(dataRoomVisitorSessions.sessionStartAt, endDate));
+  }
+  const filteredSessions = await db.select().from(dataRoomVisitorSessions)
+    .where(and(...sessionsConditions));
 
-  const sessions = await sessionsQuery;
-  const filteredSessions = sessions.filter(s => {
-    if (startDate && s.sessionStartAt < startDate) return false;
-    if (endDate && s.sessionStartAt > endDate) return false;
-    return true;
-  });
-
-  // Get page views for documents
+  // Get page views for documents with date filter applied in SQL
   const docIds = documents.map(d => d.id);
-  const pageViews = docIds.length > 0
-    ? await db.select().from(documentPageViews).where(inArray(documentPageViews.documentId, docIds))
-    : [];
-
-  const filteredPageViews = pageViews.filter(pv => {
-    if (startDate && pv.enterTime < startDate) return false;
-    if (endDate && pv.enterTime > endDate) return false;
-    return true;
-  });
+  let filteredPageViews: any[] = [];
+  if (docIds.length > 0) {
+    const pageViewConditions = [inArray(documentPageViews.documentId, docIds)];
+    if (startDate) {
+      pageViewConditions.push(gte(documentPageViews.enterTime, startDate));
+    }
+    if (endDate) {
+      pageViewConditions.push(lte(documentPageViews.enterTime, endDate));
+    }
+    filteredPageViews = await db.select().from(documentPageViews)
+      .where(and(...pageViewConditions));
+  }
 
   // Build report
   const visitorEngagement = visitors.map(v => {

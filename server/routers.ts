@@ -10438,12 +10438,30 @@ Ask if they received the original request and if they can provide a quote.`;
       updatePageView: publicProcedure
         .input(z.object({
           id: z.number(),
+          sessionToken: z.string(), // Session token for authorization
           durationMs: z.number(),
           scrollDepth: z.number().optional(),
           mouseMovements: z.number().optional(),
           clicks: z.number().optional(),
         }))
         .mutation(async ({ input }) => {
+          // Verify the page view belongs to this session
+          const pageView = await db.getDocumentPageViews(0).then(views => 
+            views.find(v => v.id === input.id)
+          );
+          
+          if (!pageView) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Page view not found' });
+          }
+
+          // Verify session token matches (get session for this page view's visitor)
+          const sessions = await db.getVisitorSessions(pageView.visitorId);
+          const validSession = sessions.find(s => s.sessionToken === input.sessionToken);
+          
+          if (!validSession) {
+            throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid session token' });
+          }
+
           await db.updateDocumentPageView(input.id, {
             exitTime: new Date(),
             durationMs: input.durationMs,
@@ -10720,7 +10738,7 @@ Ask if they received the original request and if they can provide a quote.`;
       exportCsv: protectedProcedure
         .input(z.object({
           dataRoomId: z.number(),
-          type: z.enum(['visitors', 'documents', 'sessions', 'pageViews']),
+          type: z.enum(['visitors', 'documents']), // Only supported types
         }))
         .mutation(async ({ input }) => {
           const report = await db.getDataRoomEngagementReport(input.dataRoomId);
