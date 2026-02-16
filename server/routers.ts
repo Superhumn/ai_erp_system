@@ -10203,7 +10203,13 @@ Ask if they received the original request and if they can provide a quote.`;
       // Get sync configuration for a data room
       getConfig: protectedProcedure
         .input(z.object({ dataRoomId: z.number() }))
-        .query(async ({ input }) => {
+        .query(async ({ input, ctx }) => {
+          // Check authorization
+          const room = await db.getDataRoomById(input.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
           return db.getDriveSyncConfig(input.dataRoomId);
         }),
 
@@ -10223,9 +10229,16 @@ Ask if they received the original request and if they can provide a quote.`;
           maxFileSizeMb: z.number().default(100),
         }))
         .mutation(async ({ input, ctx }) => {
+          // Check authorization
+          const room = await db.getDataRoomById(input.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
           const existingConfig = await db.getDriveSyncConfig(input.dataRoomId);
 
-          const configData = {
+          const configData: Omit<InsertDataRoomDriveSyncConfig, 'id'> = {
             dataRoomId: input.dataRoomId,
             googleDriveFolderId: input.googleDriveFolderId,
             googleDriveFolderName: input.googleDriveFolderName,
@@ -10244,7 +10257,7 @@ Ask if they received the original request and if they can provide a quote.`;
             await db.updateDriveSyncConfig(existingConfig.id, configData);
             return { id: existingConfig.id, updated: true };
           } else {
-            const id = await db.createDriveSyncConfig(configData as any);
+            const id = await db.createDriveSyncConfig(configData);
             return { id, updated: false };
           }
         }),
@@ -10252,7 +10265,13 @@ Ask if they received the original request and if they can provide a quote.`;
       // Delete sync configuration
       deleteConfig: protectedProcedure
         .input(z.object({ dataRoomId: z.number() }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          // Check authorization
+          const room = await db.getDataRoomById(input.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
           await db.deleteDriveSyncConfig(input.dataRoomId);
           return { success: true };
         }),
@@ -10260,7 +10279,13 @@ Ask if they received the original request and if they can provide a quote.`;
       // Get sync logs
       getLogs: protectedProcedure
         .input(z.object({ dataRoomId: z.number(), limit: z.number().default(50) }))
-        .query(async ({ input }) => {
+        .query(async ({ input, ctx }) => {
+          // Check authorization
+          const room = await db.getDataRoomById(input.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
           return db.getDriveSyncLogs(input.dataRoomId, input.limit);
         }),
 
@@ -10268,6 +10293,13 @@ Ask if they received the original request and if they can provide a quote.`;
       syncNow: protectedProcedure
         .input(z.object({ dataRoomId: z.number() }))
         .mutation(async ({ input, ctx }) => {
+          // Check authorization
+          const room = await db.getDataRoomById(input.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
           const config = await db.getDriveSyncConfig(input.dataRoomId);
           if (!config) {
             throw new TRPCError({ code: 'NOT_FOUND', message: 'No sync configuration found for this data room' });
@@ -10283,8 +10315,9 @@ Ask if they received the original request and if they can provide a quote.`;
           });
 
           try {
-            // Get user's Google OAuth token
-            const token = await db.getGoogleOAuthTokenByUserId(ctx.user.id);
+            // Get Google OAuth token for the user configured for sync (or current user as fallback)
+            const syncUserId = config.syncUserId || ctx.user.id;
+            const token = await db.getGoogleOAuthTokenByUserId(syncUserId);
             if (!token) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected. Please connect your Google account first.' });
             }
