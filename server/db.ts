@@ -1,4 +1,4 @@
-import { eq, desc, and, sql, gte, lte, lt, like, or, count, sum, isNull, inArray } from "drizzle-orm";
+import { eq, desc, and, sql, gte, lte, lt, like, or, count, sum, isNull, inArray, gt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users, companies, customers, vendors, products,
@@ -93,7 +93,10 @@ import {
   InsertFirefliesMeeting, InsertFirefliesActionItem, InsertFirefliesContactMapping,
   // Copacker portal
   copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
-  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument
+  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
+  // COGS tracking
+  cogsTransactions, freightCostAllocations,
+  InsertCogsTransaction, InsertFreightCostAllocation
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8302,4 +8305,407 @@ export async function updateCopackerShippingDocument(id: number, data: Partial<I
   const db = await getDb();
   if (!db) return;
   await db.update(copackerShippingDocuments).set(data).where(eq(copackerShippingDocuments.id, id));
+}
+
+// ============================================
+// COGS (COST OF GOODS SOLD) TRACKING
+// ============================================
+
+/**
+ * Update inventory cost basis when receiving goods
+ * Uses weighted average cost method
+ */
+export async function updateInventoryCostBasis(
+  productId: number,
+  warehouseId: number,
+  receivedQuantity: number,
+  unitCost: number
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Get current inventory record
+  const [currentInventory] = await db
+    .select()
+    .from(inventory)
+    .where(and(
+      eq(inventory.productId, productId),
+      eq(inventory.warehouseId, warehouseId)
+    ))
+    .limit(1);
+
+  if (!currentInventory) {
+    // Create new inventory record
+    await db.insert(inventory).values({
+      productId,
+      warehouseId,
+      quantity: receivedQuantity.toString(),
+      averageCost: unitCost.toString(),
+      totalCostBasis: (receivedQuantity * unitCost).toString()
+    });
+    return;
+  }
+
+  // Calculate weighted average cost
+  const currentQty = parseFloat(currentInventory.quantity);
+  const currentAvgCost = parseFloat(currentInventory.averageCost || '0');
+  const currentTotalCost = currentQty * currentAvgCost;
+  
+  const newTotalCost = currentTotalCost + (receivedQuantity * unitCost);
+  const newTotalQty = currentQty + receivedQuantity;
+  const newAvgCost = newTotalQty > 0 ? newTotalCost / newTotalQty : 0;
+
+  await db
+    .update(inventory)
+    .set({
+      quantity: newTotalQty.toString(),
+      averageCost: newAvgCost.toString(),
+      totalCostBasis: newTotalCost.toString()
+    })
+    .where(eq(inventory.id, currentInventory.id));
+}
+
+/**
+ * Calculate COGS for a sales order line using FIFO or average cost method
+ */
+export async function calculateCOGS(
+  productId: number,
+  warehouseId: number,
+  quantity: number,
+  method: 'fifo' | 'average' = 'average'
+): Promise<{ unitCost: number; totalCost: number }> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  if (method === 'average') {
+    // Use weighted average cost from inventory
+    const [inv] = await db
+      .select()
+      .from(inventory)
+      .where(and(
+        eq(inventory.productId, productId),
+        eq(inventory.warehouseId, warehouseId)
+      ))
+      .limit(1);
+
+    const unitCost = parseFloat(inv?.averageCost || '0');
+    return {
+      unitCost,
+      totalCost: unitCost * quantity
+    };
+  } else {
+    // FIFO: Use oldest lots first
+    const lots = await db
+      .select()
+      .from(inventoryBalances)
+      .innerJoin(inventoryLots, eq(inventoryBalances.lotId, inventoryLots.id))
+      .where(and(
+        eq(inventoryBalances.productId, productId),
+        eq(inventoryBalances.warehouseId, warehouseId),
+        eq(inventoryBalances.status, 'available')
+      ))
+      .orderBy(inventoryLots.manufacturedDate);
+
+    let remainingQty = quantity;
+    let totalCost = 0;
+    
+    for (const lot of lots) {
+      const lotQty = parseFloat(lot.inventoryBalances.quantity);
+      const lotCost = parseFloat(lot.inventoryLots.unitCost || '0');
+      
+      if (lotQty >= remainingQty) {
+        totalCost += remainingQty * lotCost;
+        remainingQty = 0;
+        break;
+      } else {
+        totalCost += lotQty * lotCost;
+        remainingQty -= lotQty;
+      }
+    }
+
+    const unitCost = quantity > 0 ? totalCost / quantity : 0;
+    return { unitCost, totalCost };
+  }
+}
+
+/**
+ * Record COGS transaction when a sale is fulfilled
+ */
+export async function recordCOGSSale(
+  salesOrderId: number,
+  salesOrderLineId: number,
+  productId: number,
+  warehouseId: number,
+  quantitySold: number,
+  revenueAmount: number,
+  freightCostAllocated: number = 0,
+  customsCostAllocated: number = 0,
+  insuranceCostAllocated: number = 0,
+  otherCostAllocated: number = 0
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Calculate COGS using average cost method
+  const { unitCost, totalCost: productCost } = await calculateCOGS(productId, warehouseId, quantitySold);
+
+  // Total COGS includes product cost plus allocated costs
+  const totalCOGS = productCost + freightCostAllocated + customsCostAllocated + insuranceCostAllocated + otherCostAllocated;
+  const grossProfit = revenueAmount - totalCOGS;
+
+  // Generate transaction number
+  const transactionNumber = `COGS-${Date.now()}`;
+
+  // Insert COGS transaction
+  await db.insert(cogsTransactions).values({
+    transactionNumber,
+    salesOrderId,
+    salesOrderLineId,
+    productId,
+    warehouseId,
+    quantitySold: quantitySold.toString(),
+    unitCost: unitCost.toString(),
+    productCost: productCost.toString(),
+    freightCostAllocated: freightCostAllocated.toString(),
+    customsCostAllocated: customsCostAllocated.toString(),
+    insuranceCostAllocated: insuranceCostAllocated.toString(),
+    otherCostAllocated: otherCostAllocated.toString(),
+    totalCOGS: totalCOGS.toString(),
+    revenueAmount: revenueAmount.toString(),
+    grossProfit: grossProfit.toString(),
+    costingMethod: 'average'
+  });
+
+  // Update sales order line with COGS
+  await db
+    .update(salesOrderLines)
+    .set({
+      costOfGoodsSold: totalCOGS.toString(),
+      grossProfit: grossProfit.toString()
+    })
+    .where(eq(salesOrderLines.id, salesOrderLineId));
+
+  // Update inventory cost basis (reduce by sold quantity)
+  const [inv] = await db
+    .select()
+    .from(inventory)
+    .where(and(
+      eq(inventory.productId, productId),
+      eq(inventory.warehouseId, warehouseId)
+    ))
+    .limit(1);
+
+  if (inv) {
+    const currentQty = parseFloat(inv.quantity);
+    const currentTotalCost = parseFloat(inv.totalCostBasis || '0');
+    const newQty = currentQty - quantitySold;
+    const newTotalCost = Math.max(0, currentTotalCost - productCost);
+
+    await db
+      .update(inventory)
+      .set({
+        quantity: newQty.toString(),
+        totalCostBasis: newTotalCost.toString()
+      })
+      .where(eq(inventory.id, inv.id));
+  }
+
+  return { totalCOGS, grossProfit, unitCost };
+}
+
+/**
+ * Allocate freight costs to products in a purchase order or shipment
+ */
+export async function allocateFreightCosts(
+  purchaseOrderId: number | null,
+  shipmentId: number | null,
+  totalFreightCost: number,
+  totalCustomsDuties: number = 0,
+  totalInsuranceCost: number = 0,
+  totalHandlingFees: number = 0,
+  allocationMethod: 'weight' | 'volume' | 'quantity' | 'value' = 'quantity',
+  createdBy: number
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Get items from purchase order or shipment
+  let items: Array<{ productId: number; quantity: number; unitPrice?: number }> = [];
+
+  if (purchaseOrderId) {
+    const poItems = await db
+      .select()
+      .from(purchaseOrderItems)
+      .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
+    
+    items = poItems.map(item => ({
+      productId: item.productId!,
+      quantity: parseFloat(item.quantity),
+      unitPrice: parseFloat(item.unitPrice)
+    }));
+  }
+
+  if (items.length === 0) return;
+
+  // Calculate allocation basis
+  let totalBasis = 0;
+  const itemsWithBasis = items.map(item => {
+    let basis = 0;
+    switch (allocationMethod) {
+      case 'quantity':
+        basis = item.quantity;
+        break;
+      case 'value':
+        basis = item.quantity * (item.unitPrice || 0);
+        break;
+      // weight and volume would require product dimensions data
+      default:
+        basis = item.quantity;
+    }
+    totalBasis += basis;
+    return { ...item, basis };
+  });
+
+  // Allocate costs proportionally
+  const totalCost = totalFreightCost + totalCustomsDuties + totalInsuranceCost + totalHandlingFees;
+
+  for (const item of itemsWithBasis) {
+    const proportion = totalBasis > 0 ? item.basis / totalBasis : 0;
+    
+    const freightCost = totalFreightCost * proportion;
+    const customsDuties = totalCustomsDuties * proportion;
+    const insuranceCost = totalInsuranceCost * proportion;
+    const handlingFees = totalHandlingFees * proportion;
+    const totalAllocatedCost = freightCost + customsDuties + insuranceCost + handlingFees;
+
+    await db.insert(freightCostAllocations).values({
+      purchaseOrderId,
+      shipmentId,
+      productId: item.productId,
+      quantity: item.quantity.toString(),
+      freightCost: freightCost.toString(),
+      customsDuties: customsDuties.toString(),
+      insuranceCost: insuranceCost.toString(),
+      handlingFees: handlingFees.toString(),
+      totalAllocatedCost: totalAllocatedCost.toString(),
+      allocationMethod,
+      createdBy
+    });
+  }
+}
+
+/**
+ * Get product profitability report
+ */
+export async function getProductProfitability(
+  productId?: number,
+  startDate?: Date,
+  endDate?: Date
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  let query = db
+    .select({
+      productId: cogsTransactions.productId,
+      productName: products.name,
+      productSku: products.sku,
+      totalQuantitySold: sql<number>`SUM(${cogsTransactions.quantitySold})`,
+      totalRevenue: sql<number>`SUM(${cogsTransactions.revenueAmount})`,
+      totalProductCost: sql<number>`SUM(${cogsTransactions.productCost})`,
+      totalFreightCost: sql<number>`SUM(${cogsTransactions.freightCostAllocated})`,
+      totalCustomsCost: sql<number>`SUM(${cogsTransactions.customsCostAllocated})`,
+      totalCOGS: sql<number>`SUM(${cogsTransactions.totalCOGS})`,
+      totalGrossProfit: sql<number>`SUM(${cogsTransactions.grossProfit})`,
+      averageMargin: sql<number>`AVG((${cogsTransactions.grossProfit} / NULLIF(${cogsTransactions.revenueAmount}, 0)) * 100)`
+    })
+    .from(cogsTransactions)
+    .innerJoin(products, eq(cogsTransactions.productId, products.id))
+    .groupBy(cogsTransactions.productId, products.name, products.sku);
+
+  if (productId) {
+    query = query.where(eq(cogsTransactions.productId, productId));
+  }
+
+  if (startDate) {
+    query = query.where(gte(cogsTransactions.transactionDate, startDate));
+  }
+
+  if (endDate) {
+    query = query.where(lte(cogsTransactions.transactionDate, endDate));
+  }
+
+  return await query;
+}
+
+/**
+ * Get inventory valuation (total value of inventory on hand)
+ */
+export async function getInventoryValuation(warehouseId?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  let query = db
+    .select({
+      productId: inventory.productId,
+      productName: products.name,
+      productSku: products.sku,
+      warehouseId: inventory.warehouseId,
+      warehouseName: warehouses.name,
+      quantity: inventory.quantity,
+      averageCost: inventory.averageCost,
+      totalValue: inventory.totalCostBasis
+    })
+    .from(inventory)
+    .innerJoin(products, eq(inventory.productId, products.id))
+    .innerJoin(warehouses, eq(inventory.warehouseId, warehouses.id))
+    .where(gt(inventory.quantity, 0));
+
+  if (warehouseId) {
+    query = query.where(eq(inventory.warehouseId, warehouseId));
+  }
+
+  return await query;
+}
+
+/**
+ * Get COGS transactions history
+ */
+export async function getCOGSTransactions(
+  filters?: {
+    salesOrderId?: number;
+    productId?: number;
+    startDate?: Date;
+    endDate?: Date;
+  },
+  limit = 100
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  let query = db
+    .select()
+    .from(cogsTransactions)
+    .innerJoin(products, eq(cogsTransactions.productId, products.id))
+    .innerJoin(salesOrders, eq(cogsTransactions.salesOrderId, salesOrders.id))
+    .limit(limit)
+    .orderBy(desc(cogsTransactions.transactionDate));
+
+  if (filters?.salesOrderId) {
+    query = query.where(eq(cogsTransactions.salesOrderId, filters.salesOrderId));
+  }
+
+  if (filters?.productId) {
+    query = query.where(eq(cogsTransactions.productId, filters.productId));
+  }
+
+  if (filters?.startDate) {
+    query = query.where(gte(cogsTransactions.transactionDate, filters.startDate));
+  }
+
+  if (filters?.endDate) {
+    query = query.where(lte(cogsTransactions.transactionDate, filters.endDate));
+  }
+
+  return await query;
 }
