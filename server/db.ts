@@ -96,7 +96,10 @@ import {
   InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
   // COGS tracking
   cogsTransactions, freightCostAllocations,
-  InsertCogsTransaction, InsertFreightCostAllocation
+  InsertCogsTransaction, InsertFreightCostAllocation,
+  // QuickBooks integration
+  quickbooksAccounts, quickbooksAccountMappings, quickbooksItems,
+  InsertQuickBooksAccount, InsertQuickBooksAccountMapping, InsertQuickBooksItem
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8719,4 +8722,270 @@ export async function getCOGSTransactions(
   }
 
   return await query;
+}
+
+// ============================================
+// QUICKBOOKS COGS INTEGRATION
+// ============================================
+
+/**
+ * Sync QuickBooks Chart of Accounts
+ */
+export async function syncQuickBooksAccounts(companyId: number, qbAccounts: any[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  for (const qbAccount of qbAccounts) {
+    await db
+      .insert(quickbooksAccounts)
+      .values({
+        companyId,
+        quickbooksAccountId: qbAccount.Id,
+        name: qbAccount.Name,
+        accountType: qbAccount.AccountType,
+        accountSubType: qbAccount.AccountSubType,
+        classification: qbAccount.Classification,
+        fullyQualifiedName: qbAccount.FullyQualifiedName,
+        active: qbAccount.Active,
+        currentBalance: qbAccount.CurrentBalance?.toString(),
+        lastSyncedAt: new Date(),
+      })
+      .onDuplicateKeyUpdate({
+        set: {
+          name: qbAccount.Name,
+          accountType: qbAccount.AccountType,
+          accountSubType: qbAccount.AccountSubType,
+          classification: qbAccount.Classification,
+          fullyQualifiedName: qbAccount.FullyQualifiedName,
+          active: qbAccount.Active,
+          currentBalance: qbAccount.CurrentBalance?.toString(),
+          lastSyncedAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
+  }
+
+  return { synced: qbAccounts.length };
+}
+
+/**
+ * Sync QuickBooks Items (Products)
+ */
+export async function syncQuickBooksItems(companyId: number, qbItems: any[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  for (const qbItem of qbItems) {
+    // Try to match with existing product by SKU or QuickBooks ID
+    let productId = null;
+    if (qbItem.SKU) {
+      const [product] = await db
+        .select()
+        .from(products)
+        .where(eq(products.sku, qbItem.SKU))
+        .limit(1);
+      productId = product?.id;
+    }
+
+    await db
+      .insert(quickbooksItems)
+      .values({
+        companyId,
+        quickbooksItemId: qbItem.Id,
+        productId,
+        name: qbItem.Name,
+        sku: qbItem.SKU,
+        type: qbItem.Type,
+        description: qbItem.Description,
+        unitPrice: qbItem.UnitPrice?.toString(),
+        purchaseCost: qbItem.PurchaseCost?.toString(),
+        quantityOnHand: qbItem.QtyOnHand?.toString(),
+        incomeAccountId: qbItem.IncomeAccountRef?.value,
+        expenseAccountId: qbItem.ExpenseAccountRef?.value,
+        assetAccountId: qbItem.AssetAccountRef?.value,
+        active: qbItem.Active,
+        lastSyncedAt: new Date(),
+      })
+      .onDuplicateKeyUpdate({
+        set: {
+          productId,
+          name: qbItem.Name,
+          sku: qbItem.SKU,
+          type: qbItem.Type,
+          description: qbItem.Description,
+          unitPrice: qbItem.UnitPrice?.toString(),
+          purchaseCost: qbItem.PurchaseCost?.toString(),
+          quantityOnHand: qbItem.QtyOnHand?.toString(),
+          incomeAccountId: qbItem.IncomeAccountRef?.value,
+          expenseAccountId: qbItem.ExpenseAccountRef?.value,
+          assetAccountId: qbItem.AssetAccountRef?.value,
+          active: qbItem.Active,
+          lastSyncedAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
+
+    // Update product cost if linked
+    if (productId && qbItem.PurchaseCost) {
+      await db
+        .update(products)
+        .set({
+          costPrice: qbItem.PurchaseCost.toString(),
+          quickbooksItemId: qbItem.Id,
+        })
+        .where(eq(products.id, productId));
+    }
+  }
+
+  return { synced: qbItems.length };
+}
+
+/**
+ * Get QuickBooks account mapping by type
+ */
+export async function getQuickBooksAccountMapping(
+  companyId: number,
+  mappingType: 'cogs_product' | 'cogs_freight' | 'cogs_customs' | 'inventory_asset' | 'freight_expense' | 'income_sales' | 'expense_other'
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const [mapping] = await db
+    .select()
+    .from(quickbooksAccountMappings)
+    .where(and(
+      eq(quickbooksAccountMappings.companyId, companyId),
+      eq(quickbooksAccountMappings.mappingType, mappingType),
+      eq(quickbooksAccountMappings.isDefault, true)
+    ))
+    .limit(1);
+
+  return mapping;
+}
+
+/**
+ * Create or update QuickBooks account mapping
+ */
+export async function upsertQuickBooksAccountMapping(data: {
+  companyId: number;
+  mappingType: 'cogs_product' | 'cogs_freight' | 'cogs_customs' | 'inventory_asset' | 'freight_expense' | 'income_sales' | 'expense_other';
+  quickbooksAccountId: string;
+  erpCategoryName?: string;
+  isDefault?: boolean;
+  notes?: string;
+  createdBy: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // If setting as default, unset other defaults for this type
+  if (data.isDefault) {
+    await db
+      .update(quickbooksAccountMappings)
+      .set({ isDefault: false })
+      .where(and(
+        eq(quickbooksAccountMappings.companyId, data.companyId),
+        eq(quickbooksAccountMappings.mappingType, data.mappingType)
+      ));
+  }
+
+  const result = await db.insert(quickbooksAccountMappings).values(data);
+  return { id: result[0].insertId };
+}
+
+/**
+ * Get QuickBooks item by product ID
+ */
+export async function getQuickBooksItemByProductId(productId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const [item] = await db
+    .select()
+    .from(quickbooksItems)
+    .where(eq(quickbooksItems.productId, productId))
+    .limit(1);
+
+  return item;
+}
+
+/**
+ * Update inventory cost basis from QuickBooks item cost
+ */
+export async function updateInventoryCostFromQuickBooks(
+  productId: number,
+  warehouseId: number,
+  qbPurchaseCost: number
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Get current inventory
+  const [inv] = await db
+    .select()
+    .from(inventory)
+    .where(and(
+      eq(inventory.productId, productId),
+      eq(inventory.warehouseId, warehouseId)
+    ))
+    .limit(1);
+
+  if (inv) {
+    // Update average cost if QuickBooks cost is available
+    await db
+      .update(inventory)
+      .set({
+        averageCost: qbPurchaseCost.toString(),
+        updatedAt: new Date(),
+      })
+      .where(eq(inventory.id, inv.id));
+  }
+
+  // Also update product cost price
+  await db
+    .update(products)
+    .set({
+      costPrice: qbPurchaseCost.toString(),
+    })
+    .where(eq(products.id, productId));
+}
+
+/**
+ * Get all QuickBooks account mappings for a company
+ */
+export async function getQuickBooksAccountMappings(companyId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  return await db
+    .select()
+    .from(quickbooksAccountMappings)
+    .leftJoin(quickbooksAccounts, eq(quickbooksAccountMappings.quickbooksAccountId, quickbooksAccounts.quickbooksAccountId))
+    .where(eq(quickbooksAccountMappings.companyId, companyId))
+    .orderBy(quickbooksAccountMappings.mappingType);
+}
+
+/**
+ * Get QuickBooks accounts by type for selection
+ */
+export async function getQuickBooksAccountsByType(
+  companyId: number,
+  classification?: 'Asset' | 'Liability' | 'Equity' | 'Revenue' | 'Expense'
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  let query = db
+    .select()
+    .from(quickbooksAccounts)
+    .where(and(
+      eq(quickbooksAccounts.companyId, companyId),
+      eq(quickbooksAccounts.active, true)
+    ));
+
+  if (classification) {
+    query = query.where(eq(quickbooksAccounts.classification, classification));
+  }
+
+  return await query.orderBy(quickbooksAccounts.name);
 }

@@ -94,6 +94,77 @@ export const quickbooksOAuthTokens = mysqlTable("quickbooksOAuthTokens", {
 export type QuickBooksOAuthToken = typeof quickbooksOAuthTokens.$inferSelect;
 export type InsertQuickBooksOAuthToken = typeof quickbooksOAuthTokens.$inferInsert;
 
+// QuickBooks Chart of Accounts sync
+export const quickbooksAccounts = mysqlTable("quickbooksAccounts", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  quickbooksAccountId: varchar("quickbooksAccountId", { length: 64 }).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  accountType: varchar("accountType", { length: 64 }), // e.g., "Cost of Goods Sold", "Inventory", "Other Current Asset"
+  accountSubType: varchar("accountSubType", { length: 64 }), // e.g., "SuppliesMaterialsCogs", "Inventory"
+  classification: varchar("classification", { length: 64 }), // Asset, Liability, Equity, Revenue, Expense
+  fullyQualifiedName: text("fullyQualifiedName"),
+  active: boolean("active").default(true),
+  currentBalance: decimal("currentBalance", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  lastSyncedAt: timestamp("lastSyncedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type QuickBooksAccount = typeof quickbooksAccounts.$inferSelect;
+export type InsertQuickBooksAccount = typeof quickbooksAccounts.$inferInsert;
+
+// QuickBooks account category mappings for COGS
+export const quickbooksAccountMappings = mysqlTable("quickbooksAccountMappings", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  mappingType: mysqlEnum("mappingType", [
+    "cogs_product", // Cost of Goods Sold - Products
+    "cogs_freight", // Cost of Goods Sold - Freight/Shipping
+    "cogs_customs", // Cost of Goods Sold - Customs/Duties
+    "inventory_asset", // Inventory Asset account
+    "freight_expense", // Freight/Delivery Expense
+    "income_sales", // Sales Income
+    "expense_other" // Other expenses
+  ]).notNull(),
+  quickbooksAccountId: varchar("quickbooksAccountId", { length: 64 }).notNull(),
+  erpCategoryName: varchar("erpCategoryName", { length: 255 }), // Optional ERP category name
+  isDefault: boolean("isDefault").default(false),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type QuickBooksAccountMapping = typeof quickbooksAccountMappings.$inferSelect;
+export type InsertQuickBooksAccountMapping = typeof quickbooksAccountMappings.$inferInsert;
+
+// QuickBooks Items sync (Products/Services)
+export const quickbooksItems = mysqlTable("quickbooksItems", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  quickbooksItemId: varchar("quickbooksItemId", { length: 64 }).notNull(),
+  productId: int("productId"), // Link to ERP product
+  name: varchar("name", { length: 255 }).notNull(),
+  sku: varchar("sku", { length: 64 }),
+  type: varchar("type", { length: 32 }), // Inventory, NonInventory, Service
+  description: text("description"),
+  unitPrice: decimal("unitPrice", { precision: 15, scale: 2 }),
+  purchaseCost: decimal("purchaseCost", { precision: 15, scale: 2 }),
+  quantityOnHand: decimal("quantityOnHand", { precision: 15, scale: 4 }),
+  incomeAccountId: varchar("incomeAccountId", { length: 64 }),
+  expenseAccountId: varchar("expenseAccountId", { length: 64 }),
+  assetAccountId: varchar("assetAccountId", { length: 64 }),
+  active: boolean("active").default(true),
+  lastSyncedAt: timestamp("lastSyncedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type QuickBooksItem = typeof quickbooksItems.$inferSelect;
+export type InsertQuickBooksItem = typeof quickbooksItems.$inferInsert;
+
 // ============================================
 // CORE ENTITIES
 // ============================================

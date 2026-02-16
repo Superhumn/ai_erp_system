@@ -18,7 +18,7 @@ import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
-import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo } from "./_core/quickbooks";
+import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems } from "./_core/quickbooks";
 import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 
 // Role-based access middleware
@@ -3687,6 +3687,121 @@ export const appRouter = router({
         companyName: result.data?.CompanyInfo?.CompanyName 
       };
     }),
+
+    // Sync Chart of Accounts from QuickBooks
+    syncAccounts: protectedProcedure
+      .input(z.object({ companyId: z.number().optional() }))
+      .mutation(async ({ input, ctx }) => {
+        const token = await db.getQuickBooksOAuthToken(ctx.user.id);
+        if (!token || !token.realmId) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'QuickBooks not connected' });
+        }
+
+        const result = await getChartOfAccounts(token.accessToken, token.realmId);
+        if (result.error) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
+        }
+
+        const accounts = result.data?.QueryResponse?.Account || [];
+        const companyId = input.companyId || 1; // Default to company 1
+        const synced = await db.syncQuickBooksAccounts(companyId, accounts);
+
+        await createAuditLog(ctx.user.id, 'create', 'quickbooks_sync', 0, `Synced ${synced.synced} accounts from QuickBooks`);
+        
+        return { 
+          success: true, 
+          synced: synced.synced,
+          message: `Successfully synced ${synced.synced} accounts from QuickBooks`
+        };
+      }),
+
+    // Sync Items/Products from QuickBooks
+    syncItems: protectedProcedure
+      .input(z.object({ 
+        companyId: z.number().optional(),
+        type: z.enum(['Inventory', 'NonInventory', 'Service']).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const token = await db.getQuickBooksOAuthToken(ctx.user.id);
+        if (!token || !token.realmId) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'QuickBooks not connected' });
+        }
+
+        const result = await getQuickBooksItems(token.accessToken, token.realmId, {
+          type: input.type,
+          activeOnly: true,
+        });
+        
+        if (result.error) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
+        }
+
+        const items = result.data?.QueryResponse?.Item || [];
+        const companyId = input.companyId || 1;
+        const synced = await db.syncQuickBooksItems(companyId, items);
+
+        await createAuditLog(ctx.user.id, 'create', 'quickbooks_sync', 0, `Synced ${synced.synced} items from QuickBooks`);
+        
+        return { 
+          success: true, 
+          synced: synced.synced,
+          message: `Successfully synced ${synced.synced} items from QuickBooks`
+        };
+      }),
+
+    // Get QuickBooks accounts for mapping
+    getAccounts: protectedProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        classification: z.enum(['Asset', 'Liability', 'Equity', 'Revenue', 'Expense']).optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const companyId = input?.companyId || 1;
+        return db.getQuickBooksAccountsByType(companyId, input?.classification);
+      }),
+
+    // Get account mappings
+    getAccountMappings: protectedProcedure
+      .input(z.object({ companyId: z.number().optional() }))
+      .query(async ({ input }) => {
+        const companyId = input.companyId || 1;
+        return db.getQuickBooksAccountMappings(companyId);
+      }),
+
+    // Create or update account mapping
+    upsertAccountMapping: protectedProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        mappingType: z.enum([
+          'cogs_product',
+          'cogs_freight',
+          'cogs_customs',
+          'inventory_asset',
+          'freight_expense',
+          'income_sales',
+          'expense_other'
+        ]),
+        quickbooksAccountId: z.string(),
+        erpCategoryName: z.string().optional(),
+        isDefault: z.boolean().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const companyId = input.companyId || 1;
+        const result = await db.upsertQuickBooksAccountMapping({
+          companyId,
+          mappingType: input.mappingType,
+          quickbooksAccountId: input.quickbooksAccountId,
+          erpCategoryName: input.erpCategoryName,
+          isDefault: input.isDefault ?? true,
+          notes: input.notes,
+          createdBy: ctx.user.id,
+        });
+
+        await createAuditLog(ctx.user.id, 'create', 'quickbooks_mapping', result.id, `Mapped ${input.mappingType} to QB account ${input.quickbooksAccountId}`);
+        
+        return { success: true, id: result.id };
+      }),
   }),
 
   // ============================================

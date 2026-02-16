@@ -227,3 +227,214 @@ export async function makeQuickBooksRequest(
 export async function getCompanyInfo(accessToken: string, realmId: string) {
   return makeQuickBooksRequest(accessToken, realmId, "companyinfo/" + realmId);
 }
+
+/**
+ * Get QuickBooks Chart of Accounts
+ * Used for mapping COGS and inventory accounts
+ */
+export async function getChartOfAccounts(accessToken: string, realmId: string) {
+  return makeQuickBooksRequest(
+    accessToken,
+    realmId,
+    "query?query=SELECT * FROM Account WHERE Active = true"
+  );
+}
+
+/**
+ * Get QuickBooks Items (Products/Services)
+ * Returns inventory items with cost information
+ */
+export async function getQuickBooksItems(accessToken: string, realmId: string, options?: {
+  type?: 'Inventory' | 'NonInventory' | 'Service';
+  activeOnly?: boolean;
+  maxResults?: number;
+}) {
+  const { type, activeOnly = true, maxResults = 1000 } = options || {};
+  
+  let query = "SELECT * FROM Item";
+  const conditions = [];
+  
+  if (type) {
+    conditions.push(`Type = '${type}'`);
+  }
+  if (activeOnly) {
+    conditions.push("Active = true");
+  }
+  
+  if (conditions.length > 0) {
+    query += " WHERE " + conditions.join(" AND ");
+  }
+  
+  query += ` MAXRESULTS ${maxResults}`;
+  
+  return makeQuickBooksRequest(
+    accessToken,
+    realmId,
+    `query?query=${encodeURIComponent(query)}`
+  );
+}
+
+/**
+ * Get QuickBooks Invoices
+ * Used to sync revenue and COGS data
+ */
+export async function getQuickBooksInvoices(accessToken: string, realmId: string, options?: {
+  startDate?: string; // YYYY-MM-DD
+  endDate?: string;
+  maxResults?: number;
+}) {
+  const { startDate, endDate, maxResults = 1000 } = options || {};
+  
+  let query = "SELECT * FROM Invoice";
+  const conditions = [];
+  
+  if (startDate) {
+    conditions.push(`TxnDate >= '${startDate}'`);
+  }
+  if (endDate) {
+    conditions.push(`TxnDate <= '${endDate}'`);
+  }
+  
+  if (conditions.length > 0) {
+    query += " WHERE " + conditions.join(" AND ");
+  }
+  
+  query += ` ORDER BY TxnDate DESC MAXRESULTS ${maxResults}`;
+  
+  return makeQuickBooksRequest(
+    accessToken,
+    realmId,
+    `query?query=${encodeURIComponent(query)}`
+  );
+}
+
+/**
+ * Get QuickBooks Bills (Purchase transactions)
+ * Used to sync inventory costs and freight expenses
+ */
+export async function getQuickBooksBills(accessToken: string, realmId: string, options?: {
+  startDate?: string; // YYYY-MM-DD
+  endDate?: string;
+  vendorId?: string;
+  maxResults?: number;
+}) {
+  const { startDate, endDate, vendorId, maxResults = 1000 } = options || {};
+  
+  let query = "SELECT * FROM Bill";
+  const conditions = [];
+  
+  if (startDate) {
+    conditions.push(`TxnDate >= '${startDate}'`);
+  }
+  if (endDate) {
+    conditions.push(`TxnDate <= '${endDate}'`);
+  }
+  if (vendorId) {
+    conditions.push(`VendorRef = '${vendorId}'`);
+  }
+  
+  if (conditions.length > 0) {
+    query += " WHERE " + conditions.join(" AND ");
+  }
+  
+  query += ` ORDER BY TxnDate DESC MAXRESULTS ${maxResults}`;
+  
+  return makeQuickBooksRequest(
+    accessToken,
+    realmId,
+    `query?query=${encodeURIComponent(query)}`
+  );
+}
+
+/**
+ * Get QuickBooks Purchase Orders
+ * Used to sync expected inventory costs
+ */
+export async function getQuickBooksPurchaseOrders(accessToken: string, realmId: string, options?: {
+  startDate?: string;
+  endDate?: string;
+  maxResults?: number;
+}) {
+  const { startDate, endDate, maxResults = 1000 } = options || {};
+  
+  let query = "SELECT * FROM PurchaseOrder";
+  const conditions = [];
+  
+  if (startDate) {
+    conditions.push(`TxnDate >= '${startDate}'`);
+  }
+  if (endDate) {
+    conditions.push(`TxnDate <= '${endDate}'`);
+  }
+  
+  if (conditions.length > 0) {
+    query += " WHERE " + conditions.join(" AND ");
+  }
+  
+  query += ` ORDER BY TxnDate DESC MAXRESULTS ${maxResults}`;
+  
+  return makeQuickBooksRequest(
+    accessToken,
+    realmId,
+    `query?query=${encodeURIComponent(query)}`
+  );
+}
+
+/**
+ * Create or update a QuickBooks Item
+ * Used to push product information to QuickBooks
+ */
+export async function upsertQuickBooksItem(
+  accessToken: string,
+  realmId: string,
+  itemData: {
+    Id?: string;
+    Name: string;
+    Type: 'Inventory' | 'NonInventory' | 'Service';
+    QtyOnHand?: number;
+    InvStartDate?: string;
+    UnitPrice?: number;
+    PurchaseCost?: number;
+    IncomeAccountRef?: { value: string };
+    ExpenseAccountRef?: { value: string };
+    AssetAccountRef?: { value: string };
+    Description?: string;
+    SKU?: string;
+  }
+) {
+  const method = itemData.Id ? 'POST' : 'POST';
+  const endpoint = itemData.Id ? `item?operation=update` : 'item';
+  
+  return makeQuickBooksRequest(accessToken, realmId, endpoint, {
+    method,
+    body: JSON.stringify(itemData),
+  });
+}
+
+/**
+ * Post a Journal Entry to QuickBooks
+ * Used to record COGS transactions
+ */
+export async function createJournalEntry(
+  accessToken: string,
+  realmId: string,
+  journalData: {
+    TxnDate: string; // YYYY-MM-DD
+    Line: Array<{
+      Description?: string;
+      Amount: number;
+      DetailType: 'JournalEntryLineDetail';
+      JournalEntryLineDetail: {
+        PostingType: 'Debit' | 'Credit';
+        AccountRef: { value: string };
+      };
+    }>;
+    DocNumber?: string;
+    PrivateNote?: string;
+  }
+) {
+  return makeQuickBooksRequest(accessToken, realmId, 'journalentry', {
+    method: 'POST',
+    body: JSON.stringify(journalData),
+  });
+}
