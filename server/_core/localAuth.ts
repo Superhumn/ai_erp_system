@@ -1,0 +1,244 @@
+/**
+ * Local Authentication System
+ * Provides email/password authentication as a replacement for manus.ai OAuth
+ */
+
+import { pbkdf2Sync, randomBytes } from "crypto";
+import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import type { Express, Request, Response } from "express";
+import * as db from "../db";
+import { getSessionCookieOptions } from "./cookies";
+import { sdk } from "./sdk";
+
+const SALT_LENGTH = 32;
+const HASH_ITERATIONS = 100000;
+const KEY_LENGTH = 64;
+const DIGEST = "sha512";
+
+/**
+ * Hash a password using PBKDF2
+ */
+function hashPassword(password: string, salt: string): string {
+  return pbkdf2Sync(password, salt, HASH_ITERATIONS, KEY_LENGTH, DIGEST).toString("hex");
+}
+
+/**
+ * Generate a random salt
+ */
+function generateSalt(): string {
+  return randomBytes(SALT_LENGTH).toString("hex");
+}
+
+/**
+ * Verify a password against a hash
+ */
+function verifyPassword(password: string, salt: string, hash: string): boolean {
+  const passwordHash = hashPassword(password, salt);
+  return passwordHash === hash;
+}
+
+/**
+ * Generate a unique openId for local users
+ * Format: local_{nanoid}
+ */
+async function generateLocalOpenId(): Promise<string> {
+  const { nanoid } = await import("nanoid");
+  return `local_${nanoid(21)}`;
+}
+
+/**
+ * Validate email format
+ */
+function isValidEmail(email: string): boolean {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
+}
+
+/**
+ * Validate password strength
+ * At least 8 characters
+ */
+function isValidPassword(password: string): boolean {
+  return password.length >= 8;
+}
+
+export interface LocalAuthCredentials {
+  email: string;
+  password: string;
+  name?: string;
+}
+
+/**
+ * Register local authentication routes
+ */
+export function registerLocalAuthRoutes(app: Express) {
+  /**
+   * POST /api/auth/signup
+   * Register a new user with email/password
+   */
+  app.post("/api/auth/signup", async (req: Request, res: Response) => {
+    try {
+      const { email, password, name } = req.body as LocalAuthCredentials;
+
+      // Validate input
+      if (!email || !password) {
+        return res.status(400).json({ error: "Email and password are required" });
+      }
+
+      if (!isValidEmail(email)) {
+        return res.status(400).json({ error: "Invalid email format" });
+      }
+
+      if (!isValidPassword(password)) {
+        return res.status(400).json({ error: "Password must be at least 8 characters" });
+      }
+
+      // Check if user already exists
+      const existingUser = await db.getUserByEmail(email);
+      if (existingUser) {
+        return res.status(409).json({ error: "User with this email already exists" });
+      }
+
+      // Generate salt and hash password
+      const salt = generateSalt();
+      const passwordHash = hashPassword(password, salt);
+      const openId = await generateLocalOpenId();
+
+      // Store credentials
+      await db.createLocalAuthCredential({
+        openId,
+        email: email.toLowerCase(),
+        passwordHash,
+        salt,
+      });
+
+      // Create user record
+      await db.upsertUser({
+        openId,
+        name: name || email.split("@")[0],
+        email: email.toLowerCase(),
+        loginMethod: "email",
+        lastSignedIn: new Date(),
+      });
+
+      // Create session
+      const sessionToken = await sdk.createSessionToken(openId, {
+        name: name || email.split("@")[0],
+        expiresInMs: ONE_YEAR_MS,
+      });
+
+      const cookieOptions = getSessionCookieOptions(req);
+      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+
+      return res.status(201).json({
+        success: true,
+        message: "Account created successfully",
+      });
+    } catch (error) {
+      console.error("[Local Auth] Signup failed", error);
+      return res.status(500).json({ error: "Signup failed" });
+    }
+  });
+
+  /**
+   * POST /api/auth/login
+   * Login with email/password
+   */
+  app.post("/api/auth/login", async (req: Request, res: Response) => {
+    try {
+      const { email, password } = req.body as LocalAuthCredentials;
+
+      // Validate input
+      if (!email || !password) {
+        return res.status(400).json({ error: "Email and password are required" });
+      }
+
+      // Get user credentials
+      const credentials = await db.getLocalAuthCredentialByEmail(email.toLowerCase());
+      if (!credentials) {
+        return res.status(401).json({ error: "Invalid email or password" });
+      }
+
+      // Verify password
+      const isValid = verifyPassword(password, credentials.salt, credentials.passwordHash);
+      if (!isValid) {
+        return res.status(401).json({ error: "Invalid email or password" });
+      }
+
+      // Update user's last signed in timestamp
+      await db.upsertUser({
+        openId: credentials.openId,
+        lastSignedIn: new Date(),
+      });
+
+      // Create session
+      const user = await db.getUserByOpenId(credentials.openId);
+      const sessionToken = await sdk.createSessionToken(credentials.openId, {
+        name: user?.name || email.split("@")[0],
+        expiresInMs: ONE_YEAR_MS,
+      });
+
+      const cookieOptions = getSessionCookieOptions(req);
+      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+
+      return res.status(200).json({
+        success: true,
+        message: "Login successful",
+      });
+    } catch (error) {
+      console.error("[Local Auth] Login failed", error);
+      return res.status(500).json({ error: "Login failed" });
+    }
+  });
+
+  /**
+   * POST /api/auth/change-password
+   * Change password for authenticated user
+   */
+  app.post("/api/auth/change-password", async (req: Request, res: Response) => {
+    try {
+      // Authenticate the request
+      const user = await sdk.authenticateRequest(req);
+      
+      const { currentPassword, newPassword } = req.body;
+
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ error: "Current password and new password are required" });
+      }
+
+      if (!isValidPassword(newPassword)) {
+        return res.status(400).json({ error: "New password must be at least 8 characters" });
+      }
+
+      // Get current credentials
+      const credentials = await db.getLocalAuthCredentialByOpenId(user.openId);
+      if (!credentials) {
+        return res.status(400).json({ error: "No local auth credentials found for this user" });
+      }
+
+      // Verify current password
+      const isValid = verifyPassword(currentPassword, credentials.salt, credentials.passwordHash);
+      if (!isValid) {
+        return res.status(401).json({ error: "Current password is incorrect" });
+      }
+
+      // Generate new salt and hash
+      const newSalt = generateSalt();
+      const newPasswordHash = hashPassword(newPassword, newSalt);
+
+      // Update credentials
+      await db.updateLocalAuthCredential(user.openId, {
+        passwordHash: newPasswordHash,
+        salt: newSalt,
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Password changed successfully",
+      });
+    } catch (error) {
+      console.error("[Local Auth] Password change failed", error);
+      return res.status(500).json({ error: "Password change failed" });
+    }
+  });
+}

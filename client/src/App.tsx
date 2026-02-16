@@ -99,6 +99,9 @@ import Team from "./pages/settings/Team";
 import CopackerPortal from "./pages/portal/CopackerPortal";
 import VendorPortal from "./pages/portal/VendorPortal";
 
+// Auth
+import { Login } from "./pages/Login";
+
 // SOPs
 import SOPs from "./pages/SOPs";
 
@@ -240,6 +243,8 @@ function App() {
           <TooltipProvider>
             <Toaster />
             <Switch>
+              {/* Public Login */}
+              <Route path="/login" component={Login} />
               {/* Public Data Room Access (outside dashboard) */}
               <Route path="/share/:code" component={DataRoomPublic} />
               {/* Supplier Portal (public) */}

@@ -1,7 +1,7 @@
 import { eq, desc, and, sql, gte, lte, lt, like, or, count, sum, isNull, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
-  InsertUser, users, companies, customers, vendors, products,
+  InsertUser, users, localAuthCredentials, InsertLocalAuthCredential, companies, customers, vendors, products,
   accounts, invoices, invoiceItems, payments, transactions, transactionLines,
   orders, orderItems, inventory, warehouses, productionBatches,
   purchaseOrders, purchaseOrderItems, shipments,
@@ -8302,4 +8302,53 @@ export async function updateCopackerShippingDocument(id: number, data: Partial<I
   const db = await getDb();
   if (!db) return;
   await db.update(copackerShippingDocuments).set(data).where(eq(copackerShippingDocuments.id, id));
+}
+
+// ============================================
+// LOCAL AUTHENTICATION
+// ============================================
+
+export async function createLocalAuthCredential(data: InsertLocalAuthCredential) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(localAuthCredentials).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getLocalAuthCredentialByEmail(email: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select()
+    .from(localAuthCredentials)
+    .where(eq(localAuthCredentials.email, email))
+    .limit(1);
+  return rows[0] || null;
+}
+
+export async function getLocalAuthCredentialByOpenId(openId: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select()
+    .from(localAuthCredentials)
+    .where(eq(localAuthCredentials.openId, openId))
+    .limit(1);
+  return rows[0] || null;
+}
+
+export async function updateLocalAuthCredential(openId: string, data: Partial<InsertLocalAuthCredential>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(localAuthCredentials)
+    .set(data)
+    .where(eq(localAuthCredentials.openId, openId));
+}
+
+export async function getUserByEmail(email: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select()
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1);
+  return rows[0] || null;
 }

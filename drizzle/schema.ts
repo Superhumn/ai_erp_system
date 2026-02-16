@@ -29,6 +29,20 @@ export const users = mysqlTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
+// Local authentication credentials (email/password)
+export const localAuthCredentials = mysqlTable("localAuthCredentials", {
+  id: int("id").autoincrement().primaryKey(),
+  openId: varchar("openId", { length: 64 }).notNull().unique(),
+  email: varchar("email", { length: 320 }).notNull().unique(),
+  passwordHash: varchar("passwordHash", { length: 256 }).notNull(),
+  salt: varchar("salt", { length: 256 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type LocalAuthCredential = typeof localAuthCredentials.$inferSelect;
+export type InsertLocalAuthCredential = typeof localAuthCredentials.$inferInsert;
+
 // Team invitations for onboarding new users
 export const teamInvitations = mysqlTable("teamInvitations", {
   id: int("id").autoincrement().primaryKey(),
