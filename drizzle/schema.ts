@@ -391,6 +391,8 @@ export const inventory = mysqlTable("inventory", {
   reorderQuantity: decimal("reorderQuantity", { precision: 15, scale: 4 }),
   lastCountDate: timestamp("lastCountDate"),
   lastCountQuantity: decimal("lastCountQuantity", { precision: 15, scale: 4 }),
+  averageCost: decimal("averageCost", { precision: 15, scale: 4 }), // Average cost per unit for COGS calculation
+  totalCostBasis: decimal("totalCostBasis", { precision: 15, scale: 2 }), // Total cost of inventory on hand
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -1877,6 +1879,56 @@ export const inventoryTransactions = mysqlTable("inventoryTransactions", {
 export type InventoryTransaction = typeof inventoryTransactions.$inferSelect;
 export type InsertInventoryTransaction = typeof inventoryTransactions.$inferInsert;
 
+// COGS (Cost of Goods Sold) transaction tracking
+export const cogsTransactions = mysqlTable("cogsTransactions", {
+  id: int("id").autoincrement().primaryKey(),
+  transactionNumber: varchar("transactionNumber", { length: 64 }).notNull(),
+  salesOrderId: int("salesOrderId").notNull(),
+  salesOrderLineId: int("salesOrderLineId").notNull(),
+  productId: int("productId").notNull(),
+  lotId: int("lotId"),
+  warehouseId: int("warehouseId"),
+  quantitySold: decimal("quantitySold", { precision: 15, scale: 4 }).notNull(),
+  unitCost: decimal("unitCost", { precision: 15, scale: 4 }).notNull(), // Cost per unit at time of sale
+  productCost: decimal("productCost", { precision: 15, scale: 2 }).notNull(), // Base product cost
+  freightCostAllocated: decimal("freightCostAllocated", { precision: 15, scale: 2 }).default("0"), // Allocated freight/delivery cost
+  customsCostAllocated: decimal("customsCostAllocated", { precision: 15, scale: 2 }).default("0"), // Allocated customs/duties
+  insuranceCostAllocated: decimal("insuranceCostAllocated", { precision: 15, scale: 2 }).default("0"), // Allocated insurance
+  otherCostAllocated: decimal("otherCostAllocated", { precision: 15, scale: 2 }).default("0"), // Other allocated costs
+  totalCOGS: decimal("totalCOGS", { precision: 15, scale: 2 }).notNull(), // Total COGS = productCost + all allocated costs
+  revenueAmount: decimal("revenueAmount", { precision: 15, scale: 2 }).notNull(), // Revenue from this sale
+  grossProfit: decimal("grossProfit", { precision: 15, scale: 2 }).notNull(), // Revenue - COGS
+  costingMethod: mysqlEnum("costingMethod", ["fifo", "lifo", "average", "specific"]).default("fifo").notNull(),
+  notes: text("notes"),
+  transactionDate: timestamp("transactionDate").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CogsTransaction = typeof cogsTransactions.$inferSelect;
+export type InsertCogsTransaction = typeof cogsTransactions.$inferInsert;
+
+// Freight cost allocation to products
+export const freightCostAllocations = mysqlTable("freightCostAllocations", {
+  id: int("id").autoincrement().primaryKey(),
+  purchaseOrderId: int("purchaseOrderId"),
+  shipmentId: int("shipmentId"),
+  productId: int("productId").notNull(),
+  quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),
+  freightCost: decimal("freightCost", { precision: 15, scale: 2 }).notNull(),
+  customsDuties: decimal("customsDuties", { precision: 15, scale: 2 }).default("0"),
+  insuranceCost: decimal("insuranceCost", { precision: 15, scale: 2 }).default("0"),
+  handlingFees: decimal("handlingFees", { precision: 15, scale: 2 }).default("0"),
+  totalAllocatedCost: decimal("totalAllocatedCost", { precision: 15, scale: 2 }).notNull(),
+  allocationMethod: mysqlEnum("allocationMethod", ["weight", "volume", "quantity", "value", "manual"]).default("quantity").notNull(),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FreightCostAllocation = typeof freightCostAllocations.$inferSelect;
+export type InsertFreightCostAllocation = typeof freightCostAllocations.$inferInsert;
+
 // Work order output lots
 export const workOrderOutputs = mysqlTable("workOrderOutputs", {
   id: int("id").autoincrement().primaryKey(),
@@ -2049,6 +2101,9 @@ export const salesOrders = mysqlTable("salesOrders", {
   shippingAmount: decimal("shippingAmount", { precision: 15, scale: 2 }).default("0"),
   discountAmount: decimal("discountAmount", { precision: 15, scale: 2 }).default("0"),
   totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).default("0"),
+  totalCOGS: decimal("totalCOGS", { precision: 15, scale: 2 }), // Total Cost of Goods Sold for order
+  grossProfit: decimal("grossProfit", { precision: 15, scale: 2 }), // Revenue - COGS
+  grossProfitMargin: decimal("grossProfitMargin", { precision: 5, scale: 2 }), // (Gross Profit / Revenue) * 100
   currency: varchar("currency", { length: 3 }).default("USD"),
   shippingAddress: json("shippingAddress"),
   billingAddress: json("billingAddress"),
@@ -2076,6 +2131,8 @@ export const salesOrderLines = mysqlTable("salesOrderLines", {
   fulfilledQuantity: decimal("fulfilledQuantity", { precision: 15, scale: 4 }).default("0"),
   unitPrice: decimal("unitPrice", { precision: 15, scale: 2 }).notNull(),
   totalPrice: decimal("totalPrice", { precision: 15, scale: 2 }).notNull(),
+  costOfGoodsSold: decimal("costOfGoodsSold", { precision: 15, scale: 2 }), // Total COGS for this line
+  grossProfit: decimal("grossProfit", { precision: 15, scale: 2 }), // totalPrice - COGS
   unit: varchar("unit", { length: 32 }).default("EA"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
