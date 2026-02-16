@@ -7,13 +7,21 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { Calendar } from "../../components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
-import { CalendarIcon, Download, TrendingUp, TrendingDown, DollarSign, Package, Truck } from "lucide-react";
+import { Badge } from "../../components/ui/badge";
+import { CalendarIcon, Download, TrendingUp, TrendingDown, DollarSign, Package, Truck, ExternalLink } from "lucide-react";
 import { format } from "date-fns";
+import { Link } from "wouter";
 
 export default function Profitability() {
   const [dateRange, setDateRange] = useState<{ from: Date | undefined; to: Date | undefined }>({
     from: new Date(new Date().setMonth(new Date().getMonth() - 1)),
     to: new Date()
+  });
+
+  // Check QuickBooks connection
+  const { data: qbStatus } = useQuery({
+    queryKey: ['quickbooks-connection'],
+    queryFn: () => trpc.quickbooks.getConnectionStatus.query(),
   });
 
   // Fetch product profitability data
@@ -68,10 +76,30 @@ export default function Profitability() {
     <div className="container mx-auto p-6 space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold">Profitability & COGS Tracking</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold">Profitability & COGS Tracking</h1>
+            {qbStatus?.connected ? (
+              <Badge variant="success" className="gap-1">
+                <DollarSign className="h-3 w-3" />
+                QuickBooks Connected
+              </Badge>
+            ) : (
+              <Badge variant="secondary" className="gap-1">
+                Local Data Only
+              </Badge>
+            )}
+          </div>
           <p className="text-muted-foreground mt-2">
             Track cost of goods sold, profit margins, and inventory valuation across all products
           </p>
+          {!qbStatus?.connected && (
+            <p className="text-sm text-amber-600 mt-1">
+              <Link href="/settings/quickbooks" className="underline inline-flex items-center gap-1">
+                Connect QuickBooks <ExternalLink className="h-3 w-3" />
+              </Link>
+              {" "}to sync cost data and account mappings
+            </p>
+          )}
         </div>
         <div className="flex gap-2">
           <Popover>

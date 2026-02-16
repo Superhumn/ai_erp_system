@@ -86,6 +86,7 @@ import Integrations from "./pages/settings/Integrations";
 import NotificationSettings from "./pages/settings/Notifications";
 import TransactionalEmails from "./pages/settings/TransactionalEmails";
 import Fireflies from "./pages/settings/Fireflies";
+import QuickBooksIntegration from "./pages/settings/QuickBooksIntegration";
 
 // Projects
 import Projects from "./pages/projects/Projects";
@@ -138,6 +139,7 @@ function Router() {
         <Route path="/settings/notifications" component={NotificationSettings} />
         <Route path="/settings/emails" component={TransactionalEmails} />
         <Route path="/settings/fireflies" component={Fireflies} />
+        <Route path="/settings/quickbooks" component={QuickBooksIntegration} />
 
         {/* Finance */}
         <Route path="/finance/accounts" component={Accounts} />
