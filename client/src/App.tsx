@@ -61,6 +61,7 @@ import InventoryHub from "./pages/operations/InventoryHub";
 import OperationsHub from "./pages/operations/OperationsHub";
 import InventoryManagementHub from "./pages/operations/InventoryManagementHub";
 import DocumentImport from "./pages/operations/DocumentImport";
+import Profitability from "./pages/operations/Profitability";
 import SupplierPortal from "./pages/SupplierPortal";
 
 // Freight
@@ -185,6 +186,7 @@ function Router() {
         <Route path="/operations/logistics-hub" component={LogisticsHub} />
         <Route path="/operations/inventory-hub" component={InventoryHub} />
         <Route path="/operations/inventory-management" component={InventoryManagementHub} />
+        <Route path="/operations/profitability" component={Profitability} />
         <Route path="/operations/document-import" component={DocumentImport} />
 
         {/* Freight */}
