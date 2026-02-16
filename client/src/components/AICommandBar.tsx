@@ -541,6 +541,15 @@ function parseIntent(query: string): ParsedIntent {
     };
   }
   
+  // Check for "bill to" pattern with amount
+  if (lowerQuery.includes("bill") && lowerQuery.includes("to") && lowerQuery.includes("$")) {
+    return {
+      taskType: "generate_invoice",
+      taskData: { text: query },
+      description: "Create invoice from text"
+    };
+  }
+  
   // Default to query
   return {
     taskType: "query",
