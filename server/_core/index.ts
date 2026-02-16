@@ -502,11 +502,17 @@ async function startServer() {
     console.log("[Startup] Starting autonomous supply chain orchestrator...");
     startOrchestrator().catch(err => {
       console.error("[Startup] Failed to start orchestrator:", err);
+      console.warn("[Startup] Server running in degraded mode - autonomous workflows disabled");
     });
 
     // Start the AI agent scheduler
     console.log("[Startup] Starting AI agent scheduler...");
-    startScheduler();
+    try {
+      startScheduler();
+    } catch (err) {
+      console.error("[Startup] Failed to start AI agent scheduler:", err);
+      console.warn("[Startup] Server running in degraded mode - AI agent automation disabled");
+    }
   });
 }
 
