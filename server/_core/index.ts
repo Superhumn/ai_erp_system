@@ -12,6 +12,8 @@ import * as sendgridProvider from "./sendgridProvider";
 import * as emailService from "./emailService";
 import * as db from "../db";
 import { startEmailQueueWorker } from "../emailQueueWorker";
+import { startOrchestrator } from "../supplyChainOrchestrator";
+import { startScheduler } from "../aiAgentScheduler";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -495,6 +497,16 @@ async function startServer() {
 
     // Start the email queue worker
     startEmailQueueWorker();
+
+    // Start the autonomous supply chain orchestrator
+    console.log("[Startup] Starting autonomous supply chain orchestrator...");
+    startOrchestrator().catch(err => {
+      console.error("[Startup] Failed to start orchestrator:", err);
+    });
+
+    // Start the AI agent scheduler
+    console.log("[Startup] Starting AI agent scheduler...");
+    startScheduler();
   });
 }
 
