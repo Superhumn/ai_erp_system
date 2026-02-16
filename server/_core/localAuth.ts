@@ -15,6 +15,57 @@ const HASH_ITERATIONS = 100000;
 const KEY_LENGTH = 64;
 const DIGEST = "sha512";
 
+// Rate limiting
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+const MAX_LOGIN_ATTEMPTS = 5;
+const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+
+/**
+ * Check and update rate limit for an IP address
+ * Returns true if request should be allowed, false if rate limited
+ */
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const attempt = loginAttempts.get(ip);
+
+  // Clean up expired entries
+  if (attempt && now > attempt.resetAt) {
+    loginAttempts.delete(ip);
+  }
+
+  const current = loginAttempts.get(ip);
+  if (!current) {
+    loginAttempts.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return true;
+  }
+
+  if (current.count >= MAX_LOGIN_ATTEMPTS) {
+    return false;
+  }
+
+  current.count++;
+  return true;
+}
+
+/**
+ * Reset rate limit for an IP address (called on successful login)
+ */
+function resetRateLimit(ip: string): void {
+  loginAttempts.delete(ip);
+}
+
+/**
+ * Get client IP address from request
+ */
+function getClientIp(req: Request): string {
+  return (
+    (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+    (req.headers['x-real-ip'] as string) ||
+    req.socket.remoteAddress ||
+    'unknown'
+  );
+}
+
 /**
  * Hash a password using PBKDF2
  */
@@ -77,6 +128,15 @@ export function registerLocalAuthRoutes(app: Express) {
    * Register a new user with email/password
    */
   app.post("/api/auth/signup", async (req: Request, res: Response) => {
+    const clientIp = getClientIp(req);
+
+    // Check rate limit
+    if (!checkRateLimit(clientIp)) {
+      return res.status(429).json({ 
+        error: "Too many signup attempts. Please try again in 15 minutes." 
+      });
+    }
+
     try {
       const { email, password, name } = req.body as LocalAuthCredentials;
 
@@ -130,6 +190,9 @@ export function registerLocalAuthRoutes(app: Express) {
       const cookieOptions = getSessionCookieOptions(req);
       res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
 
+      // Reset rate limit on successful signup
+      resetRateLimit(clientIp);
+
       return res.status(201).json({
         success: true,
         message: "Account created successfully",
@@ -145,6 +208,15 @@ export function registerLocalAuthRoutes(app: Express) {
    * Login with email/password
    */
   app.post("/api/auth/login", async (req: Request, res: Response) => {
+    const clientIp = getClientIp(req);
+
+    // Check rate limit
+    if (!checkRateLimit(clientIp)) {
+      return res.status(429).json({ 
+        error: "Too many login attempts. Please try again in 15 minutes." 
+      });
+    }
+
     try {
       const { email, password } = req.body as LocalAuthCredentials;
 
@@ -181,6 +253,9 @@ export function registerLocalAuthRoutes(app: Express) {
       const cookieOptions = getSessionCookieOptions(req);
       res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
 
+      // Reset rate limit on successful login
+      resetRateLimit(clientIp);
+
       return res.status(200).json({
         success: true,
         message: "Login successful",
@@ -196,6 +271,15 @@ export function registerLocalAuthRoutes(app: Express) {
    * Change password for authenticated user
    */
   app.post("/api/auth/change-password", async (req: Request, res: Response) => {
+    const clientIp = getClientIp(req);
+
+    // Check rate limit
+    if (!checkRateLimit(clientIp)) {
+      return res.status(429).json({ 
+        error: "Too many password change attempts. Please try again in 15 minutes." 
+      });
+    }
+
     try {
       // Authenticate the request
       const user = await sdk.authenticateRequest(req);
@@ -232,12 +316,22 @@ export function registerLocalAuthRoutes(app: Express) {
         salt: newSalt,
       });
 
+      // Reset rate limit on successful password change
+      resetRateLimit(clientIp);
+
       return res.status(200).json({
         success: true,
         message: "Password changed successfully",
       });
     } catch (error) {
       console.error("[Local Auth] Password change failed", error);
+      // Check if this is an authentication error
+      if (error && typeof error === 'object' && 'message' in error) {
+        const errorMessage = (error as Error).message;
+        if (errorMessage.includes('session') || errorMessage.includes('Forbidden')) {
+          return res.status(401).json({ error: "Authentication required" });
+        }
+      }
       return res.status(500).json({ error: "Password change failed" });
     }
   });

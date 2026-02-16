@@ -8,6 +8,3 @@ CREATE TABLE IF NOT EXISTS `localAuthCredentials` (
   `createdAt` timestamp NOT NULL DEFAULT (now()),
   `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP
 );
-
-CREATE INDEX `idx_openId` ON `localAuthCredentials` (`openId`);
-CREATE INDEX `idx_email` ON `localAuthCredentials` (`email`);
