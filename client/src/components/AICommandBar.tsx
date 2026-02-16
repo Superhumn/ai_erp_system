@@ -341,6 +341,7 @@ const quickActions = [
   { icon: Truck, label: "Draft vendor delay response", query: "Draft a professional response to this vendor about their shipment delay", context: ["vendor", "po", "shipment"], taskType: "send_email" as TaskType },
   { icon: ClipboardList, label: "Generate PO from forecast", query: "Based on demand forecast, generate purchase orders for materials running low", context: ["procurement", "forecast"], taskType: "generate_po" as TaskType },
   { icon: Users, label: "Find customer insights", query: "Analyze this customer's purchase history and suggest upsell opportunities", context: ["customer", "sales"], taskType: "query" as TaskType },
+  { icon: DollarSign, label: "Create invoice quickly", query: "$500 invoice to Acme Corp for consulting services", context: ["finance", "sales", "invoice"], taskType: "generate_invoice" as TaskType },
   // Entity creation quick actions
   { icon: Building, label: "Add new vendor", query: "Create a new vendor", context: ["procurement", "vendor"], taskType: "create_vendor" as TaskType },
   { icon: Package, label: "Add new material", query: "Create a new raw material", context: ["procurement", "inventory"], taskType: "create_material" as TaskType },
@@ -519,6 +520,27 @@ function parseIntent(query: string): ParsedIntent {
     };
   }
   
+  // Check for invoice creation intent
+  if ((lowerQuery.includes("create") || lowerQuery.includes("generate") || lowerQuery.includes("send")) && 
+      (lowerQuery.includes("invoice") || lowerQuery.includes("bill"))) {
+    return {
+      taskType: "generate_invoice",
+      taskData: { text: query },
+      description: "Create invoice from text"
+    };
+  }
+  
+  // Check for direct invoice patterns (e.g., "$500 invoice to...", "invoice for...")
+  if (lowerQuery.includes("invoice") && 
+      (lowerQuery.includes("$") || lowerQuery.includes("for") || lowerQuery.includes("to") || 
+       lowerQuery.includes("bill to") || lowerQuery.includes("net"))) {
+    return {
+      taskType: "generate_invoice",
+      taskData: { text: query },
+      description: "Create invoice from text"
+    };
+  }
+  
   // Default to query
   return {
     taskType: "query",
@@ -613,6 +635,23 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
     },
     onError: (error) => {
       toast.error(`Failed to create task: ${error.message}`);
+      setIsLoading(false);
+    },
+  });
+
+  // Invoice creation from text mutation
+  const createInvoiceFromText = trpc.invoices.createFromText.useMutation({
+    onSuccess: (data) => {
+      setIsLoading(false);
+      toast.success("Invoice created successfully", {
+        description: `Invoice #${data.invoiceNumber} has been created as a draft`
+      });
+      utils.invoices.list.invalidate();
+      setLocation("/finance/invoices");
+      onOpenChange(false);
+    },
+    onError: (error) => {
+      toast.error(`Failed to create invoice: ${error.message}`);
       setIsLoading(false);
     },
   });
@@ -737,6 +776,13 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
     }
     if (taskType === "create_customer") {
       setShowQuickCreateCustomer(true);
+      return;
+    }
+    
+    // Handle invoice creation with natural language
+    if (taskType === "generate_invoice") {
+      setIsLoading(true);
+      createInvoiceFromText.mutate({ text: q });
       return;
     }
     
