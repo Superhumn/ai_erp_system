@@ -6054,6 +6054,16 @@ export async function createDocumentPageView(data: InsertDocumentPageView) {
   return result[0].insertId;
 }
 
+export async function getDocumentPageViewById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const result = await db.select().from(documentPageViews)
+    .where(eq(documentPageViews.id, id))
+    .limit(1);
+  return result[0] || null;
+}
+
 export async function getDocumentPageViews(documentId: number, visitorId?: number) {
   const db = await getDb();
   if (!db) return [];
@@ -6259,7 +6269,7 @@ export async function deleteEmailAccessRule(id: number) {
 
 export async function checkEmailAccess(dataRoomId: number, email: string): Promise<{
   allowed: boolean;
-  rule: any | null;
+  rule: typeof dataRoomEmailAccessRules.$inferSelect | null;
   permissions: { allowDownload: boolean; allowPrint: boolean; maxViews: number | null; requireNda: boolean };
 }> {
   const db = await getDb();

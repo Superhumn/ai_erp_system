@@ -10438,7 +10438,7 @@ Ask if they received the original request and if they can provide a quote.`;
       updatePageView: publicProcedure
         .input(z.object({
           id: z.number(),
-          sessionToken: z.string(), // Session token for authorization
+          sessionToken: z.string(), // Session token to verify the page view belongs to the current visitor session
           durationMs: z.number(),
           scrollDepth: z.number().optional(),
           mouseMovements: z.number().optional(),
@@ -10446,9 +10446,7 @@ Ask if they received the original request and if they can provide a quote.`;
         }))
         .mutation(async ({ input }) => {
           // Verify the page view belongs to this session
-          const pageView = await db.getDocumentPageViews(0).then(views => 
-            views.find(v => v.id === input.id)
-          );
+          const pageView = await db.getDocumentPageViewById(input.id);
           
           if (!pageView) {
             throw new TRPCError({ code: 'NOT_FOUND', message: 'Page view not found' });

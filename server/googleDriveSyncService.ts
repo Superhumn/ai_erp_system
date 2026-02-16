@@ -271,11 +271,20 @@ async function downloadAndUploadFile(
     }
 
     // Upload to our storage with sanitized filename
-    // Remove path separators and limit length to prevent issues
-    const sanitizedName = file.name
-      .replace(/[\/\\]/g, '_')  // Replace slashes with underscores
-      .replace(/[^\w\s.-]/g, '') // Remove special characters except alphanumeric, spaces, dots, dashes
-      .substring(0, 200);        // Limit filename length
+    // Sanitize filename to prevent path traversal and S3 key issues:
+    // 1. Replace path separators (/ \) with underscores
+    // 2. Keep only safe characters: alphanumeric, spaces, dots, dashes, underscores
+    // 3. Limit length to prevent excessively long keys
+    let sanitizedName = file.name
+      .replace(/[\/\\]/g, '_')     // Replace slashes with underscores
+      .replace(/[^\w\s.-]/g, '')   // Keep only word chars (\w includes a-zA-Z0-9_), spaces, dots, dashes
+      .replace(/\s+/g, '_')        // Replace spaces with underscores for cleaner URLs
+      .substring(0, 200);          // Limit filename length
+    
+    // Provide fallback if sanitization results in empty string
+    if (!sanitizedName || sanitizedName.trim() === '') {
+      sanitizedName = 'unnamed_file';
+    }
     
     const key = `dataroom/${options.dataRoomId}/drive-sync/${Date.now()}-${sanitizedName}`;
 
