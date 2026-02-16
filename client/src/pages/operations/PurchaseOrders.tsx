@@ -100,7 +100,7 @@ export default function PurchaseOrders() {
       let numericValue =
         typeof value === "number"
           ? value
-          : parseFloat((value ?? "").toString() || "0");
+          : parseFloat(value?.toString() ?? "0");
 
       if (Number.isNaN(numericValue)) {
         numericValue = 0;
@@ -191,7 +191,7 @@ export default function PurchaseOrders() {
     }
     
     // Validate each line item has required fields
-    const hasInvalidItems = lineItems.some((item) => {
+    const invalidItemIndex = lineItems.findIndex((item) => {
       const description = (item.description || "").trim();
       const quantity = parseFloat(item.quantity);
       const unitPrice = parseFloat(item.unitPrice);
@@ -203,8 +203,8 @@ export default function PurchaseOrders() {
         unitPrice <= 0
       );
     });
-    if (hasInvalidItems) {
-      toast.error("All line items must have a description, quantity greater than 0, and unit price greater than 0");
+    if (invalidItemIndex !== -1) {
+      toast.error(`Line item #${invalidItemIndex + 1} is missing required fields. All items must have a description, quantity greater than 0, and unit price greater than 0.`);
       return;
     }
     
