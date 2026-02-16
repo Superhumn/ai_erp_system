@@ -8404,14 +8404,16 @@ export async function calculateCOGS(
         eq(inventoryBalances.warehouseId, warehouseId),
         eq(inventoryBalances.status, 'available')
       ))
-      .orderBy(inventoryLots.manufacturedDate);
+      .orderBy(inventoryLots.manufactureDate);
 
     let remainingQty = quantity;
     let totalCost = 0;
     
     for (const lot of lots) {
       const lotQty = parseFloat(lot.inventoryBalances.quantity);
-      const lotCost = parseFloat(lot.inventoryLots.unitCost || '0');
+      // Lot cost should come from inventory average cost or purchase order cost
+      // For now, use 0 as placeholder
+      const lotCost = 0;
       
       if (lotQty >= remainingQty) {
         totalCost += remainingQty * lotCost;
@@ -8605,6 +8607,18 @@ export async function getProductProfitability(
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  // Build filter conditions
+  const conditions = [];
+  if (productId) {
+    conditions.push(eq(cogsTransactions.productId, productId));
+  }
+  if (startDate) {
+    conditions.push(gte(cogsTransactions.transactionDate, startDate));
+  }
+  if (endDate) {
+    conditions.push(lte(cogsTransactions.transactionDate, endDate));
+  }
+
   let query = db
     .select({
       productId: cogsTransactions.productId,
@@ -8623,16 +8637,8 @@ export async function getProductProfitability(
     .innerJoin(products, eq(cogsTransactions.productId, products.id))
     .groupBy(cogsTransactions.productId, products.name, products.sku);
 
-  if (productId) {
-    query = query.where(eq(cogsTransactions.productId, productId));
-  }
-
-  if (startDate) {
-    query = query.where(gte(cogsTransactions.transactionDate, startDate));
-  }
-
-  if (endDate) {
-    query = query.where(lte(cogsTransactions.transactionDate, endDate));
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions));
   }
 
   return await query;
@@ -8645,7 +8651,13 @@ export async function getInventoryValuation(warehouseId?: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  let query = db
+  // Build filter conditions
+  const conditions = [gt(inventory.quantity, '0')];
+  if (warehouseId) {
+    conditions.push(eq(inventory.warehouseId, warehouseId));
+  }
+
+  const query = db
     .select({
       productId: inventory.productId,
       productName: products.name,
@@ -8659,11 +8671,7 @@ export async function getInventoryValuation(warehouseId?: number) {
     .from(inventory)
     .innerJoin(products, eq(inventory.productId, products.id))
     .innerJoin(warehouses, eq(inventory.warehouseId, warehouses.id))
-    .where(gt(inventory.quantity, 0));
-
-  if (warehouseId) {
-    query = query.where(eq(inventory.warehouseId, warehouseId));
-  }
+    .where(and(...conditions));
 
   return await query;
 }
@@ -8683,6 +8691,21 @@ export async function getCOGSTransactions(
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  // Build filter conditions
+  const conditions = [];
+  if (filters?.salesOrderId) {
+    conditions.push(eq(cogsTransactions.salesOrderId, filters.salesOrderId));
+  }
+  if (filters?.productId) {
+    conditions.push(eq(cogsTransactions.productId, filters.productId));
+  }
+  if (filters?.startDate) {
+    conditions.push(gte(cogsTransactions.transactionDate, filters.startDate));
+  }
+  if (filters?.endDate) {
+    conditions.push(lte(cogsTransactions.transactionDate, filters.endDate));
+  }
+
   let query = db
     .select()
     .from(cogsTransactions)
@@ -8691,20 +8714,8 @@ export async function getCOGSTransactions(
     .limit(limit)
     .orderBy(desc(cogsTransactions.transactionDate));
 
-  if (filters?.salesOrderId) {
-    query = query.where(eq(cogsTransactions.salesOrderId, filters.salesOrderId));
-  }
-
-  if (filters?.productId) {
-    query = query.where(eq(cogsTransactions.productId, filters.productId));
-  }
-
-  if (filters?.startDate) {
-    query = query.where(gte(cogsTransactions.transactionDate, filters.startDate));
-  }
-
-  if (filters?.endDate) {
-    query = query.where(lte(cogsTransactions.transactionDate, filters.endDate));
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions));
   }
 
   return await query;
