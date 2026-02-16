@@ -44,8 +44,12 @@ export const purchaseOrderTextEndpoints = {
           try {
             productId = await findOrCreateEntity(item.materialName, 'material', db);
           } catch (err) {
-            // If material creation fails, we'll create the PO item without linking
+            // Log material linking failure to audit trail
             console.warn('Failed to link material:', err);
+            await createAuditLog(ctx.user.id, 'warning', 'purchaseOrder', 0, 'Material linking failed', null, {
+              materialName: item.materialName,
+              error: err instanceof Error ? err.message : 'Unknown error'
+            });
           }
           
           items.push({
@@ -169,8 +173,26 @@ export const paymentTextEndpoints = {
           try {
             vendorId = await findOrCreateEntity(parsed.payerName, 'vendor', db);
           } catch (vendorErr) {
-            console.warn('Failed to find/create payer entity:', err);
+            // Both lookups failed - this is a critical issue
+            console.error('Failed to find/create payer entity:', { customerError: err, vendorError: vendorErr });
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: `Unable to identify payer "${parsed.payerName}". Please create the customer or vendor first.`
+            });
           }
+        }
+        
+        // Log warning if payment has no associated entity (shouldn't happen after above check)
+        if (!customerId && !vendorId) {
+          console.error('CRITICAL: Payment created with no associated entity');
+          await createAuditLog(ctx.user.id, 'error', 'payment', 0, 'Payment without entity', null, {
+            payerName: parsed.payerName,
+            amount: parsed.amount
+          });
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'Failed to associate payment with customer or vendor'
+          });
         }
         
         // Find invoice if mentioned

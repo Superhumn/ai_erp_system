@@ -761,7 +761,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
     onSuccess: (data) => {
       setIsLoading(false);
       toast.success("Inventory transfer initiated", {
-        description: `Transfer #${data.transferId} has been created`
+        description: `Transfer #${data.transferNumber} has been created`
       });
       utils.inventory.list.invalidate();
       onOpenChange(false);
@@ -903,7 +903,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
     }
     
     // Handle purchase order creation with natural language
-    if (taskType === "generate_po" && q.includes("from") || q.includes("to") || q.includes("vendor")) {
+    if (taskType === "generate_po" && (q.includes("from") || q.includes("to") || q.includes("vendor"))) {
       setIsLoading(true);
       createPOFromText.mutate({ text: q });
       return;

@@ -279,7 +279,9 @@ ${schema.examples.length > 0 ? `Example inputs:\n${schema.examples.map((ex, i) =
 
     // Validate required fields
     for (const reqField of schema.requiredFields) {
-      if (!parsed[reqField] && parsed[reqField] !== 0 && parsed[reqField] !== false) {
+      const value = parsed[reqField];
+      // Check if value is missing (null or undefined), but allow 0 and false as valid
+      if (value == null) {
         throw new Error(`Missing required field: ${reqField}`);
       }
     }
