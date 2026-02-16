@@ -402,11 +402,12 @@ export async function upsertQuickBooksItem(
     SKU?: string;
   }
 ) {
-  const method = itemData.Id ? 'POST' : 'POST';
+  // QuickBooks uses POST for both create and update
+  // Update requires the item object with Id field and operation=update query param
   const endpoint = itemData.Id ? `item?operation=update` : 'item';
   
   return makeQuickBooksRequest(accessToken, realmId, endpoint, {
-    method,
+    method: 'POST',
     body: JSON.stringify(itemData),
   });
 }

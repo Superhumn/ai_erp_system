@@ -8975,17 +8975,20 @@ export async function getQuickBooksAccountsByType(
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  let query = db
-    .select()
-    .from(quickbooksAccounts)
-    .where(and(
-      eq(quickbooksAccounts.companyId, companyId),
-      eq(quickbooksAccounts.active, true)
-    ));
+  const conditions = [
+    eq(quickbooksAccounts.companyId, companyId),
+    eq(quickbooksAccounts.active, true)
+  ];
 
   if (classification) {
-    query = query.where(eq(quickbooksAccounts.classification, classification));
+    conditions.push(eq(quickbooksAccounts.classification, classification));
   }
 
-  return await query.orderBy(quickbooksAccounts.name);
+  const query = db
+    .select()
+    .from(quickbooksAccounts)
+    .where(and(...conditions))
+    .orderBy(quickbooksAccounts.name);
+
+  return await query;
 }
