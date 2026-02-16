@@ -8303,3 +8303,35 @@ export async function updateCopackerShippingDocument(id: number, data: Partial<I
   if (!db) return;
   await db.update(copackerShippingDocuments).set(data).where(eq(copackerShippingDocuments.id, id));
 }
+
+// ============================================
+// NATURAL LANGUAGE SUPPORT HELPERS
+// ============================================
+
+export async function getWarehouseByName(name: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(warehouses).where(sql`LOWER(${warehouses.name}) = LOWER(${name})`).limit(1);
+  return results[0] || null;
+}
+
+export async function getInvoiceByNumber(invoiceNumber: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(invoices).where(eq(invoices.invoiceNumber, invoiceNumber)).limit(1);
+  return results[0] || null;
+}
+
+export async function getRawMaterialByName(name: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(rawMaterials).where(sql`LOWER(${rawMaterials.name}) = LOWER(${name})`).limit(1);
+  return results[0] || null;
+}
+
+export async function getProductByName(name: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(products).where(sql`LOWER(${products.name}) = LOWER(${name})`).limit(1);
+  return results[0] || null;
+}
