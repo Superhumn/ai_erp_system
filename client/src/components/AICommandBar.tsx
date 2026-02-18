@@ -559,17 +559,41 @@ function parseIntent(query: string): ParsedIntent {
   }
   
   // Check for invoice creation intent
-  const isInvoiceIntent = 
-    // Explicit invoice creation: "create/generate/send invoice/bill"
-    ((lowerQuery.includes("create") || lowerQuery.includes("generate") || lowerQuery.includes("send")) && 
-     (lowerQuery.includes("invoice") || lowerQuery.includes("bill"))) ||
-    // Direct invoice patterns: "$500 invoice to...", "invoice for...", etc.
-    (lowerQuery.includes("invoice") && 
-     (lowerQuery.includes("$") || lowerQuery.includes("for") || lowerQuery.includes("to") || 
-      lowerQuery.includes("bill to") || lowerQuery.includes("net"))) ||
-    // "bill to" with amount: "bill to customer $500"
-    (lowerQuery.includes("bill") && lowerQuery.includes("to") && lowerQuery.includes("$"));
-  
+  // Avoid treating informational or question-like queries as invoice-creation.
+  const isQuestionLike =
+    /(\bhow\b|\bwhat\b|\bwhy\b|\bwhen\b|\bwhere\b|\bwho\b)/.test(lowerQuery) ||
+    query.trim().endsWith("?");
+
+  // Rough detection of an amount, e.g. "$500", "500 usd", "500 dollars"
+  const hasAmount =
+    /\$\s*\d/.test(lowerQuery) ||
+    /\b\d+(?:\.\d{2})?\s*(?:usd|dollars?)\b/.test(lowerQuery);
+
+  const hasExplicitInvoiceVerb =
+    (lowerQuery.includes("create") ||
+      lowerQuery.includes("generate") ||
+      lowerQuery.includes("send"));
+
+  // Direct invoice patterns like "$500 invoice to customer", "invoice for client 200 usd"
+  const isDirectInvoicePattern =
+    lowerQuery.includes("invoice") &&
+    (lowerQuery.includes(" to ") || lowerQuery.includes(" for ")) &&
+    hasAmount;
+
+  // "bill to" patterns with an explicit amount, e.g. "bill to customer $500"
+  const isBillToWithAmount =
+    lowerQuery.includes("bill to") && hasAmount;
+
+  const isInvoiceIntent =
+    !isQuestionLike && (
+      // Explicit invoice creation: "create/generate/send invoice/bill"
+      (hasExplicitInvoiceVerb &&
+        (lowerQuery.includes("invoice") || lowerQuery.includes("bill"))) ||
+      // Direct invoice patterns: "$500 invoice to...", "invoice for...", etc.
+      isDirectInvoicePattern ||
+      // "bill to" with amount: "bill to customer $500"
+      isBillToWithAmount
+    );
   if (isInvoiceIntent) {
     return {
       taskType: "generate_invoice",
