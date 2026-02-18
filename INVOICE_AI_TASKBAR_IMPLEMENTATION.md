@@ -202,7 +202,7 @@ $8500 invoice for 300lbs beef barbacoa bill to sysco net 30
 
 ### Invoice with Services
 ```
-$5000 for consulting services to TechStart Inc due on receipt
+$5000 invoice for consulting services to TechStart Inc due on receipt
 ```
 
 ### Using Keywords
