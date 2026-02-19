@@ -409,7 +409,9 @@ export async function addNegotiationRound(params: {
       if (isDuplicateKeyError(error)) {
         retries--;
         if (retries > 0) {
-          const delay = Math.pow(2, 2 - retries) * 100 + Math.random() * 50;
+          const BASE_DELAY_MS = 100;
+          const JITTER_MS = 50;
+          const delay = Math.pow(2, 2 - retries) * BASE_DELAY_MS + Math.random() * JITTER_MS;
           await new Promise(resolve => setTimeout(resolve, delay));
           continue;
         }

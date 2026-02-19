@@ -6,6 +6,7 @@
 import { pbkdf2Sync, randomBytes } from "crypto";
 import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import type { Express, Request, Response } from "express";
+import rateLimit from "express-rate-limit";
 import * as db from "../db";
 import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
@@ -15,36 +16,13 @@ const HASH_ITERATIONS = 100000;
 const KEY_LENGTH = 64;
 const DIGEST = "sha512";
 
-const loginAttempts = new Map<string, { count: number; resetAt: number }>();
-const MAX_LOGIN_ATTEMPTS = 5;
-const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
-
-function checkRateLimit(ip: string): boolean {
-  const now = Date.now();
-  const attempt = loginAttempts.get(ip);
-  if (attempt && now > attempt.resetAt) loginAttempts.delete(ip);
-  const current = loginAttempts.get(ip);
-  if (!current) {
-    loginAttempts.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-    return true;
-  }
-  if (current.count >= MAX_LOGIN_ATTEMPTS) return false;
-  current.count++;
-  return true;
-}
-
-function resetRateLimit(ip: string): void {
-  loginAttempts.delete(ip);
-}
-
-function getClientIp(req: Request): string {
-  return (
-    (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-    (req.headers['x-real-ip'] as string) ||
-    req.socket.remoteAddress ||
-    'unknown'
-  );
-}
+const authRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many attempts. Please try again in 15 minutes." },
+});
 
 function hashPassword(password: string, salt: string): string {
   return pbkdf2Sync(password, salt, HASH_ITERATIONS, KEY_LENGTH, DIGEST).toString("hex");
@@ -78,11 +56,7 @@ export interface LocalAuthCredentials {
 }
 
 export function registerLocalAuthRoutes(app: Express) {
-  app.post("/api/auth/signup", async (req: Request, res: Response) => {
-    const clientIp = getClientIp(req);
-    if (!checkRateLimit(clientIp)) {
-      return res.status(429).json({ error: "Too many signup attempts. Please try again in 15 minutes." });
-    }
+  app.post("/api/auth/signup", authRateLimiter, async (req: Request, res: Response) => {
     try {
       const { email, password, name } = req.body as LocalAuthCredentials;
       if (!email || !password) return res.status(400).json({ error: "Email and password are required" });
@@ -98,7 +72,6 @@ export function registerLocalAuthRoutes(app: Express) {
       const sessionToken = await sdk.createSessionToken(openId, { name: name || email.split("@")[0], expiresInMs: ONE_YEAR_MS });
       const cookieOptions = getSessionCookieOptions(req);
       res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
-      resetRateLimit(clientIp);
       return res.status(201).json({ success: true, message: "Account created successfully" });
     } catch (error) {
       console.error("[Local Auth] Signup failed", error);
@@ -106,11 +79,7 @@ export function registerLocalAuthRoutes(app: Express) {
     }
   });
 
-  app.post("/api/auth/login", async (req: Request, res: Response) => {
-    const clientIp = getClientIp(req);
-    if (!checkRateLimit(clientIp)) {
-      return res.status(429).json({ error: "Too many login attempts. Please try again in 15 minutes." });
-    }
+  app.post("/api/auth/login", authRateLimiter, async (req: Request, res: Response) => {
     try {
       const { email, password } = req.body as LocalAuthCredentials;
       if (!email || !password) return res.status(400).json({ error: "Email and password are required" });
@@ -123,7 +92,6 @@ export function registerLocalAuthRoutes(app: Express) {
       const sessionToken = await sdk.createSessionToken(credentials.openId, { name: user?.name || email.split("@")[0], expiresInMs: ONE_YEAR_MS });
       const cookieOptions = getSessionCookieOptions(req);
       res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
-      resetRateLimit(clientIp);
       return res.status(200).json({ success: true, message: "Login successful" });
     } catch (error) {
       console.error("[Local Auth] Login failed", error);
@@ -131,11 +99,7 @@ export function registerLocalAuthRoutes(app: Express) {
     }
   });
 
-  app.post("/api/auth/change-password", async (req: Request, res: Response) => {
-    const clientIp = getClientIp(req);
-    if (!checkRateLimit(clientIp)) {
-      return res.status(429).json({ error: "Too many password change attempts. Please try again in 15 minutes." });
-    }
+  app.post("/api/auth/change-password", authRateLimiter, async (req: Request, res: Response) => {
     try {
       const user = await sdk.authenticateRequest(req);
       const { currentPassword, newPassword } = req.body;
@@ -148,7 +112,6 @@ export function registerLocalAuthRoutes(app: Express) {
       const newSalt = generateSalt();
       const newPasswordHash = hashPassword(newPassword, newSalt);
       await db.updateLocalAuthCredential(user.openId, { passwordHash: newPasswordHash, salt: newSalt });
-      resetRateLimit(clientIp);
       return res.status(200).json({ success: true, message: "Password changed successfully" });
     } catch (error) {
       console.error("[Local Auth] Password change failed", error);

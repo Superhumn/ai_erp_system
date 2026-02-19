@@ -8411,9 +8411,7 @@ export async function getNextRoundNumber(negotiationId: number): Promise<number>
     .where(eq(negotiationRounds.negotiationId, negotiationId));
 
   const rawMaxRound = result[0]?.maxRound;
-  const nextRound = rawMaxRound != null ? Number(rawMaxRound) : NaN;
-
-  return Number.isFinite(nextRound) && nextRound > 0 ? nextRound : 1;
+  return rawMaxRound != null && Number.isFinite(Number(rawMaxRound)) ? Number(rawMaxRound) : 1;
 }
 
 // ============================================

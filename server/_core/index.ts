@@ -3,6 +3,7 @@ import express from "express";
 import { createServer } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
+import rateLimit from "express-rate-limit";
 import { registerOAuthRoutes } from "./oauth";
 import { registerLocalAuthRoutes } from "./localAuth";
 import { appRouter } from "../routers";
@@ -47,7 +48,21 @@ async function startServer() {
   const server = createServer(app);
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
-  
+
+  const oauthCallbackLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+  const webhookLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 100,
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
   // Local authentication endpoints (email/password)
   registerLocalAuthRoutes(app);
   
@@ -55,7 +70,7 @@ async function startServer() {
   registerOAuthRoutes(app);
 
   // SendGrid webhook
-  app.post('/webhooks/sendgrid/events', express.raw({ type: 'application/json' }), async (req, res) => {
+  app.post('/webhooks/sendgrid/events', webhookLimiter, express.raw({ type: 'application/json' }), async (req, res) => {
     try {
       const rawBody = req.body.toString();
       if (ENV.sendgridWebhookSecret) {
@@ -127,7 +142,7 @@ async function startServer() {
   app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), handleShopifyWebhook);
   
   // Google OAuth callback
-  app.get('/api/google/callback', async (req, res) => {
+  app.get('/api/google/callback', oauthCallbackLimiter, async (req, res) => {
     const { code, state } = req.query;
     if (!code || !state) return res.redirect('/import?error=missing_params');
     const userId = parseInt(state as string, 10);
@@ -156,7 +171,7 @@ async function startServer() {
   });
 
   // Shopify OAuth callback
-  app.get('/api/shopify/callback', async (req, res) => {
+  app.get('/api/shopify/callback', oauthCallbackLimiter, async (req, res) => {
     const { code, shop, state } = req.query;
     if (!code || !shop || !state) return res.redirect('/settings/integrations?shopify_error=missing_params');
     const clientId = process.env.SHOPIFY_CLIENT_ID;
@@ -199,7 +214,7 @@ async function startServer() {
   });
 
   // QuickBooks OAuth callback
-  app.get('/api/oauth/quickbooks/callback', async (req, res) => {
+  app.get('/api/oauth/quickbooks/callback', oauthCallbackLimiter, async (req, res) => {
     const { code, state, realmId } = req.query;
     if (!code || !state || !realmId) return res.redirect('/settings/integrations?quickbooks_error=missing_params');
     try {
