@@ -101,6 +101,16 @@ The home dashboard provides an at-a-glance overview of the business:
 
 **URLs:** `/ai`, `/ai/approvals`, `/autonomous-dashboard`, `/approvals`, `/exceptions`
 
+**AI Command Bar (⌘K / Ctrl+K)** -- Natural language interface for all operations:
+- **Create Purchase Orders:** "Order 500kg mushrooms from Fresh Farms by Friday"
+- **Track Shipments:** "FedEx tracking 123456789 delivered to warehouse"
+- **Record Payments:** "$5000 payment from Acme Corp for invoice INV-001"
+- **Create Work Orders:** "Produce 1000 units Widget A by month end"
+- **Transfer Inventory:** "Transfer 100kg flour from Main to Production"
+- **Generate Invoices:** "$500 invoice to Acme Corp for consulting services"
+- **Quick Entity Creation:** Create customers, vendors, products, materials with text
+- See [Natural Language User Guide](NATURAL_LANGUAGE_USER_GUIDE.md) for complete documentation
+
 **AI Assistant** -- A conversational AI assistant with 20+ integrated tools:
 - Analyze sales, inventory, vendor, customer, and financial data
 - Generate and send emails

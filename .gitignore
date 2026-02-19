@@ -112,3 +112,25 @@ temp/
 
 # Test files (temporary)
 test_ocr_fallback.mjs
+test_*.mjs
+test_*.cjs
+test_*.ts
+
+# Utility scripts (temporary)
+analyze_*.cjs
+check_*.cjs
+count_*.cjs
+find_*.cjs
+trace_*.cjs
+track_*.cjs
+validate_*.cjs
+validate_*.mjs
+
+# Temporary data files
+*.csv
+*.txt
+!requirements.txt
+!package.json
+!tsconfig.json
+!*.config.ts
+!*.config.js
