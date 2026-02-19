@@ -1,15 +1,18 @@
 import { invokeLLM } from "./llm";
 
 // Email category types
-export type EmailCategory = 
-  | "receipt" 
-  | "purchase_order" 
-  | "invoice" 
-  | "shipping_confirmation" 
-  | "freight_quote" 
+export type EmailCategory =
+  | "receipt"
+  | "purchase_order"
+  | "invoice"
+  | "shipping_confirmation"
+  | "freight_quote"
   | "delivery_notification"
   | "order_confirmation"
   | "payment_confirmation"
+  | "vendor_rfq"
+  | "vendor_quote"
+  | "rfq_question"
   | "general";
 
 export interface EmailCategorization {
@@ -107,6 +110,9 @@ CATEGORIES:
 - delivery_notification: Delivery confirmations, proof of delivery, signed receipts
 - order_confirmation: Order acknowledgments, sales order confirmations
 - payment_confirmation: Payment received notices, wire transfer confirmations
+- vendor_rfq: Incoming requests for quotation, asking us to quote on materials/products/services
+- vendor_quote: A vendor responding with pricing/quote for materials we requested via RFQ
+- rfq_question: Questions or clarifications about an existing RFQ or quote
 - general: Other business emails that don't fit above categories
 
 INSTRUCTIONS:
@@ -120,7 +126,7 @@ INSTRUCTIONS:
 
 Return JSON with this structure:
 {
-  "category": "receipt|purchase_order|invoice|shipping_confirmation|freight_quote|delivery_notification|order_confirmation|payment_confirmation|general",
+  "category": "receipt|purchase_order|invoice|shipping_confirmation|freight_quote|delivery_notification|order_confirmation|payment_confirmation|vendor_rfq|vendor_quote|rfq_question|general",
   "confidence": 85,
   "subcategory": "optional specific type",
   "keywords": ["keyword1", "keyword2", "keyword3"],
@@ -184,7 +190,8 @@ function validateCategory(category: string): EmailCategory {
   const validCategories: EmailCategory[] = [
     "receipt", "purchase_order", "invoice", "shipping_confirmation",
     "freight_quote", "delivery_notification", "order_confirmation",
-    "payment_confirmation", "general"
+    "payment_confirmation", "vendor_rfq", "vendor_quote", "rfq_question",
+    "general"
   ];
   return validCategories.includes(category as EmailCategory) 
     ? (category as EmailCategory) 
@@ -259,8 +266,29 @@ export function quickCategorize(subject: string, fromEmail: string): EmailCatego
       action: "Process purchase order"
     },
     {
+      category: "vendor_rfq",
+      subjectPatterns: [/request for quote/i, /\brfq\b/i, /request for proposal/i, /\brfp\b/i, /requesting a quote/i, /need a quote/i],
+      emailPatterns: [/procurement/i, /purchasing/i, /sourcing/i],
+      priority: "high",
+      action: "Review RFQ and prepare quote response"
+    },
+    {
+      category: "vendor_quote",
+      subjectPatterns: [/quote.*response/i, /pricing.*response/i, /our quote/i, /attached quote/i, /quote.*submitted/i],
+      emailPatterns: [/sales/i, /vendor/i, /supplier/i],
+      priority: "high",
+      action: "Review vendor quote and compare pricing"
+    },
+    {
+      category: "rfq_question",
+      subjectPatterns: [/re:.*rfq/i, /re:.*quote/i, /clarification.*rfq/i, /question.*rfq/i, /question.*quote/i],
+      emailPatterns: [],
+      priority: "medium",
+      action: "Answer RFQ/quote question"
+    },
+    {
       category: "freight_quote",
-      subjectPatterns: [/quote/i, /rate/i, /freight/i, /shipping cost/i, /estimate/i, /rfq/i],
+      subjectPatterns: [/freight.*quote/i, /freight.*rate/i, /shipping cost/i, /freight.*estimate/i, /carrier.*quote/i],
       emailPatterns: [/freight/i, /logistics/i, /carrier/i],
       priority: "medium",
       action: "Compare quotes and select carrier"
@@ -633,6 +661,9 @@ export function getCategoryDisplayInfo(category: EmailCategory): {
     delivery_notification: { label: "Delivery", color: "emerald", icon: "package-check" },
     order_confirmation: { label: "Order Confirmation", color: "indigo", icon: "check-circle" },
     payment_confirmation: { label: "Payment", color: "teal", icon: "credit-card" },
+    vendor_rfq: { label: "Vendor RFQ", color: "amber", icon: "file-question" },
+    vendor_quote: { label: "Vendor Quote", color: "sky", icon: "file-check" },
+    rfq_question: { label: "RFQ Question", color: "rose", icon: "help-circle" },
     general: { label: "General", color: "gray", icon: "mail" }
   };
   

@@ -11,6 +11,7 @@ import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
+import { processRfqEmail, processRfqEmailBatch, getSortedRfqItems, classifyRfqEmail, extractRfqData, generateRfqReply, sendRfqReply } from "./aiRfqProcessingService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import * as db from "./db";
 import { storagePut } from "./storage";
@@ -13323,6 +13324,139 @@ Ask if they received the original request and if they can provide a quote.`;
 
         return { taskId: taskResult.id };
       }),
+  }),
+
+  // ============================================
+  // AI RFQ PROCESSING
+  // ============================================
+  aiRfqProcessing: router({
+    // Get sorted, prioritized list of all RFQ/quote items
+    list: protectedProcedure.query(() => getSortedRfqItems()),
+
+    // Process a single email through the AI RFQ pipeline
+    processEmail: opsProcedure
+      .input(z.object({
+        emailId: z.number(),
+        companyName: z.string().optional(),
+        senderName: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return processRfqEmail(input.emailId, {
+          companyName: input.companyName,
+          senderName: input.senderName,
+        });
+      }),
+
+    // Batch process unprocessed RFQ emails
+    processBatch: opsProcedure
+      .input(z.object({
+        limit: z.number().min(1).max(50).default(10),
+        companyName: z.string().optional(),
+        senderName: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return processRfqEmailBatch(input.limit, {
+          companyName: input.companyName,
+          senderName: input.senderName,
+        });
+      }),
+
+    // Classify an email without full processing (preview)
+    classify: protectedProcedure
+      .input(z.object({
+        emailId: z.number(),
+      }))
+      .mutation(async ({ input }) => {
+        const email = await db.getInboundEmailById(input.emailId);
+        if (!email) throw new TRPCError({ code: 'NOT_FOUND', message: 'Email not found' });
+        return classifyRfqEmail(
+          email.subject || "",
+          email.bodyText || email.bodyHtml || "",
+          email.fromEmail,
+          email.fromName || undefined
+        );
+      }),
+
+    // Extract data from an email (after classification)
+    extract: protectedProcedure
+      .input(z.object({
+        emailId: z.number(),
+      }))
+      .mutation(async ({ input }) => {
+        const email = await db.getInboundEmailById(input.emailId);
+        if (!email) throw new TRPCError({ code: 'NOT_FOUND', message: 'Email not found' });
+        const subject = email.subject || "";
+        const body = email.bodyText || email.bodyHtml || "";
+        const classification = await classifyRfqEmail(subject, body, email.fromEmail, email.fromName || undefined);
+        const extracted = await extractRfqData(subject, body, email.fromEmail, classification);
+        return { classification, extracted };
+      }),
+
+    // Generate a suggested reply for an RFQ/quote email
+    generateReply: protectedProcedure
+      .input(z.object({
+        emailId: z.number(),
+        companyName: z.string().optional(),
+        senderName: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const email = await db.getInboundEmailById(input.emailId);
+        if (!email) throw new TRPCError({ code: 'NOT_FOUND', message: 'Email not found' });
+        const subject = email.subject || "";
+        const body = email.bodyText || email.bodyHtml || "";
+        const classification = await classifyRfqEmail(subject, body, email.fromEmail, email.fromName || undefined);
+        const extracted = await extractRfqData(subject, body, email.fromEmail, classification);
+        const reply = await generateRfqReply(
+          { from: email.fromEmail, subject, body },
+          classification,
+          extracted,
+          { companyName: input.companyName, senderName: input.senderName }
+        );
+        return { classification, extracted, reply };
+      }),
+
+    // Send an approved reply
+    sendReply: opsProcedure
+      .input(z.object({
+        toEmail: z.string().email(),
+        subject: z.string().min(1),
+        body: z.string().min(1),
+        rfqType: z.enum(['vendor_rfq', 'freight_rfq', 'vendor_quote', 'freight_quote', 'rfq_question', 'general_inquiry']),
+        relatedRfqId: z.number().optional(),
+        relatedQuoteId: z.number().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return sendRfqReply(input);
+      }),
+
+    // Get summary stats for the dashboard
+    stats: protectedProcedure.query(async () => {
+      const vendorRfqs = await db.getVendorRfqs();
+      const freightRfqs = await db.getFreightRfqs();
+      const vendorQuotes = await db.getVendorQuotes();
+      const freightQuotes = await db.getFreightQuotes();
+      const pendingEmails = await db.getInboundEmails({ status: "pending", limit: 100 });
+
+      const rfqRelatedEmails = pendingEmails.filter(e => {
+        const s = (e.subject || "").toLowerCase();
+        return s.includes("rfq") || s.includes("quote") || s.includes("pricing") ||
+               s.includes("freight") || s.includes("bid") || s.includes("proposal");
+      });
+
+      return {
+        totalVendorRfqs: vendorRfqs.length,
+        activeVendorRfqs: vendorRfqs.filter(r => ['sent', 'partially_received'].includes(r.status)).length,
+        totalFreightRfqs: freightRfqs.length,
+        activeFreightRfqs: freightRfqs.filter(r => ['sent', 'awaiting_quotes'].includes(r.status)).length,
+        totalVendorQuotes: vendorQuotes.length,
+        pendingVendorQuotes: vendorQuotes.filter(q => q.status === 'pending' || q.status === 'received').length,
+        totalFreightQuotes: freightQuotes.length,
+        pendingFreightQuotes: freightQuotes.filter(q => q.status === 'pending' || q.status === 'received').length,
+        unprocessedEmails: rfqRelatedEmails.length,
+        needsReview: vendorRfqs.filter(r => r.status === 'partially_received').length +
+                     freightRfqs.filter(r => r.status === 'quotes_received').length,
+      };
+    }),
   }),
 });
 

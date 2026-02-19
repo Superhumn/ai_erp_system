@@ -61,6 +61,7 @@ import InventoryHub from "./pages/operations/InventoryHub";
 import OperationsHub from "./pages/operations/OperationsHub";
 import InventoryManagementHub from "./pages/operations/InventoryManagementHub";
 import DocumentImport from "./pages/operations/DocumentImport";
+import AiRfqProcessing from "./pages/operations/AiRfqProcessing";
 import SupplierPortal from "./pages/SupplierPortal";
 
 // Freight
@@ -186,6 +187,7 @@ function Router() {
         <Route path="/operations/inventory-hub" component={InventoryHub} />
         <Route path="/operations/inventory-management" component={InventoryManagementHub} />
         <Route path="/operations/document-import" component={DocumentImport} />
+        <Route path="/operations/ai-rfq-processing" component={AiRfqProcessing} />
 
         {/* Freight */}
         <Route path="/freight" component={FreightDashboard} />

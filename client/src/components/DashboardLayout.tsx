@@ -123,6 +123,7 @@ const menuGroups = [
       { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: FileSpreadsheet, label: "Document Import", path: "/operations/document-import" },
+      { icon: Brain, label: "AI RFQ Processing", path: "/operations/ai-rfq-processing" },
     ],
   },
   {
