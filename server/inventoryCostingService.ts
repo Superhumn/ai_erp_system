@@ -383,6 +383,25 @@ export async function generateCogsPeriodSummary(params: {
   const grossMarginPercent =
     totalRevenue > 0 ? (grossMargin / totalRevenue) * 100 : 0;
 
+  // Check if a summary already exists for this exact period
+  const existing = await db.getCogsPeriodSummaries({
+    companyId: params.companyId,
+    productId: params.productId,
+    periodType: params.periodType,
+    startDate: params.periodStart,
+    endDate: params.periodEnd,
+  });
+
+  // Filter to find exact matches (getCogsPeriodSummaries uses gte/lte which could match overlapping ranges)
+  const exactMatch = existing.find(
+    (record) =>
+      record.periodStart.getTime() === params.periodStart.getTime() &&
+      record.periodEnd.getTime() === params.periodEnd.getTime() &&
+      record.companyId === params.companyId &&
+      record.productId === params.productId &&
+      record.periodType === params.periodType
+  );
+
   const summaryData = {
     companyId: params.companyId,
     productId: params.productId,
@@ -397,21 +416,12 @@ export async function generateCogsPeriodSummary(params: {
     grossMarginPercent: grossMarginPercent.toFixed(4),
   };
 
-  // Check if a summary already exists for this period
-  const existing = await db.getCogsPeriodSummary({
-    companyId: params.companyId,
-    productId: params.productId,
-    periodType: params.periodType,
-    periodStart: params.periodStart,
-    periodEnd: params.periodEnd,
-  });
-
-  if (existing) {
-    // Update existing record
-    await db.updateCogsPeriodSummaryRecord(existing.id, summaryData);
-    return { id: existing.id };
+  // Upsert: update if exists, create if not
+  if (exactMatch) {
+    // Update the exact matching record
+    await db.updateCogsPeriodSummaryRecord(exactMatch.id, summaryData);
+    return { id: exactMatch.id };
   } else {
-    // Create new record
     return db.createCogsPeriodSummaryRecord(summaryData);
   }
 }

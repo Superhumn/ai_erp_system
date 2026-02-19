@@ -86,9 +86,9 @@ Respond ONLY with valid JSON matching this schema:
       ],
       response_format: {
         type: "json_schema",
-        strict: true,
         json_schema: {
           name: "NegotiationAnalysis",
+          strict: true,
           schema: {
             type: "object",
             additionalProperties: false,
@@ -148,10 +148,7 @@ Respond ONLY with valid JSON matching this schema:
       },
     });
 
-    const rawContent: unknown =
-      aiResult && typeof (aiResult as any).content !== "undefined"
-        ? (aiResult as any).content
-        : aiResult;
+    const rawContent: unknown = aiResult.choices[0]?.message?.content;
 
     let parsed: any;
     if (typeof rawContent === "string") {
@@ -319,10 +316,18 @@ Respond ONLY with valid JSON:
       ],
     });
 
-    const text = typeof aiResult.content === "string" ? aiResult.content : "";
+    const content = aiResult.choices[0]?.message?.content;
+    const text = typeof content === "string" ? content : "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
+      const parsed = JSON.parse(jsonMatch[0]);
+      // Validate and coerce the parsed JSON
+      return {
+        subject: typeof parsed.subject === "string" ? parsed.subject : "Vendor Negotiation",
+        body: typeof parsed.body === "string" ? parsed.body : "",
+        tone: typeof parsed.tone === "string" ? parsed.tone : "professional",
+        keyPoints: Array.isArray(parsed.keyPoints) ? parsed.keyPoints.filter((p: any) => typeof p === "string") : [],
+      };
     }
   } catch (e) {
     // Fall through to default
