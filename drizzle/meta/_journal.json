@@ -169,6 +169,20 @@
       "when": 1769437677326,
       "tag": "0023_wise_marvel_apes",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "5",
+      "when": 1770000000000,
+      "tag": "0024_autonomous_supply_chain_workflows",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "5",
+      "when": 1771251256000,
+      "tag": "0025_investment_grant_checklists",
+      "breakpoints": true
     }
   ]
 }
