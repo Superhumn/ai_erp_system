@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json, bigint } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json, bigint, uniqueIndex } from "drizzle-orm/mysql-core";
 import { relations } from "drizzle-orm";
 
 // ============================================
@@ -28,6 +28,21 @@ export const users = mysqlTable("users", {
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
+
+// Local authentication credentials for email/password auth
+export const localAuthCredentials = mysqlTable("localAuthCredentials", {
+  id: int("id").autoincrement().primaryKey(),
+  openId: varchar("openId", { length: 64 }).notNull().unique(),
+  email: varchar("email", { length: 320 }).notNull().unique(),
+  passwordHash: varchar("passwordHash", { length: 256 }).notNull(),
+  salt: varchar("salt", { length: 256 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type LocalAuthCredential = typeof localAuthCredentials.$inferSelect;
+export type InsertLocalAuthCredential = typeof localAuthCredentials.$inferInsert;
+
 
 // Team invitations for onboarding new users
 export const teamInvitations = mysqlTable("teamInvitations", {
@@ -169,16 +184,6 @@ export const vendors = mysqlTable("vendors", {
   defaultLeadTimeDays: int("defaultLeadTimeDays").default(14), // Default lead time for this vendor
   minOrderAmount: decimal("minOrderAmount", { precision: 12, scale: 2 }), // Minimum order amount
   shippingMethod: varchar("shippingMethod", { length: 64 }), // Preferred shipping method
-  
-  // Phone/Call capabilities for AI-powered communication
-  phoneExtension: varchar("phoneExtension", { length: 20 }),
-  mobilePhone: varchar("mobilePhone", { length: 32 }),
-  faxNumber: varchar("faxNumber", { length: 32 }),
-  preferredContactMethod: mysqlEnum("preferredContactMethod", ["email", "phone", "both"]).default("email"),
-  callAvailability: text("callAvailability"), // JSON with availability schedule
-  voiceCapable: boolean("voiceCapable").default(false), // Can handle AI voice calls
-  voicePreferences: text("voicePreferences"), // JSON with voice call preferences
-  
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -242,20 +247,6 @@ export const invoices = mysqlTable("invoices", {
   currency: varchar("currency", { length: 3 }).default("USD"),
   notes: text("notes"),
   terms: text("terms"),
-  // B2B and International Freight fields
-  paymentTerms: mysqlEnum("paymentTerms", ["due_on_receipt", "net_15", "net_30", "net_45", "net_60", "net_90", "eom", "cod", "cia", "custom"]),
-  paymentMethod: mysqlEnum("paymentMethod", ["bank_transfer", "wire", "ach", "check", "credit_card", "letter_of_credit", "cash_in_advance", "documentary_collection", "open_account", "consignment", "other"]),
-  purchaseOrderNumber: varchar("purchaseOrderNumber", { length: 64 }),
-  incoterms: varchar("incoterms", { length: 10 }), // EXW, FOB, CIF, DDP, etc.
-  freightRfqId: int("freightRfqId"), // Link to freight shipment
-  portOfLoading: varchar("portOfLoading", { length: 255 }),
-  portOfDischarge: varchar("portOfDischarge", { length: 255 }),
-  exportLicenseNumber: varchar("exportLicenseNumber", { length: 64 }),
-  importLicenseNumber: varchar("importLicenseNumber", { length: 64 }),
-  shippingInstructions: text("shippingInstructions"),
-  freightAmount: decimal("freightAmount", { precision: 15, scale: 2 }).default("0"),
-  insuranceAmount: decimal("insuranceAmount", { precision: 15, scale: 2 }).default("0"),
-  customsDuties: decimal("customsDuties", { precision: 15, scale: 2 }).default("0"),
   quickbooksInvoiceId: varchar("quickbooksInvoiceId", { length: 64 }),
   createdBy: int("createdBy"),
   approvedBy: int("approvedBy"),
@@ -275,11 +266,6 @@ export const invoiceItems = mysqlTable("invoice_items", {
   taxAmount: decimal("taxAmount", { precision: 15, scale: 2 }).default("0"),
   discountPercent: decimal("discountPercent", { precision: 5, scale: 2 }).default("0"),
   totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).notNull(),
-  // International freight fields
-  hsCode: varchar("hsCode", { length: 20 }), // Harmonized System code for customs
-  countryOfOrigin: varchar("countryOfOrigin", { length: 100 }),
-  weight: decimal("weight", { precision: 12, scale: 2 }), // Item weight in kg
-  volume: decimal("volume", { precision: 12, scale: 2 }), // Item volume in CBM
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -832,7 +818,7 @@ export const notificationPreferences = mysqlTable("notification_preferences", {
 export const integrationConfigs = mysqlTable("integration_configs", {
   id: int("id").autoincrement().primaryKey(),
   companyId: int("companyId"),
-  type: mysqlEnum("type", ["quickbooks", "shopify", "stripe", "slack", "email", "webhook", "fireflies"]).notNull(),
+  type: mysqlEnum("type", ["quickbooks", "shopify", "stripe", "slack", "email", "webhook"]).notNull(),
   name: varchar("name", { length: 255 }).notNull(),
   config: json("config"),
   credentials: json("credentials"),
@@ -1963,7 +1949,6 @@ export type InsertRecommendation = typeof recommendations.$inferInsert;
 // Shopify store configuration
 export const shopifyStores = mysqlTable("shopifyStores", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId"), // Multi-tenant support
   storeDomain: varchar("storeDomain", { length: 255 }).notNull().unique(), // mystore.myshopify.com
   storeName: varchar("storeName", { length: 255 }),
   accessToken: text("accessToken"), // Encrypted in production
@@ -3229,7 +3214,7 @@ export const crmContacts = mysqlTable("crm_contacts", {
 
   // CRM classification
   contactType: mysqlEnum("contactType", ["lead", "prospect", "customer", "partner", "investor", "donor", "vendor", "other"]).default("lead").notNull(),
-  source: mysqlEnum("source", ["iphone_bump", "whatsapp", "linkedin_scan", "business_card", "website", "referral", "event", "cold_outreach", "import", "manual", "fireflies"]).default("manual").notNull(),
+  source: mysqlEnum("source", ["iphone_bump", "whatsapp", "linkedin_scan", "business_card", "website", "referral", "event", "cold_outreach", "import", "manual"]).default("manual").notNull(),
   status: mysqlEnum("status", ["active", "inactive", "unsubscribed", "bounced"]).default("active").notNull(),
 
   // Sales/Fundraising context
@@ -3578,8 +3563,6 @@ export const supplyChainWorkflows = mysqlTable("supplyChainWorkflows", {
     "invoice_matching",
     "payment_processing",
     "exception_handling",
-    "vendor_quote_procurement",
-    "vendor_quote_analysis",
     "custom"
   ]).notNull(),
 
@@ -4263,211 +4246,259 @@ export type WorkflowNotification = typeof workflowNotifications.$inferSelect;
 export type InsertWorkflowNotification = typeof workflowNotifications.$inferInsert;
 
 // ============================================
-// FIREFLIES.AI INTEGRATION
+// INVENTORY COSTING & COGS
 // ============================================
 
-export const firefliesMeetings = mysqlTable("fireflies_meetings", {
+// Product costing configuration - defines which method applies per product
+export const inventoryCostingConfig = mysqlTable("inventoryCostingConfig", {
   id: int("id").autoincrement().primaryKey(),
-  firefliesId: varchar("firefliesId", { length: 128 }).notNull().unique(),
-  title: varchar("title", { length: 500 }).notNull(),
-  date: timestamp("date"),
-  duration: int("duration"), // seconds
-  organizerEmail: varchar("organizerEmail", { length: 320 }),
-  organizerName: varchar("organizerName", { length: 255 }),
-
-  // Participants
-  participants: text("participants"), // JSON array of { name, email }
-
-  // Content
-  summary: text("summary"),
-  shortSummary: text("shortSummary"),
-  keywords: text("keywords"), // JSON array of strings
-  topics: text("topics"), // JSON array of strings
-  sentimentAnalysis: text("sentimentAnalysis"), // JSON object
-
-  // Transcript
-  transcriptUrl: text("transcriptUrl"),
-  transcriptText: text("transcriptText"),
-
-  // Action items extracted by Fireflies
-  actionItems: text("actionItems"), // JSON array of { text, assignee, dueDate }
-
-  // Processing status
-  processingStatus: mysqlEnum("processingStatus", [
-    "pending", "contacts_created", "tasks_created", "project_created", "fully_processed", "skipped", "error"
-  ]).default("pending").notNull(),
-  processedAt: timestamp("processedAt"),
-  processedBy: int("processedBy"),
-  processingNotes: text("processingNotes"),
-
-  // Auto-generation settings (what was auto-created from this meeting)
-  autoCreatedProjectId: int("autoCreatedProjectId"),
-  autoCreatedTaskCount: int("autoCreatedTaskCount").default(0),
-  autoCreatedContactCount: int("autoCreatedContactCount").default(0),
-
-  // Metadata
-  meetingSource: varchar("meetingSource", { length: 64 }), // zoom, google_meet, teams, etc.
-  calendarEventId: varchar("calendarEventId", { length: 255 }),
-  recordingUrl: text("recordingUrl"),
-
+  companyId: int("companyId"),
+  productId: int("productId").notNull(),
+  costingMethod: mysqlEnum("costingMethod", ["fifo", "lifo", "weighted_average"]).default("weighted_average").notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  effectiveDate: timestamp("effectiveDate").defaultNow().notNull(),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
-export type FirefliesMeeting = typeof firefliesMeetings.$inferSelect;
-export type InsertFirefliesMeeting = typeof firefliesMeetings.$inferInsert;
+export type InventoryCostingConfig = typeof inventoryCostingConfig.$inferSelect;
+export type InsertInventoryCostingConfig = typeof inventoryCostingConfig.$inferInsert;
 
-// Track individual action items extracted from Fireflies and their mapping to project tasks
-export const firefliesActionItems = mysqlTable("fireflies_action_items", {
+// Inventory cost layers - tracks individual purchase lots for FIFO/LIFO
+export const inventoryCostLayers = mysqlTable("inventoryCostLayers", {
   id: int("id").autoincrement().primaryKey(),
-  meetingId: int("meetingId").notNull(), // FK to firefliesMeetings
-  firefliesMeetingId: varchar("firefliesMeetingId", { length: 128 }).notNull(),
-
-  // Action item content
-  text: text("text").notNull(),
-  assignee: varchar("assignee", { length: 255 }),
-  assigneeEmail: varchar("assigneeEmail", { length: 320 }),
-  dueDate: timestamp("dueDate"),
-
-  // Mapping to ERP entities
-  projectTaskId: int("projectTaskId"), // FK to project_tasks if converted
-  crmContactId: int("crmContactId"), // FK to crm_contacts for assigned person
-
-  // Status
-  status: mysqlEnum("status", ["pending", "converted_to_task", "skipped", "completed"]).default("pending").notNull(),
-  convertedAt: timestamp("convertedAt"),
-  convertedBy: int("convertedBy"),
-
+  companyId: int("companyId"),
+  productId: int("productId").notNull(),
+  warehouseId: int("warehouseId"),
+  purchaseOrderId: int("purchaseOrderId"),
+  lotId: int("lotId"),
+  layerDate: timestamp("layerDate").notNull(), // Date of the purchase/receipt
+  originalQuantity: decimal("originalQuantity", { precision: 15, scale: 4 }).notNull(),
+  remainingQuantity: decimal("remainingQuantity", { precision: 15, scale: 4 }).notNull(),
+  unitCost: decimal("unitCost", { precision: 15, scale: 4 }).notNull(), // Cost per unit in this layer
+  totalCost: decimal("totalCost", { precision: 15, scale: 2 }).notNull(),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  status: mysqlEnum("status", ["active", "depleted", "adjusted"]).default("active").notNull(),
+  referenceType: varchar("referenceType", { length: 64 }), // purchase_order, production, adjustment, opening
+  referenceId: int("referenceId"),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
-export type FirefliesActionItem = typeof firefliesActionItems.$inferSelect;
-export type InsertFirefliesActionItem = typeof firefliesActionItems.$inferInsert;
+export type InventoryCostLayer = typeof inventoryCostLayers.$inferSelect;
+export type InsertInventoryCostLayer = typeof inventoryCostLayers.$inferInsert;
 
-// Tracks contacts discovered from Fireflies meeting participants
-export const firefliesContactMappings = mysqlTable("fireflies_contact_mappings", {
+// COGS records - tracks cost of goods sold per sale/shipment
+export const cogsRecords = mysqlTable("cogsRecords", {
   id: int("id").autoincrement().primaryKey(),
-  meetingId: int("meetingId").notNull(), // FK to firefliesMeetings
-  participantEmail: varchar("participantEmail", { length: 320 }).notNull(),
-  participantName: varchar("participantName", { length: 255 }),
-
-  // Mapping
-  crmContactId: int("crmContactId"), // FK to crm_contacts if matched/created
-  isNewContact: boolean("isNewContact").default(false),
-  wasAutoCreated: boolean("wasAutoCreated").default(false),
-
+  companyId: int("companyId"),
+  productId: int("productId").notNull(),
+  warehouseId: int("warehouseId"),
+  orderId: int("orderId"), // Sales order reference
+  salesOrderLineId: int("salesOrderLineId"),
+  costingMethod: mysqlEnum("costingMethod", ["fifo", "lifo", "weighted_average"]).notNull(),
+  quantitySold: decimal("quantitySold", { precision: 15, scale: 4 }).notNull(),
+  unitCogs: decimal("unitCogs", { precision: 15, scale: 4 }).notNull(),
+  totalCogs: decimal("totalCogs", { precision: 15, scale: 2 }).notNull(),
+  unitRevenue: decimal("unitRevenue", { precision: 15, scale: 2 }),
+  totalRevenue: decimal("totalRevenue", { precision: 15, scale: 2 }),
+  grossMargin: decimal("grossMargin", { precision: 15, scale: 2 }),
+  grossMarginPercent: decimal("grossMarginPercent", { precision: 8, scale: 4 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  periodDate: timestamp("periodDate").notNull(), // The accounting period date
+  layerBreakdown: text("layerBreakdown"), // JSON array of which cost layers were consumed
+  notes: text("notes"),
+  calculatedBy: int("calculatedBy"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
-export type FirefliesContactMapping = typeof firefliesContactMappings.$inferSelect;
-export type InsertFirefliesContactMapping = typeof firefliesContactMappings.$inferInsert;
+export type CogsRecord = typeof cogsRecords.$inferSelect;
+export type InsertCogsRecord = typeof cogsRecords.$inferInsert;
 
-// ============================================
-// COPACKER PORTAL
-// ============================================
-
-// Biweekly inventory update submissions from copackers
-export const copackerInventoryUpdates = mysqlTable("copacker_inventory_updates", {
+// COGS summary by period - aggregated for reporting
+export const cogsPeriodSummary = mysqlTable("cogsPeriodSummary", {
   id: int("id").autoincrement().primaryKey(),
-  warehouseId: int("warehouseId").notNull(),
-  submittedBy: int("submittedBy").notNull(),
+  companyId: int("companyId"),
+  productId: int("productId"),
+  periodType: mysqlEnum("periodType", ["daily", "weekly", "monthly", "quarterly", "yearly"]).notNull(),
   periodStart: timestamp("periodStart").notNull(),
   periodEnd: timestamp("periodEnd").notNull(),
-  status: mysqlEnum("status", ["draft", "submitted", "reviewed", "approved", "rejected"]).default("draft").notNull(),
-  notes: text("notes"),
-  reviewedBy: int("reviewedBy"),
-  reviewedAt: timestamp("reviewedAt"),
+  totalQuantitySold: decimal("totalQuantitySold", { precision: 15, scale: 4 }).notNull(),
+  totalCogs: decimal("totalCogs", { precision: 15, scale: 2 }).notNull(),
+  totalRevenue: decimal("totalRevenue", { precision: 15, scale: 2 }),
+  averageUnitCogs: decimal("averageUnitCogs", { precision: 15, scale: 4 }),
+  grossMargin: decimal("grossMargin", { precision: 15, scale: 2 }),
+  grossMarginPercent: decimal("grossMarginPercent", { precision: 8, scale: 4 }),
+  costingMethod: mysqlEnum("costingMethod", ["fifo", "lifo", "weighted_average"]),
+  beginningInventoryValue: decimal("beginningInventoryValue", { precision: 15, scale: 2 }),
+  purchasesValue: decimal("purchasesValue", { precision: 15, scale: 2 }),
+  endingInventoryValue: decimal("endingInventoryValue", { precision: 15, scale: 2 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  // Unique constraint to prevent duplicate summaries for the same period
+  uniquePeriodSummary: uniqueIndex("idx_cogs_period_unique").on(
+    table.companyId,
+    table.productId,
+    table.periodType,
+    table.periodStart,
+    table.periodEnd
+  ),
+}));
+
+export type CogsPeriodSummary = typeof cogsPeriodSummary.$inferSelect;
+export type InsertCogsPeriodSummary = typeof cogsPeriodSummary.$inferInsert;
+
+// ============================================
+// AUTOMATED VENDOR NEGOTIATIONS
+// ============================================
+
+// Vendor negotiation sessions
+export const vendorNegotiations = mysqlTable("vendorNegotiations", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  vendorId: int("vendorId").notNull(),
+  negotiationNumber: varchar("negotiationNumber", { length: 64 }).notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  type: mysqlEnum("type", ["price_reduction", "volume_discount", "payment_terms", "lead_time", "contract_renewal", "new_contract"]).notNull(),
+  status: mysqlEnum("status", ["draft", "analyzing", "ready", "in_progress", "counter_offered", "accepted", "rejected", "expired"]).default("draft").notNull(),
+  priority: mysqlEnum("priority", ["low", "medium", "high", "urgent"]).default("medium").notNull(),
+
+  // Products/materials involved
+  productIds: text("productIds"), // JSON array of product IDs
+  rawMaterialIds: text("rawMaterialIds"), // JSON array of raw material IDs
+
+  // Current terms
+  currentUnitPrice: decimal("currentUnitPrice", { precision: 15, scale: 4 }),
+  currentPaymentTerms: int("currentPaymentTerms"),
+  currentLeadTimeDays: int("currentLeadTimeDays"),
+  currentMinOrderAmount: decimal("currentMinOrderAmount", { precision: 15, scale: 2 }),
+  currentAnnualVolume: decimal("currentAnnualVolume", { precision: 15, scale: 2 }),
+
+  // Target terms (AI-recommended or manual)
+  targetUnitPrice: decimal("targetUnitPrice", { precision: 15, scale: 4 }),
+  targetPaymentTerms: int("targetPaymentTerms"),
+  targetLeadTimeDays: int("targetLeadTimeDays"),
+  targetMinOrderAmount: decimal("targetMinOrderAmount", { precision: 15, scale: 2 }),
+  targetAnnualVolume: decimal("targetAnnualVolume", { precision: 15, scale: 2 }),
+
+  // Final agreed terms
+  agreedUnitPrice: decimal("agreedUnitPrice", { precision: 15, scale: 4 }),
+  agreedPaymentTerms: int("agreedPaymentTerms"),
+  agreedLeadTimeDays: int("agreedLeadTimeDays"),
+  agreedMinOrderAmount: decimal("agreedMinOrderAmount", { precision: 15, scale: 2 }),
+  agreedAnnualVolume: decimal("agreedAnnualVolume", { precision: 15, scale: 2 }),
+
+  // AI analysis
+  aiAnalysis: text("aiAnalysis"), // JSON: market data, benchmarks, leverage points
+  aiStrategy: text("aiStrategy"), // JSON: recommended negotiation strategy
+  aiConfidenceScore: decimal("aiConfidenceScore", { precision: 5, scale: 2 }), // 0-100 confidence in success
+  estimatedSavings: decimal("estimatedSavings", { precision: 15, scale: 2 }),
+  estimatedSavingsPercent: decimal("estimatedSavingsPercent", { precision: 8, scale: 4 }),
+
+  // Communication
+  lastEmailSentAt: timestamp("lastEmailSentAt"),
+  lastResponseAt: timestamp("lastResponseAt"),
+  negotiationRounds: int("negotiationRounds").default(0),
+  maxRounds: int("maxRounds").default(5),
+
+  expiresAt: timestamp("expiresAt"),
+  completedAt: timestamp("completedAt"),
+  initiatedBy: int("initiatedBy"),
+  assignedTo: int("assignedTo"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
-export type CopackerInventoryUpdate = typeof copackerInventoryUpdates.$inferSelect;
-export type InsertCopackerInventoryUpdate = typeof copackerInventoryUpdates.$inferInsert;
+export type VendorNegotiation = typeof vendorNegotiations.$inferSelect;
+export type InsertVendorNegotiation = typeof vendorNegotiations.$inferInsert;
 
-// Line items within a biweekly inventory update
-export const copackerInventoryUpdateItems = mysqlTable("copacker_inventory_update_items", {
+// Negotiation rounds - each back-and-forth
+export const negotiationRounds = mysqlTable("negotiationRounds", {
   id: int("id").autoincrement().primaryKey(),
-  updateId: int("updateId").notNull(),
-  productId: int("productId").notNull(),
-  previousQuantity: decimal("previousQuantity", { precision: 15, scale: 4 }),
-  newQuantity: decimal("newQuantity", { precision: 15, scale: 4 }).notNull(),
-  quantityReceived: decimal("quantityReceived", { precision: 15, scale: 4 }).default("0"),
-  quantityShipped: decimal("quantityShipped", { precision: 15, scale: 4 }).default("0"),
-  quantityDamaged: decimal("quantityDamaged", { precision: 15, scale: 4 }).default("0"),
-  notes: text("notes"),
+  negotiationId: int("negotiationId").notNull(),
+  roundNumber: int("roundNumber").notNull(),
+  direction: mysqlEnum("direction", ["outbound", "inbound"]).notNull(), // We sent or they responded
+  messageType: mysqlEnum("messageType", ["initial_offer", "counter_offer", "acceptance", "rejection", "info_request", "final_offer"]).notNull(),
+
+  // Proposed terms in this round
+  proposedUnitPrice: decimal("proposedUnitPrice", { precision: 15, scale: 4 }),
+  proposedPaymentTerms: int("proposedPaymentTerms"),
+  proposedLeadTimeDays: int("proposedLeadTimeDays"),
+  proposedMinOrderAmount: decimal("proposedMinOrderAmount", { precision: 15, scale: 2 }),
+  proposedVolume: decimal("proposedVolume", { precision: 15, scale: 2 }),
+
+  messageContent: text("messageContent"), // The email/message content
+  aiGeneratedDraft: text("aiGeneratedDraft"), // AI-drafted response
+  aiReasoning: text("aiReasoning"), // Why AI suggested this approach
+
+  sentAt: timestamp("sentAt"),
+  receivedAt: timestamp("receivedAt"),
+  sentBy: int("sentBy"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (table) => ({
+  // Unique constraint to prevent duplicate round numbers for the same negotiation
+  uniqueNegotiationRound: uniqueIndex("unique_negotiation_round").on(table.negotiationId, table.roundNumber),
+}));
 
-export type CopackerInventoryUpdateItem = typeof copackerInventoryUpdateItems.$inferSelect;
-export type InsertCopackerInventoryUpdateItem = typeof copackerInventoryUpdateItems.$inferInsert;
+export type NegotiationRound = typeof negotiationRounds.$inferSelect;
+export type InsertNegotiationRound = typeof negotiationRounds.$inferInsert;
 
-// Invoices submitted by copackers for their services
-export const copackerInvoices = mysqlTable("copacker_invoices", {
+// ============================================
+// SAUDI INVESTMENT GRANT CHECKLIST
+// ============================================
+
+export const investmentGrantChecklists = mysqlTable("investment_grant_checklists", {
   id: int("id").autoincrement().primaryKey(),
-  warehouseId: int("warehouseId").notNull(),
-  submittedBy: int("submittedBy").notNull(),
-  invoiceNumber: varchar("invoiceNumber", { length: 64 }).notNull(),
-  invoiceDate: timestamp("invoiceDate").notNull(),
-  dueDate: timestamp("dueDate"),
-  description: text("description"),
-  subtotal: decimal("subtotal", { precision: 15, scale: 2 }).notNull(),
-  taxAmount: decimal("taxAmount", { precision: 15, scale: 2 }).default("0"),
-  totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).notNull(),
-  currency: varchar("currency", { length: 3 }).default("USD"),
-  status: mysqlEnum("status", ["draft", "submitted", "under_review", "approved", "rejected", "paid"]).default("draft").notNull(),
-  fileUrl: text("fileUrl"),
-  fileKey: varchar("fileKey", { length: 512 }),
-  fileName: varchar("fileName", { length: 255 }),
-  mimeType: varchar("mimeType", { length: 128 }),
-  reviewedBy: int("reviewedBy"),
-  reviewedAt: timestamp("reviewedAt"),
-  rejectionReason: text("rejectionReason"),
-  notes: text("notes"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
-
-export type CopackerInvoice = typeof copackerInvoices.$inferSelect;
-export type InsertCopackerInvoice = typeof copackerInvoices.$inferInsert;
-
-// Line items on copacker invoices
-export const copackerInvoiceItems = mysqlTable("copacker_invoice_items", {
-  id: int("id").autoincrement().primaryKey(),
-  invoiceId: int("invoiceId").notNull(),
-  description: text("description").notNull(),
-  quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),
-  unitPrice: decimal("unitPrice", { precision: 15, scale: 2 }).notNull(),
-  totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
-
-export type CopackerInvoiceItem = typeof copackerInvoiceItems.$inferSelect;
-export type InsertCopackerInvoiceItem = typeof copackerInvoiceItems.$inferInsert;
-
-// Shipping documents uploaded by copackers (BOL, packing lists, etc.)
-export const copackerShippingDocuments = mysqlTable("copacker_shipping_documents", {
-  id: int("id").autoincrement().primaryKey(),
-  warehouseId: int("warehouseId").notNull(),
-  shipmentId: int("shipmentId"),
-  uploadedBy: int("uploadedBy").notNull(),
-  documentType: mysqlEnum("documentType", [
-    "bill_of_lading", "packing_list", "commercial_invoice", "proof_of_delivery",
-    "weight_certificate", "inspection_report", "customs_declaration", "other"
-  ]).notNull(),
+  companyId: int("companyId"),
   name: varchar("name", { length: 255 }).notNull(),
   description: text("description"),
-  fileUrl: text("fileUrl").notNull(),
-  fileKey: varchar("fileKey", { length: 512 }).notNull(),
-  fileSize: int("fileSize"),
-  mimeType: varchar("mimeType", { length: 128 }),
-  status: mysqlEnum("status", ["uploaded", "reviewed", "approved", "rejected"]).default("uploaded").notNull(),
-  reviewedBy: int("reviewedBy"),
-  reviewedAt: timestamp("reviewedAt"),
-  rejectionReason: text("rejectionReason"),
+  status: mysqlEnum("status", ["not_started", "in_progress", "completed", "on_hold"]).default("not_started").notNull(),
+  totalCapex: decimal("totalCapex", { precision: 15, scale: 2 }),
+  grantPercentage: decimal("grantPercentage", { precision: 5, scale: 2 }).default("35"),
+  estimatedGrant: decimal("estimatedGrant", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("SAR"),
+  startDate: timestamp("startDate"),
+  targetCompletionDate: timestamp("targetCompletionDate"),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
-export type CopackerShippingDocument = typeof copackerShippingDocuments.$inferSelect;
-export type InsertCopackerShippingDocument = typeof copackerShippingDocuments.$inferInsert;
+export type InvestmentGrantChecklist = typeof investmentGrantChecklists.$inferSelect;
+export type InsertInvestmentGrantChecklist = typeof investmentGrantChecklists.$inferInsert;
+
+export const investmentGrantItems = mysqlTable("investment_grant_items", {
+  id: int("id").autoincrement().primaryKey(),
+  checklistId: int("checklistId").notNull(),
+  category: mysqlEnum("category", [
+    "entity_entry_setup",
+    "project_definition",
+    "capex_financials",
+    "land_infrastructure",
+    "jobs_localization",
+    "incentive_application",
+    "construction_equipment",
+    "grant_disbursement",
+  ]).notNull(),
+  taskName: varchar("taskName", { length: 255 }).notNull(),
+  description: text("description"),
+  status: mysqlEnum("status", ["not_started", "in_progress", "completed", "blocked"]).default("not_started").notNull(),
+  assigneeId: int("assigneeId"),
+  startMonth: int("startMonth"),
+  durationMonths: int("durationMonths"),
+  completedDate: timestamp("completedDate"),
+  notes: text("notes"),
+  sortOrder: int("sortOrder").default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
+export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
