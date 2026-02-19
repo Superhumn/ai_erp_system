@@ -12,6 +12,8 @@ import * as sendgridProvider from "./sendgridProvider";
 import * as emailService from "./emailService";
 import * as db from "../db";
 import { startEmailQueueWorker } from "../emailQueueWorker";
+import { startOrchestrator } from "../supplyChainOrchestrator";
+import { startScheduler } from "../aiAgentScheduler";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {

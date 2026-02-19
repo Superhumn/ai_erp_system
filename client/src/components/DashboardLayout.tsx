@@ -232,6 +232,10 @@ export default function DashboardLayout({
         } as CSSProperties
       }
     >
+      {/* Aurora and noise backgrounds */}
+      <div className="noise-bg" />
+      <div className="aurora" />
+      
       <DashboardLayoutContent setSidebarWidth={setSidebarWidth}>
         {children}
       </DashboardLayoutContent>
@@ -368,10 +372,11 @@ function DashboardLayoutContent({
 
   return (
     <>
-      <div className="relative" ref={sidebarRef}>
+      {/* z-10 positions sidebar and content above aurora (z-0) and noise (z-0) backgrounds */}
+      <div className="relative z-10" ref={sidebarRef}>
         <Sidebar
           collapsible="icon"
-          className="border-r border-border/50"
+          className="border-r border-border/50 glass-panel"
           disableTransition={isResizing}
         >
           <SidebarHeader className="h-14 justify-center border-b border-border/50">
