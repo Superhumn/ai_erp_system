@@ -13,11 +13,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import {
-  Plus, FolderOpen, Link2, Users, BarChart3, Settings,
+  Plus, FolderOpen, Link2, Users, Settings,
   Eye, Download, Clock, Trash2, Copy, ExternalLink,
-  FileText, Lock, Globe, Archive, Upload, File, Folder,
+  FileText, Lock, Upload, File, Folder,
   ChevronRight, ArrowLeft, MoreVertical, Mail, Send, Cloud,
-  HardDrive, RefreshCw, Shield, Activity, TrendingUp,
+  HardDrive, RefreshCw, Shield, Activity,
   AlertCircle, CheckCircle2, XCircle, ClipboardList,
   CheckSquare, Square, AlertTriangle, ChevronDown, Wand2
 } from "lucide-react";
