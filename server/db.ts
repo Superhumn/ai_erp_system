@@ -96,7 +96,9 @@ import {
   InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
   // EDI module
   ediTradingPartners, ediDocumentMaps, ediTransactions, ediTransactionItems, ediProductCrosswalks, ediShipToLocations, ediComplianceScorecards,
-  InsertEdiTradingPartner, InsertEdiDocumentMap, InsertEdiTransaction, InsertEdiTransactionItem, InsertEdiProductCrosswalk, InsertEdiShipToLocation, InsertEdiComplianceScorecard
+  ediControlNumbers, ediSettings,
+  InsertEdiTradingPartner, InsertEdiDocumentMap, InsertEdiTransaction, InsertEdiTransactionItem, InsertEdiProductCrosswalk, InsertEdiShipToLocation, InsertEdiComplianceScorecard,
+  InsertEdiControlNumber, InsertEdiSettings
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8627,4 +8629,68 @@ export async function getEdiDashboardStats() {
     pendingAcks: Number(pendingAcksResult?.count ?? 0),
     errorTransactions: Number(transactionsResult?.errors ?? 0),
   };
+}
+
+// ============================================
+// EDI CONTROL NUMBERS
+// ============================================
+
+export async function getNextControlNumber(
+  tradingPartnerId: number,
+  controlNumberType: "isa" | "gs" | "st"
+): Promise<string> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Try to find existing row
+  const [existing] = await db.select().from(ediControlNumbers).where(
+    and(eq(ediControlNumbers.tradingPartnerId, tradingPartnerId), eq(ediControlNumbers.controlNumberType, controlNumberType))
+  );
+
+  let nextNumber: number;
+  if (existing) {
+    nextNumber = existing.lastUsedNumber + 1;
+    await db.update(ediControlNumbers)
+      .set({ lastUsedNumber: nextNumber })
+      .where(eq(ediControlNumbers.id, existing.id));
+  } else {
+    nextNumber = 1;
+    await db.insert(ediControlNumbers).values({
+      tradingPartnerId,
+      controlNumberType,
+      lastUsedNumber: nextNumber,
+    });
+  }
+
+  // ISA control numbers are 9 digits, ST are 4 digits, GS varies
+  const padLen = controlNumberType === "isa" ? 9 : controlNumberType === "st" ? 4 : 6;
+  return nextNumber.toString().padStart(padLen, "0");
+}
+
+// ============================================
+// EDI SETTINGS
+// ============================================
+
+export async function getEdiSettings(companyId?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (companyId) {
+    const [result] = await db.select().from(ediSettings).where(eq(ediSettings.companyId, companyId));
+    return result || null;
+  }
+  // Return first/default settings
+  const [result] = await db.select().from(ediSettings).limit(1);
+  return result || null;
+}
+
+export async function upsertEdiSettings(data: InsertEdiSettings) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = await getEdiSettings(data.companyId || undefined);
+  if (existing) {
+    await db.update(ediSettings).set(data).where(eq(ediSettings.id, existing.id));
+    return { id: existing.id };
+  }
+  const result = await db.insert(ediSettings).values(data);
+  return { id: result[0].insertId };
 }

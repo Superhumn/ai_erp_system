@@ -741,6 +741,13 @@ export async function processInboundEdi(
         // Update partner's last transaction timestamp
         await db.updateEdiTradingPartner(tradingPartnerId, { lastTransactionAt: new Date() });
 
+        // Auto-send 997 Functional Acknowledgment if enabled
+        try {
+          await sendAuto997(tradingPartnerId, envelope);
+        } catch (ackError: any) {
+          console.warn(`[EDI] Auto-997 failed for partner ${tradingPartnerId}: ${ackError.message}`);
+        }
+
         return { transactionId: txnResult.id, status: "validated", message: `Parsed 850 PO #${po.poNumber} with ${po.items.length} line items` };
       }
 
@@ -774,7 +781,7 @@ export async function processInboundEdi(
 /**
  * Convert an 850 EDI PO into an internal sales order
  */
-export async function convertEdi850ToOrder(transactionId: number): Promise<{ orderId: number }> {
+export async function convertEdi850ToOrder(transactionId: number): Promise<{ orderId: number; orderNumber: string }> {
   const txn = await db.getEdiTransactionWithItems(transactionId);
   if (!txn) throw new Error("EDI transaction not found");
   if (txn.transactionSetCode !== "850") throw new Error("Transaction is not an 850 PO");
@@ -789,45 +796,55 @@ export async function convertEdi850ToOrder(transactionId: number): Promise<{ ord
   const items = txn.items || [];
   const subtotal = items.reduce((sum, item) => sum + parseFloat(item.totalAmount?.toString() || "0"), 0);
 
-  // Create order
-  const orderResult = await db.createOrder({
+  const shippingAddress = JSON.stringify({
+    name: parsedPo.shipToName,
+    address: parsedPo.shipToAddress,
+    city: parsedPo.shipToCity,
+    state: parsedPo.shipToState,
+    zip: parsedPo.shipToZip,
+    code: parsedPo.shipToCode,
+  });
+
+  // Create a sales order (integrates with the full sales workflow)
+  const salesOrderResult = await db.createSalesOrder({
+    source: "api", // EDI-originated order (enum doesn't have "edi" yet)
     customerId: partner.customerId || undefined,
-    orderNumber: `EDI-${parsedPo.poNumber}`,
-    type: "sales",
     status: "confirmed",
-    orderDate: new Date(),
-    shippingAddress: [parsedPo.shipToName, parsedPo.shipToAddress, `${parsedPo.shipToCity || ""}, ${parsedPo.shipToState || ""} ${parsedPo.shipToZip || ""}`].filter(Boolean).join("\n"),
+    fulfillmentStatus: "unfulfilled",
+    paymentStatus: "pending",
     subtotal: subtotal.toFixed(2),
     totalAmount: subtotal.toFixed(2),
     taxAmount: "0",
     shippingAmount: "0",
     discountAmount: "0",
+    shippingAddress,
     notes: `EDI 850 PO from ${partner.name}. Original PO#: ${parsedPo.poNumber}`,
+    orderDate: new Date(),
   });
 
-  // Create order items
+  // Create sales order line items
   for (const item of items) {
-    await db.createOrderItem({
-      orderId: orderResult.id,
-      productId: item.productId || undefined,
+    await db.createSalesOrderLine({
+      salesOrderId: salesOrderResult.id,
+      productId: item.productId || 0,
       sku: item.vendorPartNumber || item.buyerPartNumber || "",
       name: item.description || `Item ${item.lineNumber}`,
       quantity: item.quantity.toString(),
+      fulfilledQuantity: "0",
       unitPrice: item.unitPrice?.toString() || "0",
-      totalAmount: item.totalAmount?.toString() || "0",
-      taxAmount: "0",
-      discountAmount: "0",
+      totalPrice: item.totalAmount?.toString() || "0",
+      unit: item.unitOfMeasure || "EA",
     });
   }
 
-  // Link transaction to order
+  // Link transaction to sales order
   await db.updateEdiTransaction(transactionId, {
-    orderId: orderResult.id,
+    orderId: salesOrderResult.id,
     status: "processed",
     processedAt: new Date(),
   });
 
-  return { orderId: orderResult.id };
+  return { orderId: salesOrderResult.id, orderNumber: salesOrderResult.orderNumber };
 }
 
 /**
@@ -837,18 +854,31 @@ export async function generateOutboundEdi(
   tradingPartnerId: number,
   transactionSetCode: string,
   sourceData: Edi855Acknowledgment | Edi810Invoice | Edi856ShipNotice,
-  controlNumber: string
+  controlNumber?: string
 ): Promise<{ transactionId: number; rawContent: string }> {
   const partner = await db.getEdiTradingPartnerById(tradingPartnerId);
   if (!partner) throw new Error("Trading partner not found");
 
+  // Load our company EDI settings
+  const settings = await db.getEdiSettings();
+
+  // Auto-generate control number if not provided
+  if (!controlNumber) {
+    controlNumber = await db.getNextControlNumber(tradingPartnerId, "isa");
+  }
+
+  // Use company settings for sender IDs, fall back to partner config for backwards compat
+  const ourIsaId = settings?.isaId || "OURCOMPANY";
+  const ourIsaQualifier = settings?.isaQualifier || "ZZ";
+  const ourGsId = settings?.gsApplicationCode || "OURAPP";
+
   const config: EdiEnvelopeConfig = {
-    senderId: partner.gsId, // Our ID from partner's perspective (we are the sender)
-    senderQualifier: partner.isaQualifier,
+    senderId: ourIsaId,
+    senderQualifier: ourIsaQualifier,
     receiverId: partner.isaId,
     receiverQualifier: partner.isaQualifier,
-    gsSenderId: partner.gsId,
-    gsReceiverId: partner.isaId,
+    gsSenderId: ourGsId,
+    gsReceiverId: partner.gsId,
     controlNumber,
     isTest: partner.testMode || false,
     version: "004010",
@@ -889,6 +919,75 @@ export async function generateOutboundEdi(
   await db.updateEdiTradingPartner(tradingPartnerId, { lastTransactionAt: new Date() });
 
   return { transactionId: txnResult.id, rawContent };
+}
+
+/**
+ * Auto-send a 997 Functional Acknowledgment back to the partner after receiving an inbound document.
+ * Checks EDI settings for autoSend997 flag. If transport is configured, delivers via SFTP/AS2.
+ */
+async function sendAuto997(
+  tradingPartnerId: number,
+  envelope: ParsedEdiEnvelope
+): Promise<void> {
+  const settings = await db.getEdiSettings();
+  if (settings && !settings.autoSend997) return;
+
+  const partner = await db.getEdiTradingPartnerById(tradingPartnerId);
+  if (!partner) return;
+
+  const controlNumber = await db.getNextControlNumber(tradingPartnerId, "isa");
+
+  const ourIsaId = settings?.isaId || "OURCOMPANY";
+  const ourIsaQualifier = settings?.isaQualifier || "ZZ";
+  const ourGsId = settings?.gsApplicationCode || "OURAPP";
+
+  const config: EdiEnvelopeConfig = {
+    senderId: ourIsaId,
+    senderQualifier: ourIsaQualifier,
+    receiverId: partner.isaId,
+    receiverQualifier: partner.isaQualifier,
+    gsSenderId: ourGsId,
+    gsReceiverId: partner.gsId,
+    controlNumber,
+    isTest: partner.testMode || false,
+    version: "004010",
+  };
+
+  const originalTxnSets = envelope.transactionSets.map(ts => ({
+    code: ts.transactionSetCode,
+    controlNumber: ts.controlNumber,
+    accepted: true,
+  }));
+
+  const rawContent = generate997(
+    { functionalId: envelope.gsSegment.functionalId || "PO", controlNumber: envelope.gsSegment.controlNumber || "1" },
+    originalTxnSets,
+    config
+  );
+
+  // Record the outbound 997
+  const txnResult = await db.createEdiTransaction({
+    tradingPartnerId,
+    transactionSetCode: "997",
+    direction: "outbound",
+    interchangeControlNumber: controlNumber,
+    groupControlNumber: controlNumber,
+    transactionSetControlNumber: controlNumber,
+    rawContent,
+    parsedData: JSON.stringify({ originalTxnSets }),
+    status: "processed",
+    processedAt: new Date(),
+  });
+
+  // Attempt transport delivery if available
+  try {
+    const { deliverOutbound } = await import("./ediTransportService");
+    await deliverOutbound(tradingPartnerId, rawContent, "997", controlNumber);
+    console.log(`[EDI] Auto-997 sent to partner ${partner.name} (txn ${txnResult.id})`);
+  } catch {
+    // Transport not available or delivery failed — 997 is still recorded for manual delivery
+    console.log(`[EDI] Auto-997 recorded for partner ${partner.name} (txn ${txnResult.id}), transport delivery skipped`);
+  }
 }
 
 /**

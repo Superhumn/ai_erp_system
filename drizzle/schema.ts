@@ -4677,3 +4677,33 @@ export const ediComplianceScorecards = mysqlTable("edi_compliance_scorecards", {
 
 export type EdiComplianceScorecard = typeof ediComplianceScorecards.$inferSelect;
 export type InsertEdiComplianceScorecard = typeof ediComplianceScorecards.$inferInsert;
+
+// EDI Control Numbers - sequential tracking per partner for ISA/GS/ST control numbers
+export const ediControlNumbers = mysqlTable("edi_control_numbers", {
+  id: int("id").autoincrement().primaryKey(),
+  tradingPartnerId: int("tradingPartnerId").notNull(),
+  controlNumberType: mysqlEnum("controlNumberType", ["isa", "gs", "st"]).notNull(),
+  lastUsedNumber: int("lastUsedNumber").default(0).notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EdiControlNumber = typeof ediControlNumbers.$inferSelect;
+export type InsertEdiControlNumber = typeof ediControlNumbers.$inferInsert;
+
+// EDI Settings - company-wide EDI configuration (our identifiers)
+export const ediSettings = mysqlTable("edi_settings", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  isaId: varchar("isaId", { length: 15 }).notNull(),
+  isaQualifier: varchar("isaQualifier", { length: 2 }).default("ZZ").notNull(),
+  gsApplicationCode: varchar("gsApplicationCode", { length: 15 }).notNull(),
+  companyName: varchar("companyName", { length: 255 }),
+  ackTimeoutMinutes: int("ackTimeoutMinutes").default(30),
+  autoSend997: boolean("autoSend997").default(true),
+  defaultTestMode: boolean("defaultTestMode").default(false),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EdiSettings = typeof ediSettings.$inferSelect;
+export type InsertEdiSettings = typeof ediSettings.$inferInsert;

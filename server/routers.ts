@@ -13662,6 +13662,40 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
     }),
 
+    // EDI Settings (company-wide config)
+    settings: router({
+      get: protectedProcedure.query(() => db.getEdiSettings()),
+      upsert: adminProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          isaId: z.string().min(1).max(15),
+          isaQualifier: z.string().max(2).optional(),
+          gsApplicationCode: z.string().min(1).max(15),
+          companyName: z.string().optional(),
+          ackTimeoutMinutes: z.number().optional(),
+          autoSend997: z.boolean().optional(),
+          defaultTestMode: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.upsertEdiSettings(input);
+          await createAuditLog(ctx.user.id, 'update', 'edi_settings', result.id, 'Updated EDI settings');
+          return result;
+        }),
+    }),
+
+    // Control Numbers
+    controlNumbers: router({
+      getNext: opsProcedure
+        .input(z.object({
+          tradingPartnerId: z.number(),
+          type: z.enum(["isa", "gs", "st"]),
+        }))
+        .mutation(async ({ input }) => {
+          const controlNumber = await db.getNextControlNumber(input.tradingPartnerId, input.type);
+          return { controlNumber };
+        }),
+    }),
+
     // Compliance Scorecards
     compliance: router({
       list: protectedProcedure

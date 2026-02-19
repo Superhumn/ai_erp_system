@@ -1,7 +1,11 @@
+import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   ArrowLeftRight,
   Building2,
@@ -16,8 +20,11 @@ import {
   ShoppingCart,
   FileOutput,
   Truck,
+  Settings,
+  Save,
 } from "lucide-react";
 import { Link } from "wouter";
+import { toast } from "sonner";
 
 const txnSetLabels: Record<string, string> = {
   "850": "Purchase Order",
@@ -43,6 +50,28 @@ export default function EDIDashboard() {
   const { data: stats, isLoading } = trpc.edi.dashboardStats.useQuery();
   const { data: recentTransactions } = trpc.edi.transactions.list.useQuery({ limit: 10 });
   const { data: partners } = trpc.edi.partners.list.useQuery({});
+  const { data: ediSettings, refetch: refetchSettings } = trpc.edi.settings.get.useQuery();
+  const [showSettings, setShowSettings] = useState(false);
+
+  const upsertSettings = trpc.edi.settings.upsert.useMutation({
+    onSuccess: () => {
+      toast.success("EDI settings saved");
+      refetchSettings();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const handleSaveSettings = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    upsertSettings.mutate({
+      isaId: fd.get("isaId") as string,
+      isaQualifier: (fd.get("isaQualifier") as string) || "ZZ",
+      gsApplicationCode: fd.get("gsApplicationCode") as string,
+      companyName: (fd.get("companyName") as string) || undefined,
+      autoSend997: fd.get("autoSend997") === "on",
+    });
+  };
 
   if (isLoading) {
     return (
@@ -244,6 +273,92 @@ export default function EDIDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* EDI Settings */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Settings className="h-5 w-5" />
+              <div>
+                <CardTitle>Company EDI Settings</CardTitle>
+                <CardDescription>Your company's EDI identifiers used for all outbound documents</CardDescription>
+              </div>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => setShowSettings(!showSettings)}>
+              {showSettings ? "Hide" : ediSettings ? "Edit" : "Configure"}
+            </Button>
+          </div>
+        </CardHeader>
+        {!showSettings && ediSettings && (
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div>
+                <span className="text-muted-foreground">ISA ID:</span>
+                <span className="ml-2 font-mono font-medium">{ediSettings.isaId}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">ISA Qualifier:</span>
+                <span className="ml-2 font-mono">{ediSettings.isaQualifier}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">GS App Code:</span>
+                <span className="ml-2 font-mono font-medium">{ediSettings.gsApplicationCode}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Auto-997:</span>
+                <Badge variant="outline" className={ediSettings.autoSend997 ? "bg-green-50 text-green-700 ml-2" : "bg-gray-50 text-gray-700 ml-2"}>
+                  {ediSettings.autoSend997 ? "Enabled" : "Disabled"}
+                </Badge>
+              </div>
+            </div>
+          </CardContent>
+        )}
+        {!showSettings && !ediSettings && (
+          <CardContent>
+            <p className="text-sm text-muted-foreground text-center py-2">
+              No EDI settings configured yet. Click "Configure" to set your company's EDI identifiers.
+            </p>
+          </CardContent>
+        )}
+        {showSettings && (
+          <CardContent>
+            <form onSubmit={handleSaveSettings} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="isaId">ISA Interchange ID</Label>
+                  <Input id="isaId" name="isaId" placeholder="Your ISA ID" maxLength={15} required defaultValue={ediSettings?.isaId || ""} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="isaQualifier">ISA Qualifier</Label>
+                  <Input id="isaQualifier" name="isaQualifier" placeholder="ZZ" maxLength={2} defaultValue={ediSettings?.isaQualifier || "ZZ"} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="gsApplicationCode">GS Application Code</Label>
+                  <Input id="gsApplicationCode" name="gsApplicationCode" placeholder="Your GS ID" maxLength={15} required defaultValue={ediSettings?.gsApplicationCode || ""} />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="companyName">Company Name (for reference)</Label>
+                  <Input id="companyName" name="companyName" placeholder="Your Company Name" defaultValue={ediSettings?.companyName || ""} />
+                </div>
+                <div className="flex items-center space-x-2 pt-6">
+                  <Switch id="autoSend997" name="autoSend997" defaultChecked={ediSettings?.autoSend997 ?? true} />
+                  <Label htmlFor="autoSend997">Auto-send 997 Functional Acknowledgments</Label>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => setShowSettings(false)}>Cancel</Button>
+                <Button type="submit" disabled={upsertSettings.isPending}>
+                  {upsertSettings.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+                  Save Settings
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        )}
+      </Card>
 
       {/* Recent Transactions */}
       <Card>
