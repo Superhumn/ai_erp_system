@@ -35,9 +35,6 @@ interface SyncResult {
   warnings: string[];
 }
 
-// Map of Drive folder IDs to data room folder IDs
-const folderMapping = new Map<string, number>();
-
 /**
  * List folders in Google Drive for the folder picker UI
  */
@@ -70,8 +67,8 @@ export async function syncGoogleDriveFolder(options: SyncOptions): Promise<SyncR
   let filesSkipped = 0;
   let foldersCreated = 0;
 
-  // Clear folder mapping for this sync
-  folderMapping.clear();
+  // Map of Drive folder IDs to data room folder IDs for this sync
+  const folderMapping = new Map<string, number>();
 
   try {
     // Get existing documents and folders in the data room
