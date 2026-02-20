@@ -7,9 +7,15 @@ import { defineConfig } from "vite";
 import { vitePluginManusRuntime } from "vite-plugin-manus-runtime";
 
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime()];
+export default defineConfig(({ command }) => {
+const plugins = [
+  react(),
+  tailwindcss(),
+  // Development-only plugins: JSX source locations and Manus runtime overlay
+  ...(command === "serve" ? [jsxLocPlugin(), vitePluginManusRuntime()] : []),
+];
 
-export default defineConfig({
+return {
   plugins,
   resolve: {
     alias: {
@@ -41,4 +47,5 @@ export default defineConfig({
       deny: ["**/.*"],
     },
   },
+};
 });
