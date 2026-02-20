@@ -857,6 +857,21 @@ While the system works completely standalone with email/password authentication,
 
 ---
 
+## Post-Deployment: How to Access Your App
+
+**Just deployed? Start here:**
+- 🎯 **[HOW TO ACCESS](./HOW_TO_ACCESS.md)** - Visual quick guide with diagrams
+- ⚡ **[Vercel Quick Start](./QUICK_START_VERCEL.md)** - Deploy in 5 minutes
+- ❓ **[Access FAQ](./ACCESS_FAQ.md)** - 29 common questions answered
+
+**Detailed guides:**
+- 📘 [Vercel Access Guide](./docs/VERCEL_ACCESS_GUIDE.md) - Complete troubleshooting
+- 📗 [Standalone Deployment](./docs/STANDALONE_DEPLOYMENT.md) - All platforms
+
+**TL;DR:** Visit `https://[your-project].vercel.app` → Click "Sign up" → First user = Admin
+
+---
+
 ## Integration Setup Guides
 
 Detailed setup documentation for each integration:
