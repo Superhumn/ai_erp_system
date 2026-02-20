@@ -1326,9 +1326,24 @@ export const appRouter = router({
     approve: opsProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
+        const po = await db.getPurchaseOrderById(input.id);
+        if (!po) throw new TRPCError({ code: 'NOT_FOUND', message: 'PO not found' });
+
         await db.updatePurchaseOrder(input.id, { status: 'sent', approvedBy: ctx.user.id, approvedAt: new Date() });
         await createAuditLog(ctx.user.id, 'approve', 'purchaseOrder', input.id);
-        return { success: true };
+
+        // Auto-create inbound shipment for tracking
+        const vendor = await db.getVendorById(po.vendorId);
+        const shipmentNumber = generateNumber('SHIP');
+        const shipment = await db.createShipment({
+          type: 'inbound',
+          purchaseOrderId: po.id,
+          shipmentNumber,
+          status: 'pending',
+          fromAddress: vendor?.address || undefined,
+        });
+
+        return { success: true, shipmentId: shipment.id };
       }),
     sendToSupplier: opsProcedure
       .input(z.object({
@@ -1348,18 +1363,23 @@ export const appRouter = router({
         const portalToken = nanoid(32);
         const portalLink = `${process.env.VITE_APP_URL || ''}/supplier-portal/${portalToken}`;
         
-        // Create shipment if requested
+        // Create shipment if requested (check if one doesn't already exist)
         let shipmentId: number | undefined;
         if (input.createShipment) {
-          const shipmentNumber = generateNumber('SHIP');
-          const shipment = await db.createShipment({
-            type: 'inbound',
-            purchaseOrderId: po.id,
-            shipmentNumber,
-            status: 'pending',
-            fromAddress: vendor.address || undefined,
-          });
-          shipmentId = shipment.id;
+          const existingShipment = await db.getShipmentByPurchaseOrderId(po.id);
+          if (existingShipment) {
+            shipmentId = existingShipment.id;
+          } else {
+            const shipmentNumber = generateNumber('SHIP');
+            const shipment = await db.createShipment({
+              type: 'inbound',
+              purchaseOrderId: po.id,
+              shipmentNumber,
+              status: 'pending',
+              fromAddress: vendor.address || undefined,
+            });
+            shipmentId = shipment.id;
+          }
         }
         
         // Create freight RFQ if requested
@@ -1463,12 +1483,23 @@ export const appRouter = router({
         id: z.number(),
         status: z.enum(['pending', 'in_transit', 'delivered', 'returned', 'cancelled']).optional(),
         trackingNumber: z.string().optional(),
+        carrier: z.string().optional(),
+        shipDate: z.date().optional(),
         deliveryDate: z.date().optional(),
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
         const [oldShipment] = await db.getShipments({ id } as any) || [];
+
+        // Auto-update status to in_transit when tracking number is added and status is pending
+        if (data.trackingNumber && !oldShipment?.trackingNumber && oldShipment?.status === 'pending' && !data.status) {
+          data.status = 'in_transit';
+          if (!data.shipDate) {
+            data.shipDate = new Date();
+          }
+        }
+
         await db.updateShipment(id, data);
         await createAuditLog(ctx.user.id, 'update', 'shipment', id);
         
