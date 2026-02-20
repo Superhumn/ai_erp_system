@@ -870,12 +870,33 @@ Detailed setup documentation for each integration:
 
 ## Deployment
 
+### Quick Start Options
+
+**Want to deploy in 5 minutes?**
+- **Vercel:** See [QUICK_START_VERCEL.md](./QUICK_START_VERCEL.md) for the fastest path
+- **Railway:** See detailed guide below
+
+**Need help accessing after deployment?**
+- [How to Access Your Vercel Deployment](./docs/VERCEL_ACCESS_GUIDE.md) - Complete guide with troubleshooting
+- Your app will be at `https://[your-project].vercel.app` or `https://[your-app].railway.app`
+- First visit redirects to `/login` - click "Sign up" to create admin account
+
 ### Railway (Recommended)
 
 1. **Build Command:** `pnpm run build`
 2. **Start Command:** `pnpm run start`
 3. Set all required environment variables in the Railway dashboard.
 4. Railway auto-detects configuration from `package.json`.
+5. **Access:** Visit `https://[your-app].railway.app`, click "Sign up", create first user (auto-admin)
+
+### Vercel (Popular Alternative)
+
+1. **Deploy:** Run `vercel` or connect GitHub repo
+2. **Environment Variables:** Set `DATABASE_URL` and `JWT_SECRET` in Vercel dashboard
+3. **Database Migrations:** Run `npm run db:push` locally after setting DATABASE_URL
+4. **Access:** Visit `https://[your-project].vercel.app`, sign up as first user (auto-admin)
+
+**Detailed instructions:** [docs/VERCEL_ACCESS_GUIDE.md](./docs/VERCEL_ACCESS_GUIDE.md)
 
 ### Production Build (Manual)
 

@@ -62,6 +62,31 @@ Railway is the easiest deployment option with automatic builds and deployments.
      NODE_ENV=production
      ```
 
+3. **Run Database Migrations:**
+   ```bash
+   # Set DATABASE_URL in local .env
+   echo "DATABASE_URL=your-mysql-connection-string" > .env
+   
+   # Run migrations to create all tables
+   npm run db:push
+   ```
+
+4. **Accessing Your Deployment:**
+   - Your app will be at: `https://[your-project].vercel.app`
+   - Visit the URL in your browser
+   - You'll be redirected to `/login`
+   - Click "Sign up" to create your first user
+   - **The first user automatically gets admin role**
+   - You're now logged in and ready to use the system!
+
+   **Need detailed help?** See the [Vercel Access Guide](./VERCEL_ACCESS_GUIDE.md) for:
+   - Finding your deployment URL
+   - Troubleshooting common issues
+   - Setting up custom domains
+   - Database configuration
+   
+   **Want the quick version?** See [QUICK_START_VERCEL.md](../QUICK_START_VERCEL.md)
+
 ### AWS/DigitalOcean/Heroku
 
 For traditional hosting platforms:
