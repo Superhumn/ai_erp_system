@@ -17,6 +17,7 @@ import {
   exceptionLog,
   supplierPerformance,
   workflowNotifications,
+  aiAgentTasks,
 } from "../drizzle/schema";
 import { eq, and, desc, asc, sql, gte, lte, or } from "drizzle-orm";
 
@@ -391,6 +392,98 @@ export const autonomousWorkflowRouter = router({
         return {
           success: results.every(r => r.success),
           processed: results.length,
+        };
+      }),
+
+    // Unified view: combines workflow approvals + AI agent tasks pending approval
+    unified: protectedProcedure
+      .input(z.object({
+        status: z.enum(["pending", "all"]).default("pending"),
+        limit: z.number().default(50),
+      }).optional())
+      .query(async ({ input, ctx }) => {
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+        const statusFilter = input?.status || "pending";
+        const limit = input?.limit || 50;
+
+        // Fetch workflow approvals
+        const workflowApprovals = await db
+          .select()
+          .from(workflowApprovalQueue)
+          .where(
+            statusFilter === "pending"
+              ? or(eq(workflowApprovalQueue.status, "pending"), eq(workflowApprovalQueue.status, "escalated"))
+              : undefined
+          )
+          .orderBy(desc(workflowApprovalQueue.requestedAt))
+          .limit(limit);
+
+        // Fetch AI agent tasks pending approval
+        const agentTasks = await db
+          .select()
+          .from(aiAgentTasks)
+          .where(
+            statusFilter === "pending"
+              ? eq(aiAgentTasks.status, "pending_approval")
+              : undefined
+          )
+          .orderBy(desc(aiAgentTasks.createdAt))
+          .limit(limit);
+
+        // Normalize into unified format
+        const unified = [
+          ...workflowApprovals.map(a => ({
+            id: a.id,
+            source: "workflow" as const,
+            type: a.approvalType,
+            title: a.title,
+            description: a.description,
+            monetaryValue: a.monetaryValue,
+            status: a.status,
+            confidence: a.aiConfidence,
+            recommendation: a.aiRecommendation,
+            riskLevel: a.riskAssessment,
+            entityType: a.relatedEntityType,
+            entityId: a.relatedEntityId,
+            createdAt: a.requestedAt,
+            escalationLevel: a.escalationLevel,
+          })),
+          ...agentTasks.map(t => {
+            const taskData = t.taskData ? JSON.parse(t.taskData) : {};
+            return {
+              id: t.id,
+              source: "ai_agent" as const,
+              type: t.taskType,
+              title: taskData.title || t.taskType,
+              description: taskData.description || t.aiReasoning,
+              monetaryValue: taskData.estimatedAmount || null,
+              status: t.status === "pending_approval" ? "pending" : t.status,
+              confidence: t.aiConfidence,
+              recommendation: t.aiReasoning,
+              riskLevel: null,
+              entityType: t.relatedEntityType,
+              entityId: t.relatedEntityId,
+              createdAt: t.createdAt,
+              escalationLevel: 0,
+            };
+          }),
+        ].sort((a, b) => {
+          // Sort by escalation level (highest first), then by date (newest first)
+          if ((a.escalationLevel || 0) !== (b.escalationLevel || 0)) {
+            return (b.escalationLevel || 0) - (a.escalationLevel || 0);
+          }
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        });
+
+        return {
+          items: unified,
+          counts: {
+            workflowApprovals: workflowApprovals.length,
+            agentTasks: agentTasks.length,
+            total: unified.length,
+          },
         };
       }),
   }),

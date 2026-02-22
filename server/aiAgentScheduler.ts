@@ -197,13 +197,44 @@ async function checkVendorFollowupCondition(condition: RuleCondition): Promise<b
 }
 
 async function checkPaymentReminderCondition(condition: RuleCondition): Promise<boolean> {
-  // Placeholder - check for overdue invoices
-  return false;
+  const db = await getDb();
+  if (!db) return false;
+
+  // Check for invoices past their due date that haven't been paid
+  const { invoices } = await import("../drizzle/schema");
+  const overdueInvoices = await db
+    .select()
+    .from(invoices)
+    .where(
+      and(
+        eq(invoices.status, "sent" as any),
+        lt(invoices.dueDate, new Date())
+      )
+    )
+    .limit(10);
+
+  return overdueInvoices.length > 0;
 }
 
 async function checkShipmentTrackingCondition(condition: RuleCondition): Promise<boolean> {
-  // Placeholder - check for shipments needing tracking updates
-  return false;
+  const db = await getDb();
+  if (!db) return false;
+
+  // Check for shipments in transit that haven't been updated recently
+  const { shipments } = await import("../drizzle/schema");
+  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+  const staleShipments = await db
+    .select()
+    .from(shipments)
+    .where(
+      and(
+        eq(shipments.status, "in_transit"),
+        lt(shipments.updatedAt, threeDaysAgo)
+      )
+    )
+    .limit(10);
+
+  return staleShipments.length > 0;
 }
 
 // ============================================
@@ -221,6 +252,10 @@ async function createTaskFromRule(rule: typeof aiAgentRules.$inferSelect): Promi
       return await createRFQTask(rule, actionConfig);
     case "vendor_followup":
       return await createVendorFollowupTask(rule, actionConfig);
+    case "payment_reminder":
+      return await createPaymentReminderTask(rule, actionConfig);
+    case "shipment_tracking":
+      return await createShipmentTrackingTask(rule, actionConfig);
     default:
       return null;
   }
@@ -481,6 +516,113 @@ Respond with JSON: { "subject": "email subject", "body": "email body text" }`,
     .from(aiAgentTasks)
     .where(eq(aiAgentTasks.id, task.id));
 
+  return createdTask;
+}
+
+async function createPaymentReminderTask(
+  rule: typeof aiAgentRules.$inferSelect,
+  actionConfig: RuleAction
+): Promise<typeof aiAgentTasks.$inferSelect | null> {
+  const db = await getDb();
+  if (!db) return null;
+
+  const { invoices, customers } = await import("../drizzle/schema");
+
+  // Find overdue invoices
+  const overdueInvoices = await db
+    .select({ invoice: invoices, customer: customers })
+    .from(invoices)
+    .leftJoin(customers, eq(invoices.customerId, customers.id))
+    .where(
+      and(
+        eq(invoices.status, "sent" as any),
+        lt(invoices.dueDate, new Date())
+      )
+    )
+    .limit(1);
+
+  if (overdueInvoices.length === 0) return null;
+
+  const { invoice, customer } = overdueInvoices[0];
+  const daysOverdue = Math.floor((Date.now() - (invoice.dueDate?.getTime() || Date.now())) / (1000 * 60 * 60 * 24));
+
+  const [task] = await db
+    .insert(aiAgentTasks)
+    .values({
+      taskType: "send_email",
+      status: "pending_approval",
+      priority: daysOverdue > 14 ? "high" : "medium",
+      taskData: JSON.stringify({
+        title: `Payment reminder for Invoice ${invoice.invoiceNumber}`,
+        description: `Invoice ${invoice.invoiceNumber} is ${daysOverdue} days overdue. Total: $${invoice.totalAmount}`,
+        invoiceId: invoice.id,
+        customerId: customer?.id,
+        customerEmail: customer?.email,
+        to: customer?.email,
+        subject: `Payment Reminder: Invoice ${invoice.invoiceNumber} - ${daysOverdue} Days Overdue`,
+        body: `Dear ${customer?.name || 'Customer'},\n\nThis is a friendly reminder that Invoice ${invoice.invoiceNumber} for $${invoice.totalAmount} was due on ${invoice.dueDate?.toLocaleDateString()}.\n\nPlease process this payment at your earliest convenience.\n\nBest regards`,
+      }),
+      aiReasoning: `Invoice ${invoice.invoiceNumber} is ${daysOverdue} days past due. Payment reminder recommended.`,
+      aiConfidence: "0.95",
+      relatedEntityType: "invoice",
+      relatedEntityId: invoice.id,
+      requiresApproval: true,
+    })
+    .$returningId();
+
+  const [createdTask] = await db.select().from(aiAgentTasks).where(eq(aiAgentTasks.id, task.id));
+  return createdTask;
+}
+
+async function createShipmentTrackingTask(
+  rule: typeof aiAgentRules.$inferSelect,
+  actionConfig: RuleAction
+): Promise<typeof aiAgentTasks.$inferSelect | null> {
+  const db = await getDb();
+  if (!db) return null;
+
+  const { shipments } = await import("../drizzle/schema");
+  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+
+  // Find stale in-transit shipments
+  const staleShipments = await db
+    .select()
+    .from(shipments)
+    .where(
+      and(
+        eq(shipments.status, "in_transit"),
+        lt(shipments.updatedAt, threeDaysAgo)
+      )
+    )
+    .limit(1);
+
+  if (staleShipments.length === 0) return null;
+
+  const shipment = staleShipments[0];
+  const daysSinceUpdate = Math.floor((Date.now() - shipment.updatedAt.getTime()) / (1000 * 60 * 60 * 24));
+
+  const [task] = await db
+    .insert(aiAgentTasks)
+    .values({
+      taskType: "send_email",
+      status: "pending_approval",
+      priority: daysSinceUpdate > 7 ? "high" : "medium",
+      taskData: JSON.stringify({
+        title: `Shipment tracking follow-up: ${shipment.shipmentNumber}`,
+        description: `Shipment ${shipment.shipmentNumber} (${shipment.carrier || 'Unknown carrier'}) has not been updated for ${daysSinceUpdate} days.`,
+        shipmentId: shipment.id,
+        trackingNumber: shipment.trackingNumber,
+        carrier: shipment.carrier,
+      }),
+      aiReasoning: `Shipment ${shipment.shipmentNumber} has been in transit for ${daysSinceUpdate} days without update. Follow-up recommended.`,
+      aiConfidence: "0.85",
+      relatedEntityType: "shipment",
+      relatedEntityId: shipment.id,
+      requiresApproval: true,
+    })
+    .$returningId();
+
+  const [createdTask] = await db.select().from(aiAgentTasks).where(eq(aiAgentTasks.id, task.id));
   return createdTask;
 }
 

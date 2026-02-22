@@ -2552,10 +2552,46 @@ Rank all quotes and identify the best option.`;
           })
           .where(eq(vendorRfqs.id, rfqId));
 
+        // Fix 5d: Create PO from awarded vendor quote
+        let createdPoId: number | null = null;
+        try {
+          const poNumber = `PO-${new Date().getFullYear().toString().slice(-2)}${(new Date().getMonth() + 1).toString().padStart(2, '0')}-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
+
+          const [newPo] = await db
+            .insert(purchaseOrders)
+            .values({
+              poNumber,
+              vendorId: bestQuote.vendorId,
+              status: "draft" as any,
+              totalAmount: bestQuoteTotal.toFixed(2),
+              notes: `Auto-generated from RFQ ${rfq.rfqNumber}, Quote #${bestQuote.id}`,
+            })
+            .$returningId();
+
+          createdPoId = newPo.id;
+
+          // Create PO line item from quote
+          await db.insert(purchaseOrderItems).values({
+            purchaseOrderId: newPo.id,
+            description: rfq.materialName || "Material from RFQ",
+            quantity: rfq.quantity || "1",
+            unitPrice: bestQuote.unitPrice || bestQuoteTotal.toFixed(2),
+            totalAmount: bestQuoteTotal.toFixed(2),
+          });
+
+          // Emit event so procurement workflow continues
+          await engine.emitEvent(
+            "po_created", "info", "workflow_processor", "purchase_order", newPo.id,
+            { poNumber, vendorId: bestQuote.vendorId, rfqId, quoteId: bestQuote.id, source: "vendor_quote_award" }
+          );
+        } catch (poErr) {
+          console.warn("[WorkflowProcessor] Failed to create PO from awarded quote:", poErr);
+        }
+
         approvalResult = {
           autoApproved: true,
           approvalId: null,
-          message: `Quote auto-approved. Total: $${bestQuoteTotal.toFixed(2)} is at or below threshold $${autoApproveThreshold}`,
+          message: `Quote auto-approved. Total: $${bestQuoteTotal.toFixed(2)} is at or below threshold $${autoApproveThreshold}${createdPoId ? `. PO created (ID: ${createdPoId})` : ''}`,
         };
       } else {
         // Request approval

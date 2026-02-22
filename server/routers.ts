@@ -12,6 +12,7 @@ import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
+import { getWorkflowEngine } from "./autonomousWorkflowEngine";
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
@@ -65,6 +66,48 @@ const vendorProcedure = protectedProcedure.use(({ ctx, next }) => {
   }
   return next({ ctx });
 });
+
+// Helper to check if a manual operation requires approval
+async function checkManualApprovalRequired(
+  entityType: string,
+  amount: number,
+  userRole: string
+): Promise<{ required: boolean; message?: string }> {
+  try {
+    const engine = await getWorkflowEngine();
+    const result = await engine.checkApprovalRequired(entityType, amount);
+    if (result.required && !result.autoApprove) {
+      // Admin and exec roles bypass approval
+      if (['admin', 'exec'].includes(userRole)) {
+        return { required: false };
+      }
+      return {
+        required: true,
+        message: `This operation requires approval (amount $${amount.toFixed(2)} exceeds threshold). Level ${result.level || 1} approval required by ${(result.roles || ['admin']).join(', ')}.`,
+      };
+    }
+    return { required: false };
+  } catch {
+    return { required: false }; // Fail open if engine unavailable
+  }
+}
+
+// Helper to emit supply chain events (non-blocking)
+async function emitSupplyChainEvent(
+  eventType: string,
+  severity: "info" | "warning" | "error" | "critical",
+  sourceSystem: string,
+  sourceEntityType: string,
+  sourceEntityId: number,
+  eventData: any
+) {
+  try {
+    const engine = await getWorkflowEngine();
+    await engine.emitEvent(eventType, severity, sourceSystem, sourceEntityType, sourceEntityId, eventData);
+  } catch (err) {
+    console.warn(`[EventEmit] Failed to emit ${eventType}:`, err);
+  }
+}
 
 // Helper to create audit log
 async function createAuditLog(userId: number, action: 'create' | 'update' | 'delete' | 'view' | 'export' | 'approve' | 'reject', entityType: string, entityId: number, entityName?: string, oldValues?: any, newValues?: any) {
@@ -538,6 +581,33 @@ export const appRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
+
+        // Check for significant price changes requiring approval
+        if (data.unitPrice) {
+          const existingProduct = await db.getProductById(id);
+          if (existingProduct?.unitPrice) {
+            const oldPrice = parseFloat(existingProduct.unitPrice);
+            const newPrice = parseFloat(data.unitPrice);
+            const changePct = oldPrice > 0 ? Math.abs((newPrice - oldPrice) / oldPrice * 100) : 0;
+
+            if (changePct > 10) {
+              const approval = await checkManualApprovalRequired('price_change', newPrice, ctx.user.role);
+              if (approval.required) {
+                throw new TRPCError({
+                  code: 'PRECONDITION_FAILED',
+                  message: approval.message || `Price change of ${changePct.toFixed(1)}% requires approval`,
+                });
+              }
+
+              // Emit price change event
+              await emitSupplyChainEvent(
+                'price_change', changePct > 25 ? 'warning' : 'info', 'router', 'product', id,
+                { oldPrice, newPrice, changePct, changedBy: ctx.user.id }
+              );
+            }
+          }
+        }
+
         await db.updateProduct(id, data);
         await createAuditLog(ctx.user.id, 'update', 'product', id);
         return { success: true };
@@ -1224,8 +1294,82 @@ export const appRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
+        const oldOrder = await db.getOrderById(id);
+
+        // Require approval for refunds and cancellations
+        if (data.status === 'refunded' || data.status === 'cancelled') {
+          const orderAmount = parseFloat(oldOrder?.totalAmount || '0');
+          if (orderAmount > 0) {
+            const approval = await checkManualApprovalRequired('payment', orderAmount, ctx.user.role);
+            if (approval.required) {
+              throw new TRPCError({
+                code: 'PRECONDITION_FAILED',
+                message: approval.message || `Order ${data.status === 'refunded' ? 'refund' : 'cancellation'} of $${orderAmount.toFixed(2)} requires approval`,
+              });
+            }
+          }
+        }
+
         await db.updateOrder(id, data);
         await createAuditLog(ctx.user.id, 'update', 'order', id);
+
+        // Emit supply chain events and cross-module transactions for status transitions
+        if (data.status && oldOrder?.status !== data.status) {
+          const eventMap: Record<string, string> = {
+            confirmed: 'order_confirmed',
+            shipped: 'order_shipped',
+            delivered: 'order_delivered',
+            cancelled: 'order_cancelled',
+          };
+          const eventType = eventMap[data.status];
+          if (eventType) {
+            await emitSupplyChainEvent(
+              eventType, 'info', 'router', 'order', id,
+              { previousStatus: oldOrder?.status, newStatus: data.status, updatedBy: ctx.user.id }
+            );
+          }
+
+          // Auto-generate customer invoice when order ships (Fix 5a: Sales -> Finance)
+          if (data.status === 'shipped' && oldOrder?.customerId && oldOrder?.totalAmount) {
+            try {
+              const invoiceNumber = generateNumber('INV');
+              const dueDate = new Date();
+              dueDate.setDate(dueDate.getDate() + 30); // Net 30
+
+              await db.createInvoice({
+                invoiceNumber,
+                customerId: oldOrder.customerId,
+                companyId: oldOrder.companyId,
+                type: 'standard',
+                status: 'draft',
+                issueDate: new Date(),
+                dueDate,
+                subtotal: oldOrder.totalAmount,
+                totalAmount: oldOrder.totalAmount,
+                taxAmount: '0',
+                notes: `Auto-generated from Order #${oldOrder.orderNumber} upon shipment`,
+              });
+
+              // Copy order items to invoice items
+              const orderWithItems = await db.getOrderWithItems(id);
+              if (orderWithItems?.items) {
+                for (const item of orderWithItems.items) {
+                  await db.createInvoiceItem({
+                    invoiceId: (await db.getInvoices({ customerId: oldOrder.customerId }))
+                      .find(inv => inv.invoiceNumber === invoiceNumber)?.id || 0,
+                    description: item.description || `Order Item`,
+                    quantity: item.quantity,
+                    unitPrice: item.unitPrice,
+                    totalAmount: item.totalAmount,
+                  });
+                }
+              }
+            } catch (err) {
+              console.warn('[CrossModule] Failed to auto-generate invoice from order:', err);
+            }
+          }
+        }
+
         return { success: true };
       }),
   }),
@@ -1266,15 +1410,50 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
         const [oldInventory] = await db.getInventory({ id } as any) || [];
+
+        // Check for large quantity adjustments requiring approval
+        if (data.quantity && oldInventory) {
+          const oldQty = parseFloat(oldInventory.quantity || '0');
+          const newQty = parseFloat(data.quantity);
+          const adjustmentQty = Math.abs(newQty - oldQty);
+          const product = await db.getProductById(oldInventory.productId);
+          const unitValue = parseFloat(product?.costPrice || product?.unitPrice || '0');
+          const adjustmentValue = adjustmentQty * unitValue;
+
+          // Require approval for large inventory adjustments (> $1000 value or > 50% change)
+          if (adjustmentValue > 1000 || (oldQty > 0 && adjustmentQty / oldQty > 0.5)) {
+            const approval = await checkManualApprovalRequired('inventory_transfer', adjustmentValue, ctx.user.role);
+            if (approval.required) {
+              throw new TRPCError({
+                code: 'PRECONDITION_FAILED',
+                message: approval.message || `Inventory adjustment of ${adjustmentQty} units ($${adjustmentValue.toFixed(2)} value) requires approval`,
+              });
+            }
+          }
+        }
+
         await db.updateInventory(id, data);
         await createAuditLog(ctx.user.id, 'update', 'inventory', id);
 
         // Check for low stock and create notification
         if (data.quantity && oldInventory) {
           const newQty = parseFloat(data.quantity);
+          const oldQty = parseFloat(oldInventory.quantity || '0');
           const reorderLevel = parseFloat(oldInventory.reorderLevel || '0');
 
+          // Emit inventory adjustment event
+          await emitSupplyChainEvent(
+            'inventory_adjustment', 'info', 'router', 'inventory', id,
+            { productId: oldInventory.productId, oldQuantity: oldQty, newQuantity: newQty, adjustedBy: ctx.user.id }
+          );
+
           if (newQty <= reorderLevel && newQty > 0) {
+            // Emit low stock event for automation
+            await emitSupplyChainEvent(
+              'inventory_low', 'warning', 'router', 'inventory', id,
+              { productId: oldInventory.productId, quantity: newQty, reorderLevel }
+            );
+
             const allUsers = await db.getAllUsers();
             const opsUsers = allUsers.filter(u => ['admin', 'ops', 'exec'].includes(u.role));
             const product = await db.getProductById(oldInventory.productId);
@@ -1289,6 +1468,13 @@ export const appRouter = router({
               link: `/operations/inventory`,
               metadata: { productId: oldInventory.productId, quantity: newQty, reorderLevel },
             }, opsUsers.map(u => u.id));
+          }
+
+          if (newQty <= 0) {
+            await emitSupplyChainEvent(
+              'inventory_critical', 'critical', 'router', 'inventory', id,
+              { productId: oldInventory.productId, quantity: newQty }
+            );
           }
         }
 
@@ -1727,15 +1913,55 @@ export const appRouter = router({
         await db.updatePurchaseOrder(id, data);
         await createAuditLog(ctx.user.id, 'update', 'purchaseOrder', id, oldPO?.poNumber, oldPO, data);
         
-        // Create notification for PO status changes
+        // Create notification and emit supply chain event for PO status changes
         if (data.status && oldPO?.status !== data.status) {
+          // Emit supply chain events
+          const poEventMap: Record<string, string> = {
+            sent: 'po_sent',
+            confirmed: 'po_confirmed',
+            partial: 'po_received',
+            received: 'po_received',
+            cancelled: 'po_discrepancy',
+          };
+          const poEventType = poEventMap[data.status];
+          if (poEventType) {
+            await emitSupplyChainEvent(
+              poEventType, 'info', 'router', 'purchase_order', id,
+              { poNumber: oldPO?.poNumber, previousStatus: oldPO?.status, newStatus: data.status, updatedBy: ctx.user.id }
+            );
+          }
+
+          // Fix 5c: Auto-receive inventory when PO is marked received
+          if (data.status === 'received' || data.status === 'partial') {
+            try {
+              const poWithItems = await db.getPurchaseOrderWithItems(id);
+              if (poWithItems?.items) {
+                for (const item of poWithItems.items) {
+                  // Update finished goods inventory if product linked
+                  if (item.productId) {
+                    const existingInv = await db.getInventory({ productId: item.productId });
+                    if (existingInv && existingInv.length > 0) {
+                      const currentQty = parseFloat(existingInv[0].quantity || '0');
+                      const receivedQty = parseFloat(item.quantity);
+                      await db.updateInventory(existingInv[0].id, {
+                        quantity: (currentQty + receivedQty).toString(),
+                      });
+                    }
+                  }
+                }
+              }
+            } catch (err) {
+              console.warn('[CrossModule] Failed to auto-receive inventory from PO:', err);
+            }
+          }
+
           const notificationType = data.status === 'received' ? 'po_received' as const :
             data.status === 'confirmed' ? 'po_approved' as const :
             data.status === 'partial' ? 'po_received' as const : 'system' as const;
-          
+
           const allUsers = await db.getAllUsers();
           const opsUsers = allUsers.filter(u => ['admin', 'ops', 'exec'].includes(u.role));
-          
+
           await db.notifyUsersOfEvent({
             type: notificationType,
             title: `PO ${oldPO?.poNumber} ${data.status}`,
@@ -1746,7 +1972,7 @@ export const appRouter = router({
             link: `/operations/purchase-orders/${id}`,
           }, opsUsers.map(u => u.id));
         }
-        
+
         return { success: true };
       }),
     approve: opsProcedure
@@ -6785,8 +7011,12 @@ Provide a brief status summary, any missing documents, and next steps.`;
       }),
     startProduction: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         await db.updateWorkOrder(input.id, { status: 'in_progress', actualStartDate: new Date() });
+        await emitSupplyChainEvent(
+          'production_started', 'info', 'router', 'work_order', input.id,
+          { startedBy: ctx.user?.id }
+        );
         return { success: true };
       }),
     completeProduction: protectedProcedure
@@ -6847,10 +7077,23 @@ Provide a brief status summary, any missing documents, and next steps.`;
           actualEndDate: new Date()
         });
         
+        // Emit production_completed supply chain event
+        await emitSupplyChainEvent(
+          'production_completed', yieldPercent < 90 ? 'warning' : 'info', 'router', 'work_order', input.id,
+          { workOrderNumber: workOrder.workOrderNumber, completedQuantity: completedQty, plannedQuantity: plannedQty, yieldPercent, bomId: workOrder.bomId }
+        );
+
+        if (yieldPercent < 85) {
+          await emitSupplyChainEvent(
+            'yield_variance', 'warning', 'router', 'work_order', input.id,
+            { workOrderNumber: workOrder.workOrderNumber, expectedYield: 100, actualYield: yieldPercent }
+          );
+        }
+
         // Create notification for work order completion
         const allUsers = await db.getAllUsers();
         const opsUsers = allUsers.filter(u => ['admin', 'ops', 'exec'].includes(u.role));
-        
+
         await db.notifyUsersOfEvent({
           type: 'work_order_completed',
           title: `Work Order ${workOrder.workOrderNumber} Completed`,
@@ -6861,7 +7104,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
           link: `/operations/work-orders`,
           metadata: { completedQuantity: completedQty, yieldPercent },
         }, opsUsers.map(u => u.id));
-        
+
         return { success: true };
       }),
     createFromText: opsProcedure
@@ -8298,7 +8541,7 @@ Ask if they received the original request and if they can provide a quote.`;
                     }
                   }
 
-                  await db.createSalesOrder({
+                  const newOrder = await db.createSalesOrder({
                     shopifyOrderId: order.id.toString(),
                     source: 'shopify',
                     status: order.fulfillment_status === 'fulfilled' ? 'delivered' :
@@ -8310,6 +8553,14 @@ Ask if they received the original request and if they can provide a quote.`;
                     notes: `Shopify Order: ${order.name}`,
                   });
                   totalImported++;
+
+                  // Emit order_created event for Shopify orders
+                  const orderStatus = order.financial_status === 'paid' ? 'confirmed' : 'pending';
+                  await emitSupplyChainEvent(
+                    orderStatus === 'confirmed' ? 'order_confirmed' : 'order_created',
+                    'info', 'shopify', 'sales_order', newOrder.id,
+                    { shopifyOrderId: order.id, orderName: order.name, totalAmount: order.total_price, source: 'shopify' }
+                  );
                 }
               }
 
@@ -9973,7 +10224,21 @@ Ask if they received the original request and if they can provide a quote.`;
             invitedBy: ctx.user.id,
           });
 
-          // TODO: Send invitation email
+          // Send invitation email
+          if (isEmailConfigured()) {
+            const dataRoom = await db.getDataRoomById(input.dataRoomId);
+            await sendEmail({
+              to: input.email,
+              subject: `You've been invited to a data room: ${dataRoom?.name || 'Data Room'}`,
+              html: formatEmailHtml(
+                `Data Room Invitation\n\n` +
+                `You have been invited to view "${dataRoom?.name || 'Data Room'}" with ${input.role} access.\n\n` +
+                `${input.message ? `Message: ${input.message}\n\n` : ''}` +
+                `Your invite code: ${inviteCode}\n\n` +
+                `Click the link below to access the data room.`
+              ),
+            });
+          }
 
           return { id, inviteCode };
         }),
@@ -10005,7 +10270,23 @@ Ask if they received the original request and if they can provide a quote.`;
       resend: protectedProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input }) => {
-          // TODO: Resend invitation email
+          // Resend invitation email
+          if (isEmailConfigured()) {
+            const invitation = await db.getDataRoomInvitationById(input.id);
+            if (invitation?.email) {
+              const dataRoom = await db.getDataRoomById(invitation.dataRoomId);
+              await sendEmail({
+                to: invitation.email,
+                subject: `Reminder: You've been invited to a data room: ${dataRoom?.name || 'Data Room'}`,
+                html: formatEmailHtml(
+                  `Data Room Invitation Reminder\n\n` +
+                  `You have been invited to view "${dataRoom?.name || 'Data Room'}" with ${invitation.role} access.\n\n` +
+                  `Your invite code: ${invitation.inviteCode}\n\n` +
+                  `Click the link below to access the data room.`
+                ),
+              });
+            }
+          }
           return { success: true };
         }),
     }),

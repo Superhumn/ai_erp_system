@@ -607,9 +607,8 @@ Always provide clear reasoning for your decision.`,
       .where(eq(workflowRuns.id, approval.runId));
 
     if (approved) {
-      // Resume workflow execution
-      // This would trigger continuation of the workflow from where it paused
-      // For now, we'll mark it as approved and let the scheduler pick it up
+      // Execute post-approval actions based on entity type
+      await this.executePostApprovalActions(approval, resolvedBy, notes);
     }
 
     // Send notification about resolution
@@ -619,10 +618,152 @@ Always provide clear reasoning for your decision.`,
       `${approved ? "Approved" : "Rejected"}: ${approval.title}`,
       `The approval request has been ${approved ? "approved" : "rejected"} by the reviewer.${notes ? ` Notes: ${notes}` : ""}`,
       [],
-      false
+      true
     );
 
     return { success: true, runResumed: approved };
+  }
+
+  /**
+   * Execute post-approval actions based on the approval type.
+   * Converts approved items into actual records (POs, payments, transfers, etc.)
+   */
+  private async executePostApprovalActions(
+    approval: any,
+    approvedBy: number,
+    notes?: string
+  ): Promise<void> {
+    const contextData = approval.contextData ? JSON.parse(approval.contextData) : {};
+
+    try {
+      switch (approval.approvalType) {
+        case "purchase_order": {
+          // Convert suggested PO to actual PO
+          if (approval.relatedEntityType === "suggested_purchase_order" && approval.relatedEntityId) {
+            await this.convertSuggestedPO(approval.relatedEntityId, approvedBy, contextData);
+          }
+          // Emit event so procurement workflow can continue
+          await this.emitEvent(
+            "po_created", "info", "approval_engine", "purchase_order",
+            approval.relatedEntityId || 0,
+            { approvedBy, approvalId: approval.id, source: "workflow_approval", ...contextData }
+          );
+          break;
+        }
+
+        case "vendor_selection":
+        case "vendor_quote": {
+          // Create PO from awarded vendor quote
+          if (approval.relatedEntityId) {
+            await this.emitEvent(
+              "quote_received", "info", "approval_engine", "vendor_quote",
+              approval.relatedEntityId,
+              { approvedBy, approvalId: approval.id, action: "create_po_from_quote", ...contextData }
+            );
+          }
+          break;
+        }
+
+        case "inventory_transfer": {
+          // Emit event so transfer workflow can execute
+          if (approval.relatedEntityId) {
+            await this.emitEvent(
+              "inventory_received", "info", "approval_engine", "inventory_transfer",
+              approval.relatedEntityId,
+              { approvedBy, approvalId: approval.id, action: "execute_transfer", ...contextData }
+            );
+          }
+          break;
+        }
+
+        case "payment": {
+          // Emit event so payment workflow can execute
+          if (approval.relatedEntityId) {
+            await this.emitEvent(
+              "payment_due", "info", "approval_engine", "payment",
+              approval.relatedEntityId,
+              { approvedBy, approvalId: approval.id, action: "execute_payment", ...contextData }
+            );
+          }
+          break;
+        }
+
+        case "work_order": {
+          if (approval.relatedEntityId) {
+            await this.emitEvent(
+              "work_order_created", "info", "approval_engine", "work_order",
+              approval.relatedEntityId,
+              { approvedBy, approvalId: approval.id, ...contextData }
+            );
+          }
+          break;
+        }
+
+        case "freight_booking": {
+          if (approval.relatedEntityId) {
+            await this.emitEvent(
+              "shipment_booked", "info", "approval_engine", "freight_booking",
+              approval.relatedEntityId,
+              { approvedBy, approvalId: approval.id, ...contextData }
+            );
+          }
+          break;
+        }
+
+        default:
+          console.log(`[WorkflowEngine] No post-approval action defined for type: ${approval.approvalType}`);
+      }
+    } catch (err) {
+      console.error(`[WorkflowEngine] Post-approval action failed for approval ${approval.id}:`, err);
+      // Record the failure but don't throw — the approval itself succeeded
+      await this.emitEvent(
+        "workflow_failed", "error", "approval_engine", approval.approvalType,
+        approval.relatedEntityId || 0,
+        { error: String(err), approvalId: approval.id }
+      );
+    }
+  }
+
+  /**
+   * Convert a suggested purchase order into an actual purchase order
+   */
+  private async convertSuggestedPO(
+    suggestedPoId: number,
+    approvedBy: number,
+    contextData: any
+  ): Promise<void> {
+    const { suggestedPurchaseOrders, purchaseOrders } = await import("../drizzle/schema");
+
+    const [suggestedPo] = await this.db
+      .select()
+      .from(suggestedPurchaseOrders)
+      .where(eq(suggestedPurchaseOrders.id, suggestedPoId));
+
+    if (!suggestedPo) return;
+
+    // Mark suggested PO as converted
+    await this.db
+      .update(suggestedPurchaseOrders)
+      .set({ status: "converted" as any })
+      .where(eq(suggestedPurchaseOrders.id, suggestedPoId));
+
+    // Create actual PO
+    const poNumber = `PO-${new Date().getFullYear().toString().slice(-2)}${(new Date().getMonth() + 1).toString().padStart(2, '0')}-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
+
+    const [newPo] = await this.db
+      .insert(purchaseOrders)
+      .values({
+        poNumber,
+        vendorId: suggestedPo.vendorId,
+        status: "draft" as any,
+        totalAmount: suggestedPo.estimatedTotal,
+        notes: `Auto-generated from suggested PO #${suggestedPoId}. Approved by user ${approvedBy}.`,
+        approvedBy,
+        approvedAt: new Date(),
+      })
+      .$returningId();
+
+    console.log(`[WorkflowEngine] Converted suggested PO ${suggestedPoId} to PO ${poNumber} (ID: ${newPo.id})`);
   }
 
   // ============================================
@@ -878,10 +1019,27 @@ Decide the best resolution action from: accept_variance, reject_and_reorder, esc
       actionLabel: actionUrl ? "View Details" : undefined,
     });
 
-    // TODO: Actually send email if configured
-    // if (sendEmailNotification) {
-    //   await sendEmail({ ... });
-    // }
+    // Send email notifications to users with matching roles
+    if (sendEmailNotification && targetRoles.length > 0) {
+      try {
+        const { users } = await import("../drizzle/schema");
+        const allUsers = await this.db.select().from(users);
+        const targetUsers = allUsers.filter(u => u.email && targetRoles.includes(u.role || ''));
+
+        for (const user of targetUsers) {
+          if (user.email) {
+            await sendEmail({
+              to: user.email,
+              subject: `[ERP Workflow] ${title}`,
+              html: `<h3>${title}</h3><p>${message}</p>${actionUrl ? `<p><a href="${actionUrl}">View Details</a></p>` : ''}`,
+              text: `${title}\n\n${message}${actionUrl ? `\n\nView: ${actionUrl}` : ''}`,
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("[WorkflowEngine] Failed to send email notifications:", err);
+      }
+    }
   }
 
   // ============================================

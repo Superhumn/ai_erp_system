@@ -96,6 +96,7 @@ import {
   InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
+import { sendEmail, isEmailConfigured } from './_core/email';
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -4787,10 +4788,22 @@ export async function notifyUsersOfEvent(
       inAppCount++;
     }
     
-    // Email notifications would be handled here with SendGrid
-    if (shouldEmail) {
-      emailCount++;
-      // TODO: Send email notification via SendGrid
+    // Send email notification via SendGrid
+    if (shouldEmail && isEmailConfigured()) {
+      try {
+        const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+        if (user?.email) {
+          await sendEmail({
+            to: user.email,
+            subject: `[ERP] ${event.title}`,
+            html: `<h3>${event.title}</h3><p>${event.message}</p>${event.link ? `<p><a href="${event.link}">View Details</a></p>` : ''}`,
+            text: `${event.title}\n\n${event.message}${event.link ? `\n\nView: ${event.link}` : ''}`,
+          });
+          emailCount++;
+        }
+      } catch (err) {
+        console.warn(`[Notifications] Failed to send email to user ${userId}:`, err);
+      }
     }
   }
   
@@ -5682,6 +5695,13 @@ export async function createDataRoomInvitation(data: InsertDataRoomInvitation) {
   if (!db) throw new Error("Database not available");
   const result = await db.insert(dataRoomInvitations).values(data);
   return { id: result[0].insertId };
+}
+
+export async function getDataRoomInvitationById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomInvitations).where(eq(dataRoomInvitations.id, id)).limit(1);
+  return result[0] || null;
 }
 
 export async function getDataRoomInvitations(dataRoomId: number) {
