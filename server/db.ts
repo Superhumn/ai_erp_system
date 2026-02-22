@@ -2270,6 +2270,127 @@ export async function updateInventoryQuantityById(
   });
 }
 
+// Batch update inventory quantities (for copacker quick count)
+export async function batchUpdateInventoryQuantities(
+  updates: Array<{ inventoryId: number; quantity: number; notes?: string }>,
+  userId: number
+) {
+  const db = await getDb();
+  if (!db) return { updated: 0, skipped: 0 };
+
+  let updated = 0;
+  let skipped = 0;
+
+  for (const update of updates) {
+    const existing = await db.select().from(inventory).where(eq(inventory.id, update.inventoryId)).limit(1);
+    if (!existing[0]) {
+      skipped++;
+      continue;
+    }
+
+    const oldQuantity = parseFloat(existing[0].quantity?.toString() || '0');
+    const newQuantity = update.quantity;
+
+    // Skip if quantity hasn't changed
+    if (oldQuantity === newQuantity) {
+      skipped++;
+      continue;
+    }
+
+    await db.update(inventory).set({
+      quantity: newQuantity.toString(),
+      updatedAt: new Date(),
+    }).where(eq(inventory.id, update.inventoryId));
+
+    await createAuditLog({
+      entityType: 'inventory',
+      entityId: update.inventoryId,
+      action: 'update',
+      userId,
+      oldValues: { quantity: oldQuantity },
+      newValues: { quantity: newQuantity, notes: update.notes || 'Quick count update' },
+    });
+
+    updated++;
+  }
+
+  return { updated, skipped };
+}
+
+// Import inventory from CSV data (SKU-based matching for copacker)
+export async function importInventoryFromCsv(
+  warehouseId: number,
+  rows: Array<{ sku: string; quantity: number; notes?: string }>,
+  userId: number
+) {
+  const db = await getDb();
+  if (!db) return { updated: 0, created: 0, notFound: [] as string[] };
+
+  let updated = 0;
+  let created = 0;
+  const notFound: string[] = [];
+
+  for (const row of rows) {
+    // Find product by SKU
+    const product = await db.select().from(products)
+      .where(eq(products.sku, row.sku))
+      .limit(1);
+
+    if (!product[0]) {
+      notFound.push(row.sku);
+      continue;
+    }
+
+    // Find existing inventory for this product at this warehouse
+    const existing = await db.select().from(inventory)
+      .where(and(
+        eq(inventory.productId, product[0].id),
+        eq(inventory.warehouseId, warehouseId)
+      ))
+      .limit(1);
+
+    if (existing[0]) {
+      const oldQuantity = parseFloat(existing[0].quantity?.toString() || '0');
+      await db.update(inventory).set({
+        quantity: row.quantity.toString(),
+        updatedAt: new Date(),
+      }).where(eq(inventory.id, existing[0].id));
+
+      await createAuditLog({
+        entityType: 'inventory',
+        entityId: existing[0].id,
+        action: 'update',
+        userId,
+        oldValues: { quantity: oldQuantity },
+        newValues: { quantity: row.quantity, notes: row.notes || 'CSV import' },
+      });
+
+      updated++;
+    } else {
+      // Create new inventory record
+      const result = await db.insert(inventory).values({
+        productId: product[0].id,
+        warehouseId,
+        quantity: row.quantity.toString(),
+        reservedQuantity: '0',
+        reorderLevel: '0',
+      });
+
+      await createAuditLog({
+        entityType: 'inventory',
+        entityId: result[0].insertId,
+        action: 'create',
+        userId,
+        newValues: { quantity: row.quantity, sku: row.sku, notes: row.notes || 'CSV import' },
+      });
+
+      created++;
+    }
+  }
+
+  return { updated, created, notFound };
+}
+
 
 // ============================================
 // BILL OF MATERIALS (BOM) FUNCTIONS

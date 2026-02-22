@@ -1,42 +1,76 @@
-import { useState } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { Package, Truck, Upload, Warehouse, Edit2, Save, X } from "lucide-react";
+import { Package, Truck, Upload, Warehouse, Save, ClipboardPaste, Download, FileSpreadsheet, CheckCircle, AlertCircle } from "lucide-react";
 
 export default function CopackerPortal() {
   const { user } = useAuth();
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editQuantity, setEditQuantity] = useState<string>("");
-  const [editNotes, setEditNotes] = useState<string>("");
+  const [quantities, setQuantities] = useState<Record<number, string>>({});
+  const [changedIds, setChangedIds] = useState<Set<number>>(new Set());
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [csvUploadOpen, setCsvUploadOpen] = useState(false);
   const [selectedShipmentId, setSelectedShipmentId] = useState<number | null>(null);
-  
+  const [csvPreview, setCsvPreview] = useState<Array<{ sku: string; quantity: number; name?: string }>>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   // Queries
   const { data: warehouse } = trpc.copackerPortal.getWarehouse.useQuery();
   const { data: inventory, isLoading: loadingInventory, refetch: refetchInventory } = trpc.copackerPortal.getInventory.useQuery();
   const { data: shipments, isLoading: loadingShipments } = trpc.copackerPortal.getShipments.useQuery();
-  
+
+  // Initialize quantities from inventory data
+  useEffect(() => {
+    if (inventory && Object.keys(quantities).length === 0) {
+      const initial: Record<number, string> = {};
+      inventory.forEach((item: any) => {
+        initial[item.inventory.id] = parseFloat(item.inventory.quantity || "0").toString();
+      });
+      setQuantities(initial);
+    }
+  }, [inventory]);
+
   // Mutations
-  const updateInventory = trpc.copackerPortal.updateInventory.useMutation({
-    onSuccess: () => {
-      toast.success("Inventory updated");
-      setEditingId(null);
+  const batchUpdate = trpc.copackerPortal.batchUpdateInventory.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Inventory updated: ${data.updated} items changed, ${data.skipped} unchanged`);
+      setChangedIds(new Set());
       refetchInventory();
     },
     onError: (error) => {
       toast.error("Failed to update inventory", { description: error.message });
     },
   });
-  
+
+  const csvImport = trpc.copackerPortal.importCsv.useMutation({
+    onSuccess: (data) => {
+      const parts = [];
+      if (data.updated > 0) parts.push(`${data.updated} updated`);
+      if (data.created > 0) parts.push(`${data.created} created`);
+      if (data.notFound.length > 0) parts.push(`${data.notFound.length} SKUs not found`);
+      toast.success(`CSV import complete: ${parts.join(', ')}`);
+      if (data.notFound.length > 0) {
+        toast.warning(`SKUs not found: ${data.notFound.join(', ')}`);
+      }
+      setCsvUploadOpen(false);
+      setCsvPreview([]);
+      refetchInventory();
+      // Reset quantities so they re-initialize from fresh data
+      setQuantities({});
+    },
+    onError: (error) => {
+      toast.error("CSV import failed", { description: error.message });
+    },
+  });
+
   const uploadDocument = trpc.copackerPortal.uploadShipmentDocument.useMutation({
     onSuccess: () => {
       toast.success("Document uploaded");
@@ -46,31 +80,141 @@ export default function CopackerPortal() {
       toast.error("Failed to upload document", { description: error.message });
     },
   });
-  
-  const startEdit = (item: any) => {
-    setEditingId(item.inventory.id);
-    setEditQuantity(item.inventory.quantity?.toString() || "0");
-    setEditNotes("");
+
+  const handleQuantityChange = useCallback((inventoryId: number, value: string) => {
+    setQuantities(prev => ({ ...prev, [inventoryId]: value }));
+    setChangedIds(prev => new Set(prev).add(inventoryId));
+  }, []);
+
+  const submitQuickCount = () => {
+    if (changedIds.size === 0) {
+      toast.info("No changes to submit");
+      return;
+    }
+
+    const items = Array.from(changedIds).map(id => ({
+      inventoryId: id,
+      quantity: parseFloat(quantities[id] || "0") || 0,
+      notes: "Quick count",
+    }));
+
+    batchUpdate.mutate({ items });
   };
-  
-  const cancelEdit = () => {
-    setEditingId(null);
-    setEditQuantity("");
-    setEditNotes("");
+
+  const handleCsvFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const text = evt.target?.result as string;
+      parseCsvText(text);
+    };
+    reader.readAsText(file);
   };
-  
-  const saveEdit = (inventoryId: number) => {
-    updateInventory.mutate({
-      inventoryId,
-      quantity: parseFloat(editQuantity) || 0,
-      notes: editNotes || undefined,
+
+  const parseCsvText = (text: string) => {
+    const lines = text.trim().split('\n');
+    if (lines.length < 2) {
+      toast.error("CSV must have a header row and at least one data row");
+      return;
+    }
+
+    // Parse header to find SKU and Quantity columns
+    const header = lines[0].toLowerCase().split(',').map(h => h.trim().replace(/"/g, ''));
+    const skuCol = header.findIndex(h => h === 'sku' || h === 'item' || h === 'product_sku' || h === 'item_sku');
+    const qtyCol = header.findIndex(h => h === 'quantity' || h === 'qty' || h === 'count' || h === 'on_hand' || h === 'onhand');
+
+    if (skuCol === -1 || qtyCol === -1) {
+      toast.error("CSV must have 'SKU' and 'Quantity' columns");
+      return;
+    }
+
+    const rows: Array<{ sku: string; quantity: number }> = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(',').map(c => c.trim().replace(/"/g, ''));
+      const sku = cols[skuCol];
+      const qty = parseFloat(cols[qtyCol]);
+
+      if (sku && !isNaN(qty)) {
+        rows.push({ sku, quantity: qty });
+      }
+    }
+
+    if (rows.length === 0) {
+      toast.error("No valid rows found in CSV");
+      return;
+    }
+
+    setCsvPreview(rows);
+    setCsvUploadOpen(true);
+  };
+
+  const handlePasteFromClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text.trim()) {
+        toast.error("Clipboard is empty");
+        return;
+      }
+
+      // Handle tab-separated (from Excel/Sheets) or comma-separated
+      const delimiter = text.includes('\t') ? '\t' : ',';
+      const lines = text.trim().split('\n');
+
+      const rows: Array<{ sku: string; quantity: number }> = [];
+      for (const line of lines) {
+        const cols = line.split(delimiter).map(c => c.trim().replace(/"/g, ''));
+        if (cols.length >= 2) {
+          const sku = cols[0];
+          const qty = parseFloat(cols[1]);
+          if (sku && !isNaN(qty) && sku.toLowerCase() !== 'sku') {
+            rows.push({ sku, quantity: qty });
+          }
+        }
+      }
+
+      if (rows.length === 0) {
+        toast.error("No valid data found. Paste should have SKU and Quantity columns.");
+        return;
+      }
+
+      setCsvPreview(rows);
+      setCsvUploadOpen(true);
+    } catch {
+      toast.error("Could not read clipboard. Try uploading a CSV file instead.");
+    }
+  };
+
+  const submitCsvImport = () => {
+    csvImport.mutate({
+      rows: csvPreview.map(r => ({
+        sku: r.sku,
+        quantity: r.quantity,
+      })),
     });
   };
-  
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+
+  const downloadTemplate = () => {
+    const headers = "SKU,Quantity,Notes";
+    const rows = inventory?.map((item: any) =>
+      `${item.product?.sku || ""},${parseFloat(item.inventory.quantity || "0")},`
+    ).join('\n') || '';
+    const csv = `${headers}\n${rows}`;
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `inventory-count-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleShipmentFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !selectedShipmentId) return;
-    
+
     const reader = new FileReader();
     reader.onload = () => {
       const base64 = (reader.result as string).split(",")[1];
@@ -85,260 +229,348 @@ export default function CopackerPortal() {
     reader.readAsDataURL(file);
   };
 
-  // Check if user has copacker access
   if (user?.role !== "copacker" && user?.role !== "admin" && user?.role !== "ops") {
     return (
       <div className="p-6">
-          <Card>
-            <CardContent className="py-12 text-center">
-              <p className="text-muted-foreground">
-                You don't have access to the Copacker Portal.
-              </p>
-            </CardContent>
-          </Card>
-        </div>
+        <Card>
+          <CardContent className="py-12 text-center">
+            <p className="text-muted-foreground">
+              You don't have access to the Copacker Portal.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
+  const changeCount = changedIds.size;
+
   return (
     <div className="p-6 space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">Copacker Portal</h1>
-            <p className="text-muted-foreground">
-              Manage inventory and shipment documents for your facility
-            </p>
-          </div>
-          {warehouse && (
-            <Card className="px-4 py-2">
-              <div className="flex items-center gap-2">
-                <Warehouse className="h-4 w-4 text-muted-foreground" />
-                <span className="font-medium">{warehouse.name}</span>
-                <Badge variant="outline">{warehouse.type}</Badge>
-              </div>
-            </Card>
-          )}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Copacker Portal</h1>
+          <p className="text-muted-foreground">
+            Update inventory counts and manage shipment documents
+          </p>
         </div>
-        
-        <Tabs defaultValue="inventory">
-          <TabsList>
-            <TabsTrigger value="inventory">
-              <Package className="h-4 w-4 mr-2" />
-              Inventory
-            </TabsTrigger>
-            <TabsTrigger value="shipments">
-              <Truck className="h-4 w-4 mr-2" />
-              Shipments
-            </TabsTrigger>
-          </TabsList>
-          
-          <TabsContent value="inventory" className="mt-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Inventory at Your Facility</CardTitle>
-                <CardDescription>
-                  Update stock quantities as products are received or shipped
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {loadingInventory ? (
-                  <div className="text-center py-8 text-muted-foreground">Loading...</div>
-                ) : !inventory?.length ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    No inventory items found for your facility
-                  </div>
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Product</TableHead>
-                        <TableHead>SKU</TableHead>
-                        <TableHead>Current Quantity</TableHead>
-                        <TableHead>Unit</TableHead>
-                        <TableHead>Last Updated</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {inventory?.map((item: any) => (
-                        <TableRow key={item.inventory.id}>
+        {warehouse && (
+          <Card className="px-4 py-2">
+            <div className="flex items-center gap-2">
+              <Warehouse className="h-4 w-4 text-muted-foreground" />
+              <span className="font-medium">{warehouse.name}</span>
+              <Badge variant="outline">{warehouse.type}</Badge>
+            </div>
+          </Card>
+        )}
+      </div>
+
+      <Tabs defaultValue="quick-count">
+        <TabsList>
+          <TabsTrigger value="quick-count">
+            <Package className="h-4 w-4 mr-2" />
+            Quick Count
+          </TabsTrigger>
+          <TabsTrigger value="shipments">
+            <Truck className="h-4 w-4 mr-2" />
+            Shipments
+          </TabsTrigger>
+        </TabsList>
+
+        {/* Quick Count Tab - All items editable at once */}
+        <TabsContent value="quick-count" className="mt-4 space-y-4">
+          {/* Action bar */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={handlePasteFromClipboard}>
+                <ClipboardPaste className="h-4 w-4 mr-2" />
+                Paste from Spreadsheet
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
+                <Upload className="h-4 w-4 mr-2" />
+                Upload CSV
+              </Button>
+              <Button variant="outline" size="sm" onClick={downloadTemplate}>
+                <Download className="h-4 w-4 mr-2" />
+                Download Template
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.txt"
+                className="hidden"
+                onChange={handleCsvFile}
+              />
+            </div>
+
+            <Button
+              onClick={submitQuickCount}
+              disabled={changeCount === 0 || batchUpdate.isPending}
+              className="min-w-[160px]"
+            >
+              <Save className="h-4 w-4 mr-2" />
+              {batchUpdate.isPending ? "Saving..." : `Submit Count${changeCount > 0 ? ` (${changeCount})` : ''}`}
+            </Button>
+          </div>
+
+          {/* Quick count table */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg">Inventory Count</CardTitle>
+              <CardDescription>
+                Enter current quantities for each item, then click Submit Count
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loadingInventory ? (
+                <div className="text-center py-8 text-muted-foreground">Loading...</div>
+              ) : !inventory?.length ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Package className="h-12 w-12 mx-auto mb-4" />
+                  <p>No inventory items found for your facility</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[40%]">Product</TableHead>
+                      <TableHead>SKU</TableHead>
+                      <TableHead className="w-[140px]">Quantity</TableHead>
+                      <TableHead>Unit</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {inventory?.map((item: any) => {
+                      const id = item.inventory.id;
+                      const currentValue = quantities[id] ?? parseFloat(item.inventory.quantity || "0").toString();
+                      const originalValue = parseFloat(item.inventory.quantity || "0");
+                      const hasChanged = changedIds.has(id);
+                      const newValue = parseFloat(currentValue) || 0;
+                      const diff = newValue - originalValue;
+
+                      return (
+                        <TableRow
+                          key={id}
+                          className={hasChanged ? "bg-blue-50/50" : undefined}
+                        >
                           <TableCell className="font-medium">
                             {item.product?.name || "Unknown Product"}
                           </TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {item.product?.sku || "—"}
+                          <TableCell className="text-muted-foreground font-mono text-sm">
+                            {item.product?.sku || "--"}
                           </TableCell>
                           <TableCell>
-                            {editingId === item.inventory.id ? (
-                              <div className="flex items-center gap-2">
-                                <Input
-                                  type="number"
-                                  value={editQuantity}
-                                  onChange={(e) => setEditQuantity(e.target.value)}
-                                  className="w-24"
-                                />
-                                <Input
-                                  placeholder="Notes (optional)"
-                                  value={editNotes}
-                                  onChange={(e) => setEditNotes(e.target.value)}
-                                  className="w-40"
-                                />
-                              </div>
+                            <Input
+                              type="number"
+                              min="0"
+                              value={currentValue}
+                              onChange={(e) => handleQuantityChange(id, e.target.value)}
+                              className={`w-[120px] font-mono ${hasChanged ? 'border-blue-400 bg-blue-50' : ''}`}
+                            />
+                          </TableCell>
+                          <TableCell className="text-muted-foreground text-sm">
+                            {item.product?.unit || "units"}
+                          </TableCell>
+                          <TableCell>
+                            {hasChanged ? (
+                              <Badge
+                                variant="outline"
+                                className={diff > 0
+                                  ? "bg-green-50 text-green-700 border-green-300"
+                                  : diff < 0
+                                    ? "bg-red-50 text-red-700 border-red-300"
+                                    : "bg-gray-50 text-gray-600 border-gray-300"
+                                }
+                              >
+                                {diff > 0 ? `+${diff}` : diff === 0 ? 'no change' : diff}
+                              </Badge>
                             ) : (
-                              <span className="font-mono">
-                                {parseFloat(item.inventory.quantity || "0").toLocaleString()}
+                              <span className="text-xs text-muted-foreground">
+                                {item.inventory.updatedAt
+                                  ? new Date(item.inventory.updatedAt).toLocaleDateString()
+                                  : ""}
                               </span>
                             )}
                           </TableCell>
-                          <TableCell>{item.product?.unit || "units"}</TableCell>
-                          <TableCell className="text-muted-foreground text-sm">
-                            {item.inventory.updatedAt 
-                              ? new Date(item.inventory.updatedAt).toLocaleDateString()
-                              : "—"}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {editingId === item.inventory.id ? (
-                              <div className="flex justify-end gap-2">
-                                <Button
-                                  size="sm"
-                                  onClick={() => saveEdit(item.inventory.id)}
-                                  disabled={updateInventory.isPending}
-                                >
-                                  <Save className="h-4 w-4 mr-1" />
-                                  Save
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={cancelEdit}
-                                >
-                                  <X className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            ) : (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => startEdit(item)}
-                              >
-                                <Edit2 className="h-4 w-4 mr-1" />
-                                Update
-                              </Button>
-                            )}
-                          </TableCell>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-          
-          <TabsContent value="shipments" className="mt-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Shipments</CardTitle>
-                <CardDescription>
-                  View shipments and upload required documents
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {loadingShipments ? (
-                  <div className="text-center py-8 text-muted-foreground">Loading...</div>
-                ) : !shipments?.length ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    No shipments found
-                  </div>
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Shipment #</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead>Carrier</TableHead>
-                        <TableHead>Tracking</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Ship Date</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Shipments Tab */}
+        <TabsContent value="shipments" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Shipments</CardTitle>
+              <CardDescription>
+                View shipments and upload required documents
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loadingShipments ? (
+                <div className="text-center py-8 text-muted-foreground">Loading...</div>
+              ) : !shipments?.length ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No shipments found
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Shipment #</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Carrier</TableHead>
+                      <TableHead>Tracking</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Ship Date</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {shipments?.map((shipment: any) => (
+                      <TableRow key={shipment.id}>
+                        <TableCell className="font-medium">
+                          {shipment.shipmentNumber}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={shipment.type === "inbound" ? "default" : "secondary"}>
+                            {shipment.type}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{shipment.carrier || "--"}</TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {shipment.trackingNumber || "--"}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{shipment.status}</Badge>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground text-sm">
+                          {shipment.shipDate
+                            ? new Date(shipment.shipDate).toLocaleDateString()
+                            : "--"}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setSelectedShipmentId(shipment.id);
+                              setUploadOpen(true);
+                            }}
+                          >
+                            <Upload className="h-4 w-4 mr-1" />
+                            Upload Doc
+                          </Button>
+                        </TableCell>
                       </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {shipments?.map((shipment: any) => (
-                        <TableRow key={shipment.id}>
-                          <TableCell className="font-medium">
-                            {shipment.shipmentNumber}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={shipment.type === "inbound" ? "default" : "secondary"}>
-                              {shipment.type}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>{shipment.carrier || "—"}</TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {shipment.trackingNumber || "—"}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{shipment.status}</Badge>
-                          </TableCell>
-                          <TableCell className="text-muted-foreground text-sm">
-                            {shipment.shipDate 
-                              ? new Date(shipment.shipDate).toLocaleDateString()
-                              : "—"}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => {
-                                setSelectedShipmentId(shipment.id);
-                                setUploadOpen(true);
-                              }}
-                            >
-                              <Upload className="h-4 w-4 mr-1" />
-                              Upload Doc
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-        
-        {/* Upload Document Dialog */}
-        <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Upload Shipment Document</DialogTitle>
-              <DialogDescription>
-                Upload a document for this shipment (BOL, packing list, etc.)
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="file">Select File</Label>
-                <Input
-                  id="file"
-                  type="file"
-                  onChange={handleFileUpload}
-                  accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
-                />
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Supported formats: PDF, Word, Excel, Images
-              </p>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* Upload Shipment Document Dialog */}
+      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Upload Shipment Document</DialogTitle>
+            <DialogDescription>
+              Upload a document for this shipment (BOL, packing list, etc.)
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="shipment-file">Select File</Label>
+              <Input
+                id="shipment-file"
+                type="file"
+                onChange={handleShipmentFileUpload}
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+              />
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setUploadOpen(false)}>
-                Cancel
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
+            <p className="text-xs text-muted-foreground">
+              Supported formats: PDF, Word, Excel, Images
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUploadOpen(false)}>
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* CSV Import Preview Dialog */}
+      <Dialog open={csvUploadOpen} onOpenChange={setCsvUploadOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileSpreadsheet className="h-5 w-5" />
+              Import Inventory from CSV
+            </DialogTitle>
+            <DialogDescription>
+              Review the data below before importing. {csvPreview.length} items found.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[400px] overflow-auto border rounded-lg">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>SKU</TableHead>
+                  <TableHead>Quantity</TableHead>
+                  <TableHead>Match</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {csvPreview.map((row, idx) => {
+                  const matchedItem = inventory?.find(
+                    (item: any) => item.product?.sku === row.sku
+                  );
+                  return (
+                    <TableRow key={idx}>
+                      <TableCell className="font-mono text-sm">{row.sku}</TableCell>
+                      <TableCell className="font-mono">{row.quantity}</TableCell>
+                      <TableCell>
+                        {matchedItem ? (
+                          <span className="flex items-center gap-1 text-green-600 text-sm">
+                            <CheckCircle className="h-3 w-3" />
+                            {matchedItem.product?.name}
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1 text-amber-600 text-sm">
+                            <AlertCircle className="h-3 w-3" />
+                            No match
+                          </span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => { setCsvUploadOpen(false); setCsvPreview([]); }}>
+              Cancel
+            </Button>
+            <Button
+              onClick={submitCsvImport}
+              disabled={csvImport.isPending}
+            >
+              {csvImport.isPending ? "Importing..." : `Import ${csvPreview.length} Items`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }

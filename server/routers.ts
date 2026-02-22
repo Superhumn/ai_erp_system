@@ -4867,8 +4867,78 @@ Provide a brief status summary, any missing documents, and next steps.`;
         });
 
         await createAuditLog(ctx.user.id, 'create', 'document', result.id, input.name);
-        
+
         return { id: result.id, url };
+      }),
+
+    // Batch update inventory (quick count - update all items at once)
+    batchUpdateInventory: copackerProcedure
+      .input(z.object({
+        items: z.array(z.object({
+          inventoryId: z.number(),
+          quantity: z.number().min(0),
+          notes: z.string().optional(),
+        })),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Verify copacker has access to all items
+        if (ctx.user.role === 'copacker' && ctx.user.linkedWarehouseId) {
+          const inventoryItems = await db.getInventoryByWarehouse(ctx.user.linkedWarehouseId);
+          const validIds = new Set(inventoryItems.map((item: any) => item.inventory.id));
+          for (const item of input.items) {
+            if (!validIds.has(item.inventoryId)) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: `No access to inventory item ${item.inventoryId}` });
+            }
+          }
+        }
+
+        const result = await db.batchUpdateInventoryQuantities(input.items, ctx.user.id);
+        return result;
+      }),
+
+    // Import inventory from CSV data (SKU + Quantity)
+    importCsv: copackerProcedure
+      .input(z.object({
+        rows: z.array(z.object({
+          sku: z.string(),
+          quantity: z.number().min(0),
+          notes: z.string().optional(),
+        })),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'No warehouse assigned' });
+        }
+
+        const warehouseId = ctx.user.linkedWarehouseId;
+        if (!warehouseId) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'No warehouse specified' });
+        }
+
+        const result = await db.importInventoryFromCsv(warehouseId, input.rows, ctx.user.id);
+        return result;
+      }),
+
+    // Download CSV template for inventory import
+    getCsvTemplate: copackerProcedure
+      .query(async ({ ctx }) => {
+        if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
+          return { headers: 'SKU,Quantity,Notes', rows: [] };
+        }
+
+        const warehouseId = ctx.user.linkedWarehouseId;
+        if (!warehouseId) {
+          return { headers: 'SKU,Quantity,Notes', rows: [] };
+        }
+
+        const items = await db.getInventoryByWarehouse(warehouseId);
+        const rows = items.map((item: any) => ({
+          sku: item.product?.sku || '',
+          name: item.product?.name || '',
+          currentQuantity: parseFloat(item.inventory.quantity || '0'),
+        }));
+
+        return { headers: 'SKU,Quantity,Notes', rows };
       }),
   }),
 
