@@ -7204,6 +7204,510 @@ Ask if they received the original request and if they can provide a quote.`;
       list: protectedProcedure
         .input(z.object({ rfqId: z.number().optional(), vendorId: z.number().optional() }).optional())
         .query(({ input }) => db.getVendorRfqEmails(input)),
+
+      // Parse an incoming vendor email and auto-create a quote
+      parseIncoming: opsProcedure
+        .input(z.object({
+          rfqId: z.number().optional(),
+          vendorId: z.number().optional(),
+          fromEmail: z.string(),
+          subject: z.string(),
+          body: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          // Auto-detect vendor from email address
+          let vendorId = input.vendorId;
+          let vendor;
+          if (!vendorId) {
+            vendor = await db.getVendorByEmail(input.fromEmail);
+            if (!vendor) {
+              // Try matching by domain
+              const domain = input.fromEmail.split('@')[1];
+              if (domain) {
+                const domainVendors = await db.getVendorByEmailDomain(domain);
+                if (domainVendors.length === 1) {
+                  vendor = domainVendors[0];
+                }
+              }
+            }
+            vendorId = vendor?.id;
+          } else {
+            vendor = await db.getVendorById(vendorId);
+          }
+
+          // Auto-detect RFQ from subject line or active RFQs for this vendor
+          let rfqId = input.rfqId;
+          if (!rfqId && vendorId) {
+            // Check if subject references an RFQ number
+            const rfqMatch = input.subject.match(/RFQ[- ]?(\d{4}[- ]?\d+)/i) ||
+                             input.body.match(/RFQ[- ]?(\d{4}[- ]?\d+)/i);
+            if (rfqMatch) {
+              const rfqNumber = rfqMatch[0].replace(/\s+/g, '-').toUpperCase();
+              const rfqs = await db.getVendorRfqs();
+              const matchedRfq = rfqs.find(r =>
+                r.rfqNumber.toUpperCase() === rfqNumber ||
+                r.rfqNumber.toUpperCase().replace(/-/g, '') === rfqNumber.replace(/-/g, '')
+              );
+              if (matchedRfq) rfqId = matchedRfq.id;
+            }
+
+            // If still no RFQ, find active RFQs where this vendor was invited
+            if (!rfqId) {
+              const activeRfqs = await db.getVendorRfqs({ status: 'sent' });
+              for (const rfq of activeRfqs) {
+                const invitations = await db.getVendorRfqInvitations(rfq.id);
+                if (invitations.some(i => i.vendorId === vendorId && i.status !== 'responded')) {
+                  rfqId = rfq.id;
+                  break;
+                }
+              }
+              // Also check partially_received status
+              if (!rfqId) {
+                const partialRfqs = await db.getVendorRfqs({ status: 'partially_received' });
+                for (const rfq of partialRfqs) {
+                  const invitations = await db.getVendorRfqInvitations(rfq.id);
+                  if (invitations.some(i => i.vendorId === vendorId && i.status !== 'responded')) {
+                    rfqId = rfq.id;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+
+          const rfq = rfqId ? await db.getVendorRfqById(rfqId) : null;
+
+          // Use AI to extract quote data from the email
+          const parsePrompt = `Extract vendor material quote information from this email. The vendor is responding to a Request for Quote (RFQ).
+
+${rfq ? `RFQ Details:
+- RFQ Number: ${rfq.rfqNumber}
+- Material: ${rfq.materialName}
+- Requested Quantity: ${rfq.quantity} ${rfq.unit}
+- Specifications: ${rfq.specifications || 'N/A'}
+` : ''}
+From: ${input.fromEmail}${vendor ? ` (${vendor.name})` : ''}
+Subject: ${input.subject}
+
+Email Body:
+${input.body}
+
+Extract and return as JSON:
+{
+  "quoteNumber": "vendor's quote/reference number (string or null)",
+  "unitPrice": "price per unit as a number (null if not found)",
+  "quantity": "offered quantity as a number (null if not found)",
+  "totalPrice": "total price as a number (null if not found)",
+  "currency": "currency code (default USD)",
+  "shippingCost": "shipping cost as a number (null if not found)",
+  "handlingFee": "handling fee as a number (null if not found)",
+  "taxAmount": "tax amount as a number (null if not found)",
+  "otherCharges": "other charges as a number (null if not found)",
+  "totalWithCharges": "grand total including all charges as a number (null if not found)",
+  "leadTimeDays": "lead time in days as a number (null if not found)",
+  "estimatedDeliveryDate": "ISO date string or null",
+  "minimumOrderQty": "minimum order quantity as a number (null if not found)",
+  "validUntil": "quote validity date as ISO string or null",
+  "paymentTerms": "payment terms like Net 30, COD, etc. (string or null)",
+  "notes": "any additional terms, conditions, or notes (string or null)",
+  "isQuoteResponse": "true if this email contains pricing/quote info, false if it's just a question or acknowledgment"
+}`;
+
+          const response = await invokeLLM({
+            messages: [
+              { role: 'system', content: 'You are a procurement data extraction expert. Extract structured quote data from vendor emails accurately. Parse prices, quantities, lead times, and terms. If a field is not mentioned, return null.' },
+              { role: 'user', content: parsePrompt },
+            ],
+          });
+
+          const rawExtracted = response.choices[0]?.message?.content;
+          const extractedText = typeof rawExtracted === 'string' ? rawExtracted : '{}';
+
+          let extractedData: any;
+          try {
+            const jsonMatch = extractedText.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, extractedText];
+            extractedData = JSON.parse(jsonMatch[1]?.trim() || extractedText);
+          } catch {
+            extractedData = { isQuoteResponse: false };
+          }
+
+          // Save the email record
+          const emailResult = await db.createVendorRfqEmail({
+            rfqId: rfqId || 0,
+            vendorId: vendorId || 0,
+            direction: 'inbound',
+            emailType: 'quote_response',
+            fromEmail: input.fromEmail,
+            toEmail: process.env.SENDGRID_FROM_EMAIL || 'procurement@company.com',
+            subject: input.subject,
+            body: input.body,
+            aiGenerated: false,
+            aiParsed: true,
+            aiExtractedData: JSON.stringify(extractedData),
+            sendStatus: 'delivered',
+          });
+
+          // If we extracted valid quote data, auto-create a vendor quote
+          let quoteResult = null;
+          if (extractedData.isQuoteResponse && vendorId && rfqId &&
+              (extractedData.unitPrice || extractedData.totalPrice)) {
+
+            // Calculate totalWithCharges if not provided
+            if (!extractedData.totalWithCharges && extractedData.totalPrice) {
+              const total = parseFloat(extractedData.totalPrice) +
+                (parseFloat(extractedData.shippingCost) || 0) +
+                (parseFloat(extractedData.handlingFee) || 0) +
+                (parseFloat(extractedData.taxAmount) || 0) +
+                (parseFloat(extractedData.otherCharges) || 0);
+              extractedData.totalWithCharges = total;
+            }
+
+            quoteResult = await db.createVendorQuote({
+              rfqId,
+              vendorId,
+              quoteNumber: extractedData.quoteNumber,
+              unitPrice: extractedData.unitPrice?.toString(),
+              quantity: extractedData.quantity?.toString() || rfq?.quantity,
+              totalPrice: extractedData.totalPrice?.toString(),
+              currency: extractedData.currency || 'USD',
+              shippingCost: extractedData.shippingCost?.toString(),
+              handlingFee: extractedData.handlingFee?.toString(),
+              taxAmount: extractedData.taxAmount?.toString(),
+              otherCharges: extractedData.otherCharges?.toString(),
+              totalWithCharges: extractedData.totalWithCharges?.toString(),
+              leadTimeDays: extractedData.leadTimeDays,
+              estimatedDeliveryDate: extractedData.estimatedDeliveryDate ? new Date(extractedData.estimatedDeliveryDate) : undefined,
+              minimumOrderQty: extractedData.minimumOrderQty?.toString(),
+              validUntil: extractedData.validUntil ? new Date(extractedData.validUntil) : undefined,
+              paymentTerms: extractedData.paymentTerms,
+              notes: extractedData.notes,
+              receivedVia: 'email',
+              rawEmailContent: input.body,
+              status: 'received',
+            });
+
+            // Update email record with quote ID
+            await db.updateVendorRfqEmail(emailResult.id, { quoteId: quoteResult.id });
+
+            // Update invitation status
+            const invitations = await db.getVendorRfqInvitations(rfqId);
+            const invitation = invitations.find(i => i.vendorId === vendorId);
+            if (invitation) {
+              await db.updateVendorRfqInvitation(invitation.id, {
+                status: 'responded',
+                respondedAt: new Date(),
+              });
+            }
+
+            // Re-rank all quotes for this RFQ
+            const allQuotes = await db.getVendorQuotes({ rfqId });
+            const sortedByPrice = allQuotes
+              .filter(q => q.status === 'received')
+              .sort((a, b) => parseFloat(a.totalPrice || '999999') - parseFloat(b.totalPrice || '999999'));
+            const sortedByLeadTime = [...sortedByPrice]
+              .sort((a, b) => (a.leadTimeDays || 999) - (b.leadTimeDays || 999));
+
+            for (let i = 0; i < sortedByPrice.length; i++) {
+              const priceRank = i + 1;
+              const leadTimeRank = sortedByLeadTime.findIndex(q => q.id === sortedByPrice[i].id) + 1;
+              await db.updateVendorQuote(sortedByPrice[i].id, {
+                priceComparisonRank: priceRank,
+                leadTimeComparisonRank: leadTimeRank,
+                overallRank: priceRank,
+              });
+            }
+
+            // Check if all vendors have responded
+            const updatedInvitations = await db.getVendorRfqInvitations(rfqId);
+            const allResponded = updatedInvitations.every(i =>
+              ['responded', 'declined', 'no_response'].includes(i.status)
+            );
+            if (allResponded && updatedInvitations.length > 0) {
+              await db.updateVendorRfq(rfqId, { status: 'all_received' });
+            } else {
+              await db.updateVendorRfq(rfqId, { status: 'partially_received' });
+            }
+
+            await createAuditLog(ctx.user.id, 'create', 'vendor_quote', quoteResult.id,
+              `Auto-parsed from email (${vendor?.name || input.fromEmail})`);
+          }
+
+          return {
+            email: emailResult,
+            quote: quoteResult,
+            extractedData,
+            matchedVendor: vendor ? { id: vendor.id, name: vendor.name } : null,
+            matchedRfq: rfq ? { id: rfq.id, rfqNumber: rfq.rfqNumber } : null,
+          };
+        }),
+
+      // Scan inbox for vendor quote replies and auto-parse them
+      scanInbox: opsProcedure
+        .mutation(async ({ ctx }) => {
+          // Check if IMAP is configured
+          const { isImapConfigured, scanAndCategorizeInbox } = await import('./_core/emailInboxScanner');
+          if (!isImapConfigured()) {
+            throw new TRPCError({
+              code: 'PRECONDITION_FAILED',
+              message: 'Email inbox scanning not configured. Set IMAP_HOST, IMAP_USER, and IMAP_PASSWORD environment variables.',
+            });
+          }
+
+          const scanResult = await scanAndCategorizeInbox();
+          if (!scanResult.success) {
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: `Inbox scan failed: ${scanResult.errors.join(', ')}`,
+            });
+          }
+
+          // Get all vendors (for matching)
+          const allVendors = await db.getVendors();
+          const vendorEmailMap = new Map<string, typeof allVendors[0]>();
+          const vendorDomainMap = new Map<string, typeof allVendors[0][]>();
+          for (const v of allVendors) {
+            if (v.email) {
+              vendorEmailMap.set(v.email.toLowerCase(), v);
+              const domain = v.email.split('@')[1]?.toLowerCase();
+              if (domain) {
+                if (!vendorDomainMap.has(domain)) vendorDomainMap.set(domain, []);
+                vendorDomainMap.get(domain)!.push(v);
+              }
+            }
+          }
+
+          // Get active RFQs
+          const activeRfqs = [
+            ...await db.getVendorRfqs({ status: 'sent' }),
+            ...await db.getVendorRfqs({ status: 'partially_received' }),
+          ];
+
+          const results = {
+            scannedEmails: scanResult.processedEmails.length,
+            vendorQuoteEmails: 0,
+            quotesCreated: 0,
+            skipped: 0,
+            errors: [] as string[],
+            processed: [] as Array<{ fromEmail: string; subject: string; vendorName?: string; rfqNumber?: string; quoteCreated: boolean }>,
+          };
+
+          for (const email of scanResult.processedEmails) {
+            const fromAddr = email.from.address.toLowerCase();
+            const fromDomain = fromAddr.split('@')[1];
+
+            // Match to a known vendor
+            let vendor = vendorEmailMap.get(fromAddr);
+            if (!vendor && fromDomain) {
+              const domainVendors = vendorDomainMap.get(fromDomain);
+              if (domainVendors?.length === 1) vendor = domainVendors[0];
+            }
+
+            if (!vendor) continue; // Not from a known vendor
+
+            // Check if it looks like a quote response (subject references RFQ, or quick categorization)
+            const subjectLower = email.subject.toLowerCase();
+            const isQuoteRelated =
+              subjectLower.includes('rfq') ||
+              subjectLower.includes('quote') ||
+              subjectLower.includes('quotation') ||
+              subjectLower.includes('pricing') ||
+              subjectLower.includes('price list') ||
+              subjectLower.includes('bid') ||
+              subjectLower.includes('proposal') ||
+              subjectLower.includes('re:') && activeRfqs.some(r =>
+                subjectLower.includes(r.rfqNumber.toLowerCase()) ||
+                subjectLower.includes(r.materialName.toLowerCase())
+              );
+
+            if (!isQuoteRelated) continue;
+
+            results.vendorQuoteEmails++;
+
+            // Check if we already processed this email (by subject + sender + date)
+            const existingEmails = await db.getVendorRfqEmails({ vendorId: vendor.id });
+            const alreadyProcessed = existingEmails.some(e =>
+              e.direction === 'inbound' &&
+              e.fromEmail === fromAddr &&
+              e.subject === email.subject
+            );
+
+            if (alreadyProcessed) {
+              results.skipped++;
+              continue;
+            }
+
+            // Find matching RFQ
+            let matchedRfqId: number | undefined;
+            for (const rfq of activeRfqs) {
+              if (subjectLower.includes(rfq.rfqNumber.toLowerCase())) {
+                matchedRfqId = rfq.id;
+                break;
+              }
+              // Check if vendor was invited to this RFQ
+              const invitations = await db.getVendorRfqInvitations(rfq.id);
+              if (invitations.some(i => i.vendorId === vendor!.id && !['responded', 'declined'].includes(i.status))) {
+                matchedRfqId = rfq.id;
+                break;
+              }
+            }
+
+            try {
+              // Use the parseIncoming logic via a direct AI call
+              const rfq = matchedRfqId ? await db.getVendorRfqById(matchedRfqId) : null;
+
+              const parsePrompt = `Extract vendor material quote information from this email.
+
+${rfq ? `RFQ Details:
+- RFQ Number: ${rfq.rfqNumber}
+- Material: ${rfq.materialName}
+- Requested Quantity: ${rfq.quantity} ${rfq.unit}
+` : ''}
+From: ${fromAddr} (${vendor.name})
+Subject: ${email.subject}
+
+Email Body:
+${email.bodyText}
+
+Extract and return as JSON:
+{
+  "quoteNumber": "vendor's quote/reference number (string or null)",
+  "unitPrice": "price per unit as a number (null if not found)",
+  "quantity": "offered quantity as a number (null if not found)",
+  "totalPrice": "total price as a number (null if not found)",
+  "currency": "currency code (default USD)",
+  "shippingCost": "shipping/freight cost as a number (null if not found)",
+  "handlingFee": "handling fee as a number (null if not found)",
+  "taxAmount": "tax as a number (null if not found)",
+  "otherCharges": "other charges as a number (null if not found)",
+  "totalWithCharges": "grand total including all charges as a number (null if not found)",
+  "leadTimeDays": "lead time in days as a number (null if not found)",
+  "estimatedDeliveryDate": "ISO date string or null",
+  "minimumOrderQty": "minimum order quantity as a number (null if not found)",
+  "validUntil": "quote validity date as ISO string or null",
+  "paymentTerms": "payment terms like Net 30, COD (string or null)",
+  "notes": "additional terms or notes (string or null)",
+  "isQuoteResponse": "true if email contains pricing/quote info, false otherwise"
+}`;
+
+              const aiResponse = await invokeLLM({
+                messages: [
+                  { role: 'system', content: 'You are a procurement data extraction expert. Extract structured quote data from vendor emails accurately.' },
+                  { role: 'user', content: parsePrompt },
+                ],
+              });
+
+              const rawText = typeof aiResponse.choices[0]?.message?.content === 'string'
+                ? aiResponse.choices[0].message.content : '{}';
+              let extracted: any;
+              try {
+                const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, rawText];
+                extracted = JSON.parse(jsonMatch[1]?.trim() || rawText);
+              } catch {
+                extracted = { isQuoteResponse: false };
+              }
+
+              // Save email record
+              const emailResult = await db.createVendorRfqEmail({
+                rfqId: matchedRfqId || 0,
+                vendorId: vendor.id,
+                direction: 'inbound',
+                emailType: 'quote_response',
+                fromEmail: fromAddr,
+                toEmail: process.env.SENDGRID_FROM_EMAIL || 'procurement@company.com',
+                subject: email.subject,
+                body: email.bodyText,
+                aiGenerated: false,
+                aiParsed: true,
+                aiExtractedData: JSON.stringify(extracted),
+                sendStatus: 'delivered',
+              });
+
+              let quoteCreated = false;
+
+              if (extracted.isQuoteResponse && matchedRfqId &&
+                  (extracted.unitPrice || extracted.totalPrice)) {
+                // Auto-create quote
+                const quoteResult = await db.createVendorQuote({
+                  rfqId: matchedRfqId,
+                  vendorId: vendor.id,
+                  quoteNumber: extracted.quoteNumber,
+                  unitPrice: extracted.unitPrice?.toString(),
+                  quantity: extracted.quantity?.toString() || rfq?.quantity,
+                  totalPrice: extracted.totalPrice?.toString(),
+                  currency: extracted.currency || 'USD',
+                  shippingCost: extracted.shippingCost?.toString(),
+                  handlingFee: extracted.handlingFee?.toString(),
+                  taxAmount: extracted.taxAmount?.toString(),
+                  otherCharges: extracted.otherCharges?.toString(),
+                  totalWithCharges: extracted.totalWithCharges?.toString(),
+                  leadTimeDays: extracted.leadTimeDays,
+                  estimatedDeliveryDate: extracted.estimatedDeliveryDate ? new Date(extracted.estimatedDeliveryDate) : undefined,
+                  minimumOrderQty: extracted.minimumOrderQty?.toString(),
+                  validUntil: extracted.validUntil ? new Date(extracted.validUntil) : undefined,
+                  paymentTerms: extracted.paymentTerms,
+                  notes: extracted.notes,
+                  receivedVia: 'email',
+                  rawEmailContent: email.bodyText,
+                  status: 'received',
+                });
+
+                await db.updateVendorRfqEmail(emailResult.id, { quoteId: quoteResult.id });
+
+                // Update invitation status
+                const invitations = await db.getVendorRfqInvitations(matchedRfqId);
+                const invitation = invitations.find(i => i.vendorId === vendor!.id);
+                if (invitation) {
+                  await db.updateVendorRfqInvitation(invitation.id, {
+                    status: 'responded',
+                    respondedAt: new Date(),
+                  });
+                }
+
+                // Re-rank quotes
+                const allQuotes = await db.getVendorQuotes({ rfqId: matchedRfqId });
+                const sorted = allQuotes
+                  .filter(q => q.status === 'received')
+                  .sort((a, b) => parseFloat(a.totalPrice || '999999') - parseFloat(b.totalPrice || '999999'));
+                for (let i = 0; i < sorted.length; i++) {
+                  await db.updateVendorQuote(sorted[i].id, { overallRank: i + 1 });
+                }
+
+                // Update RFQ status
+                const updatedInvitations = await db.getVendorRfqInvitations(matchedRfqId);
+                const allResponded = updatedInvitations.every(i =>
+                  ['responded', 'declined', 'no_response'].includes(i.status)
+                );
+                if (allResponded && updatedInvitations.length > 0) {
+                  await db.updateVendorRfq(matchedRfqId, { status: 'all_received' });
+                } else {
+                  await db.updateVendorRfq(matchedRfqId, { status: 'partially_received' });
+                }
+
+                quoteCreated = true;
+                results.quotesCreated++;
+
+                await createAuditLog(ctx.user.id, 'create', 'vendor_quote', quoteResult.id,
+                  `Auto-parsed from inbox scan (${vendor.name})`);
+              }
+
+              results.processed.push({
+                fromEmail: fromAddr,
+                subject: email.subject,
+                vendorName: vendor.name,
+                rfqNumber: rfq?.rfqNumber,
+                quoteCreated,
+              });
+
+            } catch (err: any) {
+              results.errors.push(`Error processing email from ${fromAddr}: ${err.message}`);
+            }
+          }
+
+          await createAuditLog(ctx.user.id, 'update', 'vendor_rfq', 0,
+            `Inbox scan: ${results.quotesCreated} quotes auto-created from ${results.vendorQuoteEmails} emails`);
+
+          return results;
+        }),
     }),
   }),
 

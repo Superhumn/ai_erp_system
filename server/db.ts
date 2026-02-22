@@ -312,6 +312,19 @@ export async function getVendorById(id: number) {
   return result[0];
 }
 
+export async function getVendorByEmail(email: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(vendors).where(eq(vendors.email, email)).limit(1);
+  return result[0];
+}
+
+export async function getVendorByEmailDomain(domain: string) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(vendors).where(like(vendors.email, `%@${domain}`));
+}
+
 export async function createVendor(data: InsertVendor) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

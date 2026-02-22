@@ -94,6 +94,14 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
   const [selectedRfqId, setSelectedRfqId] = useState<number | null>(null);
   const [selectedVendorIds, setSelectedVendorIds] = useState<number[]>([]);
   const [isEnterQuoteOpen, setIsEnterQuoteOpen] = useState(false);
+  const [isPasteEmailOpen, setIsPasteEmailOpen] = useState(false);
+  const [isScanningInbox, setIsScanningInbox] = useState(false);
+  const [parseResult, setParseResult] = useState<any>(null);
+  const [emailForm, setEmailForm] = useState({
+    fromEmail: '',
+    subject: '',
+    body: '',
+  });
   const [quoteForm, setQuoteForm] = useState({
     vendorId: '',
     unitPrice: '',
@@ -194,6 +202,51 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
     onError: (err) => toast.error(err.message),
   });
 
+  const parseIncoming = trpc.vendorQuotes.emails.parseIncoming.useMutation({
+    onSuccess: (result) => {
+      setParseResult(result);
+      if (result.quote) {
+        toast.success(
+          `Quote auto-created from ${result.matchedVendor?.name || result.extractedData?.fromEmail || 'vendor'}` +
+          (result.matchedRfq ? ` for ${result.matchedRfq.rfqNumber}` : '')
+        );
+        utils.vendorQuotes.quotes.list.invalidate();
+        utils.vendorQuotes.quotes.getWithVendorInfo.invalidate();
+        utils.vendorQuotes.rfqs.list.invalidate();
+        utils.vendorQuotes.rfqs.getInvitations.invalidate();
+      } else if (result.extractedData?.isQuoteResponse === false) {
+        toast.info('Email parsed but does not appear to contain quote pricing data');
+      } else {
+        toast.info('Email parsed but could not match to a vendor and RFQ');
+      }
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const scanInbox = trpc.vendorQuotes.emails.scanInbox.useMutation({
+    onSuccess: (result) => {
+      setIsScanningInbox(false);
+      if (result.quotesCreated > 0) {
+        toast.success(`Inbox scanned: ${result.quotesCreated} quote(s) auto-created from ${result.vendorQuoteEmails} vendor email(s)`);
+        utils.vendorQuotes.quotes.list.invalidate();
+        utils.vendorQuotes.quotes.getWithVendorInfo.invalidate();
+        utils.vendorQuotes.rfqs.list.invalidate();
+        utils.vendorQuotes.rfqs.getInvitations.invalidate();
+      } else if (result.vendorQuoteEmails > 0) {
+        toast.info(`Scanned ${result.scannedEmails} emails. Found ${result.vendorQuoteEmails} vendor emails but no new quotes extracted.`);
+      } else {
+        toast.info(`Scanned ${result.scannedEmails} emails. No vendor quote replies found.`);
+      }
+      if (result.errors.length > 0) {
+        toast.error(`Errors: ${result.errors.join('; ')}`);
+      }
+    },
+    onError: (err) => {
+      setIsScanningInbox(false);
+      toast.error(err.message);
+    },
+  });
+
   const selectedRfq = rfqs?.find((r: any) => r.id === selectedRfqId);
 
   const rfqColumns: Column<any>[] = [
@@ -237,10 +290,30 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
             All Quotes ({quotes?.length || 0})
           </Button>
         </div>
-        <Button onClick={() => setIsCreateRfqOpen(true)}>
-          <Mail className="h-4 w-4 mr-1" />
-          Create RFQ
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => {
+              setIsScanningInbox(true);
+              scanInbox.mutate();
+            }}
+            disabled={scanInbox.isPending}
+          >
+            {scanInbox.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+            Scan Inbox
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setIsPasteEmailOpen(true)}
+          >
+            <Sparkles className="h-4 w-4 mr-1" />
+            Paste & Parse Email
+          </Button>
+          <Button onClick={() => setIsCreateRfqOpen(true)}>
+            <Mail className="h-4 w-4 mr-1" />
+            Create RFQ
+          </Button>
+        </div>
       </div>
 
       {activeSubTab === 'rfqs' && (
@@ -312,10 +385,16 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                         </Button>
                       )}
                       {['sent', 'partially_received'].includes(selectedRfq.status) && (
-                        <Button size="sm" variant="outline" onClick={() => setIsEnterQuoteOpen(true)}>
-                          <DollarSign className="h-4 w-4 mr-1" />
-                          Enter Quote
-                        </Button>
+                        <>
+                          <Button size="sm" variant="outline" onClick={() => setIsPasteEmailOpen(true)}>
+                            <Sparkles className="h-4 w-4 mr-1" />
+                            Parse Email
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => setIsEnterQuoteOpen(true)}>
+                            <DollarSign className="h-4 w-4 mr-1" />
+                            Enter Quote
+                          </Button>
+                        </>
                       )}
                     </div>
                   </div>
@@ -781,6 +860,185 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
               {createQuote.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Save Quote
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Paste & Parse Email Dialog */}
+      <Dialog open={isPasteEmailOpen} onOpenChange={(open) => { setIsPasteEmailOpen(open); if (!open) setParseResult(null); }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5" />
+              Auto-Parse Vendor Quote Email
+            </DialogTitle>
+            <DialogDescription>
+              Paste a vendor's quote email and AI will extract pricing, lead times, and terms automatically
+            </DialogDescription>
+          </DialogHeader>
+          {!parseResult ? (
+            <div className="space-y-4">
+              <div>
+                <Label>From Email Address *</Label>
+                <Input
+                  value={emailForm.fromEmail}
+                  onChange={(e) => setEmailForm({ ...emailForm, fromEmail: e.target.value })}
+                  placeholder="vendor@example.com"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Vendor and RFQ will be auto-detected from this email address
+                </p>
+              </div>
+              <div>
+                <Label>Subject *</Label>
+                <Input
+                  value={emailForm.subject}
+                  onChange={(e) => setEmailForm({ ...emailForm, subject: e.target.value })}
+                  placeholder="e.g., Re: Request for Quote: RFQ-2024-001 - Steel Plate"
+                />
+              </div>
+              <div>
+                <Label>Email Body *</Label>
+                <Textarea
+                  value={emailForm.body}
+                  onChange={(e) => setEmailForm({ ...emailForm, body: e.target.value })}
+                  placeholder="Paste the full email body here..."
+                  rows={12}
+                  className="font-mono text-sm"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Parse Results */}
+              <div className={`p-4 rounded-lg border ${parseResult.quote ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'}`}>
+                <div className="flex items-center gap-2 mb-2">
+                  {parseResult.quote ? (
+                    <CheckCircle className="h-5 w-5 text-green-500" />
+                  ) : (
+                    <AlertCircle className="h-5 w-5 text-yellow-500" />
+                  )}
+                  <span className="font-medium">
+                    {parseResult.quote ? 'Quote auto-created successfully' : 'Email parsed, no quote created'}
+                  </span>
+                </div>
+                <div className="text-sm space-y-1">
+                  <p>Vendor: {parseResult.matchedVendor ? <Badge variant="outline">{parseResult.matchedVendor.name}</Badge> : <span className="text-muted-foreground">Not matched</span>}</p>
+                  <p>RFQ: {parseResult.matchedRfq ? <Badge variant="outline">{parseResult.matchedRfq.rfqNumber}</Badge> : <span className="text-muted-foreground">Not matched</span>}</p>
+                </div>
+              </div>
+
+              {parseResult.extractedData && (
+                <div>
+                  <Label className="text-sm font-medium">Extracted Data</Label>
+                  <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
+                    {parseResult.extractedData.unitPrice && (
+                      <div className="bg-muted p-2 rounded">
+                        <span className="text-muted-foreground">Unit Price:</span>{' '}
+                        <span className="font-medium">{parseResult.extractedData.currency || 'USD'} {parseResult.extractedData.unitPrice}</span>
+                      </div>
+                    )}
+                    {parseResult.extractedData.totalPrice && (
+                      <div className="bg-muted p-2 rounded">
+                        <span className="text-muted-foreground">Total Price:</span>{' '}
+                        <span className="font-medium">{parseResult.extractedData.currency || 'USD'} {parseResult.extractedData.totalPrice}</span>
+                      </div>
+                    )}
+                    {parseResult.extractedData.quantity && (
+                      <div className="bg-muted p-2 rounded">
+                        <span className="text-muted-foreground">Quantity:</span>{' '}
+                        <span className="font-medium">{parseResult.extractedData.quantity}</span>
+                      </div>
+                    )}
+                    {parseResult.extractedData.leadTimeDays && (
+                      <div className="bg-muted p-2 rounded">
+                        <span className="text-muted-foreground">Lead Time:</span>{' '}
+                        <span className="font-medium">{parseResult.extractedData.leadTimeDays} days</span>
+                      </div>
+                    )}
+                    {parseResult.extractedData.paymentTerms && (
+                      <div className="bg-muted p-2 rounded">
+                        <span className="text-muted-foreground">Payment:</span>{' '}
+                        <span className="font-medium">{parseResult.extractedData.paymentTerms}</span>
+                      </div>
+                    )}
+                    {parseResult.extractedData.validUntil && (
+                      <div className="bg-muted p-2 rounded">
+                        <span className="text-muted-foreground">Valid Until:</span>{' '}
+                        <span className="font-medium">{new Date(parseResult.extractedData.validUntil).toLocaleDateString()}</span>
+                      </div>
+                    )}
+                    {parseResult.extractedData.shippingCost && (
+                      <div className="bg-muted p-2 rounded">
+                        <span className="text-muted-foreground">Shipping:</span>{' '}
+                        <span className="font-medium">{parseResult.extractedData.currency || 'USD'} {parseResult.extractedData.shippingCost}</span>
+                      </div>
+                    )}
+                    {parseResult.extractedData.minimumOrderQty && (
+                      <div className="bg-muted p-2 rounded">
+                        <span className="text-muted-foreground">MOQ:</span>{' '}
+                        <span className="font-medium">{parseResult.extractedData.minimumOrderQty}</span>
+                      </div>
+                    )}
+                  </div>
+                  {parseResult.extractedData.notes && (
+                    <div className="mt-2 p-2 bg-muted rounded text-sm">
+                      <span className="text-muted-foreground">Notes:</span> {parseResult.extractedData.notes}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            {!parseResult ? (
+              <>
+                <Button variant="outline" onClick={() => setIsPasteEmailOpen(false)}>Cancel</Button>
+                <Button
+                  onClick={() => {
+                    if (!emailForm.fromEmail || !emailForm.body) {
+                      toast.error('Email address and body are required');
+                      return;
+                    }
+                    parseIncoming.mutate({
+                      rfqId: selectedRfqId || undefined,
+                      fromEmail: emailForm.fromEmail,
+                      subject: emailForm.subject,
+                      body: emailForm.body,
+                    });
+                  }}
+                  disabled={parseIncoming.isPending}
+                >
+                  {parseIncoming.isPending ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Parsing...
+                    </>
+                  ) : (
+                    <>
+                      <Bot className="h-4 w-4 mr-2" />
+                      Parse with AI
+                    </>
+                  )}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => {
+                  setParseResult(null);
+                  setEmailForm({ fromEmail: '', subject: '', body: '' });
+                }}>
+                  Parse Another
+                </Button>
+                <Button onClick={() => {
+                  setIsPasteEmailOpen(false);
+                  setParseResult(null);
+                  setEmailForm({ fromEmail: '', subject: '', body: '' });
+                }}>
+                  Done
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
