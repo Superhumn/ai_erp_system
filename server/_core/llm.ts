@@ -1,4 +1,10 @@
 import { ENV } from "./env";
+import { generateText } from "ai";
+import { createOpenAI } from "@ai-sdk/openai";
+import { createAnthropic } from "@ai-sdk/anthropic";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+
+// ── Public types (unchanged — all existing callers continue to work) ──
 
 export type Role = "system" | "user" | "assistant" | "tool" | "function";
 
@@ -19,7 +25,7 @@ export type FileContent = {
   type: "file_url";
   file_url: {
     url: string;
-    mime_type?: "audio/mpeg" | "audio/wav" | "application/pdf" | "audio/mp4" | "video/mp4" ;
+    mime_type?: "audio/mpeg" | "audio/wav" | "application/pdf" | "audio/mp4" | "video/mp4";
   };
 };
 
@@ -111,231 +117,240 @@ export type ResponseFormat =
   | { type: "json_object" }
   | { type: "json_schema"; json_schema: JsonSchema };
 
-const ensureArray = (
-  value: MessageContent | MessageContent[]
-): MessageContent[] => (Array.isArray(value) ? value : [value]);
+// ── Provider helpers ──
 
-const normalizeContentPart = (
-  part: MessageContent
-): TextContent | ImageContent | FileContent => {
-  if (typeof part === "string") {
-    return { type: "text", text: part };
-  }
-
-  if (part.type === "text") {
-    return part;
-  }
-
-  if (part.type === "image_url") {
-    return part;
-  }
-
-  if (part.type === "file_url") {
-    return part;
-  }
-
-  throw new Error("Unsupported message content part");
+const DEFAULT_MODELS: Record<string, string> = {
+  openai: "gpt-4o",
+  anthropic: "claude-sonnet-4-20250514",
+  google: "gemini-2.5-flash",
 };
 
-const normalizeMessage = (message: Message) => {
-  const { role, name, tool_call_id, tool_calls } = message;
+function getProviderAndModel() {
+  const provider = ENV.llmProvider || "openai";
+  const model = ENV.llmModel || DEFAULT_MODELS[provider] || DEFAULT_MODELS.openai;
+  return { provider, model };
+}
 
-  if (role === "tool" || role === "function") {
-    const content = ensureArray(message.content)
-      .map(part => (typeof part === "string" ? part : JSON.stringify(part)))
-      .join("\n");
+function getLanguageModel() {
+  const { provider, model } = getProviderAndModel();
 
-    return {
-      role,
-      name,
-      tool_call_id,
-      content,
-    };
+  // If legacy Forge API is configured and no new provider key is set, fall back to it
+  if (provider === "openai" && !ENV.openaiApiKey && ENV.forgeApiKey) {
+    const forge = createOpenAI({
+      apiKey: ENV.forgeApiKey,
+      baseURL: ENV.forgeApiUrl
+        ? `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1`
+        : "https://forge.manus.im/v1",
+    });
+    return forge(ENV.llmModel || "gemini-2.5-flash");
   }
 
-  const contentParts = ensureArray(message.content).map(normalizeContentPart);
-
-  // If there's only text content, collapse to a single string for compatibility
-  if (contentParts.length === 1 && contentParts[0].type === "text") {
-    const result: Record<string, unknown> = {
-      role,
-      name,
-      content: contentParts[0].text,
-    };
-    if (tool_calls && tool_calls.length > 0) {
-      result.tool_calls = tool_calls;
+  switch (provider) {
+    case "anthropic": {
+      if (!ENV.anthropicApiKey) throw new Error("ANTHROPIC_API_KEY is not configured");
+      const anthropic = createAnthropic({ apiKey: ENV.anthropicApiKey });
+      return anthropic(model);
     }
-    return result;
+    case "google": {
+      if (!ENV.googleAiApiKey) throw new Error("GOOGLE_AI_API_KEY is not configured");
+      const google = createGoogleGenerativeAI({ apiKey: ENV.googleAiApiKey });
+      return google(model);
+    }
+    case "openai":
+    default: {
+      if (!ENV.openaiApiKey) throw new Error("OPENAI_API_KEY is not configured");
+      const openai = createOpenAI({ apiKey: ENV.openaiApiKey });
+      return openai(model);
+    }
+  }
+}
+
+// ── Message conversion ──
+
+function convertMessages(messages: Message[]): Array<{
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | Array<{ type: string; [key: string]: unknown }>;
+  toolCallId?: string;
+}> {
+  const result: any[] = [];
+
+  for (const msg of messages) {
+    if (msg.role === "tool" || msg.role === "function") {
+      const text = Array.isArray(msg.content)
+        ? msg.content.map(p => (typeof p === "string" ? p : JSON.stringify(p))).join("\n")
+        : typeof msg.content === "string"
+          ? msg.content
+          : JSON.stringify(msg.content);
+
+      result.push({
+        role: "tool" as const,
+        content: text,
+        toolCallId: msg.tool_call_id ?? msg.name ?? "unknown",
+      });
+      continue;
+    }
+
+    if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
+      // Convert assistant message with tool_calls into Vercel AI SDK format
+      const textContent = typeof msg.content === "string" ? msg.content : "";
+      result.push({
+        role: "assistant" as const,
+        content: [
+          ...(textContent ? [{ type: "text", text: textContent }] : []),
+          ...msg.tool_calls.map(tc => ({
+            type: "tool-call",
+            toolCallId: tc.id,
+            toolName: tc.function.name,
+            args: JSON.parse(tc.function.arguments || "{}"),
+          })),
+        ],
+      });
+      continue;
+    }
+
+    const parts = Array.isArray(msg.content) ? msg.content : [msg.content];
+    const converted: any[] = [];
+
+    for (const part of parts) {
+      if (typeof part === "string") {
+        converted.push({ type: "text", text: part });
+      } else if (part.type === "text") {
+        converted.push({ type: "text", text: part.text });
+      } else if (part.type === "image_url") {
+        converted.push({
+          type: "image",
+          image: part.image_url.url,
+        });
+      } else if (part.type === "file_url") {
+        // Pass file URLs as text descriptions since not all providers support file content
+        converted.push({
+          type: "text",
+          text: `[Attached file: ${part.file_url.url}]`,
+        });
+      }
+    }
+
+    // Collapse single text part to plain string for simpler API calls
+    const content =
+      converted.length === 1 && converted[0].type === "text"
+        ? converted[0].text
+        : converted;
+
+    result.push({
+      role: msg.role as "system" | "user" | "assistant",
+      content,
+    });
   }
 
-  const result: Record<string, unknown> = {
-    role,
-    name,
-    content: contentParts,
-  };
-  if (tool_calls && tool_calls.length > 0) {
-    result.tool_calls = tool_calls;
+  return result;
+}
+
+// ── Tool conversion ──
+
+function convertTools(tools?: Tool[]): Record<string, { description?: string; parameters: unknown }> | undefined {
+  if (!tools || tools.length === 0) return undefined;
+
+  const result: Record<string, { description?: string; parameters: unknown }> = {};
+  for (const tool of tools) {
+    result[tool.function.name] = {
+      description: tool.function.description,
+      parameters: tool.function.parameters ?? { type: "object", properties: {} },
+    };
   }
   return result;
-};
+}
 
-const normalizeToolChoice = (
-  toolChoice: ToolChoice | undefined,
-  tools: Tool[] | undefined
-): "none" | "auto" | ToolChoiceExplicit | undefined => {
-  if (!toolChoice) return undefined;
-
-  if (toolChoice === "none" || toolChoice === "auto") {
-    return toolChoice;
-  }
-
-  if (toolChoice === "required") {
-    if (!tools || tools.length === 0) {
-      throw new Error(
-        "tool_choice 'required' was provided but no tools were configured"
-      );
+function convertToolChoice(
+  tc: ToolChoice | undefined,
+  tools?: Tool[]
+): "auto" | "none" | "required" | { type: "tool"; toolName: string } | undefined {
+  if (!tc) return undefined;
+  if (tc === "none") return "none";
+  if (tc === "auto") return "auto";
+  if (tc === "required") {
+    if (tools && tools.length === 1) {
+      return { type: "tool", toolName: tools[0].function.name };
     }
-
-    if (tools.length > 1) {
-      throw new Error(
-        "tool_choice 'required' needs a single tool or specify the tool name explicitly"
-      );
-    }
-
-    return {
-      type: "function",
-      function: { name: tools[0].function.name },
-    };
+    return "required";
   }
-
-  if ("name" in toolChoice) {
-    return {
-      type: "function",
-      function: { name: toolChoice.name },
-    };
+  if ("name" in tc) {
+    return { type: "tool", toolName: tc.name };
   }
-
-  return toolChoice;
-};
-
-const resolveApiUrl = () =>
-  ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0
-    ? `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/chat/completions`
-    : "https://forge.manus.im/v1/chat/completions";
-
-const assertApiKey = () => {
-  if (!ENV.forgeApiKey) {
-    throw new Error("OPENAI_API_KEY is not configured");
+  if ("type" in tc && tc.function) {
+    return { type: "tool", toolName: tc.function.name };
   }
-};
+  return undefined;
+}
 
-const normalizeResponseFormat = ({
-  responseFormat,
-  response_format,
-  outputSchema,
-  output_schema,
-}: {
-  responseFormat?: ResponseFormat;
-  response_format?: ResponseFormat;
-  outputSchema?: OutputSchema;
-  output_schema?: OutputSchema;
-}):
-  | { type: "json_schema"; json_schema: JsonSchema }
-  | { type: "text" }
-  | { type: "json_object" }
-  | undefined => {
-  const explicitFormat = responseFormat || response_format;
-  if (explicitFormat) {
-    if (
-      explicitFormat.type === "json_schema" &&
-      !explicitFormat.json_schema?.schema
-    ) {
-      throw new Error(
-        "responseFormat json_schema requires a defined schema object"
-      );
-    }
-    return explicitFormat;
-  }
-
-  const schema = outputSchema || output_schema;
-  if (!schema) return undefined;
-
-  if (!schema.name || !schema.schema) {
-    throw new Error("outputSchema requires both name and schema");
-  }
-
-  return {
-    type: "json_schema",
-    json_schema: {
-      name: schema.name,
-      schema: schema.schema,
-      ...(typeof schema.strict === "boolean" ? { strict: schema.strict } : {}),
-    },
-  };
-};
+// ── Main entry point ──
 
 export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
-  assertApiKey();
-
   const {
     messages,
     tools,
     toolChoice,
     tool_choice,
+    maxTokens,
+    max_tokens,
     outputSchema,
     output_schema,
     responseFormat,
     response_format,
   } = params;
 
-  const payload: Record<string, unknown> = {
-    model: "gemini-2.5-flash",
-    messages: messages.map(normalizeMessage),
+  const languageModel = getLanguageModel();
+  const convertedMessages = convertMessages(messages);
+  const convertedTools = convertTools(tools);
+  const convertedToolChoice = convertToolChoice(toolChoice || tool_choice, tools);
+  const tokenLimit = maxTokens || max_tokens || 32768;
+
+  // Build the generateText options
+  const options: Parameters<typeof generateText>[0] = {
+    model: languageModel,
+    messages: convertedMessages as any,
+    maxOutputTokens: tokenLimit,
   };
 
-  if (tools && tools.length > 0) {
-    payload.tools = tools;
+  if (convertedTools) {
+    options.tools = convertedTools as any;
+  }
+  if (convertedToolChoice) {
+    options.toolChoice = convertedToolChoice as any;
   }
 
-  const normalizedToolChoice = normalizeToolChoice(
-    toolChoice || tool_choice,
-    tools
-  );
-  if (normalizedToolChoice) {
-    payload.tool_choice = normalizedToolChoice;
-  }
+  const result = await generateText(options);
 
-  payload.max_tokens = 32768
-  payload.thinking = {
-    "budget_tokens": 128
-  }
-
-  const normalizedResponseFormat = normalizeResponseFormat({
-    responseFormat,
-    response_format,
-    outputSchema,
-    output_schema,
-  });
-
-  if (normalizedResponseFormat) {
-    payload.response_format = normalizedResponseFormat;
-  }
-
-  const response = await fetch(resolveApiUrl(), {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${ENV.forgeApiKey}`,
+  // Convert Vercel AI SDK result back to InvokeResult format for backward compatibility
+  const toolCalls: ToolCall[] = (result.toolCalls || []).map((tc: any, idx: number) => ({
+    id: tc.toolCallId || `call_${idx}`,
+    type: "function" as const,
+    function: {
+      name: tc.toolName,
+      arguments: JSON.stringify(tc.args),
     },
-    body: JSON.stringify(payload),
-  });
+  }));
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(
-      `LLM invoke failed: ${response.status} ${response.statusText} – ${errorText}`
-    );
-  }
-
-  return (await response.json()) as InvokeResult;
+  return {
+    id: result.response?.id ?? `gen_${Date.now()}`,
+    created: Math.floor(Date.now() / 1000),
+    model: result.response?.modelId ?? "unknown",
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: "assistant",
+          content: result.text ?? "",
+          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+        },
+        finish_reason: result.finishReason ?? "stop",
+      },
+    ],
+    usage: result.usage
+      ? {
+          prompt_tokens: result.usage.inputTokens ?? 0,
+          completion_tokens: result.usage.outputTokens ?? 0,
+          total_tokens: (result.usage.inputTokens ?? 0) + (result.usage.outputTokens ?? 0),
+        }
+      : undefined,
+  };
 }

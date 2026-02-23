@@ -7,6 +7,12 @@ export const ENV = {
   isProduction: process.env.NODE_ENV === "production",
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
+  // LLM Provider Configuration (Vercel AI SDK)
+  llmProvider: process.env.LLM_PROVIDER ?? "openai", // "openai" | "anthropic" | "google"
+  llmModel: process.env.LLM_MODEL ?? "",             // e.g. "gpt-4o", "claude-sonnet-4-20250514", "gemini-2.5-flash"
+  openaiApiKey: process.env.OPENAI_API_KEY ?? "",
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
+  googleAiApiKey: process.env.GOOGLE_AI_API_KEY ?? "",
   // SendGrid email configuration
   sendgridApiKey: process.env.SENDGRID_API_KEY ?? "",
   sendgridFromEmail: process.env.SENDGRID_FROM_EMAIL ?? "",  // MAIL_FROM - e.g., quotes@yourdomain.com
