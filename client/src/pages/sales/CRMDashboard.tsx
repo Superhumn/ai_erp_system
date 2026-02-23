@@ -20,11 +20,11 @@ export default function CRMDashboard() {
 
   // Calculate metrics
   const totalInvestors = investors?.length || 0;
-  const activeInvestors = investors?.filter(i => i.status === 'invested').length || 0;
-  const committedInvestors = investors?.filter(i => i.status === 'committed').length || 0;
-  const totalRaised = investments?.reduce((sum, inv) => sum + parseFloat(inv.amount || '0'), 0) || 0;
-  const activeCampaigns = campaigns?.filter(c => c.status === 'active').length || 0;
-  const upcomingReminders = reminders?.filter(r => {
+  const activeInvestors = investors?.filter((i: any) => i.status === 'invested').length || 0;
+  const committedInvestors = investors?.filter((i: any) => i.status === 'committed').length || 0;
+  const totalRaised = investments?.reduce((sum: any, inv: any) => sum + parseFloat(inv.amount || '0'), 0) || 0;
+  const activeCampaigns = campaigns?.filter((c: any) => c.status === 'active').length || 0;
+  const upcomingReminders = reminders?.filter((r: any) => {
     const dueDate = new Date(r.dueDate);
     const now = new Date();
     return dueDate > now && dueDate < new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
@@ -32,26 +32,26 @@ export default function CRMDashboard() {
 
   // Status distribution for pie chart
   const statusData = [
-    { name: 'Lead', value: investors?.filter(i => i.status === 'lead').length || 0, color: '#9ca3af' },
-    { name: 'Contacted', value: investors?.filter(i => i.status === 'contacted').length || 0, color: '#3b82f6' },
-    { name: 'Interested', value: investors?.filter(i => i.status === 'interested').length || 0, color: '#8b5cf6' },
-    { name: 'Committed', value: investors?.filter(i => i.status === 'committed').length || 0, color: '#f59e0b' },
-    { name: 'Invested', value: investors?.filter(i => i.status === 'invested').length || 0, color: '#10b981' },
-    { name: 'Passed', value: investors?.filter(i => i.status === 'passed').length || 0, color: '#ef4444' },
+    { name: 'Lead', value: investors?.filter((i: any) => i.status === 'lead').length || 0, color: '#9ca3af' },
+    { name: 'Contacted', value: investors?.filter((i: any) => i.status === 'contacted').length || 0, color: '#3b82f6' },
+    { name: 'Interested', value: investors?.filter((i: any) => i.status === 'interested').length || 0, color: '#8b5cf6' },
+    { name: 'Committed', value: investors?.filter((i: any) => i.status === 'committed').length || 0, color: '#f59e0b' },
+    { name: 'Invested', value: investors?.filter((i: any) => i.status === 'invested').length || 0, color: '#10b981' },
+    { name: 'Passed', value: investors?.filter((i: any) => i.status === 'passed').length || 0, color: '#ef4444' },
   ].filter(item => item.value > 0);
 
   // Type distribution
   const typeData = [
-    { name: 'Angel', value: investors?.filter(i => i.type === 'angel').length || 0 },
-    { name: 'VC', value: investors?.filter(i => i.type === 'vc').length || 0 },
-    { name: 'Family Office', value: investors?.filter(i => i.type === 'family_office').length || 0 },
-    { name: 'Strategic', value: investors?.filter(i => i.type === 'strategic').length || 0 },
-    { name: 'Accelerator', value: investors?.filter(i => i.type === 'accelerator').length || 0 },
-    { name: 'Other', value: investors?.filter(i => i.type === 'other').length || 0 },
+    { name: 'Angel', value: investors?.filter((i: any) => i.type === 'angel').length || 0 },
+    { name: 'VC', value: investors?.filter((i: any) => i.type === 'vc').length || 0 },
+    { name: 'Family Office', value: investors?.filter((i: any) => i.type === 'family_office').length || 0 },
+    { name: 'Strategic', value: investors?.filter((i: any) => i.type === 'strategic').length || 0 },
+    { name: 'Accelerator', value: investors?.filter((i: any) => i.type === 'accelerator').length || 0 },
+    { name: 'Other', value: investors?.filter((i: any) => i.type === 'other').length || 0 },
   ].filter(item => item.value > 0);
 
   // Campaign progress
-  const campaignData = campaigns?.map(campaign => ({
+  const campaignData = campaigns?.map((campaign: any) => ({
     name: campaign.name,
     target: parseFloat(campaign.targetAmount || '0'),
     raised: parseFloat(campaign.raisedAmount || '0'),

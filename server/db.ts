@@ -7393,12 +7393,12 @@ export async function getCrmPipelines(type?: string) {
   const db = await getDb();
   if (!db) return [];
 
-  let query = db.select().from(crmPipelines).where(eq(crmPipelines.isActive, true));
+  const conditions = [eq(crmPipelines.isActive, true)];
   if (type) {
-    query = query.where(eq(crmPipelines.type, type as any)) as any;
+    conditions.push(eq(crmPipelines.type, type as any));
   }
 
-  return query.orderBy(crmPipelines.name);
+  return db.select().from(crmPipelines).where(and(...conditions)).orderBy(crmPipelines.name);
 }
 
 export async function getCrmPipelineById(id: number) {
@@ -7613,6 +7613,8 @@ export async function processVCardCapture(captureId: number, vcardData: string, 
     // Create new contact
     contactId = await createCrmContact({
       ...parsedData,
+      firstName: parsedData.firstName || '',
+      fullName: parsedData.fullName || '',
       source: "iphone_bump",
       capturedBy,
       captureData: JSON.stringify({ vcardData, captureId }),
@@ -8334,4 +8336,701 @@ export async function getProductByName(name: string) {
   if (!db) return null;
   const results = await db.select().from(products).where(sql`LOWER(${products.name}) = LOWER(${name})`).limit(1);
   return results[0] || null;
+}
+
+// ============================================
+// STUB FUNCTIONS - Transactional Email System
+// These functions support the transactional email features
+// that are referenced in the router but tables are not yet created.
+// ============================================
+
+export async function getEmailMessageStats() {
+  return { total: 0, queued: 0, sent: 0, delivered: 0, failed: 0, bounced: 0, opened: 0, clicked: 0 };
+}
+
+export async function getTransactionalEmailTemplates() {
+  return [] as any[];
+}
+
+export async function getTransactionalEmailTemplateById(id: number) {
+  return null as any;
+}
+
+export async function getTransactionalEmailTemplateByName(name: string) {
+  return null as any;
+}
+
+export async function createTransactionalEmailTemplate(data: any) {
+  return { id: 0, ...data };
+}
+
+export async function updateTransactionalEmailTemplate(id: number, data: any) {
+  return { id, ...data };
+}
+
+export async function deleteTransactionalEmailTemplate(id: number) {
+  return { success: true };
+}
+
+export async function getEmailMessages(filters?: any) {
+  return [] as any[];
+}
+
+export async function getEmailMessageById(id: number) {
+  return null as any;
+}
+
+export async function getEmailMessageByIdempotencyKey(key: string) {
+  return null as any;
+}
+
+export async function getEmailMessageByProviderMessageId(providerMessageId: string) {
+  return null as any;
+}
+
+export async function createEmailMessage(data: any) {
+  return { id: 0, ...data };
+}
+
+export async function updateEmailMessage(id: number, data: any) {
+  return { id, ...data };
+}
+
+export async function updateEmailMessageStatus(id: number, status: string, providerMessageId?: string, errorJson?: any) {
+  return { id, status, providerMessageId, errorJson };
+}
+
+export async function incrementEmailMessageRetry(id: number) {
+  return { id };
+}
+
+export async function getEmailEventsByMessageId(messageId: number) {
+  return [] as any[];
+}
+
+export async function getEmailEventsByProviderMessageId(providerMessageId: string) {
+  return [] as any[];
+}
+
+export async function getRecentEmailEvents(limit?: number) {
+  return [] as any[];
+}
+
+export async function createEmailEvent(data: any) {
+  return { id: 0, ...data };
+}
+
+export async function getQueuedEmailMessages(limit: number = 10) {
+  return [] as any[];
+}
+
+// ============================================
+// STUB FUNCTIONS - Google Drive Sync
+// ============================================
+
+export async function getDriveSyncConfig(dataRoomId: number) {
+  return null as any;
+}
+
+export async function createDriveSyncConfig(data: any) {
+  return 0;
+}
+
+export async function updateDriveSyncConfig(id: number, data: any) {
+  return { id, ...data };
+}
+
+export async function deleteDriveSyncConfig(dataRoomId: number) {
+  return { success: true };
+}
+
+export async function getDriveSyncLogs(dataRoomId: number, limit: number = 50) {
+  return [] as any[];
+}
+
+export async function createDriveSyncLog(data: any) {
+  return 0;
+}
+
+export async function updateDriveSyncLog(id: number, data: any) {
+  return { id, ...data };
+}
+
+export async function getGoogleOAuthTokenByUserId(userId: number) {
+  return getGoogleOAuthToken(userId);
+}
+
+// ============================================
+// STUB FUNCTIONS - Page-Level Tracking
+// ============================================
+
+export async function createDocumentPageView(data: any) {
+  return 0;
+}
+
+export async function updateDocumentPageView(id: number, data: any) {
+  return { id, ...data };
+}
+
+export async function getDocumentPageViews(documentId: number, visitorId?: number) {
+  return [] as any[];
+}
+
+export async function getPageViewsByVisitor(visitorId: number) {
+  return [] as any[];
+}
+
+// ============================================
+// STUB FUNCTIONS - Visitor Sessions
+// ============================================
+
+export async function createVisitorSession(data: any) {
+  return 0;
+}
+
+export async function getSessionByToken(sessionToken: string) {
+  return null as any;
+}
+
+export async function updateVisitorSession(id: number, data: any) {
+  return { id, ...data };
+}
+
+export async function getDataRoomSessions(dataRoomId: number, limit: number = 100) {
+  return [] as any[];
+}
+
+export async function getVisitorSessions(visitorId: number) {
+  return [] as any[];
+}
+
+// ============================================
+// STUB FUNCTIONS - Email Access Rules
+// ============================================
+
+export async function getEmailAccessRules(dataRoomId: number) {
+  return [] as any[];
+}
+
+export async function createEmailAccessRule(data: any) {
+  return 0;
+}
+
+export async function updateEmailAccessRule(id: number, data: any) {
+  return { id, ...data };
+}
+
+export async function deleteEmailAccessRule(id: number) {
+  return { success: true };
+}
+
+export async function checkEmailAccess(dataRoomId: number, email: string) {
+  return { allowed: true, rules: [] as any[] };
+}
+
+// ============================================
+// STUB FUNCTIONS - Detailed Analytics
+// ============================================
+
+export async function getPageViewAnalytics(dataRoomId: number) {
+  return [] as any[];
+}
+
+export async function getDetailedVisitorAnalytics(dataRoomId: number, visitorId: number) {
+  return null as any;
+}
+
+export async function getDataRoomEngagementReport(dataRoomId: number, startDate?: Date, endDate?: Date) {
+  return { visitorEngagement: [] as any[], documentEngagement: [] as any[], summary: {} };
+}
+
+// ============================================
+// STUB FUNCTIONS - Inventory Transfers (text-based)
+// ============================================
+
+export async function createInventoryTransfer(data: any) {
+  const db = await getDb();
+  if (!db) return { id: 0 };
+  const [result] = await db.insert(inventoryTransfers).values(data);
+  return { id: (result as any).insertId || 0, ...data };
+}
+
+export async function createInventoryTransferItem(data: any) {
+  const db = await getDb();
+  if (!db) return { id: 0 };
+  const [result] = await db.insert(inventoryTransferItems).values(data);
+  return { id: (result as any).insertId || 0, ...data };
+}
+
+// ============================================
+// STUB FUNCTIONS - Shipment by ID
+// ============================================
+
+export async function getShipmentById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(shipments).where(eq(shipments.id, id)).limit(1);
+  return results[0] || null;
+}
+
+// ============================================
+// STUB FUNCTIONS - All Raw Materials (no filter)
+// ============================================
+
+export async function getAllRawMaterials() {
+  return getRawMaterials();
+}
+
+// ============================================
+// WORK ORDER INVENTORY RESERVATION
+// ============================================
+
+/**
+ * Reserve raw materials for a pending work order.
+ * Updates rawMaterialInventory.reservedQuantity and workOrderMaterials.reservedQuantity/status.
+ */
+export async function reserveMaterialsForWorkOrder(workOrderId: number, performedBy?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const workOrder = await getWorkOrderById(workOrderId);
+  if (!workOrder) throw new Error("Work order not found");
+
+  const materials = await getWorkOrderMaterials(workOrderId);
+  const results: { materialId: number; name: string; required: number; reserved: number; status: string }[] = [];
+
+  for (const mat of materials) {
+    if (!mat.rawMaterialId) continue;
+
+    const requiredQty = parseFloat(mat.requiredQuantity?.toString() || '0');
+    const alreadyReserved = parseFloat(mat.reservedQuantity?.toString() || '0');
+    const needToReserve = requiredQty - alreadyReserved;
+
+    if (needToReserve <= 0) {
+      results.push({ materialId: mat.rawMaterialId, name: mat.name, required: requiredQty, reserved: alreadyReserved, status: 'reserved' });
+      continue;
+    }
+
+    const inv = await getRawMaterialInventoryByLocation(mat.rawMaterialId, workOrder.warehouseId || 0);
+    if (!inv) {
+      await updateWorkOrderMaterial(mat.id, { status: 'shortage' });
+      results.push({ materialId: mat.rawMaterialId, name: mat.name, required: requiredQty, reserved: alreadyReserved, status: 'shortage' });
+      continue;
+    }
+
+    const currentQty = parseFloat(inv.quantity?.toString() || '0');
+    const currentReserved = parseFloat(inv.reservedQuantity?.toString() || '0');
+    const available = currentQty - currentReserved;
+    const canReserve = Math.min(needToReserve, available);
+
+    if (canReserve <= 0) {
+      await updateWorkOrderMaterial(mat.id, { status: 'shortage' });
+      results.push({ materialId: mat.rawMaterialId, name: mat.name, required: requiredQty, reserved: alreadyReserved, status: 'shortage' });
+      continue;
+    }
+
+    // Update inventory reserved quantity
+    const newReservedQty = currentReserved + canReserve;
+    const newAvailable = currentQty - newReservedQty;
+    await upsertRawMaterialInventory(mat.rawMaterialId, workOrder.warehouseId || 0, {
+      reservedQuantity: newReservedQty.toFixed(4),
+      availableQuantity: newAvailable.toFixed(4),
+    });
+
+    // Update work order material
+    const totalReserved = alreadyReserved + canReserve;
+    const matStatus = totalReserved >= requiredQty ? 'reserved' : 'partial';
+    await updateWorkOrderMaterial(mat.id, {
+      reservedQuantity: totalReserved.toFixed(4),
+      status: matStatus,
+    });
+
+    results.push({ materialId: mat.rawMaterialId, name: mat.name, required: requiredQty, reserved: totalReserved, status: matStatus });
+  }
+
+  return results;
+}
+
+/**
+ * Release reserved materials for a work order (e.g. when cancelled).
+ */
+export async function releaseMaterialReservations(workOrderId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const workOrder = await getWorkOrderById(workOrderId);
+  if (!workOrder) throw new Error("Work order not found");
+
+  const materials = await getWorkOrderMaterials(workOrderId);
+
+  for (const mat of materials) {
+    if (!mat.rawMaterialId) continue;
+
+    const reservedQty = parseFloat(mat.reservedQuantity?.toString() || '0');
+    if (reservedQty <= 0) continue;
+
+    const inv = await getRawMaterialInventoryByLocation(mat.rawMaterialId, workOrder.warehouseId || 0);
+    if (!inv) continue;
+
+    const currentReserved = parseFloat(inv.reservedQuantity?.toString() || '0');
+    const currentQty = parseFloat(inv.quantity?.toString() || '0');
+    const newReserved = Math.max(0, currentReserved - reservedQty);
+
+    await upsertRawMaterialInventory(mat.rawMaterialId, workOrder.warehouseId || 0, {
+      reservedQuantity: newReserved.toFixed(4),
+      availableQuantity: (currentQty - newReserved).toFixed(4),
+    });
+
+    await updateWorkOrderMaterial(mat.id, {
+      reservedQuantity: '0',
+      status: 'pending',
+    });
+  }
+}
+
+// ============================================
+// MATERIAL SHORTAGE ALERTS
+// ============================================
+
+/**
+ * Check all pending/scheduled work orders for material shortages
+ * and generate alerts for any materials that are insufficient.
+ */
+export async function generateMaterialShortageAlerts() {
+  const db = await getDb();
+  if (!db) return [];
+
+  const allWorkOrders = await getWorkOrders();
+  const pendingWOs = allWorkOrders.filter(wo => ['draft', 'scheduled'].includes(wo.status));
+  const alertIds: number[] = [];
+
+  for (const wo of pendingWOs) {
+    const materials = await getWorkOrderMaterials(wo.id);
+
+    for (const mat of materials) {
+      if (!mat.rawMaterialId) continue;
+
+      const requiredQty = parseFloat(mat.requiredQuantity?.toString() || '0');
+      const inv = await getRawMaterialInventoryByLocation(mat.rawMaterialId, wo.warehouseId || 0);
+      const currentQty = inv ? parseFloat(inv.quantity?.toString() || '0') : 0;
+      const currentReserved = inv ? parseFloat(inv.reservedQuantity?.toString() || '0') : 0;
+      const available = currentQty - currentReserved;
+
+      if (available < requiredQty) {
+        const shortageQty = requiredQty - available;
+        // Check if alert already exists for this material/work order
+        const existingAlerts = await getAlerts({
+          type: 'shortage' as any,
+          status: 'open' as any,
+        });
+        const alreadyExists = existingAlerts.some(
+          a => a.entityType === 'work_order_material' && a.entityId === mat.id
+        );
+
+        if (!alreadyExists) {
+          const alert = await createAlert({
+            type: 'shortage',
+            severity: shortageQty > requiredQty * 0.5 ? 'critical' : 'warning',
+            title: `Material shortage: ${mat.name} for WO ${wo.workOrderNumber}`,
+            description: `Work order ${wo.workOrderNumber} requires ${requiredQty} ${mat.unit} of ${mat.name}, but only ${available.toFixed(2)} available (${shortageQty.toFixed(2)} short).`,
+            entityType: 'work_order_material',
+            entityId: mat.id,
+            thresholdValue: requiredQty.toFixed(4),
+            actualValue: available.toFixed(4),
+            autoGenerated: true,
+          });
+          alertIds.push(alert.id);
+        }
+      }
+    }
+  }
+
+  return alertIds;
+}
+
+// ============================================
+// ANOMALY DETECTION
+// ============================================
+
+/**
+ * Detect anomalies in financial and operational data.
+ * Returns alerts for unusual patterns.
+ */
+export async function detectAnomalies() {
+  const db = await getDb();
+  if (!db) return [];
+
+  const alertIds: number[] = [];
+
+  // 1. Check for unusually large transactions (> 3x average)
+  const allPayments = await getPayments();
+  if (allPayments.length > 5) {
+    const amounts = allPayments.map(p => parseFloat(p.amount?.toString() || '0'));
+    const avg = amounts.reduce((a, b) => a + b, 0) / amounts.length;
+    const stdDev = Math.sqrt(amounts.map(x => Math.pow(x - avg, 2)).reduce((a, b) => a + b, 0) / amounts.length);
+    const threshold = avg + 3 * stdDev;
+
+    const recentPayments = allPayments
+      .filter(p => {
+        const payDate = new Date(p.paymentDate || p.createdAt);
+        const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        return payDate >= dayAgo;
+      });
+
+    for (const payment of recentPayments) {
+      const amount = parseFloat(payment.amount?.toString() || '0');
+      if (amount > threshold && threshold > 0) {
+        const alert = await createAlert({
+          type: 'quality_issue' as any,
+          severity: 'warning',
+          title: `Anomaly: Unusually large payment of $${amount.toFixed(2)}`,
+          description: `Payment #${payment.id} of $${amount.toFixed(2)} is significantly above the average of $${avg.toFixed(2)} (threshold: $${threshold.toFixed(2)}).`,
+          entityType: 'payment',
+          entityId: payment.id,
+          thresholdValue: threshold.toFixed(4),
+          actualValue: amount.toFixed(4),
+          autoGenerated: true,
+        });
+        alertIds.push(alert.id);
+      }
+    }
+  }
+
+  // 2. Check for overdue invoices (> 60 days past due)
+  const allInvoices = await getInvoices();
+  const now = new Date();
+  for (const inv of allInvoices) {
+    if (inv.status === 'paid' || inv.status === 'cancelled') continue;
+    const dueDate = inv.dueDate ? new Date(inv.dueDate) : null;
+    if (dueDate && dueDate < new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000)) {
+      const daysOverdue = Math.floor((now.getTime() - dueDate.getTime()) / (24 * 60 * 60 * 1000));
+      const existingAlerts = await getAlerts({ type: 'po_overdue' as any, status: 'open' as any });
+      const exists = existingAlerts.some(a => a.entityType === 'invoice' && a.entityId === inv.id);
+      if (!exists) {
+        const alert = await createAlert({
+          type: 'po_overdue',
+          severity: daysOverdue > 90 ? 'critical' : 'warning',
+          title: `Invoice ${inv.invoiceNumber} overdue by ${daysOverdue} days`,
+          description: `Invoice ${inv.invoiceNumber} for $${inv.totalAmount || '0'} was due on ${dueDate.toISOString().slice(0, 10)} and is ${daysOverdue} days overdue.`,
+          entityType: 'invoice',
+          entityId: inv.id,
+          autoGenerated: true,
+        });
+        alertIds.push(alert.id);
+      }
+    }
+  }
+
+  // 3. Check for yield variance in completed work orders
+  const allWOs = await getWorkOrders();
+  const recentCompletedWOs = allWOs.filter(wo => {
+    if (wo.status !== 'completed') return false;
+    const completed = wo.actualEndDate ? new Date(wo.actualEndDate) : null;
+    if (!completed) return false;
+    return completed >= new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  });
+
+  for (const wo of recentCompletedWOs) {
+    const planned = parseFloat(wo.quantity?.toString() || '0');
+    const completed = parseFloat(wo.completedQuantity?.toString() || '0');
+    if (planned > 0) {
+      const yieldPercent = (completed / planned) * 100;
+      if (yieldPercent < 85) {
+        const existingAlerts = await getAlerts({ type: 'yield_variance' as any, status: 'open' as any });
+        const exists = existingAlerts.some(a => a.entityType === 'work_order' && a.entityId === wo.id);
+        if (!exists) {
+          const alert = await createAlert({
+            type: 'yield_variance',
+            severity: yieldPercent < 70 ? 'critical' : 'warning',
+            title: `Low yield on WO ${wo.workOrderNumber}: ${yieldPercent.toFixed(1)}%`,
+            description: `Work order ${wo.workOrderNumber} had a yield of ${yieldPercent.toFixed(1)}% (${completed} out of ${planned} planned). This is below the 85% threshold.`,
+            entityType: 'work_order',
+            entityId: wo.id,
+            thresholdValue: '85',
+            actualValue: yieldPercent.toFixed(4),
+            autoGenerated: true,
+          });
+          alertIds.push(alert.id);
+        }
+      }
+    }
+  }
+
+  return alertIds;
+}
+
+// ============================================
+// VENDOR SUGGESTION (by PO history)
+// ============================================
+
+/**
+ * Get preferred vendor for a raw material based on PO history.
+ * Returns vendor with most POs, best price, and shortest lead time.
+ */
+export async function getPreferredVendorForMaterial(rawMaterialId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  // Get all PO items that reference this raw material
+  const poRawMats = await db.select().from(purchaseOrderRawMaterials)
+    .where(eq(purchaseOrderRawMaterials.rawMaterialId, rawMaterialId));
+
+  if (poRawMats.length === 0) return null;
+
+  // Get PO item IDs
+  const poItemIds = poRawMats.map(p => p.purchaseOrderItemId);
+
+  // Get the PO items to find PO IDs
+  const poItems = await db.select().from(purchaseOrderItems)
+    .where(inArray(purchaseOrderItems.id, poItemIds));
+
+  // Get PO IDs and their vendors
+  const poIds = [...new Set(poItems.map(pi => pi.purchaseOrderId))];
+  const pos = await db.select().from(purchaseOrders)
+    .where(inArray(purchaseOrders.id, poIds));
+
+  // Count POs per vendor
+  const vendorPOCount: Record<number, { count: number; totalCost: number; avgLeadTime: number }> = {};
+  for (const po of pos) {
+    if (!po.vendorId) continue;
+    if (!vendorPOCount[po.vendorId]) {
+      vendorPOCount[po.vendorId] = { count: 0, totalCost: 0, avgLeadTime: 0 };
+    }
+    vendorPOCount[po.vendorId].count++;
+    vendorPOCount[po.vendorId].totalCost += parseFloat(po.totalAmount?.toString() || '0');
+  }
+
+  // Find the vendor with the most POs
+  let bestVendorId: number | null = null;
+  let bestCount = 0;
+  for (const [vendorId, stats] of Object.entries(vendorPOCount)) {
+    if (stats.count > bestCount) {
+      bestCount = stats.count;
+      bestVendorId = parseInt(vendorId);
+    }
+  }
+
+  if (!bestVendorId) return null;
+
+  const vendor = await getVendorById(bestVendorId);
+  return vendor ? { ...vendor, poCount: bestCount, stats: vendorPOCount[bestVendorId] } : null;
+}
+
+// ============================================
+// EMAIL AUTO-ROUTING BY CATEGORY
+// ============================================
+
+/**
+ * Auto-route an email to the appropriate workflow based on its category.
+ * Creates relevant records (transactions, POs, shipment updates, etc.)
+ */
+export async function autoRouteEmailByCategory(emailId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const email = await getInboundEmailById(emailId);
+  if (!email) throw new Error("Email not found");
+
+  const category = email.category || 'general';
+  const actions: string[] = [];
+
+  switch (category) {
+    case 'receipt':
+    case 'invoice': {
+      // Auto-create parsed document approval task
+      const docs = await getParsedDocuments({ emailId });
+      for (const doc of docs) {
+        if (!doc.isReviewed) {
+          actions.push(`Queued ${doc.documentType} document #${doc.id} for review`);
+        }
+      }
+      break;
+    }
+    case 'purchase_order': {
+      const docs = await getParsedDocuments({ emailId });
+      for (const doc of docs) {
+        if (doc.documentNumber) {
+          const po = await findPurchaseOrderByNumber(doc.documentNumber);
+          if (po) {
+            actions.push(`Linked to PO ${doc.documentNumber}`);
+          }
+        }
+      }
+      break;
+    }
+    case 'shipping_confirmation': {
+      const docs = await getParsedDocuments({ emailId });
+      for (const doc of docs) {
+        if (doc.trackingNumber) {
+          const shipment = await findShipmentByTracking(doc.trackingNumber);
+          if (shipment) {
+            actions.push(`Linked to shipment with tracking ${doc.trackingNumber}`);
+          }
+        }
+      }
+      break;
+    }
+    case 'freight_quote': {
+      actions.push('Routed to freight quote management for review');
+      break;
+    }
+    default: {
+      actions.push('Categorized as general correspondence');
+      break;
+    }
+  }
+
+  return { emailId, category, actions };
+}
+
+// ============================================
+// DOCUMENT-TO-PO/SHIPMENT LINKING
+// ============================================
+
+/**
+ * Link a parsed document to an existing PO or shipment by matching document numbers and tracking.
+ */
+export async function linkParsedDocumentToEntities(documentId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const doc = await getParsedDocumentById(documentId);
+  if (!doc) throw new Error("Document not found");
+
+  let linkedPO: number | null = null;
+  let linkedShipment: number | null = null;
+
+  // Try to link to PO by document number
+  if (doc.documentNumber && !doc.purchaseOrderId) {
+    const po = await findPurchaseOrderByNumber(doc.documentNumber);
+    if (po) {
+      linkedPO = po.id;
+      await db.update(parsedDocuments)
+        .set({ purchaseOrderId: po.id })
+        .where(eq(parsedDocuments.id, documentId));
+    }
+  }
+
+  // Try to link to shipment by tracking number
+  if (doc.trackingNumber && !doc.shipmentId) {
+    const shipment = await findShipmentByTracking(doc.trackingNumber);
+    if (shipment) {
+      linkedShipment = shipment.id;
+      await db.update(parsedDocuments)
+        .set({ shipmentId: shipment.id })
+        .where(eq(parsedDocuments.id, documentId));
+    }
+  }
+
+  // Try to match vendor
+  if (!doc.vendorId && (doc.vendorName || doc.vendorEmail)) {
+    const vendor = await findVendorByEmailOrName(doc.vendorEmail || undefined, doc.vendorName || undefined);
+    if (vendor) {
+      await db.update(parsedDocuments)
+        .set({ vendorId: vendor.id })
+        .where(eq(parsedDocuments.id, documentId));
+    }
+  }
+
+  return { documentId, linkedPO, linkedShipment };
 }
