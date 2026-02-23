@@ -1803,7 +1803,7 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {syncLogs.map((log) => (
+                {syncLogs.map((log: any) => (
                   <TableRow key={log.id}>
                     <TableCell>{new Date(log.startedAt).toLocaleString()}</TableCell>
                     <TableCell>
@@ -1856,7 +1856,7 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
                 <div className="p-4 text-center text-muted-foreground">No folders found</div>
               ) : (
                 <div className="p-2 space-y-1">
-                  {driveFolders?.map((folder) => (
+                  {driveFolders?.map((folder: any) => (
                     <div
                       key={folder.id}
                       className={`flex items-center justify-between p-2 rounded-lg hover:bg-muted cursor-pointer ${selectedFolderId === folder.id ? 'bg-primary/10 border border-primary' : ''}`}
@@ -1937,7 +1937,7 @@ function EmailAccessRulesManager({ dataRoomId }: { dataRoomId: number }) {
       });
       refetch();
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast.error(error.message);
     },
   });
@@ -2008,7 +2008,7 @@ function EmailAccessRulesManager({ dataRoomId }: { dataRoomId: number }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rules.map((rule) => (
+                {rules.map((rule: any) => (
                   <TableRow key={rule.id}>
                     <TableCell>
                       <Badge className={getRuleTypeColor(rule.ruleType)}>
