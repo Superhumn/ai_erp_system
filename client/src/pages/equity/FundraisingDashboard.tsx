@@ -110,6 +110,33 @@ export default function FundraisingDashboard() {
   const [contactSearch, setContactSearch] = useState("");
   const [selectedCrmContact, setSelectedCrmContact] = useState<number | null>(null);
   const [useExistingContact, setUseExistingContact] = useState(false);
+  const [wireDialogOpen, setWireDialogOpen] = useState(false);
+  const [wireCommitmentId, setWireCommitmentId] = useState<number | null>(null);
+  const [complianceEditId, setComplianceEditId] = useState<number | null>(null);
+  const [ddEditId, setDdEditId] = useState<number | null>(null);
+
+  const [wireForm, setWireForm] = useState({
+    wireAmount: "",
+    wireReference: "",
+    wireDate: "",
+    wireConfirmed: false,
+  });
+
+  const [complianceForm, setComplianceForm] = useState({
+    accreditationType: "" as string,
+    accreditationVerified: false,
+    kycCompleted: false,
+    kycProvider: "",
+    w9Received: false,
+    w8benReceived: false,
+    notes: "",
+  });
+
+  const [ddForm, setDdForm] = useState({
+    status: "requested" as string,
+    responseNotes: "",
+    documentUrl: "",
+  });
 
   const [commitmentForm, setCommitmentForm] = useState({
     investorName: "",
@@ -166,7 +193,7 @@ export default function FundraisingDashboard() {
     {},
     { enabled: !!selectedRoundId }
   );
-  const { data: complianceRecords } = trpc.fundraising.compliance.list.useQuery(
+  const { data: complianceRecords, refetch: refetchCompliance } = trpc.fundraising.compliance.list.useQuery(
     undefined,
     { enabled: !!selectedRoundId }
   );
@@ -330,6 +357,26 @@ export default function FundraisingDashboard() {
     onError: (error) => toast.error(error.message),
   });
 
+  // Compliance update mutation
+  const updateCompliance = trpc.fundraising.compliance.update.useMutation({
+    onSuccess: () => {
+      toast.success("Compliance record updated");
+      setComplianceEditId(null);
+      refetchCompliance();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  // Due diligence update mutation
+  const updateDueDiligence = trpc.fundraising.dueDiligence.update.useMutation({
+    onSuccess: () => {
+      toast.success("Due diligence request updated");
+      setDdEditId(null);
+      refetchDD();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   const resetCommitmentForm = () => {
     setCommitmentForm({
       investorName: "",
@@ -454,6 +501,90 @@ export default function FundraisingDashboard() {
       content: updateForm.content || undefined,
       updateType: updateForm.updateType,
       summary: updateForm.summary || undefined,
+    });
+  };
+
+  // Handler for commitment status changes — intercepts "wired" to show confirmation dialog
+  const handleCommitmentStatusChange = (commitmentId: number, newStatus: string) => {
+    if (newStatus === "wired") {
+      const commitment = commitments?.find(c => c.id === commitmentId);
+      setWireCommitmentId(commitmentId);
+      setWireForm({
+        wireAmount: commitment?.commitmentAmount?.toString() || "",
+        wireReference: "",
+        wireDate: new Date().toISOString().split("T")[0],
+        wireConfirmed: false,
+      });
+      setWireDialogOpen(true);
+    } else {
+      updateCommitment.mutate({ id: commitmentId, data: { commitmentType: newStatus as any } });
+    }
+  };
+
+  const handleWireConfirmation = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!wireCommitmentId || !wireForm.wireConfirmed) return;
+    updateCommitment.mutate({
+      id: wireCommitmentId,
+      data: {
+        commitmentType: "wired",
+        wireConfirmed: true,
+        wireAmount: wireForm.wireAmount,
+        wireReference: wireForm.wireReference || undefined,
+        wireDate: wireForm.wireDate ? new Date(wireForm.wireDate) : new Date(),
+      },
+    });
+    setWireDialogOpen(false);
+    setWireCommitmentId(null);
+  };
+
+  const handleComplianceEdit = (record: any) => {
+    setComplianceEditId(record.id);
+    setComplianceForm({
+      accreditationType: record.accreditationType || "",
+      accreditationVerified: record.accreditationVerified || false,
+      kycCompleted: record.kycCompleted || false,
+      kycProvider: record.kycProvider || "",
+      w9Received: record.w9Received || false,
+      w8benReceived: record.w8benReceived || false,
+      notes: record.notes || "",
+    });
+  };
+
+  const handleComplianceSave = () => {
+    if (!complianceEditId) return;
+    updateCompliance.mutate({
+      id: complianceEditId,
+      data: {
+        accreditationType: complianceForm.accreditationType || undefined,
+        accreditationVerified: complianceForm.accreditationVerified,
+        kycCompleted: complianceForm.kycCompleted,
+        kycProvider: complianceForm.kycProvider || undefined,
+        w9Received: complianceForm.w9Received,
+        w8benReceived: complianceForm.w8benReceived,
+        notes: complianceForm.notes || undefined,
+      },
+    });
+  };
+
+  const handleDdEdit = (request: any) => {
+    setDdEditId(request.id);
+    setDdForm({
+      status: request.status || "requested",
+      responseNotes: request.responseNotes || "",
+      documentUrl: request.documentUrl || "",
+    });
+  };
+
+  const handleDdSave = () => {
+    if (!ddEditId) return;
+    updateDueDiligence.mutate({
+      id: ddEditId,
+      data: {
+        status: ddForm.status,
+        responseNotes: ddForm.responseNotes || undefined,
+        documentUrl: ddForm.documentUrl || undefined,
+      },
     });
   };
 
@@ -1056,6 +1187,28 @@ export default function FundraisingDashboard() {
                 </Dialog>
               </div>
 
+              {/* Equity Conversion Summary */}
+              {commitments && commitments.some(c => c.commitmentType === "wired" && c.wireConfirmed) && (
+                <Card className="border-green-200 bg-green-50/50">
+                  <CardContent className="py-4">
+                    <div className="flex items-center gap-6">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="h-5 w-5 text-green-600" />
+                        <span className="font-medium text-green-800">Cap Table Updated</span>
+                      </div>
+                      <div className="text-sm text-green-700">
+                        {commitments.filter(c => c.commitmentType === "wired" && c.wireConfirmed).length} investor(s)
+                        wired {formatCurrency(
+                          commitments
+                            .filter(c => c.commitmentType === "wired" && c.wireConfirmed)
+                            .reduce((sum, c) => sum + parseFloat(c.wireAmount?.toString() || c.commitmentAmount?.toString() || "0"), 0)
+                        )} — equity holdings and shareholder records auto-created
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
               <Card>
                 <Table>
                   <TableHeader>
@@ -1100,29 +1253,43 @@ export default function FundraisingDashboard() {
                               {config?.label}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-sm capitalize">
-                            {commitment.instrumentType?.replace("_", " ")}
+                          <TableCell className="text-sm">
+                            <span className="capitalize">{commitment.instrumentType?.replace("_", " ")}</span>
+                            {commitment.commitmentType === "wired" && commitment.shareholderId && (
+                              <div className="mt-1">
+                                <Link href={`/equity/shareholders?id=${commitment.shareholderId}`}>
+                                  <Badge className="bg-purple-500/10 text-purple-600 cursor-pointer hover:bg-purple-500/20">
+                                    <Target className="h-3 w-3 mr-0.5" />
+                                    View Equity
+                                  </Badge>
+                                </Link>
+                              </div>
+                            )}
                           </TableCell>
                           <TableCell className="text-right">
-                            <Select
-                              value={commitment.commitmentType || "soft"}
-                              onValueChange={(value: any) =>
-                                updateCommitment.mutate({
-                                  id: commitment.id,
-                                  data: { commitmentType: value }
-                                })
-                              }
-                            >
-                              <SelectTrigger className="w-[120px]">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="soft">Soft</SelectItem>
-                                <SelectItem value="hard">Hard</SelectItem>
-                                <SelectItem value="signed">Signed</SelectItem>
-                                <SelectItem value="wired">Wired</SelectItem>
-                              </SelectContent>
-                            </Select>
+                            <div className="flex items-center justify-end gap-2">
+                              <Select
+                                value={commitment.commitmentType || "soft"}
+                                onValueChange={(value) => handleCommitmentStatusChange(commitment.id, value)}
+                              >
+                                <SelectTrigger className="w-[120px]">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="soft">Soft</SelectItem>
+                                  <SelectItem value="hard">Hard</SelectItem>
+                                  <SelectItem value="signed">Signed</SelectItem>
+                                  <SelectItem value="wired">Wired</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            {commitment.commitmentType === "wired" && commitment.wireConfirmed && (
+                              <div className="text-xs text-muted-foreground mt-1 text-right space-y-0.5">
+                                <div>Wired: {formatCurrency(commitment.wireAmount)}</div>
+                                {commitment.wireReference && <div>Ref: {commitment.wireReference}</div>}
+                                {commitment.wireDate && <div>{new Date(commitment.wireDate).toLocaleDateString()}</div>}
+                              </div>
+                            )}
                           </TableCell>
                         </TableRow>
                       );
@@ -1137,6 +1304,96 @@ export default function FundraisingDashboard() {
                   </TableBody>
                 </Table>
               </Card>
+
+              {/* Wire Confirmation Dialog */}
+              <Dialog open={wireDialogOpen} onOpenChange={setWireDialogOpen}>
+                <DialogContent>
+                  <form onSubmit={handleWireConfirmation}>
+                    <DialogHeader>
+                      <DialogTitle>Confirm Wire Receipt</DialogTitle>
+                      <DialogDescription>
+                        Enter wire transfer details to confirm receipt of funds. This will
+                        automatically create equity holdings and update the cap table.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                      <div className="space-y-2">
+                        <Label>Wire Amount *</Label>
+                        <div className="relative">
+                          <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            className="pl-9"
+                            type="number"
+                            step="0.01"
+                            value={wireForm.wireAmount}
+                            onChange={(e) => setWireForm({ ...wireForm, wireAmount: e.target.value })}
+                            placeholder="500000"
+                            required
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Wire Reference / Confirmation Number</Label>
+                        <Input
+                          value={wireForm.wireReference}
+                          onChange={(e) => setWireForm({ ...wireForm, wireReference: e.target.value })}
+                          placeholder="e.g., FWT-2025-001234"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Date Received *</Label>
+                        <Input
+                          type="date"
+                          value={wireForm.wireDate}
+                          onChange={(e) => setWireForm({ ...wireForm, wireDate: e.target.value })}
+                          required
+                        />
+                      </div>
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 space-y-3">
+                        <div className="flex items-start gap-2">
+                          <AlertCircle className="h-5 w-5 text-amber-600 mt-0.5 shrink-0" />
+                          <div className="text-sm text-amber-800">
+                            <p className="font-medium">This action will trigger the following:</p>
+                            <ul className="mt-2 space-y-1 list-disc pl-4">
+                              <li>Create a shareholder record (if new investor)</li>
+                              <li>Issue equity holdings based on wire amount and share price</li>
+                              <li>Record funding investment for the round</li>
+                              <li>Update total amount raised on the funding round</li>
+                              <li>Mark wire-related checklist items as complete</li>
+                              <li>Update CRM deal status to "Won"</li>
+                            </ul>
+                          </div>
+                        </div>
+                        <label className="flex items-center gap-2 cursor-pointer pt-2 border-t border-amber-200">
+                          <input
+                            type="checkbox"
+                            className="rounded border-amber-400"
+                            checked={wireForm.wireConfirmed}
+                            onChange={(e) => setWireForm({ ...wireForm, wireConfirmed: e.target.checked })}
+                          />
+                          <span className="text-sm font-medium text-amber-900">
+                            I confirm this wire transfer has been received and verified
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button type="button" variant="outline" onClick={() => setWireDialogOpen(false)}>
+                        Cancel
+                      </Button>
+                      <Button
+                        type="submit"
+                        disabled={!wireForm.wireConfirmed || updateCommitment.isPending}
+                        className="bg-green-600 hover:bg-green-700"
+                      >
+                        {updateCommitment.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                        <Banknote className="h-4 w-4 mr-2" />
+                        Confirm Wire Receipt
+                      </Button>
+                    </DialogFooter>
+                  </form>
+                </DialogContent>
+              </Dialog>
             </TabsContent>
 
             {/* Closing Checklist Tab */}
@@ -1394,47 +1651,159 @@ export default function FundraisingDashboard() {
                     <TableRow>
                       <TableHead>Investor</TableHead>
                       <TableHead>Accreditation</TableHead>
-                      <TableHead>KYC Status</TableHead>
+                      <TableHead>KYC</TableHead>
                       <TableHead>Tax Docs</TableHead>
                       <TableHead>Notes</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {complianceRecords?.map((record) => (
+                    {complianceRecords?.map((record: any) => (
                       <TableRow key={record.id}>
                         <TableCell>
-                          <div className="font-medium">{record.investorCommitment?.investorName || `Commitment #${record.investorCommitmentId}`}</div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge className={complianceStatusConfig[record.accreditationStatus]?.color}>
-                            {complianceStatusConfig[record.accreditationStatus]?.label}
-                          </Badge>
-                          {record.accreditationType && (
-                            <div className="text-xs text-muted-foreground mt-1">{record.accreditationType}</div>
+                          <div className="font-medium">{record.investorName}</div>
+                          {record.investorEmail && (
+                            <div className="text-xs text-muted-foreground">{record.investorEmail}</div>
                           )}
                         </TableCell>
                         <TableCell>
-                          <Badge className={complianceStatusConfig[record.kycStatus]?.color}>
-                            {complianceStatusConfig[record.kycStatus]?.label}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge className={complianceStatusConfig[record.taxDocumentStatus || "pending"]?.color}>
-                            {complianceStatusConfig[record.taxDocumentStatus || "pending"]?.label}
-                          </Badge>
-                          {record.taxDocumentType && (
-                            <div className="text-xs text-muted-foreground mt-1">{record.taxDocumentType}</div>
+                          {complianceEditId === record.id ? (
+                            <div className="space-y-2">
+                              <Select
+                                value={complianceForm.accreditationType}
+                                onValueChange={(v) => setComplianceForm({ ...complianceForm, accreditationType: v })}
+                              >
+                                <SelectTrigger className="w-[160px]">
+                                  <SelectValue placeholder="Select type..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="individual_income">Income</SelectItem>
+                                  <SelectItem value="individual_net_worth">Net Worth</SelectItem>
+                                  <SelectItem value="entity">Entity</SelectItem>
+                                  <SelectItem value="qualified_purchaser">Qualified</SelectItem>
+                                  <SelectItem value="non_accredited">Non-Accredited</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <label className="flex items-center gap-1.5 text-xs">
+                                <input
+                                  type="checkbox"
+                                  checked={complianceForm.accreditationVerified}
+                                  onChange={(e) => setComplianceForm({ ...complianceForm, accreditationVerified: e.target.checked })}
+                                />
+                                Verified
+                              </label>
+                            </div>
+                          ) : (
+                            <>
+                              <Badge className={record.accreditationVerified
+                                ? "bg-green-500/10 text-green-600"
+                                : "bg-yellow-500/10 text-yellow-600"
+                              }>
+                                {record.accreditationVerified ? "Verified" : "Pending"}
+                              </Badge>
+                              {record.accreditationType && (
+                                <div className="text-xs text-muted-foreground mt-1 capitalize">
+                                  {record.accreditationType.replace(/_/g, " ")}
+                                </div>
+                              )}
+                            </>
                           )}
                         </TableCell>
-                        <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
-                          {record.notes || "-"}
+                        <TableCell>
+                          {complianceEditId === record.id ? (
+                            <div className="space-y-2">
+                              <label className="flex items-center gap-1.5 text-xs">
+                                <input
+                                  type="checkbox"
+                                  checked={complianceForm.kycCompleted}
+                                  onChange={(e) => setComplianceForm({ ...complianceForm, kycCompleted: e.target.checked })}
+                                />
+                                KYC Complete
+                              </label>
+                              <Input
+                                className="w-[130px] h-7 text-xs"
+                                placeholder="KYC Provider"
+                                value={complianceForm.kycProvider}
+                                onChange={(e) => setComplianceForm({ ...complianceForm, kycProvider: e.target.value })}
+                              />
+                            </div>
+                          ) : (
+                            <Badge className={record.kycCompleted
+                              ? "bg-green-500/10 text-green-600"
+                              : "bg-yellow-500/10 text-yellow-600"
+                            }>
+                              {record.kycCompleted ? "Complete" : "Pending"}
+                            </Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {complianceEditId === record.id ? (
+                            <div className="space-y-1">
+                              <label className="flex items-center gap-1.5 text-xs">
+                                <input
+                                  type="checkbox"
+                                  checked={complianceForm.w9Received}
+                                  onChange={(e) => setComplianceForm({ ...complianceForm, w9Received: e.target.checked })}
+                                />
+                                W-9
+                              </label>
+                              <label className="flex items-center gap-1.5 text-xs">
+                                <input
+                                  type="checkbox"
+                                  checked={complianceForm.w8benReceived}
+                                  onChange={(e) => setComplianceForm({ ...complianceForm, w8benReceived: e.target.checked })}
+                                />
+                                W-8BEN
+                              </label>
+                            </div>
+                          ) : (
+                            <div className="space-y-1">
+                              {record.w9Received && (
+                                <Badge className="bg-green-500/10 text-green-600">W-9</Badge>
+                              )}
+                              {record.w8benReceived && (
+                                <Badge className="bg-green-500/10 text-green-600">W-8BEN</Badge>
+                              )}
+                              {!record.w9Received && !record.w8benReceived && (
+                                <Badge className="bg-yellow-500/10 text-yellow-600">Pending</Badge>
+                              )}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground max-w-[200px]">
+                          {complianceEditId === record.id ? (
+                            <Input
+                              className="h-7 text-xs"
+                              value={complianceForm.notes}
+                              onChange={(e) => setComplianceForm({ ...complianceForm, notes: e.target.value })}
+                              placeholder="Notes..."
+                            />
+                          ) : (
+                            <span className="truncate block">{record.notes || "-"}</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {complianceEditId === record.id ? (
+                            <div className="flex gap-1 justify-end">
+                              <Button size="sm" onClick={handleComplianceSave} disabled={updateCompliance.isPending}>
+                                {updateCompliance.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Save"}
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={() => setComplianceEditId(null)}>
+                                Cancel
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button size="sm" variant="ghost" onClick={() => handleComplianceEdit(record)}>
+                              Edit
+                            </Button>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}
                     {(!complianceRecords || complianceRecords.length === 0) && (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                          No compliance records yet
+                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                          No compliance records yet. They are auto-created when commitments are added.
                         </TableCell>
                       </TableRow>
                     )}
@@ -1735,24 +2104,27 @@ export default function FundraisingDashboard() {
                       <TableHead>Priority</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Due Date</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {dueDiligence?.map((request) => (
+                    {dueDiligence?.map((request: any) => (
                       <TableRow key={request.id}>
                         <TableCell>
-                          <div className="font-medium">{request.requestTitle}</div>
+                          <div className="font-medium">{request.requestItem}</div>
                           {request.description && (
                             <div className="text-sm text-muted-foreground truncate max-w-[200px]">
                               {request.description}
                             </div>
                           )}
                         </TableCell>
-                        <TableCell>{request.investorCommitment?.investorName || "-"}</TableCell>
+                        <TableCell>
+                          <div className="text-sm">{request.investorName || "-"}</div>
+                        </TableCell>
                         <TableCell className="capitalize">{request.category}</TableCell>
                         <TableCell>
                           <Badge className={
-                            request.priority === "high" || request.priority === "critical" ? "bg-red-500/10 text-red-600" :
+                            request.priority === "high" || request.priority === "urgent" ? "bg-red-500/10 text-red-600" :
                             request.priority === "medium" ? "bg-yellow-500/10 text-yellow-600" :
                             "bg-gray-500/10 text-gray-600"
                           }>
@@ -1760,22 +2132,72 @@ export default function FundraisingDashboard() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <Badge className={
-                            request.status === "completed" ? "bg-green-500/10 text-green-600" :
-                            request.status === "in_progress" ? "bg-blue-500/10 text-blue-600" :
-                            "bg-gray-500/10 text-gray-600"
-                          }>
-                            {request.status?.replace("_", " ")}
-                          </Badge>
+                          {ddEditId === request.id ? (
+                            <Select
+                              value={ddForm.status}
+                              onValueChange={(v) => setDdForm({ ...ddForm, status: v })}
+                            >
+                              <SelectTrigger className="w-[130px]">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="requested">Requested</SelectItem>
+                                <SelectItem value="in_progress">In Progress</SelectItem>
+                                <SelectItem value="ready">Ready</SelectItem>
+                                <SelectItem value="shared">Shared</SelectItem>
+                                <SelectItem value="closed">Closed</SelectItem>
+                                <SelectItem value="declined">Declined</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Badge className={
+                              request.status === "shared" || request.status === "closed" ? "bg-green-500/10 text-green-600" :
+                              request.status === "in_progress" || request.status === "ready" ? "bg-blue-500/10 text-blue-600" :
+                              request.status === "declined" ? "bg-red-500/10 text-red-600" :
+                              "bg-gray-500/10 text-gray-600"
+                            }>
+                              {request.status?.replace("_", " ")}
+                            </Badge>
+                          )}
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">
                           {request.dueDate ? new Date(request.dueDate).toLocaleDateString() : "-"}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {ddEditId === request.id ? (
+                            <div className="space-y-2">
+                              <Input
+                                className="h-7 text-xs"
+                                placeholder="Response notes..."
+                                value={ddForm.responseNotes}
+                                onChange={(e) => setDdForm({ ...ddForm, responseNotes: e.target.value })}
+                              />
+                              <Input
+                                className="h-7 text-xs"
+                                placeholder="Document URL..."
+                                value={ddForm.documentUrl}
+                                onChange={(e) => setDdForm({ ...ddForm, documentUrl: e.target.value })}
+                              />
+                              <div className="flex gap-1 justify-end">
+                                <Button size="sm" onClick={handleDdSave} disabled={updateDueDiligence.isPending}>
+                                  {updateDueDiligence.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Save"}
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={() => setDdEditId(null)}>
+                                  Cancel
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <Button size="sm" variant="ghost" onClick={() => handleDdEdit(request)}>
+                              Edit
+                            </Button>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}
                     {(!dueDiligence || dueDiligence.length === 0) && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                           No due diligence requests yet
                         </TableCell>
                       </TableRow>
