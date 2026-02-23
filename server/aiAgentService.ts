@@ -13,6 +13,7 @@ import {
   inventory,
   inventoryTransactions,
   invoices,
+  invoiceItems,
   freightRfqs,
   freightQuotes,
   freightBookings,
@@ -20,9 +21,16 @@ import {
   shipments,
   workOrders,
   billOfMaterials,
+  bomComponents,
   aiAgentTasks,
   aiAgentLogs,
   sentEmails,
+  employees,
+  contracts,
+  warehouses,
+  payments,
+  transactions,
+  productionBatches,
 } from "../drizzle/schema";
 import { eq, and, like, desc, sql, gte, lte, or, isNull, isNotNull } from "drizzle-orm";
 
@@ -373,6 +381,366 @@ const AI_TOOLS: Tool[] = [
       },
     },
   },
+
+  // Product Management Tools
+  {
+    type: "function",
+    function: {
+      name: "manage_product",
+      description: "Create, update, search, or get information about products in the catalog",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["create", "update", "get", "list", "search", "delete"],
+            description: "Action to perform",
+          },
+          productId: { type: "number", description: "Product ID for get/update/delete" },
+          data: {
+            type: "object",
+            description: "Product data for create/update",
+            properties: {
+              name: { type: "string" },
+              sku: { type: "string" },
+              category: { type: "string" },
+              unitPrice: { type: "string" },
+              description: { type: "string" },
+              status: { type: "string" },
+            },
+          },
+          searchQuery: { type: "string", description: "Search query" },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  // Raw Material Management Tools
+  {
+    type: "function",
+    function: {
+      name: "manage_raw_material",
+      description: "Create, update, search, or get information about raw materials",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["create", "update", "get", "list", "search", "delete"],
+            description: "Action to perform",
+          },
+          materialId: { type: "number", description: "Raw material ID" },
+          data: {
+            type: "object",
+            description: "Raw material data for create/update",
+            properties: {
+              name: { type: "string" },
+              sku: { type: "string" },
+              unit: { type: "string" },
+              category: { type: "string" },
+              unitCost: { type: "string" },
+              description: { type: "string" },
+              reorderPoint: { type: "string" },
+              reorderQuantity: { type: "string" },
+            },
+          },
+          searchQuery: { type: "string", description: "Search query" },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  // Invoice Management Tools
+  {
+    type: "function",
+    function: {
+      name: "manage_invoice",
+      description: "Create, update, search, or manage invoices including marking as paid or void",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["create", "update", "get", "list", "search", "void", "mark_paid"],
+            description: "Action to perform",
+          },
+          invoiceId: { type: "number", description: "Invoice ID" },
+          data: {
+            type: "object",
+            description: "Invoice data for create/update",
+            properties: {
+              customerId: { type: "number" },
+              orderId: { type: "number" },
+              dueDate: { type: "string" },
+              notes: { type: "string" },
+              items: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    description: { type: "string" },
+                    quantity: { type: "number" },
+                    unitPrice: { type: "number" },
+                  },
+                },
+              },
+            },
+          },
+          searchQuery: { type: "string", description: "Search query" },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  // BOM (Bill of Materials) Management Tools
+  {
+    type: "function",
+    function: {
+      name: "manage_bom",
+      description: "Create, update, or manage bills of materials and their components",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["create", "update", "get", "list", "add_component", "remove_component"],
+            description: "Action to perform",
+          },
+          bomId: { type: "number", description: "BOM ID" },
+          data: {
+            type: "object",
+            description: "BOM data for create/update",
+            properties: {
+              productId: { type: "number" },
+              name: { type: "string" },
+              batchSize: { type: "string" },
+              batchUnit: { type: "string" },
+              notes: { type: "string" },
+            },
+          },
+          componentData: {
+            type: "object",
+            description: "Component data for add/remove",
+            properties: {
+              rawMaterialId: { type: "number" },
+              productId: { type: "number" },
+              name: { type: "string" },
+              quantity: { type: "string" },
+              unit: { type: "string" },
+            },
+          },
+          componentId: { type: "number", description: "Component ID for removal" },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  // Work Order Management Tools
+  {
+    type: "function",
+    function: {
+      name: "manage_work_order",
+      description: "Create, update, start, complete, or cancel work orders for manufacturing",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["create", "update", "get", "list", "start", "complete", "cancel"],
+            description: "Action to perform",
+          },
+          workOrderId: { type: "number", description: "Work order ID" },
+          data: {
+            type: "object",
+            description: "Work order data",
+            properties: {
+              bomId: { type: "number" },
+              productId: { type: "number" },
+              quantity: { type: "string" },
+              priority: { type: "string" },
+              notes: { type: "string" },
+              dueDate: { type: "string" },
+            },
+          },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  // Shipment Management Tools
+  {
+    type: "function",
+    function: {
+      name: "manage_shipment",
+      description: "Create, update, track, or manage shipments and deliveries",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["create", "update", "get", "list", "track", "mark_delivered"],
+            description: "Action to perform",
+          },
+          shipmentId: { type: "number", description: "Shipment ID" },
+          data: {
+            type: "object",
+            description: "Shipment data",
+            properties: {
+              orderId: { type: "number" },
+              trackingNumber: { type: "string" },
+              carrier: { type: "string" },
+              status: { type: "string" },
+              shippedDate: { type: "string" },
+              expectedDeliveryDate: { type: "string" },
+              notes: { type: "string" },
+            },
+          },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  // Warehouse Management Tools
+  {
+    type: "function",
+    function: {
+      name: "manage_warehouse",
+      description: "Create, update, or get information about warehouses and storage locations",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["create", "update", "get", "list", "inventory_levels"],
+            description: "Action to perform",
+          },
+          warehouseId: { type: "number", description: "Warehouse ID" },
+          data: {
+            type: "object",
+            description: "Warehouse data",
+            properties: {
+              name: { type: "string" },
+              code: { type: "string" },
+              address: { type: "string" },
+              city: { type: "string" },
+              state: { type: "string" },
+              country: { type: "string" },
+              type: { type: "string" },
+              contactName: { type: "string" },
+              contactEmail: { type: "string" },
+            },
+          },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  // Employee Management Tools
+  {
+    type: "function",
+    function: {
+      name: "manage_employee",
+      description: "Create, update, search, or get information about employees",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["create", "update", "get", "list", "search"],
+            description: "Action to perform",
+          },
+          employeeId: { type: "number", description: "Employee ID" },
+          data: {
+            type: "object",
+            description: "Employee data",
+            properties: {
+              firstName: { type: "string" },
+              lastName: { type: "string" },
+              email: { type: "string" },
+              phone: { type: "string" },
+              jobTitle: { type: "string" },
+              departmentId: { type: "number" },
+              hireDate: { type: "string" },
+            },
+          },
+          searchQuery: { type: "string", description: "Search query" },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  // Contract Management Tools
+  {
+    type: "function",
+    function: {
+      name: "manage_contract",
+      description: "Create, update, search, or manage legal contracts",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["create", "update", "get", "list", "search", "activate", "terminate"],
+            description: "Action to perform",
+          },
+          contractId: { type: "number", description: "Contract ID" },
+          data: {
+            type: "object",
+            description: "Contract data",
+            properties: {
+              title: { type: "string" },
+              type: { type: "string" },
+              partyType: { type: "string" },
+              partyId: { type: "number" },
+              partyName: { type: "string" },
+              startDate: { type: "string" },
+              endDate: { type: "string" },
+              value: { type: "string" },
+              description: { type: "string" },
+              terms: { type: "string" },
+            },
+          },
+          searchQuery: { type: "string", description: "Search query" },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  // Payment Management Tools
+  {
+    type: "function",
+    function: {
+      name: "manage_payment",
+      description: "Create, get, list, or void payments",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["create", "get", "list", "void"],
+            description: "Action to perform",
+          },
+          paymentId: { type: "number", description: "Payment ID" },
+          data: {
+            type: "object",
+            description: "Payment data",
+            properties: {
+              type: { type: "string", enum: ["received", "made"] },
+              invoiceId: { type: "number" },
+              vendorId: { type: "number" },
+              customerId: { type: "number" },
+              amount: { type: "string" },
+              paymentMethod: { type: "string" },
+              paymentDate: { type: "string" },
+              referenceNumber: { type: "string" },
+              notes: { type: "string" },
+            },
+          },
+        },
+        required: ["action"],
+      },
+    },
+  },
   // Task Creation Tool
   {
     type: "function",
@@ -384,7 +752,13 @@ const AI_TOOLS: Tool[] = [
         properties: {
           taskType: {
             type: "string",
-            enum: ["generate_po", "send_rfq", "send_email", "update_inventory", "vendor_followup", "create_work_order"],
+            enum: [
+              "generate_po", "send_rfq", "send_email", "update_inventory", "vendor_followup",
+              "create_work_order", "create_product", "create_material", "create_customer",
+              "create_bom", "create_invoice", "create_shipment", "create_warehouse",
+              "create_employee", "create_contract", "create_payment", "update_order",
+              "create_order"
+            ],
           },
           priority: {
             type: "string",
@@ -1003,6 +1377,36 @@ async function executeManageCustomer(params: any, ctx: AIAgentContext): Promise<
       return { orders: customerOrders, total: customerOrders.length };
     }
 
+    case "create": {
+      if (!data?.name) throw new Error("Customer name required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "create_customer",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify(data),
+        aiReasoning: `Create customer: ${data.name}`,
+        aiConfidence: "0.90",
+        relatedEntityType: "customer",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Customer creation pending approval" };
+    }
+
+    case "update": {
+      if (!customerId) throw new Error("Customer ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "update_customer",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify({ customerId, ...data }),
+        aiReasoning: `Update customer #${customerId}`,
+        aiConfidence: "0.85",
+        relatedEntityType: "customer",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Customer update pending approval" };
+    }
+
     default:
       throw new Error(`Unknown customer action: ${action}`);
   }
@@ -1025,6 +1429,66 @@ async function executeManageOrder(params: any, ctx: AIAgentContext): Promise<any
       const order = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
       const items = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
       return { order: order[0], items };
+    }
+
+    case "create": {
+      if (!data?.customerId) throw new Error("Customer ID required for order");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "create_order",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify(data),
+        aiReasoning: `Create order for customer #${data.customerId}`,
+        aiConfidence: "0.90",
+        relatedEntityType: "order",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Order creation pending approval" };
+    }
+
+    case "update": {
+      if (!orderId) throw new Error("Order ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "update_order",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify({ orderId, ...data }),
+        aiReasoning: `Update order #${orderId}`,
+        aiConfidence: "0.85",
+        relatedEntityType: "order",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Order update pending approval" };
+    }
+
+    case "cancel": {
+      if (!orderId) throw new Error("Order ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "cancel_order",
+        status: "pending_approval",
+        priority: "high",
+        taskData: JSON.stringify({ orderId }),
+        aiReasoning: `Cancel order #${orderId}`,
+        aiConfidence: "0.80",
+        relatedEntityType: "order",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Order cancellation pending approval" };
+    }
+
+    case "fulfill": {
+      if (!orderId) throw new Error("Order ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "fulfill_order",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify({ orderId }),
+        aiReasoning: `Fulfill order #${orderId}`,
+        aiConfidence: "0.90",
+        relatedEntityType: "order",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Order fulfillment pending approval" };
     }
 
     default:
@@ -1195,6 +1659,735 @@ async function executeCreateTask(params: any, ctx: AIAgentContext): Promise<any>
   };
 }
 
+
+// ============================================
+// NEW ENTITY MANAGEMENT EXECUTION FUNCTIONS
+// ============================================
+
+async function executeManageProduct(params: any, ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { action, productId, data, searchQuery } = params;
+
+  switch (action) {
+    case "list": {
+      const allProducts = await db.select().from(products).limit(50);
+      return { products: allProducts, total: allProducts.length };
+    }
+    case "get": {
+      if (!productId) throw new Error("Product ID required");
+      const product = await db.select().from(products).where(eq(products.id, productId)).limit(1);
+      return { product: product[0] };
+    }
+    case "search": {
+      const allProducts = await db.select().from(products);
+      const filtered = allProducts.filter(p =>
+        p.name?.toLowerCase().includes(searchQuery?.toLowerCase() || "") ||
+        p.sku?.toLowerCase().includes(searchQuery?.toLowerCase() || "")
+      );
+      return { products: filtered, total: filtered.length, query: searchQuery };
+    }
+    case "create": {
+      if (!data?.name) throw new Error("Product name required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "create_product",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify(data),
+        aiReasoning: `Create product: ${data.name}`,
+        aiConfidence: "0.90",
+        relatedEntityType: "product",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Product creation pending approval" };
+    }
+    case "update": {
+      if (!productId) throw new Error("Product ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "update_product",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify({ productId, ...data }),
+        aiReasoning: `Update product #${productId}`,
+        aiConfidence: "0.85",
+        relatedEntityType: "product",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Product update pending approval" };
+    }
+    case "delete": {
+      if (!productId) throw new Error("Product ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "delete_product",
+        status: "pending_approval",
+        priority: "high",
+        taskData: JSON.stringify({ productId }),
+        aiReasoning: `Delete product #${productId}`,
+        aiConfidence: "0.80",
+        relatedEntityType: "product",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Product deletion pending approval" };
+    }
+    default:
+      throw new Error(`Unknown product action: ${action}`);
+  }
+}
+
+async function executeManageRawMaterial(params: any, ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { action, materialId, data, searchQuery } = params;
+
+  switch (action) {
+    case "list": {
+      const allMaterials = await db.select().from(rawMaterials).limit(50);
+      return { materials: allMaterials, total: allMaterials.length };
+    }
+    case "get": {
+      if (!materialId) throw new Error("Material ID required");
+      const material = await db.select().from(rawMaterials).where(eq(rawMaterials.id, materialId)).limit(1);
+      return { material: material[0] };
+    }
+    case "search": {
+      const allMaterials = await db.select().from(rawMaterials);
+      const filtered = allMaterials.filter(m =>
+        m.name?.toLowerCase().includes(searchQuery?.toLowerCase() || "") ||
+        m.sku?.toLowerCase().includes(searchQuery?.toLowerCase() || "")
+      );
+      return { materials: filtered, total: filtered.length, query: searchQuery };
+    }
+    case "create": {
+      if (!data?.name) throw new Error("Material name required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "create_material",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify(data),
+        aiReasoning: `Create raw material: ${data.name}`,
+        aiConfidence: "0.90",
+        relatedEntityType: "raw_material",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Material creation pending approval" };
+    }
+    case "update": {
+      if (!materialId) throw new Error("Material ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "update_material",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify({ materialId, ...data }),
+        aiReasoning: `Update raw material #${materialId}`,
+        aiConfidence: "0.85",
+        relatedEntityType: "raw_material",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Material update pending approval" };
+    }
+    case "delete": {
+      if (!materialId) throw new Error("Material ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "delete_material",
+        status: "pending_approval",
+        priority: "high",
+        taskData: JSON.stringify({ materialId }),
+        aiReasoning: `Delete raw material #${materialId}`,
+        aiConfidence: "0.80",
+        relatedEntityType: "raw_material",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Material deletion pending approval" };
+    }
+    default:
+      throw new Error(`Unknown material action: ${action}`);
+  }
+}
+
+async function executeManageInvoice(params: any, ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { action, invoiceId, data, searchQuery } = params;
+
+  switch (action) {
+    case "list": {
+      const allInvoices = await db.select().from(invoices).orderBy(desc(invoices.createdAt)).limit(50);
+      return { invoices: allInvoices, total: allInvoices.length };
+    }
+    case "get": {
+      if (!invoiceId) throw new Error("Invoice ID required");
+      const invoice = await db.select().from(invoices).where(eq(invoices.id, invoiceId)).limit(1);
+      const items = await db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, invoiceId));
+      return { invoice: invoice[0], items };
+    }
+    case "search": {
+      const allInvoices = await db.select().from(invoices);
+      const filtered = allInvoices.filter(i =>
+        i.invoiceNumber?.toLowerCase().includes(searchQuery?.toLowerCase() || "") ||
+        i.status?.toLowerCase().includes(searchQuery?.toLowerCase() || "")
+      );
+      return { invoices: filtered, total: filtered.length };
+    }
+    case "create": {
+      if (!data?.customerId) throw new Error("Customer ID required for invoice");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "create_invoice",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify(data),
+        aiReasoning: `Create invoice for customer #${data.customerId}`,
+        aiConfidence: "0.90",
+        relatedEntityType: "invoice",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Invoice creation pending approval" };
+    }
+    case "update": {
+      if (!invoiceId) throw new Error("Invoice ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "update_invoice",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify({ invoiceId, ...data }),
+        aiReasoning: `Update invoice #${invoiceId}`,
+        aiConfidence: "0.85",
+        relatedEntityType: "invoice",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Invoice update pending approval" };
+    }
+    case "void": {
+      if (!invoiceId) throw new Error("Invoice ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "void_invoice",
+        status: "pending_approval",
+        priority: "high",
+        taskData: JSON.stringify({ invoiceId }),
+        aiReasoning: `Void invoice #${invoiceId}`,
+        aiConfidence: "0.80",
+        relatedEntityType: "invoice",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Invoice void pending approval" };
+    }
+    case "mark_paid": {
+      if (!invoiceId) throw new Error("Invoice ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "mark_invoice_paid",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify({ invoiceId, paymentDate: data?.paymentDate || new Date().toISOString() }),
+        aiReasoning: `Mark invoice #${invoiceId} as paid`,
+        aiConfidence: "0.90",
+        relatedEntityType: "invoice",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Mark paid pending approval" };
+    }
+    default:
+      throw new Error(`Unknown invoice action: ${action}`);
+  }
+}
+
+async function executeManageBom(params: any, ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { action, bomId, data, componentData, componentId } = params;
+
+  switch (action) {
+    case "list": {
+      const allBoms = await db.select().from(billOfMaterials).limit(50);
+      return { boms: allBoms, total: allBoms.length };
+    }
+    case "get": {
+      if (!bomId) throw new Error("BOM ID required");
+      const bom = await db.select().from(billOfMaterials).where(eq(billOfMaterials.id, bomId)).limit(1);
+      const components = await db.select().from(bomComponents).where(eq(bomComponents.bomId, bomId));
+      return { bom: bom[0], components };
+    }
+    case "create": {
+      if (!data?.name || !data?.productId) throw new Error("BOM name and product ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "create_bom",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify(data),
+        aiReasoning: `Create BOM: ${data.name} for product #${data.productId}`,
+        aiConfidence: "0.90",
+        relatedEntityType: "bom",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "BOM creation pending approval" };
+    }
+    case "update": {
+      if (!bomId) throw new Error("BOM ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "update_bom",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify({ bomId, ...data }),
+        aiReasoning: `Update BOM #${bomId}`,
+        aiConfidence: "0.85",
+        relatedEntityType: "bom",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "BOM update pending approval" };
+    }
+    case "add_component": {
+      if (!bomId || !componentData) throw new Error("BOM ID and component data required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "add_bom_component",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify({ bomId, ...componentData }),
+        aiReasoning: `Add component to BOM #${bomId}: ${componentData.name || 'component'}`,
+        aiConfidence: "0.85",
+        relatedEntityType: "bom",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Component addition pending approval" };
+    }
+    case "remove_component": {
+      if (!componentId) throw new Error("Component ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "remove_bom_component",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify({ componentId, bomId }),
+        aiReasoning: `Remove component #${componentId} from BOM`,
+        aiConfidence: "0.85",
+        relatedEntityType: "bom",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Component removal pending approval" };
+    }
+    default:
+      throw new Error(`Unknown BOM action: ${action}`);
+  }
+}
+
+async function executeManageWorkOrder(params: any, ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { action, workOrderId, data } = params;
+
+  switch (action) {
+    case "list": {
+      const allWOs = await db.select().from(workOrders).orderBy(desc(workOrders.createdAt)).limit(50);
+      return { workOrders: allWOs, total: allWOs.length };
+    }
+    case "get": {
+      if (!workOrderId) throw new Error("Work order ID required");
+      const wo = await db.select().from(workOrders).where(eq(workOrders.id, workOrderId)).limit(1);
+      return { workOrder: wo[0] };
+    }
+    case "create": {
+      if (!data?.bomId) throw new Error("BOM ID required for work order");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "create_work_order",
+        status: "pending_approval",
+        priority: data?.priority || "medium",
+        taskData: JSON.stringify(data),
+        aiReasoning: `Create work order for BOM #${data.bomId}, quantity: ${data.quantity || 1}`,
+        aiConfidence: "0.90",
+        relatedEntityType: "work_order",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Work order creation pending approval" };
+    }
+    case "update": {
+      if (!workOrderId) throw new Error("Work order ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "update_work_order",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify({ workOrderId, ...data }),
+        aiReasoning: `Update work order #${workOrderId}`,
+        aiConfidence: "0.85",
+        relatedEntityType: "work_order",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Work order update pending approval" };
+    }
+    case "start": {
+      if (!workOrderId) throw new Error("Work order ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "start_work_order",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify({ workOrderId }),
+        aiReasoning: `Start work order #${workOrderId}`,
+        aiConfidence: "0.90",
+        relatedEntityType: "work_order",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Work order start pending approval" };
+    }
+    case "complete": {
+      if (!workOrderId) throw new Error("Work order ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "complete_work_order",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify({ workOrderId }),
+        aiReasoning: `Complete work order #${workOrderId}`,
+        aiConfidence: "0.90",
+        relatedEntityType: "work_order",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Work order completion pending approval" };
+    }
+    case "cancel": {
+      if (!workOrderId) throw new Error("Work order ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "cancel_work_order",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify({ workOrderId }),
+        aiReasoning: `Cancel work order #${workOrderId}`,
+        aiConfidence: "0.85",
+        relatedEntityType: "work_order",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Work order cancellation pending approval" };
+    }
+    default:
+      throw new Error(`Unknown work order action: ${action}`);
+  }
+}
+
+async function executeManageShipment(params: any, ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { action, shipmentId, data } = params;
+
+  switch (action) {
+    case "list": {
+      const allShipments = await db.select().from(shipments).orderBy(desc(shipments.createdAt)).limit(50);
+      return { shipments: allShipments, total: allShipments.length };
+    }
+    case "get": {
+      if (!shipmentId) throw new Error("Shipment ID required");
+      const shipment = await db.select().from(shipments).where(eq(shipments.id, shipmentId)).limit(1);
+      return { shipment: shipment[0] };
+    }
+    case "track": {
+      if (!shipmentId && !data?.trackingNumber) {
+        const activeShipments = await db.select().from(shipments);
+        const inTransit = activeShipments.filter(s => s.status === "in_transit" || s.status === "shipped");
+        return { shipments: inTransit, total: inTransit.length };
+      }
+      if (data?.trackingNumber) {
+        const allShipments = await db.select().from(shipments);
+        const found = allShipments.filter(s => s.trackingNumber === data.trackingNumber);
+        return { shipments: found, total: found.length };
+      }
+      const shipment = await db.select().from(shipments).where(eq(shipments.id, shipmentId)).limit(1);
+      return { shipment: shipment[0] };
+    }
+    case "create": {
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "create_shipment",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify(data),
+        aiReasoning: `Create shipment${data?.orderId ? ` for order #${data.orderId}` : ''}`,
+        aiConfidence: "0.90",
+        relatedEntityType: "shipment",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Shipment creation pending approval" };
+    }
+    case "update": {
+      if (!shipmentId) throw new Error("Shipment ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "update_shipment",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify({ shipmentId, ...data }),
+        aiReasoning: `Update shipment #${shipmentId}`,
+        aiConfidence: "0.85",
+        relatedEntityType: "shipment",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Shipment update pending approval" };
+    }
+    case "mark_delivered": {
+      if (!shipmentId) throw new Error("Shipment ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "deliver_shipment",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify({ shipmentId, deliveryDate: new Date().toISOString() }),
+        aiReasoning: `Mark shipment #${shipmentId} as delivered`,
+        aiConfidence: "0.90",
+        relatedEntityType: "shipment",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Delivery confirmation pending approval" };
+    }
+    default:
+      throw new Error(`Unknown shipment action: ${action}`);
+  }
+}
+
+async function executeManageWarehouse(params: any, ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { action, warehouseId, data } = params;
+
+  switch (action) {
+    case "list": {
+      const allWarehouses = await db.select().from(warehouses);
+      return { warehouses: allWarehouses, total: allWarehouses.length };
+    }
+    case "get": {
+      if (!warehouseId) throw new Error("Warehouse ID required");
+      const warehouse = await db.select().from(warehouses).where(eq(warehouses.id, warehouseId)).limit(1);
+      return { warehouse: warehouse[0] };
+    }
+    case "inventory_levels": {
+      const warehouseInventory = await db.select().from(inventory);
+      if (warehouseId) {
+        const filtered = warehouseInventory.filter(i => i.warehouseId === warehouseId);
+        return { inventory: filtered, total: filtered.length, warehouseId };
+      }
+      return { inventory: warehouseInventory.slice(0, 50), total: warehouseInventory.length };
+    }
+    case "create": {
+      if (!data?.name) throw new Error("Warehouse name required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "create_warehouse",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify(data),
+        aiReasoning: `Create warehouse: ${data.name}`,
+        aiConfidence: "0.90",
+        relatedEntityType: "warehouse",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Warehouse creation pending approval" };
+    }
+    case "update": {
+      if (!warehouseId) throw new Error("Warehouse ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "update_warehouse",
+        status: "pending_approval",
+        priority: "medium",
+        taskData: JSON.stringify({ warehouseId, ...data }),
+        aiReasoning: `Update warehouse #${warehouseId}`,
+        aiConfidence: "0.85",
+        relatedEntityType: "warehouse",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Warehouse update pending approval" };
+    }
+    default:
+      throw new Error(`Unknown warehouse action: ${action}`);
+  }
+}
+
+async function executeManageEmployee(params: any, ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { action, employeeId, data, searchQuery } = params;
+
+  switch (action) {
+    case "list": {
+      const allEmployees = await db.select().from(employees).limit(50);
+      return { employees: allEmployees, total: allEmployees.length };
+    }
+    case "get": {
+      if (!employeeId) throw new Error("Employee ID required");
+      const employee = await db.select().from(employees).where(eq(employees.id, employeeId)).limit(1);
+      return { employee: employee[0] };
+    }
+    case "search": {
+      const allEmployees = await db.select().from(employees);
+      const filtered = allEmployees.filter(e =>
+        e.firstName?.toLowerCase().includes(searchQuery?.toLowerCase() || "") ||
+        e.lastName?.toLowerCase().includes(searchQuery?.toLowerCase() || "") ||
+        e.email?.toLowerCase().includes(searchQuery?.toLowerCase() || "") ||
+        e.jobTitle?.toLowerCase().includes(searchQuery?.toLowerCase() || "")
+      );
+      return { employees: filtered, total: filtered.length, query: searchQuery };
+    }
+    case "create": {
+      if (!data?.firstName || !data?.lastName) throw new Error("First and last name required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "create_employee",
+        status: "pending_approval",
+        priority: "high",
+        taskData: JSON.stringify(data),
+        aiReasoning: `Create employee: ${data.firstName} ${data.lastName}`,
+        aiConfidence: "0.90",
+        relatedEntityType: "employee",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Employee creation pending approval" };
+    }
+    case "update": {
+      if (!employeeId) throw new Error("Employee ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "update_employee",
+        status: "pending_approval",
+        priority: "high",
+        taskData: JSON.stringify({ employeeId, ...data }),
+        aiReasoning: `Update employee #${employeeId}`,
+        aiConfidence: "0.85",
+        relatedEntityType: "employee",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Employee update pending approval" };
+    }
+    default:
+      throw new Error(`Unknown employee action: ${action}`);
+  }
+}
+
+async function executeManageContract(params: any, ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { action, contractId, data, searchQuery } = params;
+
+  switch (action) {
+    case "list": {
+      const allContracts = await db.select().from(contracts).orderBy(desc(contracts.createdAt)).limit(50);
+      return { contracts: allContracts, total: allContracts.length };
+    }
+    case "get": {
+      if (!contractId) throw new Error("Contract ID required");
+      const contract = await db.select().from(contracts).where(eq(contracts.id, contractId)).limit(1);
+      return { contract: contract[0] };
+    }
+    case "search": {
+      const allContracts = await db.select().from(contracts);
+      const filtered = allContracts.filter(c =>
+        c.title?.toLowerCase().includes(searchQuery?.toLowerCase() || "") ||
+        c.partyName?.toLowerCase().includes(searchQuery?.toLowerCase() || "") ||
+        c.contractNumber?.toLowerCase().includes(searchQuery?.toLowerCase() || "")
+      );
+      return { contracts: filtered, total: filtered.length, query: searchQuery };
+    }
+    case "create": {
+      if (!data?.title || !data?.type) throw new Error("Contract title and type required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "create_contract",
+        status: "pending_approval",
+        priority: "high",
+        taskData: JSON.stringify(data),
+        aiReasoning: `Create contract: ${data.title}`,
+        aiConfidence: "0.90",
+        relatedEntityType: "contract",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Contract creation pending approval" };
+    }
+    case "update": {
+      if (!contractId) throw new Error("Contract ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "update_contract",
+        status: "pending_approval",
+        priority: "high",
+        taskData: JSON.stringify({ contractId, ...data }),
+        aiReasoning: `Update contract #${contractId}`,
+        aiConfidence: "0.85",
+        relatedEntityType: "contract",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Contract update pending approval" };
+    }
+    case "activate": {
+      if (!contractId) throw new Error("Contract ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "activate_contract",
+        status: "pending_approval",
+        priority: "high",
+        taskData: JSON.stringify({ contractId }),
+        aiReasoning: `Activate contract #${contractId}`,
+        aiConfidence: "0.90",
+        relatedEntityType: "contract",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Contract activation pending approval" };
+    }
+    case "terminate": {
+      if (!contractId) throw new Error("Contract ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "terminate_contract",
+        status: "pending_approval",
+        priority: "high",
+        taskData: JSON.stringify({ contractId }),
+        aiReasoning: `Terminate contract #${contractId}`,
+        aiConfidence: "0.80",
+        relatedEntityType: "contract",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Contract termination pending approval" };
+    }
+    default:
+      throw new Error(`Unknown contract action: ${action}`);
+  }
+}
+
+async function executeManagePayment(params: any, ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { action, paymentId, data } = params;
+
+  switch (action) {
+    case "list": {
+      const allPayments = await db.select().from(payments).orderBy(desc(payments.createdAt)).limit(50);
+      return { payments: allPayments, total: allPayments.length };
+    }
+    case "get": {
+      if (!paymentId) throw new Error("Payment ID required");
+      const payment = await db.select().from(payments).where(eq(payments.id, paymentId)).limit(1);
+      return { payment: payment[0] };
+    }
+    case "create": {
+      if (!data?.amount || !data?.type) throw new Error("Payment amount and type required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "create_payment",
+        status: "pending_approval",
+        priority: "high",
+        taskData: JSON.stringify(data),
+        aiReasoning: `Create ${data.type} payment of $${data.amount}`,
+        aiConfidence: "0.90",
+        relatedEntityType: "payment",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Payment creation pending approval" };
+    }
+    case "void": {
+      if (!paymentId) throw new Error("Payment ID required");
+      const task = await db.insert(aiAgentTasks).values({
+        taskType: "void_payment",
+        status: "pending_approval",
+        priority: "high",
+        taskData: JSON.stringify({ paymentId }),
+        aiReasoning: `Void payment #${paymentId}`,
+        aiConfidence: "0.80",
+        relatedEntityType: "payment",
+        requiresApproval: true,
+      }).$returningId();
+      return { taskCreated: true, taskId: task[0].id, message: "Payment void pending approval" };
+    }
+    default:
+      throw new Error(`Unknown payment action: ${action}`);
+  }
+}
+
 // ============================================
 // TOOL EXECUTION DISPATCHER
 // ============================================
@@ -1227,6 +2420,26 @@ async function executeTool(toolName: string, params: any, ctx: AIAgentContext): 
       return executeGenerateReport(params, ctx);
     case "create_task":
       return executeCreateTask(params, ctx);
+    case "manage_product":
+      return executeManageProduct(params, ctx);
+    case "manage_raw_material":
+      return executeManageRawMaterial(params, ctx);
+    case "manage_invoice":
+      return executeManageInvoice(params, ctx);
+    case "manage_bom":
+      return executeManageBom(params, ctx);
+    case "manage_work_order":
+      return executeManageWorkOrder(params, ctx);
+    case "manage_shipment":
+      return executeManageShipment(params, ctx);
+    case "manage_warehouse":
+      return executeManageWarehouse(params, ctx);
+    case "manage_employee":
+      return executeManageEmployee(params, ctx);
+    case "manage_contract":
+      return executeManageContract(params, ctx);
+    case "manage_payment":
+      return executeManagePayment(params, ctx);
     default:
       throw new Error(`Unknown tool: ${toolName}`);
   }
@@ -1274,6 +2487,28 @@ export async function processAIAgentRequest(
 9. **Generate Reports**: Create various business reports.
 
 10. **Create Tasks**: Create tasks that require approval before execution.
+
+11. **Manage Products**: Create, update, search, and delete products in the catalog.
+
+12. **Manage Raw Materials**: Create, update, search raw materials used in manufacturing.
+
+13. **Manage Invoices**: Create, update, void, and mark invoices as paid.
+
+14. **Manage BOMs**: Create and manage bills of materials with components.
+
+15. **Manage Work Orders**: Create, start, complete, and cancel manufacturing work orders.
+
+16. **Manage Shipments**: Create, track, update, and mark shipments as delivered.
+
+17. **Manage Warehouses**: Create, update, and check inventory levels at warehouses.
+
+18. **Manage Employees**: Create, update, and search employee records.
+
+19. **Manage Contracts**: Create, update, activate, and terminate legal contracts.
+
+20. **Manage Payments**: Create, view, and void payments.
+
+IMPORTANT: For any operation that creates, modifies, or deletes data (create, update, delete, void, mark_paid, activate, terminate, start, complete, cancel, fulfill), ALWAYS route through the approval workflow by creating a task. Read operations (list, get, search, track, inventory_levels, performance, order_history) can execute directly.
 
 Current System Status:
 - Vendors: ${vendorCount[0]?.count || 0}

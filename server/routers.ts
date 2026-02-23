@@ -3148,7 +3148,22 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
       
       create: protectedProcedure
         .input(z.object({
-          taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query', 'reply_email', 'approve_po', 'approve_invoice', 'create_vendor', 'create_material', 'create_product', 'create_bom', 'create_customer']),
+          taskType: z.enum([
+            'generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory',
+            'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials',
+            'vendor_followup', 'create_work_order', 'query', 'reply_email', 'approve_po',
+            'approve_invoice', 'create_vendor', 'create_material', 'create_product', 'create_bom',
+            'create_customer', 'update_product', 'delete_product', 'update_material', 'delete_material',
+            'create_invoice', 'update_invoice', 'void_invoice', 'mark_invoice_paid',
+            'create_order', 'update_order', 'cancel_order', 'fulfill_order',
+            'update_bom', 'add_bom_component', 'remove_bom_component',
+            'update_work_order', 'start_work_order', 'complete_work_order', 'cancel_work_order',
+            'update_shipment', 'deliver_shipment',
+            'create_warehouse', 'update_warehouse',
+            'create_employee', 'update_employee',
+            'create_contract', 'update_contract', 'activate_contract', 'terminate_contract',
+            'create_payment', 'void_payment', 'update_customer'
+          ]),
           priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
           taskData: z.string(), // JSON string with task-specific data
           aiReasoning: z.string().optional(),
@@ -3564,6 +3579,322 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
                 });
                 
                 result = { created: true, workOrderId: workOrder.id, workOrderNumber: workOrder.workOrderNumber };
+                break;
+              }
+              
+
+              case 'update_product': {
+                const { productId: pid, ...productUpdateData } = taskData;
+                await db.updateProduct(pid, productUpdateData);
+                result = { updated: true, productId: pid };
+                break;
+              }
+              
+              case 'delete_product': {
+                await db.deleteProduct(taskData.productId);
+                result = { deleted: true, productId: taskData.productId };
+                break;
+              }
+              
+              case 'update_material': {
+                const { materialId: mid, ...materialUpdateData } = taskData;
+                await db.updateRawMaterial(mid, materialUpdateData);
+                result = { updated: true, materialId: mid };
+                break;
+              }
+              
+              case 'delete_material': {
+                await db.deleteRawMaterial(taskData.materialId);
+                result = { deleted: true, materialId: taskData.materialId };
+                break;
+              }
+              
+              case 'create_invoice': {
+                const invoiceNumber = 'INV-' + Date.now().toString(36).toUpperCase();
+                const items = taskData.items || [];
+                const totalAmount = items.reduce((sum: number, item: any) => sum + ((item.quantity || 0) * (item.unitPrice || 0)), 0);
+                const invoice = await db.createInvoice({
+                  invoiceNumber,
+                  customerId: taskData.customerId,
+                  orderId: taskData.orderId || undefined,
+                  totalAmount: totalAmount.toFixed(2),
+                  dueDate: taskData.dueDate ? new Date(taskData.dueDate) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+                  status: 'draft',
+                  notes: taskData.notes,
+                });
+                // Create invoice items
+                for (const item of items) {
+                  await db.createInvoiceItem({
+                    invoiceId: invoice.id,
+                    description: item.description || 'Item',
+                    quantity: (item.quantity || 1).toString(),
+                    unitPrice: (item.unitPrice || 0).toFixed(2),
+                    totalAmount: ((item.quantity || 1) * (item.unitPrice || 0)).toFixed(2),
+                  });
+                }
+                result = { created: true, invoiceId: invoice.id, invoiceNumber };
+                break;
+              }
+              
+              case 'update_invoice': {
+                const { invoiceId: iid, ...invoiceUpdateData } = taskData;
+                await db.updateInvoice(iid, invoiceUpdateData);
+                result = { updated: true, invoiceId: iid };
+                break;
+              }
+              
+              case 'void_invoice': {
+                await db.updateInvoice(taskData.invoiceId, { status: 'void' });
+                result = { voided: true, invoiceId: taskData.invoiceId };
+                break;
+              }
+              
+              case 'mark_invoice_paid': {
+                await db.updateInvoice(taskData.invoiceId, { status: 'paid', paidDate: new Date(taskData.paymentDate || Date.now()) });
+                result = { markedPaid: true, invoiceId: taskData.invoiceId };
+                break;
+              }
+              
+              case 'create_order': {
+                const orderNumber = 'ORD-' + Date.now().toString(36).toUpperCase();
+                const orderItems = taskData.items || [];
+                const orderTotal = orderItems.reduce((sum: number, item: any) => sum + ((item.quantity || 0) * (item.unitPrice || 0)), 0);
+                const order = await db.createOrder({
+                  orderNumber,
+                  customerId: taskData.customerId,
+                  totalAmount: orderTotal.toFixed(2),
+                  status: 'pending',
+                  notes: taskData.notes,
+                });
+                for (const item of orderItems) {
+                  await db.createOrderItem({
+                    orderId: order.id,
+                    productId: item.productId,
+                    description: item.description || 'Item',
+                    quantity: (item.quantity || 1).toString(),
+                    unitPrice: (item.unitPrice || 0).toFixed(2),
+                    totalAmount: ((item.quantity || 1) * (item.unitPrice || 0)).toFixed(2),
+                  });
+                }
+                result = { created: true, orderId: order.id, orderNumber };
+                break;
+              }
+              
+              case 'update_order': {
+                const { orderId: oid, ...orderUpdateData } = taskData;
+                await db.updateOrder(oid, orderUpdateData);
+                result = { updated: true, orderId: oid };
+                break;
+              }
+              
+              case 'cancel_order': {
+                await db.updateOrder(taskData.orderId, { status: 'cancelled' });
+                result = { cancelled: true, orderId: taskData.orderId };
+                break;
+              }
+              
+              case 'fulfill_order': {
+                await db.updateOrder(taskData.orderId, { status: 'completed' });
+                result = { fulfilled: true, orderId: taskData.orderId };
+                break;
+              }
+              
+              case 'update_bom': {
+                const { bomId: bid, ...bomUpdateData } = taskData;
+                await db.updateBom(bid, bomUpdateData);
+                result = { updated: true, bomId: bid };
+                break;
+              }
+              
+              case 'add_bom_component': {
+                const { bomId: bomForComp, ...compData } = taskData;
+                const component = await db.createBomComponent({
+                  bomId: bomForComp,
+                  rawMaterialId: compData.rawMaterialId || undefined,
+                  productId: compData.productId || undefined,
+                  name: compData.name || 'Component',
+                  quantity: compData.quantity || '1',
+                  unit: compData.unit || 'EA',
+                });
+                result = { created: true, componentId: component.id, bomId: bomForComp };
+                break;
+              }
+              
+              case 'remove_bom_component': {
+                await db.deleteBomComponent(taskData.componentId);
+                result = { deleted: true, componentId: taskData.componentId };
+                break;
+              }
+              
+              case 'update_work_order': {
+                const { workOrderId: woid, ...woUpdateData } = taskData;
+                await db.updateWorkOrder(woid, woUpdateData);
+                result = { updated: true, workOrderId: woid };
+                break;
+              }
+              
+              case 'start_work_order': {
+                await db.updateWorkOrder(taskData.workOrderId, { status: 'in_progress', startDate: new Date() });
+                result = { started: true, workOrderId: taskData.workOrderId };
+                break;
+              }
+              
+              case 'complete_work_order': {
+                await db.updateWorkOrder(taskData.workOrderId, { status: 'completed', completionDate: new Date() });
+                result = { completed: true, workOrderId: taskData.workOrderId };
+                break;
+              }
+              
+              case 'cancel_work_order': {
+                await db.updateWorkOrder(taskData.workOrderId, { status: 'cancelled' });
+                result = { cancelled: true, workOrderId: taskData.workOrderId };
+                break;
+              }
+              
+              case 'create_shipment': {
+                const shipment = await db.createShipment({
+                  orderId: taskData.orderId || undefined,
+                  trackingNumber: taskData.trackingNumber || undefined,
+                  carrier: taskData.carrier || undefined,
+                  status: 'pending',
+                  shippedDate: taskData.shippedDate ? new Date(taskData.shippedDate) : undefined,
+                  expectedDeliveryDate: taskData.expectedDeliveryDate ? new Date(taskData.expectedDeliveryDate) : undefined,
+                  notes: taskData.notes,
+                });
+                result = { created: true, shipmentId: shipment.id };
+                break;
+              }
+              
+              case 'update_shipment': {
+                const { shipmentId: sid, ...shipmentUpdateData } = taskData;
+                await db.updateShipment(sid, shipmentUpdateData);
+                result = { updated: true, shipmentId: sid };
+                break;
+              }
+              
+              case 'deliver_shipment': {
+                await db.updateShipment(taskData.shipmentId, {
+                  status: 'delivered',
+                  deliveryDate: new Date(taskData.deliveryDate || Date.now()),
+                });
+                result = { delivered: true, shipmentId: taskData.shipmentId };
+                break;
+              }
+              
+              case 'create_warehouse': {
+                const warehouse = await db.createWarehouse({
+                  name: taskData.name,
+                  code: taskData.code || undefined,
+                  address: taskData.address || undefined,
+                  city: taskData.city || undefined,
+                  state: taskData.state || undefined,
+                  country: taskData.country || undefined,
+                  type: taskData.type || 'warehouse',
+                  status: 'active',
+                  contactName: taskData.contactName || undefined,
+                  contactEmail: taskData.contactEmail || undefined,
+                });
+                result = { created: true, warehouseId: warehouse.id, warehouseName: taskData.name };
+                break;
+              }
+              
+              case 'update_warehouse': {
+                const { warehouseId: whid, ...warehouseUpdateData } = taskData;
+                await db.updateWarehouse(whid, warehouseUpdateData);
+                result = { updated: true, warehouseId: whid };
+                break;
+              }
+              
+              case 'create_employee': {
+                const employee = await db.createEmployee({
+                  firstName: taskData.firstName,
+                  lastName: taskData.lastName,
+                  email: taskData.email || undefined,
+                  phone: taskData.phone || undefined,
+                  jobTitle: taskData.jobTitle || undefined,
+                  departmentId: taskData.departmentId || undefined,
+                  hireDate: taskData.hireDate ? new Date(taskData.hireDate) : new Date(),
+                  status: 'active',
+                });
+                result = { created: true, employeeId: employee.id, employeeName: taskData.firstName + ' ' + taskData.lastName };
+                break;
+              }
+              
+              case 'update_employee': {
+                const { employeeId: eid, ...employeeUpdateData } = taskData;
+                await db.updateEmployee(eid, employeeUpdateData);
+                result = { updated: true, employeeId: eid };
+                break;
+              }
+              
+              case 'create_contract': {
+                const contractNumber = 'CTR-' + Date.now().toString(36).toUpperCase();
+                const contract = await db.createContract({
+                  contractNumber,
+                  title: taskData.title,
+                  type: taskData.type || 'other',
+                  status: 'draft',
+                  partyType: taskData.partyType || undefined,
+                  partyId: taskData.partyId || undefined,
+                  partyName: taskData.partyName || undefined,
+                  startDate: taskData.startDate ? new Date(taskData.startDate) : undefined,
+                  endDate: taskData.endDate ? new Date(taskData.endDate) : undefined,
+                  value: taskData.value || undefined,
+                  description: taskData.description || undefined,
+                  terms: taskData.terms || undefined,
+                });
+                result = { created: true, contractId: contract.id, contractNumber };
+                break;
+              }
+              
+              case 'update_contract': {
+                const { contractId: cid, ...contractUpdateData } = taskData;
+                await db.updateContract(cid, contractUpdateData);
+                result = { updated: true, contractId: cid };
+                break;
+              }
+              
+              case 'activate_contract': {
+                await db.updateContract(taskData.contractId, { status: 'active' });
+                result = { activated: true, contractId: taskData.contractId };
+                break;
+              }
+              
+              case 'terminate_contract': {
+                await db.updateContract(taskData.contractId, { status: 'terminated' });
+                result = { terminated: true, contractId: taskData.contractId };
+                break;
+              }
+              
+              case 'create_payment': {
+                const paymentNumber = 'PAY-' + Date.now().toString(36).toUpperCase();
+                const payment = await db.createPayment({
+                  paymentNumber,
+                  type: taskData.type || 'received',
+                  invoiceId: taskData.invoiceId || undefined,
+                  vendorId: taskData.vendorId || undefined,
+                  customerId: taskData.customerId || undefined,
+                  amount: taskData.amount,
+                  paymentMethod: taskData.paymentMethod || 'bank_transfer',
+                  paymentDate: taskData.paymentDate ? new Date(taskData.paymentDate) : new Date(),
+                  referenceNumber: taskData.referenceNumber || undefined,
+                  status: 'pending',
+                  notes: taskData.notes || undefined,
+                });
+                result = { created: true, paymentId: payment.id, paymentNumber };
+                break;
+              }
+              
+              case 'void_payment': {
+                await db.updatePayment(taskData.paymentId, { status: 'cancelled' });
+                result = { voided: true, paymentId: taskData.paymentId };
+                break;
+              }
+              
+              case 'update_customer': {
+                const { customerId: custId, ...customerUpdateData } = taskData;
+                await db.updateCustomer(custId, customerUpdateData);
+                result = { updated: true, customerId: custId };
                 break;
               }
               
