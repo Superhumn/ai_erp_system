@@ -4,6 +4,11 @@ import type { TrpcContext } from "./_core/context";
 
 type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
 
+// Mock storage module
+vi.mock("./storage", () => ({
+  storagePut: vi.fn().mockResolvedValue({ key: "documents/1/test-key", url: "https://s3.example.com/documents/1/test-key" }),
+}));
+
 // Mock the database module
 vi.mock("./db", () => ({
   getDb: vi.fn().mockResolvedValue({}),
@@ -71,7 +76,8 @@ vi.mock("./db", () => ({
   getDisputes: vi.fn().mockResolvedValue([]),
   createDispute: vi.fn().mockResolvedValue({ id: 1 }),
   getDocuments: vi.fn().mockResolvedValue([]),
-  uploadDocument: vi.fn().mockResolvedValue({ id: 1, fileUrl: "https://example.com/file.pdf", fileKey: "file.pdf" }),
+  createDocument: vi.fn().mockResolvedValue({ id: 1 }),
+  deleteDocument: vi.fn().mockResolvedValue(undefined),
   // Projects
   getProjects: vi.fn().mockResolvedValue([
     { id: 1, projectNumber: "PROJ-001", name: "Test Project", status: "active", priority: "medium", createdAt: new Date() },
@@ -277,5 +283,60 @@ describe("ERP System - Authentication", () => {
     const result = await caller.auth.logout();
 
     expect(result).toEqual({ success: true });
+  });
+});
+
+describe("ERP System - Document Upload", () => {
+  it("should upload an invoice document with valid mimeType", async () => {
+    const ctx = createAdminContext();
+    const caller = appRouter.createCaller(ctx);
+
+    // Simulate a small PDF file as base64
+    const fakeBase64 = Buffer.from("fake invoice pdf content").toString("base64");
+
+    const result = await caller.documents.upload({
+      name: "Invoice-2024-001.pdf",
+      type: "invoice",
+      description: "Test invoice upload",
+      fileData: fakeBase64,
+      mimeType: "application/pdf",
+    });
+
+    expect(result).toBeDefined();
+    expect(result.id).toBe(1);
+  });
+
+  it("should upload a document with empty mimeType and fallback to application/octet-stream", async () => {
+    const { storagePut } = await import("./storage");
+    const ctx = createAdminContext();
+    const caller = appRouter.createCaller(ctx);
+
+    const fakeBase64 = Buffer.from("unknown file content").toString("base64");
+
+    const result = await caller.documents.upload({
+      name: "invoice-scan",
+      type: "invoice",
+      fileData: fakeBase64,
+      mimeType: "",
+    });
+
+    expect(result).toBeDefined();
+    expect(result.id).toBe(1);
+    // Verify storagePut was called with the fallback content type
+    expect(storagePut).toHaveBeenCalledWith(
+      expect.stringContaining("documents/"),
+      expect.any(Buffer),
+      "application/octet-stream",
+    );
+  });
+
+  it("should list documents", async () => {
+    const ctx = createAdminContext();
+    const caller = appRouter.createCaller(ctx);
+
+    const documents = await caller.documents.list();
+
+    expect(documents).toBeDefined();
+    expect(Array.isArray(documents)).toBe(true);
   });
 });
