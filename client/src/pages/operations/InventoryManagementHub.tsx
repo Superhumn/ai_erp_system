@@ -41,20 +41,20 @@ export default function InventoryManagementHub() {
   const [editingCell, setEditingCell] = useState<{ id: number; field: string } | null>(null);
   const [editValue, setEditValue] = useState("");
 
-  const { data: inventory, isLoading, refetch } = trpc.inventoryManagement.list.useQuery();
-  const updateMutation = trpc.inventoryManagement.update.useMutation({
+  const { data: inventory, isLoading, refetch } = trpc.inventory.list.useQuery();
+  const updateMutation = trpc.inventory.update.useMutation({
     onSuccess: () => {
       toast.success("Updated successfully");
       refetch();
       setEditingCell(null);
       setEditValue("");
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast.error(error.message);
     }
   });
 
-  const filteredInventory = inventory?.filter((item) =>
+  const filteredInventory = inventory?.filter((item: any) =>
     item.name?.toLowerCase().includes(search.toLowerCase()) ||
     item.sku?.toLowerCase().includes(search.toLowerCase()) ||
     item.poNumber?.toLowerCase().includes(search.toLowerCase())
@@ -219,7 +219,7 @@ export default function InventoryManagementHub() {
               <ShoppingCart className="h-5 w-5 text-blue-600" />
               <div>
                 <div className="text-2xl font-bold text-blue-600">
-                  {inventory?.filter(i => i.poId).length || 0}
+                  {inventory?.filter((i: any) => i.poId).length || 0}
                 </div>
                 <p className="text-xs text-muted-foreground">Active POs</p>
               </div>
@@ -232,7 +232,7 @@ export default function InventoryManagementHub() {
               <Truck className="h-5 w-5 text-amber-600" />
               <div>
                 <div className="text-2xl font-bold text-amber-600">
-                  {inventory?.filter(i => i.freightId && i.freightStatus === 'in_transit').length || 0}
+                  {inventory?.filter((i: any) => i.freightId && i.freightStatus === 'in_transit').length || 0}
                 </div>
                 <p className="text-xs text-muted-foreground">In Transit</p>
               </div>
@@ -245,7 +245,7 @@ export default function InventoryManagementHub() {
               <TrendingUp className="h-5 w-5 text-green-600" />
               <div>
                 <div className="text-2xl font-bold text-green-600">
-                  {inventory?.filter(i => i.forecastId).length || 0}
+                  {inventory?.filter((i: any) => i.forecastId).length || 0}
                 </div>
                 <p className="text-xs text-muted-foreground">Forecasted</p>
               </div>
@@ -313,7 +313,7 @@ export default function InventoryManagementHub() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredInventory.map((item) => (
+                  {filteredInventory.map((item: any) => (
                     <TableRow key={item.id}>
                       <TableCell className="font-medium">
                         <div>

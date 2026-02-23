@@ -269,13 +269,13 @@ export default function FirefliesPage() {
                     <CheckCircle2 className="h-4 w-4" />
                     Connected to Fireflies.ai
                   </div>
-                  {config.config && (
+                  {config.config ? (
                     <div className="mt-2 text-sm text-green-600">
                       {(config.config as any).firefliesUserName && (
                         <span>Account: {(config.config as any).firefliesUserName} ({(config.config as any).firefliesEmail})</span>
                       )}
                     </div>
-                  )}
+                  ) : null}
                   {config.lastSyncAt && (
                     <div className="mt-1 text-sm text-green-600">
                       Last synced: {formatDate(config.lastSyncAt)}

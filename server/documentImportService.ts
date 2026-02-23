@@ -1219,7 +1219,7 @@ export async function bulkImportDocuments(
   let failed = 0;
 
   for (const doc of documents) {
-    const parseResult = await parseUploadedDocument(doc.content, doc.filename, doc.hint);
+    const parseResult = await parseUploadedDocument(doc.content, doc.filename, doc.hint as any);
 
     if (!parseResult.success) {
       results.push({

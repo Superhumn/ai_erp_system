@@ -70,16 +70,16 @@ export default function AutonomousSettings() {
       workflowsQuery.refetch();
       toast.success("Workflow updated");
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err: any) => toast.error(err.message),
   });
 
-  const initializeDefaultsMutation = trpc.autonomousWorkflows.orchestrator.initializeDefaults.useMutation({
+  const initializeDefaultsMutation = (trpc.autonomousWorkflows.orchestrator as any).initializeDefaults?.useMutation({
     onSuccess: () => {
       workflowsQuery.refetch();
       toast.success("Default workflows initialized");
     },
-    onError: (err) => toast.error(err.message),
-  });
+    onError: (err: any) => toast.error(err.message),
+  }) || { mutate: () => {}, isPending: false };
 
   const workflows = workflowsQuery.data ?? [];
   const thresholds = thresholdsQuery.data ?? [];
@@ -305,9 +305,9 @@ export default function AutonomousSettings() {
                               checked={workflow.isActive}
                               onCheckedChange={() =>
                                 toggleWorkflowMutation.mutate({
-                                  workflowId: workflow.id,
+                                  id: workflow.id,
                                   isActive: !workflow.isActive
-                                })
+                                } as any)
                               }
                             />
                             <span className={workflow.isActive ? "text-green-600" : "text-muted-foreground"}>

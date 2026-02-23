@@ -272,7 +272,7 @@ const productionPlanningProcessor: WorkflowProcessor = {
             .where(
               and(
                 eq(billOfMaterials.productId, forecast.productId),
-                eq(billOfMaterials.isActive, true)
+                eq(billOfMaterials.status, 'active')
               )
             );
 
@@ -499,8 +499,8 @@ const materialRequirementsProcessor: WorkflowProcessor = {
 
       const suggestedPOs: any[] = [];
 
-      for (const [vendorId, items] of vendorReqs) {
-        const poTotal = items.reduce((sum, item) => sum + item.cost, 0);
+      for (const [vendorId, items] of Array.from(vendorReqs)) {
+        const poTotal = items.reduce((sum: any, item: any) => sum + item.cost, 0);
         const suggestedPoNumber = `SPO-${Date.now().toString(36).toUpperCase()}`;
 
         const [spo] = await db
@@ -616,7 +616,7 @@ const procurementProcessor: WorkflowProcessor = {
             .where(eq(suggestedPoItems.suggestedPoId, spo.id));
 
           // Calculate totals
-          const subtotal = items.reduce((sum, item) => sum + parseFloat(item.totalPrice || "0"), 0);
+          const subtotal = items.reduce((sum: any, item: any) => sum + parseFloat(item.totalPrice || "0"), 0);
 
           // Create PO
           const poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;
@@ -857,8 +857,8 @@ Consider demand trends and storage capacity.`,
 
       const createdPOs: any[] = [];
 
-      for (const [vendorId, items] of vendorGroups) {
-        const poTotal = items.reduce((sum, item) => sum + item.value, 0);
+      for (const [vendorId, items] of Array.from(vendorGroups)) {
+        const poTotal = items.reduce((sum: any, item: any) => sum + item.value, 0);
 
         // Request approval for each PO
         await engine.requestApproval(
@@ -945,17 +945,17 @@ const inventoryTransferProcessor: WorkflowProcessor = {
 
       const transferRecommendations: any[] = [];
 
-      for (const [productId, locations] of productDistribution) {
+      for (const [productId, locations] of Array.from(productDistribution)) {
         if (locations.length < 2) continue;
 
         // Find locations with excess and shortage
-        const excess = locations.filter(l => {
+        const excess = locations.filter((l: any) => {
           const available = parseFloat(l.quantity) - parseFloat(l.reservedQuantity || "0");
           const reorderLevel = parseFloat(l.reorderLevel || "0");
           return available > reorderLevel * 2;
         });
 
-        const shortage = locations.filter(l => {
+        const shortage = locations.filter((l: any) => {
           const available = parseFloat(l.quantity) - parseFloat(l.reservedQuantity || "0");
           const reorderLevel = parseFloat(l.reorderLevel || "0");
           return available < reorderLevel;
@@ -966,8 +966,8 @@ const inventoryTransferProcessor: WorkflowProcessor = {
             context,
             "allocation_decision",
             `Determine optimal inventory transfer for product #${productId}:
-Locations with excess: ${JSON.stringify(excess.map(e => ({ warehouseId: e.warehouseId, qty: e.quantity })))}
-Locations with shortage: ${JSON.stringify(shortage.map(s => ({ warehouseId: s.warehouseId, qty: s.quantity, reorderLevel: s.reorderLevel })))}
+Locations with excess: ${JSON.stringify(excess.map((e: any) => ({ warehouseId: e.warehouseId, qty: e.quantity })))}
+Locations with shortage: ${JSON.stringify(shortage.map((s: any) => ({ warehouseId: s.warehouseId, qty: s.quantity, reorderLevel: s.reorderLevel })))}
 
 Recommend transfer quantity and from/to warehouses.`,
             [],
@@ -1272,8 +1272,8 @@ const productionSchedulingProcessor: WorkflowProcessor = {
       const orders = await db
         .select()
         .from(workOrders)
-        .where(eq(workOrders.status, "planned"))
-        .orderBy(asc(workOrders.plannedStartDate));
+        .where(eq(workOrders.status, "scheduled"))
+        .orderBy(asc(workOrders.scheduledStartDate));
 
       return { success: true, data: { workOrders: orders } };
     });
@@ -1435,7 +1435,7 @@ const freightProcurementProcessor: WorkflowProcessor = {
       const carriers = await db
         .select()
         .from(freightCarriers)
-        .where(eq(freightCarriers.status, "active"));
+        .where(eq(freightCarriers.isActive, true));
 
       return { success: true, data: { carriers } };
     });
@@ -2386,7 +2386,7 @@ const vendorQuoteAnalysisProcessor: WorkflowProcessor = {
         .from(vendors)
         .where(inArray(vendors.id, vendorIds));
 
-      const vendorMap = new Map(vendorDetails.map((v: any) => [v.id, v]));
+      const vendorMap: Map<number, any> = new Map(vendorDetails.map((v: any) => [v.id, v]));
 
       // Prepare quote data for AI analysis
       const quoteData = quotes.map((q: any) => {

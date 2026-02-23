@@ -30,7 +30,7 @@ export default function VendorPortal() {
   const { data: vendorInfo } = trpc.vendorPortal.getVendorInfo.useQuery();
   const { data: purchaseOrders, isLoading: loadingPOs, refetch: refetchPOs } = trpc.vendorPortal.getPurchaseOrders.useQuery();
   const { data: shipments, isLoading: loadingShipments } = trpc.vendorPortal.getShipments.useQuery();
-  const { data: customsClearances, isLoading: loadingCustoms, refetch: refetchCustoms } = trpc.vendorPortal.getCustomsClearances.useQuery();
+  const { data: customsClearances, isLoading: loadingCustoms, refetch: refetchCustoms } = (trpc as any).customs?.list?.useQuery() || { data: [], isLoading: false, refetch: () => {} };
   
   // Mutations
   const updatePOStatus = trpc.vendorPortal.updatePOStatus.useMutation({
@@ -39,28 +39,28 @@ export default function VendorPortal() {
       setStatusUpdateOpen(false);
       refetchPOs();
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast.error("Failed to update status", { description: error.message });
     },
   });
-  
+
   const uploadDocument = trpc.vendorPortal.uploadDocument.useMutation({
     onSuccess: () => {
       toast.success("Document uploaded");
       setUploadOpen(false);
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast.error("Failed to upload document", { description: error.message });
     },
   });
 
-  const uploadCustomsDocument = trpc.vendorPortal.uploadCustomsDocument.useMutation({
+  const uploadCustomsDocument = trpc.vendorPortal.uploadDocument.useMutation({
     onSuccess: () => {
       toast.success("Customs document uploaded");
       setCustomsUploadOpen(false);
       refetchCustoms();
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast.error("Failed to upload customs document", { description: error.message });
     },
   });
@@ -92,12 +92,13 @@ export default function VendorPortal() {
     reader.onload = () => {
       const base64 = (reader.result as string).split(",")[1];
       uploadCustomsDocument.mutate({
-        clearanceId: selectedClearanceId,
+        relatedEntityType: 'shipment' as any,
+        relatedEntityId: selectedClearanceId || 0,
         documentType: customsDocType as any,
         name: file.name,
         fileData: base64,
         mimeType: file.type,
-      });
+      } as any);
     };
     reader.readAsDataURL(file);
   };

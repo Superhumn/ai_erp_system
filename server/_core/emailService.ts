@@ -415,7 +415,7 @@ export async function sendShipmentEmail(
       } else if (shipment.orderId) {
         const order = await db.getOrderById(shipment.orderId);
         if (order) {
-          const customer = await db.getCustomerById(order.customerId);
+          const customer = order.customerId ? await db.getCustomerById(order.customerId) : null;
           if (customer?.email) {
             recipientEmail = customer.email;
             recipientName = customer.name;

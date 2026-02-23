@@ -6914,11 +6914,11 @@ Provide a brief status summary, any missing documents, and next steps.`;
             createdBy: ctx.user.id,
           } as any);
           
-          await createAuditLog(ctx.user.id, 'create', 'workOrder', workOrder.id, workOrderNumber, null, { source: 'text', originalText: input.text });
-          
+          await createAuditLog(ctx.user.id, 'create', 'workOrder', workOrder.id, workOrder.workOrderNumber, null, { source: 'text', originalText: input.text });
+
           return {
             workOrderId: workOrder.id,
-            workOrderNumber,
+            workOrderNumber: workOrder.workOrderNumber,
             parsed,
           };
         } catch (error) {
@@ -13911,9 +13911,9 @@ Ask if they received the original request and if they can provide a quote.`;
             } as any);
 
             const { parseUploadedDocument } = await import('./documentImportService');
-            const result = await parseUploadedDocument(doc.content, doc.fileName, doc.fileType);
+            const result = await parseUploadedDocument(doc.content, doc.fileName, doc.documentType as any);
 
-            results.push({ fileName: doc.fileName, success: true, importLogId: (importLog as any)?.id, ...result });
+            results.push({ fileName: doc.fileName, importLogId: (importLog as any)?.id, ...result, success: true });
           } catch (error) {
             results.push({ fileName: doc.fileName, success: false, error: error instanceof Error ? error.message : 'Unknown error' });
           }

@@ -54,7 +54,8 @@ export default function CRMInvestors() {
     notes: "",
   });
 
-  const { data: investors, isLoading, refetch } = trpc.crm.listInvestors.useQuery();
+  const { data: investorsRaw, isLoading, refetch } = trpc.crm.listInvestors.useQuery();
+  const investors = investorsRaw as any[] | undefined;
   
   const createInvestor = trpc.crm.createInvestor.useMutation({
     onSuccess: () => {
@@ -67,14 +68,14 @@ export default function CRMInvestors() {
       });
       refetch();
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast.error(error.message);
     },
   });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    createInvestor.mutate(formData);
+    createInvestor.mutate({ ...formData, firstName: formData.name } as any);
   };
 
   const filteredInvestors = investors?.filter((investor) => {

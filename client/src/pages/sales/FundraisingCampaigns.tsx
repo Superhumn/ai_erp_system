@@ -39,7 +39,8 @@ export default function FundraisingCampaigns() {
     notes: "",
   });
 
-  const { data: campaigns, isLoading, refetch } = trpc.crm.listCampaigns.useQuery();
+  const { data: campaignsRaw, isLoading, refetch } = trpc.crm.listCampaigns.useQuery();
+  const campaigns = campaignsRaw as any[] | undefined;
   
   const createCampaign = trpc.crm.createCampaign.useMutation({
     onSuccess: () => {
@@ -51,7 +52,7 @@ export default function FundraisingCampaigns() {
       });
       refetch();
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast.error(error.message);
     },
   });

@@ -238,7 +238,7 @@ export default function CRMDashboard() {
               {investors?.slice(0, 5).map((investor: any) => (
                 <div key={investor.id} className="flex items-center justify-between">
                   <div>
-                    <div className="font-medium">{investor.name}</div>
+                    <div className="font-medium">{investor.fullName}</div>
                     <div className="text-sm text-muted-foreground">
                       {investor.company} · {investor.type.replace('_', ' ')}
                     </div>
@@ -270,7 +270,7 @@ export default function CRMDashboard() {
                     <div className="flex-1">
                       <div className="font-medium">{reminder.title}</div>
                       <div className="text-sm text-muted-foreground">
-                        {investor?.name} · Due {new Date(reminder.dueDate).toLocaleDateString()}
+                        {(investor as any)?.name || investor?.fullName} · Due {new Date(reminder.dueDate).toLocaleDateString()}
                       </div>
                     </div>
                     <Badge variant="outline" className={

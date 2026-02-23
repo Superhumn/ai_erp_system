@@ -8863,59 +8863,6 @@ export async function detectAnomalies() {
 // VENDOR SUGGESTION (by PO history)
 // ============================================
 
-/**
- * Get preferred vendor for a raw material based on PO history.
- * Returns vendor with most POs, best price, and shortest lead time.
- */
-export async function getPreferredVendorForMaterial(rawMaterialId: number) {
-  const db = await getDb();
-  if (!db) return null;
-
-  // Get all PO items that reference this raw material
-  const poRawMats = await db.select().from(purchaseOrderRawMaterials)
-    .where(eq(purchaseOrderRawMaterials.rawMaterialId, rawMaterialId));
-
-  if (poRawMats.length === 0) return null;
-
-  // Get PO item IDs
-  const poItemIds = poRawMats.map(p => p.purchaseOrderItemId);
-
-  // Get the PO items to find PO IDs
-  const poItems = await db.select().from(purchaseOrderItems)
-    .where(inArray(purchaseOrderItems.id, poItemIds));
-
-  // Get PO IDs and their vendors
-  const poIds = [...new Set(poItems.map(pi => pi.purchaseOrderId))];
-  const pos = await db.select().from(purchaseOrders)
-    .where(inArray(purchaseOrders.id, poIds));
-
-  // Count POs per vendor
-  const vendorPOCount: Record<number, { count: number; totalCost: number; avgLeadTime: number }> = {};
-  for (const po of pos) {
-    if (!po.vendorId) continue;
-    if (!vendorPOCount[po.vendorId]) {
-      vendorPOCount[po.vendorId] = { count: 0, totalCost: 0, avgLeadTime: 0 };
-    }
-    vendorPOCount[po.vendorId].count++;
-    vendorPOCount[po.vendorId].totalCost += parseFloat(po.totalAmount?.toString() || '0');
-  }
-
-  // Find the vendor with the most POs
-  let bestVendorId: number | null = null;
-  let bestCount = 0;
-  for (const [vendorId, stats] of Object.entries(vendorPOCount)) {
-    if (stats.count > bestCount) {
-      bestCount = stats.count;
-      bestVendorId = parseInt(vendorId);
-    }
-  }
-
-  if (!bestVendorId) return null;
-
-  const vendor = await getVendorById(bestVendorId);
-  return vendor ? { ...vendor, poCount: bestCount, stats: vendorPOCount[bestVendorId] } : null;
-}
-
 // ============================================
 // EMAIL AUTO-ROUTING BY CATEGORY
 // ============================================

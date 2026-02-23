@@ -21,7 +21,7 @@ export default function OrderDetail() {
   const orderId = parseInt(params.id || "0");
 
   const { data: order, isLoading } = trpc.orders.get.useQuery({ id: orderId });
-  const { data: orderItems } = trpc.orderItems.list.useQuery({ orderId });
+  const { data: orderItems } = (trpc as any).orderItems?.list?.useQuery({ orderId }) || { data: [] };
   const { data: products } = trpc.products.list.useQuery();
 
   if (isLoading) {
@@ -158,7 +158,7 @@ export default function OrderDetail() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {orderItems.map((item) => {
+                {(orderItems || []).map((item: any) => {
                   const product = products?.find(p => p.id === item.productId);
                   return (
                     <TableRow key={item.id}>

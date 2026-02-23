@@ -322,7 +322,7 @@ export default function AutonomousDashboard() {
                       </TableCell>
                       <TableCell>
                         <span className="text-green-600">{run.itemsSucceeded}</span>
-                        {run.itemsFailed > 0 && (
+                        {(run.itemsFailed || 0) > 0 && (
                           <span className="text-red-600 ml-1">/ {run.itemsFailed}</span>
                         )}
                       </TableCell>

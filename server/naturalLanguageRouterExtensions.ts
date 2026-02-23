@@ -17,7 +17,7 @@ import { TRPCError } from '@trpc/server';
 export const purchaseOrderTextEndpoints = {
   createFromText: opsProcedure
     .input(z.object({ text: z.string().min(1) }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input, ctx }: { input: any; ctx: any }) => {
       try {
         // Parse the text using AI
         const parsed = await parseEntityText(input.text, 'purchase_order');
@@ -112,7 +112,7 @@ export const purchaseOrderTextEndpoints = {
 export const shipmentTextEndpoints = {
   createFromText: opsProcedure
     .input(z.object({ text: z.string().min(1) }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input, ctx }: { input: any; ctx: any }) => {
       try {
         // Parse the text using AI
         const parsed = await parseEntityText(input.text, 'shipment');
@@ -127,7 +127,7 @@ export const shipmentTextEndpoints = {
           status: parsed.status || 'pending',
           fromAddress: parsed.origin || undefined,
           toAddress: parsed.destination || undefined,
-          estimatedDelivery: parsed.estimatedDelivery ? new Date(parsed.estimatedDelivery) : undefined,
+          deliveryDate: parsed.estimatedDelivery ? new Date(parsed.estimatedDelivery) : undefined,
           weight: parsed.weight ? parsed.weight.toString() : undefined,
           notes: parsed.notes || undefined,
         });
@@ -157,7 +157,7 @@ export const shipmentTextEndpoints = {
 export const paymentTextEndpoints = {
   createFromText: financeProcedure
     .input(z.object({ text: z.string().min(1) }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input, ctx }: { input: any; ctx: any }) => {
       try {
         // Parse the text using AI
         const parsed = await parseEntityText(input.text, 'payment');
@@ -205,7 +205,10 @@ export const paymentTextEndpoints = {
         }
         
         // Create payment record
+        const paymentNumber = generateNumber('PAY');
         const payment = await db.createPayment({
+          paymentNumber,
+          type: vendorId ? 'made' : 'received',
           invoiceId,
           customerId,
           vendorId,
@@ -258,7 +261,7 @@ export const paymentTextEndpoints = {
 export const workOrderTextEndpoints = {
   createFromText: opsProcedure
     .input(z.object({ text: z.string().min(1) }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input, ctx }: { input: any; ctx: any }) => {
       try {
         // Parse the text using AI
         const parsed = await parseEntityText(input.text, 'work_order');
@@ -272,26 +275,22 @@ export const workOrderTextEndpoints = {
         }
         
         // Create work order
-        const workOrderNumber = generateNumber('WO');
         const workOrder = await db.createWorkOrder({
-          workOrderNumber,
-          productId,
-          productName: parsed.productName,
+          productId: productId || 0,
+          bomId: 0,
           quantity: parsed.quantity.toString(),
           unit: parsed.unit || 'units',
           status: 'draft',
           priority: parsed.priority || 'medium',
-          dueDate: parsed.dueDate ? new Date(parsed.dueDate) : undefined,
-          batchSize: parsed.batchSize ? parsed.batchSize.toString() : undefined,
           notes: parsed.notes || undefined,
           createdBy: ctx.user.id,
-        });
+        } as any);
         
-        await createAuditLog(ctx.user.id, 'create', 'workOrder', workOrder.id, workOrderNumber, null, { source: 'text', originalText: input.text });
-        
+        await createAuditLog(ctx.user.id, 'create', 'workOrder', workOrder.id, workOrder.workOrderNumber, null, { source: 'text', originalText: input.text });
+
         return {
           workOrderId: workOrder.id,
-          workOrderNumber,
+          workOrderNumber: workOrder.workOrderNumber,
           parsed,
         };
       } catch (error) {
@@ -311,7 +310,7 @@ export const workOrderTextEndpoints = {
 export const inventoryTextEndpoints = {
   transferFromText: opsProcedure
     .input(z.object({ text: z.string().min(1) }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input, ctx }: { input: any; ctx: any }) => {
       try {
         // Parse the text using AI
         const parsed = await parseEntityText(input.text, 'inventory_transfer');

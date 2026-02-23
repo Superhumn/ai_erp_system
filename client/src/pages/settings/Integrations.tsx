@@ -68,41 +68,41 @@ export default function IntegrationsPage() {
   }, [searchParams, refetch]);
 
   const testSendgridMutation = trpc.integrations.testSendgrid.useMutation({
-    onSuccess: (data) => {
+    onSuccess: (data: any) => {
       toast.success(data.message);
       refetch();
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast.error(error.message);
     },
   });
 
-  const shopifyInitiateOAuthMutation = trpc.integrations.shopify.initiateOAuth.useMutation({
-    onSuccess: (data) => {
+  const shopifyInitiateOAuthMutation = (trpc.integrations as any).shopify.initiateOAuth.useMutation({
+    onSuccess: (data: any) => {
       // Redirect to Shopify OAuth page
       window.location.href = data.authUrl;
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast.error(error.message);
       setShopifyConnecting(false);
     },
   });
 
-  const shopifyDisconnectMutation = trpc.integrations.shopify.disconnect.useMutation({
+  const shopifyDisconnectMutation = (trpc.integrations as any).shopify.disconnect.useMutation({
     onSuccess: () => {
       toast.success("Store disconnected successfully");
       refetch();
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast.error(error.message);
     },
   });
 
-  const shopifyTestConnectionMutation = trpc.integrations.shopify.testConnection.useMutation({
-    onSuccess: (data) => {
+  const shopifyTestConnectionMutation = (trpc.integrations as any).shopify.testConnection.useMutation({
+    onSuccess: (data: any) => {
       toast.success(data.message);
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast.error(error.message);
     },
   });
@@ -112,7 +112,7 @@ export default function IntegrationsPage() {
       toast.success("Sync history cleared");
       refetch();
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast.error(error.message);
     },
   });
@@ -122,7 +122,7 @@ export default function IntegrationsPage() {
       toast.success("QuickBooks disconnected successfully");
       refetch();
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast.error(error.message);
     },
   });

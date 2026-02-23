@@ -622,7 +622,7 @@ export default function OperationsHub() {
                     renderExpanded={(workOrder) => (
                       <WorkOrderDetailPanel 
                         workOrder={workOrder} 
-                        onStatusChange={(id, status) => updateWorkOrderStatus.mutate({ id, status })}
+                        onStatusChange={(id: number, status: any) => updateWorkOrderStatus.mutate({ id, status })}
                         onStartProduction={(id) => startProduction.mutate({ id })}
                         onCompleteProduction={(id, completedQuantity) => completeProduction.mutate({ id, completedQuantity })}
                       />
@@ -662,8 +662,8 @@ export default function OperationsHub() {
                     showSearch
                     expandedRowId={expandedLocationId}
                     onExpandChange={setExpandedLocationId}
-                    renderExpanded={(location, onClose) => (
-                      <LocationDetailPanel location={location} onClose={onClose} />
+                    renderExpanded={(location: any) => (
+                      <LocationDetailPanel location={location} />
                     )}
                   />
                 </CardContent>
@@ -777,7 +777,7 @@ export default function OperationsHub() {
       <QuickCreateDialog
         open={showPoDialog}
         onOpenChange={setShowPoDialog}
-        entityType="purchaseOrder"
+        entityType={"purchaseOrder" as any}
         onCreated={() => refetchPos()}
       />
       <QuickCreateDialog
@@ -789,7 +789,7 @@ export default function OperationsHub() {
       <QuickCreateDialog
         open={showMaterialDialog}
         onOpenChange={setShowMaterialDialog}
-        entityType="rawMaterial"
+        entityType={"material" as any}
         onCreated={() => refetchMaterials()}
       />
       <QuickCreateDialog

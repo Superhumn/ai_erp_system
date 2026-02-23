@@ -234,7 +234,7 @@ export default function ApprovalsPage() {
                     <TableCell className="font-mono">
                       ${parseFloat(approval.monetaryValue || "0").toLocaleString()}
                     </TableCell>
-                    <TableCell>{getRiskBadge(approval.riskAssessment)}</TableCell>
+                    <TableCell>{getRiskBadge(approval.riskAssessment || '')}</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <div

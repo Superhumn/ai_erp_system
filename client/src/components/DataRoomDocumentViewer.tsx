@@ -68,8 +68,8 @@ export default function DataRoomDocumentViewer({
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Mutations for tracking
-  const recordPageViewMutation = trpc.dataRoom.pageTracking.recordPageView.useMutation();
-  const updatePageViewMutation = trpc.dataRoom.pageTracking.updatePageView.useMutation();
+  const recordPageViewMutation = (trpc.dataRoom as any).pageTracking.recordPageView.useMutation();
+  const updatePageViewMutation = (trpc.dataRoom as any).pageTracking.updatePageView.useMutation();
 
   // Get device info
   const getDeviceInfo = useCallback(() => {
@@ -300,7 +300,7 @@ export default function DataRoomDocumentViewer({
         <Document
           file={documentUrl}
           onLoadSuccess={onDocumentLoadSuccess}
-          onLoadError={(error) => {
+          onLoadError={(error: any) => {
             console.error('Error loading PDF:', error);
             setIsLoading(false);
           }}
