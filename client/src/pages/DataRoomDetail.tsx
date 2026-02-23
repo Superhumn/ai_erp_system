@@ -1511,7 +1511,7 @@ function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {report?.visitorEngagement.map((v) => (
+                  {report?.visitorEngagement.map((v: any) => (
                     <TableRow
                       key={v.visitorId}
                       className="cursor-pointer hover:bg-muted/50"
@@ -1555,7 +1555,7 @@ function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {report?.documentEngagement.map((d) => (
+                  {report?.documentEngagement.map((d: any) => (
                     <TableRow key={d.documentId}>
                       <TableCell>
                         <div className="font-medium truncate max-w-[200px]">{d.documentName}</div>
@@ -1605,7 +1605,7 @@ function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
               <div className="border-t pt-4">
                 <h4 className="font-medium mb-2">Document Engagement</h4>
                 <ScrollArea className="h-60">
-                  {visitorDetails.documentEngagement.map((doc) => (
+                  {visitorDetails.documentEngagement.map((doc: any) => (
                     <div key={doc.documentId} className="p-3 border rounded-lg mb-2">
                       <div className="flex justify-between items-start">
                         <div>
@@ -1650,18 +1650,18 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
       refetchConfig();
       setFolderPickerOpen(false);
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast.error(error.message);
     },
   });
 
   const syncNowMutation = trpc.dataRoom.driveSync.syncNow.useMutation({
-    onSuccess: (result) => {
+    onSuccess: (result: any) => {
       toast.success(`Sync completed: ${result.filesAdded} added, ${result.filesUpdated} updated`);
       refetchConfig();
       refetchLogs();
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast.error(error.message);
     },
   });

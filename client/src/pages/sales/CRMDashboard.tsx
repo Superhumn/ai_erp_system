@@ -202,7 +202,7 @@ export default function CRMDashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {campaignData.map((campaign, index) => (
+              {campaignData.map((campaign: any, index: any) => (
                 <div key={index} className="space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="font-medium">{campaign.name}</div>
@@ -235,7 +235,7 @@ export default function CRMDashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {investors?.slice(0, 5).map((investor) => (
+              {investors?.slice(0, 5).map((investor: any) => (
                 <div key={investor.id} className="flex items-center justify-between">
                   <div>
                     <div className="font-medium">{investor.name}</div>
@@ -263,8 +263,8 @@ export default function CRMDashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {reminders?.slice(0, 5).map((reminder) => {
-                const investor = investors?.find(i => i.id === reminder.investorId);
+              {reminders?.slice(0, 5).map((reminder: any) => {
+                const investor = investors?.find((i: any) => i.id === reminder.investorId);
                 return (
                   <div key={reminder.id} className="flex items-start justify-between">
                     <div className="flex-1">
