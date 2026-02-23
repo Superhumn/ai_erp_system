@@ -2391,6 +2391,121 @@ export async function importInventoryFromCsv(
   return { updated, created, notFound };
 }
 
+// AI-parsed inventory import: match product names/descriptions to SKUs using fuzzy matching
+export async function matchAiParsedInventory(
+  warehouseId: number,
+  items: Array<{ productName: string; sku?: string; quantity: number }>
+) {
+  const dbConn = await getDb();
+  if (!dbConn) return { matched: [], unmatched: [] };
+
+  // Get all inventory items for this warehouse with product info
+  const warehouseInventory = await dbConn.select({
+    inventoryId: inventory.id,
+    productId: products.id,
+    productName: products.name,
+    sku: products.sku,
+    currentQuantity: inventory.quantity,
+  }).from(inventory)
+    .innerJoin(products, eq(inventory.productId, products.id))
+    .where(eq(inventory.warehouseId, warehouseId));
+
+  const matched: Array<{
+    inventoryId: number;
+    productId: number;
+    productName: string;
+    sku: string;
+    currentQuantity: number;
+    newQuantity: number;
+    aiProductName: string;
+    matchType: 'sku' | 'exact_name' | 'fuzzy_name';
+  }> = [];
+  const unmatched: Array<{ productName: string; sku?: string; quantity: number }> = [];
+
+  for (const item of items) {
+    let bestMatch: typeof warehouseInventory[0] | null = null;
+    let matchType: 'sku' | 'exact_name' | 'fuzzy_name' = 'fuzzy_name';
+
+    // 1. Try exact SKU match
+    if (item.sku) {
+      bestMatch = warehouseInventory.find(
+        inv => inv.sku?.toLowerCase() === item.sku!.toLowerCase()
+      ) || null;
+      if (bestMatch) matchType = 'sku';
+    }
+
+    // 2. Try exact product name match
+    if (!bestMatch) {
+      bestMatch = warehouseInventory.find(
+        inv => inv.productName.toLowerCase() === item.productName.toLowerCase()
+      ) || null;
+      if (bestMatch) matchType = 'exact_name';
+    }
+
+    // 3. Try fuzzy name match (contains / partial)
+    if (!bestMatch) {
+      const nameLower = item.productName.toLowerCase();
+      bestMatch = warehouseInventory.find(inv => {
+        const invName = inv.productName.toLowerCase();
+        return invName.includes(nameLower) || nameLower.includes(invName);
+      }) || null;
+      if (bestMatch) matchType = 'fuzzy_name';
+    }
+
+    // 4. Try word overlap matching
+    if (!bestMatch) {
+      const itemWords = item.productName.toLowerCase().split(/[\s,\-_]+/).filter(w => w.length > 2);
+      let bestOverlap = 0;
+      for (const inv of warehouseInventory) {
+        const invWords = inv.productName.toLowerCase().split(/[\s,\-_]+/).filter(w => w.length > 2);
+        const overlap = itemWords.filter(w => invWords.some(iw => iw.includes(w) || w.includes(iw))).length;
+        const overlapRatio = overlap / Math.max(itemWords.length, 1);
+        if (overlapRatio > 0.5 && overlap > bestOverlap) {
+          bestOverlap = overlap;
+          bestMatch = inv;
+          matchType = 'fuzzy_name';
+        }
+      }
+    }
+
+    if (bestMatch) {
+      matched.push({
+        inventoryId: bestMatch.inventoryId,
+        productId: bestMatch.productId,
+        productName: bestMatch.productName,
+        sku: bestMatch.sku || '',
+        currentQuantity: parseFloat(bestMatch.currentQuantity?.toString() || '0'),
+        newQuantity: item.quantity,
+        aiProductName: item.productName,
+        matchType,
+      });
+    } else {
+      unmatched.push(item);
+    }
+  }
+
+  return { matched, unmatched };
+}
+
+// Get copacker user info with warehouse and email
+export async function getCopackerUsersForWarehouse(warehouseId: number) {
+  const dbConn = await getDb();
+  if (!dbConn) return [];
+
+  const result = await dbConn.select({
+    id: users.id,
+    email: users.email,
+    name: users.name,
+    linkedWarehouseId: users.linkedWarehouseId,
+  }).from(users)
+    .where(and(
+      eq(users.role, 'copacker'),
+      eq(users.linkedWarehouseId, warehouseId)
+    ));
+
+  return result;
+}
+
 
 // ============================================
 // BILL OF MATERIALS (BOM) FUNCTIONS

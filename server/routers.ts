@@ -4940,6 +4940,291 @@ Provide a brief status summary, any missing documents, and next steps.`;
 
         return { headers: 'SKU,Quantity,Notes', rows };
       }),
+
+    // AI-powered file import: accepts any file, uses LLM to extract inventory data
+    importWithAI: copackerProcedure
+      .input(z.object({
+        fileData: z.string(), // Base64 encoded file
+        fileName: z.string(),
+        mimeType: z.string(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'No warehouse assigned' });
+        }
+        const warehouseId = ctx.user.linkedWarehouseId;
+        if (!warehouseId) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'No warehouse specified' });
+        }
+
+        // Get current inventory for context
+        const currentInventory = await db.getInventoryByWarehouse(warehouseId);
+        const inventoryContext = currentInventory.map((item: any) => ({
+          sku: item.product?.sku || '',
+          name: item.product?.name || '',
+          currentQty: parseFloat(item.inventory.quantity || '0'),
+        }));
+
+        const buffer = Buffer.from(input.fileData, 'base64');
+        const isImage = /\.(png|jpg|jpeg|gif|webp)$/i.test(input.fileName);
+        const isPdf = /\.pdf$/i.test(input.fileName);
+
+        const prompt = `You are an inventory data extraction AI for a copacker facility. Extract inventory counts from this document.
+
+CURRENT INVENTORY (for matching reference):
+${inventoryContext.map(i => `- ${i.name} (SKU: ${i.sku}) - Current: ${i.currentQty}`).join('\n')}
+
+INSTRUCTIONS:
+1. Extract all product names/descriptions and their quantities from this document
+2. The document may be a spreadsheet, a handwritten count sheet, a photo of inventory, a PDF report, an email, etc.
+3. Match product names to the inventory list above as closely as possible
+4. If you find a SKU, include it. If not, just provide the product name.
+5. Return ALL items you can identify with their quantities.
+
+Return ONLY a JSON array of items:
+[{"productName": "Product Name", "sku": "SKU-123", "quantity": 50}, ...]`;
+
+        let messageContent: any[];
+
+        if (isImage) {
+          const base64 = buffer.toString('base64');
+          const mimeMap: Record<string, string> = {
+            'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+            'gif': 'image/gif', 'webp': 'image/webp'
+          };
+          const ext = input.fileName.toLowerCase().match(/\.(png|jpg|jpeg|gif|webp)$/i)?.[1] || 'png';
+          const imageMime = mimeMap[ext] || 'image/png';
+          messageContent = [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: `data:${imageMime};base64,${base64}`, detail: 'high' } }
+          ];
+        } else if (isPdf) {
+          // Extract text from PDF
+          try {
+            const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+            const uint8Array = new Uint8Array(buffer);
+            const loadingTask = pdfjsLib.getDocument({ data: uint8Array });
+            const pdf = await loadingTask.promise;
+            let fullText = '';
+            for (let i = 1; i <= pdf.numPages; i++) {
+              const page = await pdf.getPage(i);
+              const textContent = await page.getTextContent();
+              const pageText = textContent.items.map((item: any) => item.str).join(' ');
+              fullText += pageText + '\n';
+            }
+            messageContent = [{ type: 'text', text: `${prompt}\n\nDOCUMENT TEXT:\n${fullText.substring(0, 50000)}` }];
+          } catch {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Could not read PDF file' });
+          }
+        } else {
+          // CSV, Excel, text - try reading as text
+          const textContent = buffer.toString('utf-8');
+          messageContent = [{ type: 'text', text: `${prompt}\n\nDOCUMENT CONTENT:\n${textContent.substring(0, 50000)}` }];
+        }
+
+        const response = await invokeLLM({
+          messages: [
+            { role: 'system', content: 'You are an inventory data extraction AI. Extract product names and quantities. Respond with ONLY valid JSON array, no other text.' },
+            { role: 'user', content: messageContent }
+          ],
+        });
+
+        const content = response.choices[0]?.message?.content;
+        if (!content) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'AI returned empty response' });
+        }
+
+        // Parse AI response
+        let contentText = typeof content === 'string' ? content : Array.isArray(content) ? (content.find((p: any) => p.type === 'text') as any)?.text || JSON.stringify(content) : JSON.stringify(content);
+        let jsonText = contentText.trim();
+        if (jsonText.startsWith('```json')) jsonText = jsonText.slice(7);
+        else if (jsonText.startsWith('```')) jsonText = jsonText.slice(3);
+        if (jsonText.endsWith('```')) jsonText = jsonText.slice(0, -3);
+        jsonText = jsonText.trim();
+
+        let aiItems: Array<{ productName: string; sku?: string; quantity: number }>;
+        try {
+          aiItems = JSON.parse(jsonText);
+          if (!Array.isArray(aiItems)) throw new Error('Not an array');
+        } catch {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'AI could not extract inventory data from this file. Try a clearer format.' });
+        }
+
+        // Match AI results to actual inventory
+        const matchResult = await db.matchAiParsedInventory(warehouseId, aiItems);
+        return matchResult;
+      }),
+
+    // Confirm and apply AI-parsed inventory updates
+    confirmAIImport: copackerProcedure
+      .input(z.object({
+        items: z.array(z.object({
+          inventoryId: z.number(),
+          quantity: z.number().min(0),
+        })),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Verify copacker access
+        if (ctx.user.role === 'copacker' && ctx.user.linkedWarehouseId) {
+          const inventoryItems = await db.getInventoryByWarehouse(ctx.user.linkedWarehouseId);
+          const validIds = new Set(inventoryItems.map((item: any) => item.inventory.id));
+          for (const item of input.items) {
+            if (!validIds.has(item.inventoryId)) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: `No access to inventory item ${item.inventoryId}` });
+            }
+          }
+        }
+
+        const result = await db.batchUpdateInventoryQuantities(
+          input.items.map(i => ({ inventoryId: i.inventoryId, quantity: i.quantity, notes: 'AI-parsed import' })),
+          ctx.user.id
+        );
+        return result;
+      }),
+
+    // Send inventory count form via email to copacker
+    sendInventoryEmailForm: copackerProcedure
+      .input(z.object({
+        email: z.string().email(),
+        warehouseId: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (!isEmailConfigured()) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Email is not configured. Add SENDGRID_API_KEY and SENDGRID_FROM_EMAIL to secrets.' });
+        }
+
+        const whId = input.warehouseId || ctx.user.linkedWarehouseId;
+        if (!whId) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'No warehouse specified' });
+        }
+
+        const warehouse = await db.getWarehouse(whId);
+        const items = await db.getInventoryByWarehouse(whId);
+
+        // Build table rows for the email
+        const tableRows = items.map((item: any) => {
+          const name = item.product?.name || 'Unknown';
+          const sku = item.product?.sku || '';
+          const currentQty = parseFloat(item.inventory.quantity || '0');
+          return `<tr>
+            <td style="border:1px solid #ddd;padding:8px;">${name}</td>
+            <td style="border:1px solid #ddd;padding:8px;font-family:monospace;">${sku}</td>
+            <td style="border:1px solid #ddd;padding:8px;text-align:center;">${currentQty}</td>
+            <td style="border:1px solid #ddd;padding:8px;text-align:center;background:#fffde7;"><strong>______</strong></td>
+          </tr>`;
+        }).join('\n');
+
+        // Also build a plain text version for reply-based parsing
+        const textItems = items.map((item: any) => {
+          const name = item.product?.name || 'Unknown';
+          const sku = item.product?.sku || '';
+          const currentQty = parseFloat(item.inventory.quantity || '0');
+          return `${sku} | ${name} | Current: ${currentQty} | New Count: ___`;
+        }).join('\n');
+
+        const htmlBody = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;color:#333;max-width:700px;margin:0 auto;padding:20px;">
+  <h2 style="color:#1a1a1a;">Inventory Count Form</h2>
+  <p>Hi,</p>
+  <p>Please update the inventory counts for <strong>${warehouse?.name || 'your facility'}</strong> and reply to this email with the updated quantities.</p>
+  <p style="color:#666;font-size:14px;">You can either:</p>
+  <ul style="color:#666;font-size:14px;">
+    <li>Reply with updated counts in the table below</li>
+    <li>Attach a file (CSV, Excel, PDF, or even a photo of your count sheet)</li>
+  </ul>
+
+  <table style="border-collapse:collapse;width:100%;margin:20px 0;">
+    <thead>
+      <tr style="background:#f5f5f5;">
+        <th style="border:1px solid #ddd;padding:8px;text-align:left;">Product</th>
+        <th style="border:1px solid #ddd;padding:8px;text-align:left;">SKU</th>
+        <th style="border:1px solid #ddd;padding:8px;text-align:center;">Current Count</th>
+        <th style="border:1px solid #ddd;padding:8px;text-align:center;background:#fffde7;">New Count</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${tableRows}
+    </tbody>
+  </table>
+
+  <p style="font-size:12px;color:#999;">
+    WAREHOUSE_ID:${whId}<br>
+    This is an automated inventory count request. Simply reply with updated quantities.
+  </p>
+</body>
+</html>`;
+
+        const textBody = `Inventory Count Form for ${warehouse?.name || 'your facility'}
+
+Please update the counts below and reply to this email:
+
+${textItems}
+
+You can also attach a file (CSV, Excel, PDF, or photo) with your counts.
+WAREHOUSE_ID:${whId}`;
+
+        const result = await sendEmail({
+          to: input.email,
+          subject: `Inventory Count Request - ${warehouse?.name || 'Facility'} - ${new Date().toLocaleDateString()}`,
+          html: htmlBody,
+          text: textBody,
+        });
+
+        if (!result.success) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to send email' });
+        }
+
+        return { success: true, messageId: result.messageId };
+      }),
+
+    // Parse an inventory count email reply using AI
+    parseInventoryEmail: copackerProcedure
+      .input(z.object({
+        emailBody: z.string(),
+        warehouseId: z.number(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const prompt = `Extract inventory counts from this email reply. The email is a response to an inventory count form.
+Look for product names, SKUs, and quantities. The format may vary - they might fill in a table, list items, or use informal text.
+
+EMAIL CONTENT:
+${input.emailBody.substring(0, 30000)}
+
+Return a JSON array of items found:
+[{"productName": "Product Name", "sku": "SKU-123", "quantity": 50}, ...]
+If no inventory data is found, return an empty array [].`;
+
+        const response = await invokeLLM({
+          messages: [
+            { role: 'system', content: 'You are an email parser that extracts inventory counts. Respond with ONLY valid JSON array.' },
+            { role: 'user', content: prompt }
+          ],
+        });
+
+        const content = response.choices[0]?.message?.content;
+        if (!content) return { matched: [], unmatched: [] };
+
+        let contentText = typeof content === 'string' ? content : Array.isArray(content) ? (content.find((p: any) => p.type === 'text') as any)?.text || '[]' : '[]';
+        let jsonText = contentText.trim();
+        if (jsonText.startsWith('```json')) jsonText = jsonText.slice(7);
+        else if (jsonText.startsWith('```')) jsonText = jsonText.slice(3);
+        if (jsonText.endsWith('```')) jsonText = jsonText.slice(0, -3);
+        jsonText = jsonText.trim();
+
+        let aiItems: Array<{ productName: string; sku?: string; quantity: number }>;
+        try {
+          aiItems = JSON.parse(jsonText);
+          if (!Array.isArray(aiItems)) aiItems = [];
+        } catch {
+          return { matched: [], unmatched: [] };
+        }
+
+        const matchResult = await db.matchAiParsedInventory(input.warehouseId, aiItems);
+        return matchResult;
+      }),
   }),
 
   // Vendor Portal - restricted views for vendors

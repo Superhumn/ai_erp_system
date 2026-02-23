@@ -10,7 +10,24 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { Package, Truck, Upload, Warehouse, Save, ClipboardPaste, Download, FileSpreadsheet, CheckCircle, AlertCircle } from "lucide-react";
+import { Package, Truck, Upload, Warehouse, Save, ClipboardPaste, Download, FileSpreadsheet, CheckCircle, AlertCircle, Sparkles, Mail, Loader2 } from "lucide-react";
+
+type AIMatchedItem = {
+  inventoryId: number;
+  productId: number;
+  productName: string;
+  sku: string;
+  currentQuantity: number;
+  newQuantity: number;
+  aiProductName: string;
+  matchType: 'sku' | 'exact_name' | 'fuzzy_name';
+};
+
+type AIUnmatchedItem = {
+  productName: string;
+  sku?: string;
+  quantity: number;
+};
 
 export default function CopackerPortal() {
   const { user } = useAuth();
@@ -21,6 +38,16 @@ export default function CopackerPortal() {
   const [selectedShipmentId, setSelectedShipmentId] = useState<number | null>(null);
   const [csvPreview, setCsvPreview] = useState<Array<{ sku: string; quantity: number; name?: string }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const aiFileInputRef = useRef<HTMLInputElement>(null);
+
+  // AI import state
+  const [aiPreviewOpen, setAiPreviewOpen] = useState(false);
+  const [aiMatched, setAiMatched] = useState<AIMatchedItem[]>([]);
+  const [aiUnmatched, setAiUnmatched] = useState<AIUnmatchedItem[]>([]);
+
+  // Email form state
+  const [emailFormOpen, setEmailFormOpen] = useState(false);
+  const [emailAddress, setEmailAddress] = useState("");
 
   // Queries
   const { data: warehouse } = trpc.copackerPortal.getWarehouse.useQuery();
@@ -63,7 +90,6 @@ export default function CopackerPortal() {
       setCsvUploadOpen(false);
       setCsvPreview([]);
       refetchInventory();
-      // Reset quantities so they re-initialize from fresh data
       setQuantities({});
     },
     onError: (error) => {
@@ -78,6 +104,45 @@ export default function CopackerPortal() {
     },
     onError: (error) => {
       toast.error("Failed to upload document", { description: error.message });
+    },
+  });
+
+  const aiImport = trpc.copackerPortal.importWithAI.useMutation({
+    onSuccess: (data) => {
+      setAiMatched(data.matched);
+      setAiUnmatched(data.unmatched);
+      setAiPreviewOpen(true);
+      if (data.matched.length === 0) {
+        toast.warning("AI could not match any items to your inventory");
+      }
+    },
+    onError: (error) => {
+      toast.error("AI import failed", { description: error.message });
+    },
+  });
+
+  const aiConfirm = trpc.copackerPortal.confirmAIImport.useMutation({
+    onSuccess: (data) => {
+      toast.success(`AI import applied: ${data.updated} items updated`);
+      setAiPreviewOpen(false);
+      setAiMatched([]);
+      setAiUnmatched([]);
+      refetchInventory();
+      setQuantities({});
+    },
+    onError: (error) => {
+      toast.error("Failed to apply AI import", { description: error.message });
+    },
+  });
+
+  const sendEmailForm = trpc.copackerPortal.sendInventoryEmailForm.useMutation({
+    onSuccess: () => {
+      toast.success(`Inventory count form sent to ${emailAddress}`);
+      setEmailFormOpen(false);
+      setEmailAddress("");
+    },
+    onError: (error) => {
+      toast.error("Failed to send email", { description: error.message });
     },
   });
 
@@ -120,7 +185,6 @@ export default function CopackerPortal() {
       return;
     }
 
-    // Parse header to find SKU and Quantity columns
     const header = lines[0].toLowerCase().split(',').map(h => h.trim().replace(/"/g, ''));
     const skuCol = header.findIndex(h => h === 'sku' || h === 'item' || h === 'product_sku' || h === 'item_sku');
     const qtyCol = header.findIndex(h => h === 'quantity' || h === 'qty' || h === 'count' || h === 'on_hand' || h === 'onhand');
@@ -158,7 +222,6 @@ export default function CopackerPortal() {
         return;
       }
 
-      // Handle tab-separated (from Excel/Sheets) or comma-separated
       const delimiter = text.includes('\t') ? '\t' : ',';
       const lines = text.trim().split('\n');
 
@@ -209,6 +272,50 @@ export default function CopackerPortal() {
     a.download = `inventory-count-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleAIFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Limit file size to 10MB
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("File too large. Maximum size is 10MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(",")[1];
+      aiImport.mutate({
+        fileData: base64,
+        fileName: file.name,
+        mimeType: file.type,
+      });
+    };
+    reader.readAsDataURL(file);
+
+    // Reset file input
+    if (aiFileInputRef.current) {
+      aiFileInputRef.current.value = "";
+    }
+  };
+
+  const submitAIImport = () => {
+    aiConfirm.mutate({
+      items: aiMatched.map(item => ({
+        inventoryId: item.inventoryId,
+        quantity: item.newQuantity,
+      })),
+    });
+  };
+
+  const handleSendEmailForm = () => {
+    if (!emailAddress.trim()) {
+      toast.error("Please enter an email address");
+      return;
+    }
+    sendEmailForm.mutate({ email: emailAddress });
   };
 
   const handleShipmentFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -280,8 +387,8 @@ export default function CopackerPortal() {
         {/* Quick Count Tab - All items editable at once */}
         <TabsContent value="quick-count" className="mt-4 space-y-4">
           {/* Action bar */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button variant="outline" size="sm" onClick={handlePasteFromClipboard}>
                 <ClipboardPaste className="h-4 w-4 mr-2" />
                 Paste from Spreadsheet
@@ -289,6 +396,29 @@ export default function CopackerPortal() {
               <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
                 <Upload className="h-4 w-4 mr-2" />
                 Upload CSV
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => aiFileInputRef.current?.click()}
+                disabled={aiImport.isPending}
+                className="border-purple-300 text-purple-700 hover:bg-purple-50"
+              >
+                {aiImport.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4 mr-2" />
+                )}
+                {aiImport.isPending ? "AI Reading..." : "Upload Any File (AI)"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setEmailFormOpen(true)}
+                className="border-blue-300 text-blue-700 hover:bg-blue-50"
+              >
+                <Mail className="h-4 w-4 mr-2" />
+                Email Count Form
               </Button>
               <Button variant="outline" size="sm" onClick={downloadTemplate}>
                 <Download className="h-4 w-4 mr-2" />
@@ -300,6 +430,13 @@ export default function CopackerPortal() {
                 accept=".csv,.txt"
                 className="hidden"
                 onChange={handleCsvFile}
+              />
+              <input
+                ref={aiFileInputRef}
+                type="file"
+                accept=".csv,.xlsx,.xls,.pdf,.png,.jpg,.jpeg,.gif,.webp,.txt,.tsv"
+                className="hidden"
+                onChange={handleAIFileUpload}
               />
             </div>
 
@@ -567,6 +704,192 @@ export default function CopackerPortal() {
               disabled={csvImport.isPending}
             >
               {csvImport.isPending ? "Importing..." : `Import ${csvPreview.length} Items`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* AI Import Preview Dialog */}
+      <Dialog open={aiPreviewOpen} onOpenChange={setAiPreviewOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-purple-600" />
+              AI-Parsed Inventory Results
+            </DialogTitle>
+            <DialogDescription>
+              AI extracted {aiMatched.length + aiUnmatched.length} items from your file.
+              {aiMatched.length > 0 && ` ${aiMatched.length} matched to your inventory.`}
+              {aiUnmatched.length > 0 && ` ${aiUnmatched.length} could not be matched.`}
+            </DialogDescription>
+          </DialogHeader>
+
+          {aiMatched.length > 0 && (
+            <div className="space-y-2">
+              <h4 className="text-sm font-medium text-green-700">Matched Items</h4>
+              <div className="max-h-[300px] overflow-auto border rounded-lg">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Product</TableHead>
+                      <TableHead>SKU</TableHead>
+                      <TableHead className="text-center">Current</TableHead>
+                      <TableHead className="text-center">New</TableHead>
+                      <TableHead>Match</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {aiMatched.map((item, idx) => {
+                      const diff = item.newQuantity - item.currentQuantity;
+                      return (
+                        <TableRow key={idx}>
+                          <TableCell>
+                            <div>
+                              <div className="font-medium text-sm">{item.productName}</div>
+                              {item.aiProductName !== item.productName && (
+                                <div className="text-xs text-muted-foreground">
+                                  AI read: "{item.aiProductName}"
+                                </div>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="font-mono text-sm text-muted-foreground">
+                            {item.sku || "--"}
+                          </TableCell>
+                          <TableCell className="text-center font-mono">{item.currentQuantity}</TableCell>
+                          <TableCell className="text-center">
+                            <span className="font-mono font-medium">{item.newQuantity}</span>
+                            {diff !== 0 && (
+                              <Badge
+                                variant="outline"
+                                className={`ml-1 text-xs ${diff > 0
+                                  ? "bg-green-50 text-green-700 border-green-300"
+                                  : "bg-red-50 text-red-700 border-red-300"
+                                }`}
+                              >
+                                {diff > 0 ? `+${diff}` : diff}
+                              </Badge>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant="outline"
+                              className={
+                                item.matchType === 'sku'
+                                  ? "bg-green-50 text-green-700 border-green-300"
+                                  : item.matchType === 'exact_name'
+                                    ? "bg-blue-50 text-blue-700 border-blue-300"
+                                    : "bg-amber-50 text-amber-700 border-amber-300"
+                              }
+                            >
+                              {item.matchType === 'sku' ? 'SKU' : item.matchType === 'exact_name' ? 'Name' : 'Fuzzy'}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+
+          {aiUnmatched.length > 0 && (
+            <div className="space-y-2">
+              <h4 className="text-sm font-medium text-amber-700">Unmatched Items (will be skipped)</h4>
+              <div className="max-h-[150px] overflow-auto border rounded-lg border-amber-200 bg-amber-50/50">
+                <Table>
+                  <TableBody>
+                    {aiUnmatched.map((item, idx) => (
+                      <TableRow key={idx}>
+                        <TableCell className="text-sm">
+                          <span className="flex items-center gap-1 text-amber-700">
+                            <AlertCircle className="h-3 w-3" />
+                            {item.productName} {item.sku ? `(${item.sku})` : ''} - Qty: {item.quantity}
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => { setAiPreviewOpen(false); setAiMatched([]); setAiUnmatched([]); }}>
+              Cancel
+            </Button>
+            <Button
+              onClick={submitAIImport}
+              disabled={aiConfirm.isPending || aiMatched.length === 0}
+              className="bg-purple-600 hover:bg-purple-700"
+            >
+              {aiConfirm.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Applying...
+                </>
+              ) : (
+                `Apply ${aiMatched.length} Updates`
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Email Count Form Dialog */}
+      <Dialog open={emailFormOpen} onOpenChange={setEmailFormOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Mail className="h-5 w-5 text-blue-600" />
+              Send Inventory Count Form
+            </DialogTitle>
+            <DialogDescription>
+              Send a pre-filled inventory form via email. The recipient can reply with updated counts,
+              or attach any file (CSV, Excel, PDF, photo of count sheet). AI will parse their response.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="email-address">Recipient Email</Label>
+              <Input
+                id="email-address"
+                type="email"
+                placeholder="copacker@example.com"
+                value={emailAddress}
+                onChange={(e) => setEmailAddress(e.target.value)}
+              />
+            </div>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
+              <p className="font-medium mb-1">The email will include:</p>
+              <ul className="list-disc ml-4 space-y-0.5 text-blue-700">
+                <li>Table of all products with current counts</li>
+                <li>"New Count" column for them to fill in</li>
+                <li>Instructions to reply or attach a file</li>
+              </ul>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setEmailFormOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSendEmailForm}
+              disabled={sendEmailForm.isPending || !emailAddress.trim()}
+            >
+              {sendEmailForm.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Sending...
+                </>
+              ) : (
+                <>
+                  <Mail className="h-4 w-4 mr-2" />
+                  Send Form
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
