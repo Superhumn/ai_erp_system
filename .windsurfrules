@@ -1,0 +1,37 @@
+# AI ERP System — Windsurf Rules
+
+See `.ai/instructions.md` for full project conventions.
+
+## Quick Reference
+
+- **Stack**: TypeScript, React 19, Express, tRPC v11, Drizzle ORM, MySQL, Tailwind v4
+- **Package Manager**: pnpm (NOT npm/yarn)
+- **Module System**: ESM
+
+## Commands
+
+- `pnpm run dev` — Start dev server
+- `pnpm run build` — Production build
+- `pnpm run check` — Type check
+- `pnpm run test` — Run tests
+- `pnpm run format` — Prettier
+- `pnpm run db:push` — DB migrations
+
+## Structure
+
+- `client/src/` — React frontend (components, pages, hooks)
+- `server/` — tRPC routers + `_core/` services
+- `shared/` — Shared types (re-exported from drizzle schema)
+- `drizzle/schema.ts` — Single database schema file
+
+## Key Rules
+
+- All code in TypeScript with strict mode — no `any`
+- Use pnpm for all package operations
+- Use Drizzle ORM — no raw SQL
+- Use tRPC procedures with Zod validation for all API endpoints
+- Frontend uses shadcn/ui patterns, Tailwind CSS, wouter routing
+- Tests in `server/**/*.test.ts` using Vitest
+- Run `pnpm run check` before committing
+- Path aliases: `@/*` → `client/src/*`, `@shared/*` → `shared/*`
+- Never commit `.env` files
