@@ -34,6 +34,7 @@ import { FileArchive, Plus, Search, Loader2, ExternalLink, Upload } from "lucide
 import { toast } from "sonner";
 import { format } from "date-fns";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 type Document = {
   id: number;
   name: string;
@@ -121,7 +122,8 @@ export default function Documents() {
           <p className="text-muted-foreground mt-1">
             Store and manage legal documents.
           </p>
-        </div>
+        
+          <AITriggerButton message="Analyze our legal documents - classify by type, identify compliance issues, and summarize key content" label="AI Document Analysis" /></div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button>

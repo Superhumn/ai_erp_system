@@ -13,6 +13,7 @@ import { Plus, ArrowLeft, Trash2, Calculator, Package, History, Save, CheckCircl
 import { toast } from "sonner";
 import { useLocation, useParams } from "wouter";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 export default function BOMDetail() {
   const [, navigate] = useLocation();
   const params = useParams<{ id: string }>();
@@ -452,7 +453,10 @@ export default function BOMDetail() {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Material Cost</CardTitle>
+                  <div className="flex items-center justify-between w-full">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">Material Cost</CardTitle>
+                  <AITriggerButton message="Analyze this BOM in detail - optimize component costs, identify supply risks, and suggest improvements" label="AI Analysis" />
+                </div>
                 </CardHeader>
                 <CardContent>
                   <span className="text-2xl font-bold">${materialCost.toFixed(2)}</span>

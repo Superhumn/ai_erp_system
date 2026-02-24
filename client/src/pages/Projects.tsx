@@ -48,6 +48,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 const taskStatusOptions = [
   { value: "backlog", label: "Backlog", color: "bg-gray-100 text-gray-800" },
   { value: "todo", label: "To Do", color: "bg-blue-100 text-blue-800" },
@@ -409,7 +410,8 @@ export default function Projects() {
             <p className="text-muted-foreground mt-1">
               Manage tasks with Kanban or Spreadsheet view
             </p>
-          </div>
+          
+          <AITriggerButton message="Analyze our projects - identify risks, optimize resource allocation, and predict completion dates" label="AI Project Analysis" /></div>
           <div className="flex items-center gap-2">
             {/* View toggle */}
             <div className="flex items-center border rounded-lg p-1">

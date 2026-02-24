@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { Package, Truck, Upload, Warehouse, Edit2, Save, X } from "lucide-react";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 export default function CopackerPortal() {
   const { user } = useAuth();
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -135,7 +136,8 @@ export default function CopackerPortal() {
           <TabsContent value="inventory" className="mt-4">
             <Card>
               <CardHeader>
-                <CardTitle>Inventory at Your Facility</CardTitle>
+                <div className="flex items-center justify-between w-full">
+                  <CardTitle>Inventory at Your Facility</CardTitle>
                 <CardDescription>
                   Update stock quantities as products are received or shipped
                 </CardDescription>

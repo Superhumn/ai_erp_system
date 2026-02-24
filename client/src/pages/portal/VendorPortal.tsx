@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { Building2, FileText, Truck, Upload, Package } from "lucide-react";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 export default function VendorPortal() {
   const { user } = useAuth();
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -127,7 +128,8 @@ export default function VendorPortal() {
           <TabsContent value="orders" className="mt-4">
             <Card>
               <CardHeader>
-                <CardTitle>Your Purchase Orders</CardTitle>
+                <div className="flex items-center justify-between w-full">
+                  <CardTitle>Your Purchase Orders</CardTitle>
                 <CardDescription>
                   View and update status of purchase orders assigned to you
                 </CardDescription>

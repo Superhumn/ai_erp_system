@@ -11,6 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
   Mail, 
   ShoppingBag, 
   FileSpreadsheet, 
@@ -482,7 +483,8 @@ export default function IntegrationsPage() {
           <TabsContent value="email" className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle>SendGrid Configuration</CardTitle>
+                <div className="flex items-center justify-between w-full">
+                  <CardTitle>SendGrid Configuration</CardTitle>
                 <CardDescription>
                   Configure SendGrid for sending freight RFQ emails and notifications
                 </CardDescription>

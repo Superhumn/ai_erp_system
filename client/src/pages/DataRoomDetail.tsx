@@ -21,6 +21,7 @@ import {
 import { useLocation, useParams } from "wouter";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 export default function DataRoomDetail() {
   const params = useParams<{ id: string }>();
   const roomId = parseInt(params.id || "0");
@@ -229,10 +230,13 @@ export default function DataRoomDetail() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+              <div className="flex items-center justify-between w-full">
+                <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
                 <Users className="h-4 w-4" />
                 Visitors
               </CardTitle>
+              <AITriggerButton message="Analyze this data room - organize documents and extract key information" label="AI Analysis" />
+            </div>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{analytics?.totalVisitors || 0}</div>

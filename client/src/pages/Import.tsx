@@ -39,6 +39,7 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { useLocation, useSearch } from "wouter";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 type ImportStep = "connect" | "select" | "preview" | "map" | "import" | "complete";
 
 const MODULE_FIELDS: Record<string, { required: string[]; optional: string[]; description: string }> = {
@@ -249,7 +250,8 @@ export default function Import() {
       <div className="p-6">
         <Card>
           <CardHeader>
-            <CardTitle>Authentication Required</CardTitle>
+            <div className="flex items-center justify-between w-full">
+              <CardTitle>Authentication Required</CardTitle>
             <CardDescription>Please log in to use the import feature.</CardDescription>
           </CardHeader>
         </Card>
@@ -613,6 +615,8 @@ export default function Import() {
               )}
               Import Complete
             </CardTitle>
+            <AITriggerButton message="Help with data import - validate data quality, detect duplicates, and suggest field mappings" label="AI Import Assistant" />
+          </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-4">

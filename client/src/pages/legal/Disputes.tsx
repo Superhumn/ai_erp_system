@@ -34,6 +34,7 @@ import { Scale, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 function formatCurrency(value: string | null | undefined) {
   const num = parseFloat(value || "0");
   return new Intl.NumberFormat("en-US", {
@@ -120,7 +121,8 @@ export default function Disputes() {
           <p className="text-muted-foreground mt-1">
             Track legal disputes and litigation.
           </p>
-        </div>
+        
+          <AITriggerButton message="Analyze our disputes - predict outcomes, suggest resolution strategies, and track legal spend" label="AI Dispute Analysis" /></div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button>

@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Plus, Building2, MapPin, Phone, Mail, Package, Edit, Trash2 } from "lucide-react";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 export default function Locations() {
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -346,7 +347,10 @@ export default function Locations() {
         {/* Locations Table */}
         <Card>
           <CardHeader>
-            <CardTitle>All Locations</CardTitle>
+            <div className="flex items-center justify-between w-full">
+              <CardTitle>All Locations</CardTitle>
+            <AITriggerButton message="Analyze our locations - show capacity utilization, suggest layout optimizations, and identify consolidation opportunities" label="AI Location Analysis" />
+          </div>
           </CardHeader>
           <CardContent>
             {isLoading ? (

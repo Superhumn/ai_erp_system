@@ -12,6 +12,7 @@ import { Plus, Eye, Trash2, Package, FileText, Calculator } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 export default function BOM() {
   const [, navigate] = useLocation();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -183,7 +184,10 @@ export default function BOM() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Total BOMs</CardTitle>
+              <div className="flex items-center justify-between w-full">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Total BOMs</CardTitle>
+              <AITriggerButton message="Analyze our bills of materials - identify cost optimization opportunities, suggest component substitutions, and assess supply chain risks" label="AI BOM Analysis" />
+            </div>
             </CardHeader>
             <CardContent>
               <div className="flex items-center gap-2">

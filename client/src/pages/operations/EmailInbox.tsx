@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
   Mail, 
   FileText, 
   Plus, 
@@ -740,7 +741,8 @@ export default function EmailInbox() {
         <div className="grid gap-4 md:grid-cols-5">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total</CardTitle>
+              <div className="flex items-center justify-between w-full">
+                <CardTitle className="text-sm font-medium">Total</CardTitle>
               <Mail className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -795,6 +797,8 @@ export default function EmailInbox() {
                 <Tag className="h-4 w-4" />
                 Email Categories
               </CardTitle>
+              <AITriggerButton message="Analyze our emails - categorize messages, identify urgent items, suggest replies, and summarize key communications" label="AI Email Assistant" />
+            </div>
             </CardHeader>
             <CardContent>
               <div className="flex flex-wrap gap-2">

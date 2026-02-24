@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Search, Users, Building2, Package, UserCog, FileSignature, FolderKanban, Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 export default function GlobalSearch() {
   const [query, setQuery] = useState("");
   const [, setLocation] = useLocation();
@@ -63,10 +64,13 @@ export default function GlobalSearch() {
           {results.customers.length > 0 && (
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <div className="flex items-center justify-between w-full">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
                   <Users className="h-4 w-4" />
                   Customers ({results.customers.length})
                 </CardTitle>
+                <AITriggerButton message="Help me search - find relevant information across the entire system" label="AI Search" />
+              </div>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">

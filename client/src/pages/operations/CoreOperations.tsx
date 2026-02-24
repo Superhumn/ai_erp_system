@@ -27,6 +27,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 // Types for the object tree
 type TreeNodeType = 
   | "sales_order" 
@@ -279,7 +280,10 @@ export default function CoreOperations() {
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b">
           <div>
-            <h1 className="text-2xl font-bold">Core Operations</h1>
+            <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">Core Operations</h1>
+          <AITriggerButton message="Analyze core operations workflow - optimize processes and identify efficiency gains" label="AI Operations Analysis" />
+        </div>
             <p className="text-muted-foreground">Unified workspace for operations management</p>
           </div>
           <Button variant="outline" size="sm" onClick={refreshAll}>

@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import SpreadsheetTable, { Column } from "@/components/SpreadsheetTable";
 import { QuickCreateButton, QuickCreateDialog } from "@/components/QuickCreateDialog";
 import { 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
   Package, Warehouse, ClipboardList, MapPin, Search, Plus, 
   AlertTriangle, CheckCircle, Clock, Play, Pause, X, ChevronRight
 } from "lucide-react";
@@ -387,7 +388,10 @@ export default function ManufacturingHub() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Manufacturing Hub</h1>
+            <div className="flex items-center justify-between">
+          <h1 className="text-3xl font-bold">Manufacturing Hub</h1>
+          <AITriggerButton message="Analyze our manufacturing operations - show capacity utilization, predict output, and identify improvement opportunities" label="AI Manufacturing Insights" />
+        </div>
             <p className="text-muted-foreground">
               Inventory, BOMs, Work Orders, and Locations
             </p>

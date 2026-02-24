@@ -32,6 +32,7 @@ import {
 import { DollarSign, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 function formatCurrency(value: string | null | undefined) {
   const num = parseFloat(value || "0");
   return new Intl.NumberFormat("en-US", {
@@ -94,7 +95,8 @@ export default function Accounts() {
           <p className="text-muted-foreground mt-1">
             Manage your general ledger accounts.
           </p>
-        </div>
+        
+          <AITriggerButton message="Analyze our accounts - identify anomalies, suggest reconciliation actions, and show account health metrics" label="AI Account Analysis" /></div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button>

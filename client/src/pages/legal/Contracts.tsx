@@ -34,6 +34,7 @@ import { FileText, Plus, Search, Loader2, Calendar } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 function formatCurrency(value: string | null | undefined) {
   const num = parseFloat(value || "0");
   return new Intl.NumberFormat("en-US", {
@@ -123,7 +124,8 @@ export default function Contracts() {
           <p className="text-muted-foreground mt-1">
             Manage contract lifecycle and key dates.
           </p>
-        </div>
+        
+          <AITriggerButton message="Analyze our contracts - identify expiring agreements, assess risks, and extract key terms" label="AI Contract Analysis" /></div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button>

@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 const documentTypes = [
   { value: "commercial_invoice", label: "Commercial Invoice", required: true, icon: FileText },
   { value: "packing_list", label: "Packing List", required: true, icon: Package },
@@ -212,7 +213,8 @@ export default function SupplierPortal() {
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <Card className="max-w-md">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-red-600">
+            <div className="flex items-center justify-between w-full">
+              <CardTitle className="flex items-center gap-2 text-red-600">
               <AlertCircle className="h-6 w-6" />
               Invalid or Expired Link
             </CardTitle>
@@ -265,6 +267,8 @@ export default function SupplierPortal() {
         <Card className="mb-6">
           <CardHeader className="pb-3">
             <CardTitle className="text-lg">Order Summary</CardTitle>
+            <AITriggerButton message="Analyze supplier metrics - show performance trends and collaborative forecasting insights" label="AI Supplier Insights" />
+          </div>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">

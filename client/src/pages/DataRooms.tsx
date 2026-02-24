@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useLocation } from "wouter";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 export default function DataRooms() {
   const [, setLocation] = useLocation();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -201,7 +202,10 @@ export default function DataRooms() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Total Rooms</CardTitle>
+              <div className="flex items-center justify-between w-full">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Total Rooms</CardTitle>
+              <AITriggerButton message="Analyze our data rooms - classify documents, suggest access permissions, and identify security risks" label="AI Data Room Analysis" />
+            </div>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{dataRooms?.length || 0}</div>

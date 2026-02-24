@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { Upload, FileText, Truck, Package, AlertCircle, CheckCircle, Clock, Edit2, X, ChevronRight, History, Loader2, FolderOpen, Cloud, ChevronLeft, File, RefreshCw } from "lucide-react";
 import { useDropzone } from "react-dropzone";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 interface ParsedLineItem {
   description: string;
   sku?: string;
@@ -295,7 +296,8 @@ export default function DocumentImport() {
             {/* Upload Area */}
             <Card>
               <CardHeader>
-                <CardTitle>Upload Document</CardTitle>
+                <div className="flex items-center justify-between w-full">
+                  <CardTitle>Upload Document</CardTitle>
                 <CardDescription>
                   Drag and drop or click to upload a purchase order or freight invoice
                 </CardDescription>
@@ -336,6 +338,8 @@ export default function DocumentImport() {
                     <FileText className="h-4 w-4" />
                     Purchase Orders
                   </CardTitle>
+                  <AITriggerButton message="Help with document import - extract data, validate content, and categorize documents" label="AI Document Assistant" />
+                </div>
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold">

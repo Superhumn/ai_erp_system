@@ -51,6 +51,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 function formatCurrency(value: string | number | null | undefined) {
   const num = typeof value === "string" ? parseFloat(value) : value;
   if (!num) return "-";
@@ -234,7 +235,10 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
           {/* RFQ List */}
           <Card className="col-span-1">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Request for Quotes</CardTitle>
+              <div className="flex items-center justify-between w-full">
+                <CardTitle className="text-sm">Request for Quotes</CardTitle>
+              <AITriggerButton message="Analyze procurement health - assess supplier risks, monitor compliance, and identify optimization opportunities" label="AI Procurement Analysis" />
+            </div>
             </CardHeader>
             <CardContent className="p-0">
               <div className="max-h-[500px] overflow-y-auto">

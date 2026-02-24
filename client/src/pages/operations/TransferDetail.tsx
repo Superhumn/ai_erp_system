@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { ArrowLeft, ArrowRight, Plus, Send, CheckCircle, Package, Truck, XCircle } from "lucide-react";
 import { useLocation, useParams } from "wouter";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 export default function TransferDetail() {
   const params = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
@@ -170,7 +171,10 @@ export default function TransferDetail() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg">Transfer Route</CardTitle>
+              <div className="flex items-center justify-between w-full">
+                <CardTitle className="text-lg">Transfer Route</CardTitle>
+              <AITriggerButton message="Analyze this transfer - suggest optimal routing and timing" label="AI Analysis" />
+            </div>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">

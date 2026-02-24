@@ -48,6 +48,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 function formatCurrency(value: string | number | null | undefined) {
   const num = typeof value === "string" ? parseFloat(value) : value;
   if (!num) return "-";
@@ -222,7 +223,8 @@ function RfqDetailPanel({ rfq, onClose, onSendToCarriers }: {
             {rfq.quotes.map((quote: any) => (
               <div key={quote.id} className="flex items-center justify-between bg-muted/30 rounded p-3">
                 <div>
-                  <div className="font-medium">{quote.carrierName}</div>
+                  <div className="font-medium">{quote.carrierName}
+          <AITriggerButton message="Analyze our logistics operations - optimize routes, identify consolidation opportunities, and predict issues" label="AI Logistics Insights" /></div>
                   <div className="text-xs text-muted-foreground">{quote.transitDays} days transit</div>
                 </div>
                 <div className="text-right">

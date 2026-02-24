@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
   Brain, 
   TrendingUp, 
   TrendingDown, 
@@ -231,7 +232,10 @@ export default function Forecasting() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Active Forecasts</CardTitle>
+            <div className="flex items-center justify-between w-full">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Active Forecasts</CardTitle>
+            <AITriggerButton message="Enhance our demand forecasting - analyze historical patterns, identify seasonal trends, and generate AI-powered predictions" label="AI Forecast Analysis" />
+          </div>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{dashboardData?.activeForecasts || 0}</div>

@@ -42,6 +42,7 @@ import {
 import { Link } from "wouter";
 import { toast } from "sonner";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 function formatDate(value: string | Date | null | undefined) {
   if (!value) return "-";
   const date = typeof value === "string" ? new Date(value) : value;
@@ -521,7 +522,8 @@ export default function ApprovalQueue() {
         <TabsContent value="logs" className="mt-4">
           <Card>
             <CardHeader>
-              <CardTitle>Activity Log</CardTitle>
+              <div className="flex items-center justify-between w-full">
+                <CardTitle>Activity Log</CardTitle>
               <CardDescription>Recent AI agent activity</CardDescription>
             </CardHeader>
             <CardContent>

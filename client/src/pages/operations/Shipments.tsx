@@ -34,6 +34,7 @@ import { Truck, Plus, Search, Loader2, Package } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 type Shipment = {
   id: number;
   shipmentNumber: string;
@@ -125,7 +126,8 @@ export default function Shipments() {
           <p className="text-muted-foreground mt-1">
             Track shipments and logistics.
           </p>
-        </div>
+        
+          <AITriggerButton message="Analyze our shipments - predict delivery times, identify delay risks, and suggest carrier optimizations" label="AI Shipment Analysis" /></div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button>

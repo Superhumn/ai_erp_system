@@ -46,6 +46,7 @@ import {
 import { toast } from "sonner";
 import { format } from "date-fns";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 function formatCurrency(value: string | null | undefined) {
   const num = parseFloat(value || "0");
   return new Intl.NumberFormat("en-US", {
@@ -380,7 +381,8 @@ export default function Invoices() {
           <p className="text-muted-foreground mt-1">
             Manage customer invoices and track payments.
           </p>
-        </div>
+        
+          <AITriggerButton message="Analyze our invoices - show overdue patterns, payment predictions, and suggest follow-up actions" label="AI Invoice Analysis" /></div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => setIsRecurringDialogOpen(true)}>
             <RefreshCw className="h-4 w-4 mr-2" />

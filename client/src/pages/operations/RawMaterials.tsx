@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 export default function RawMaterials() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState<any>(null);
@@ -83,7 +84,10 @@ export default function RawMaterials() {
     <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold">Raw Materials</h1>
+            <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">Raw Materials</h1>
+          <AITriggerButton message="Analyze our raw materials - identify reorder needs, suggest supplier alternatives, and optimize inventory levels" label="AI Material Analysis" />
+        </div>
             <p className="text-muted-foreground">Manage ingredients and packaging materials for BOMs</p>
           </div>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>

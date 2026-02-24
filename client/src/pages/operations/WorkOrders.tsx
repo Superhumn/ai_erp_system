@@ -12,6 +12,7 @@ import { Plus, Play, CheckCircle, Eye, Factory } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "wouter";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 export default function WorkOrders() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newWorkOrder, setNewWorkOrder] = useState({
@@ -168,7 +169,10 @@ export default function WorkOrders() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Draft</CardTitle>
+              <div className="flex items-center justify-between w-full">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Draft</CardTitle>
+              <AITriggerButton message="Analyze our work orders - identify bottlenecks, suggest scheduling optimizations, and show production efficiency metrics" label="AI Work Order Analysis" />
+            </div>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{workOrders?.filter(w => w.status === 'draft').length || 0}</div>

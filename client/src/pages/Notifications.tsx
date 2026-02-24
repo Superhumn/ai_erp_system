@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Bell, Check, CheckCheck, Info, AlertTriangle, AlertCircle, CheckCircle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 export default function Notifications() {
   const { data: notifications, refetch } = trpc.notifications.list.useQuery();
   const markRead = trpc.notifications.markRead.useMutation({
@@ -54,7 +55,10 @@ export default function Notifications() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Recent Notifications</CardTitle>
+          <div className="flex items-center justify-between w-full">
+            <CardTitle className="text-lg">Recent Notifications</CardTitle>
+          <AITriggerButton message="Analyze my notifications - prioritize alerts and summarize important updates" label="AI Notification Summary" />
+        </div>
         </CardHeader>
         <CardContent>
           {!notifications || notifications.length === 0 ? (

@@ -35,6 +35,7 @@ import { FolderKanban, Plus, Search, Loader2, Calendar } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 type Project = {
   id: number;
   projectNumber: string;
@@ -136,7 +137,8 @@ export default function Projects() {
           <p className="text-muted-foreground mt-1">
             Manage initiatives, timelines, and budgets.
           </p>
-        </div>
+        
+          <AITriggerButton message="Analyze our projects - identify risks, optimize resource allocation, and predict completion dates" label="AI Project Analysis" /></div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button>

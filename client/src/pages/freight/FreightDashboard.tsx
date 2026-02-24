@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { Link } from "wouter";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 export default function FreightDashboard() {
   const { data: stats, isLoading } = trpc.freight.dashboardStats.useQuery();
   const { data: recentRfqs } = trpc.freight.rfqs.list.useQuery({ status: undefined });
@@ -52,10 +53,13 @@ export default function FreightDashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+            <div className="flex items-center justify-between w-full">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <ClipboardList className="h-4 w-4" />
               Active RFQs
             </CardTitle>
+            <AITriggerButton message="Analyze freight operations - optimize costs, predict delays, and monitor compliance" label="AI Freight Insights" />
+          </div>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats?.activeRfqs || 0}</div>

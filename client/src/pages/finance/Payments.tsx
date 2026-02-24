@@ -34,6 +34,7 @@ import { CreditCard, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 function formatCurrency(value: string | null | undefined) {
   const num = parseFloat(value || "0");
   return new Intl.NumberFormat("en-US", {
@@ -110,7 +111,8 @@ export default function Payments() {
           <p className="text-muted-foreground mt-1">
             Track incoming and outgoing payments.
           </p>
-        </div>
+        
+          <AITriggerButton message="Analyze our payment data - show cash flow trends, identify optimization opportunities, and forecast upcoming payments" label="AI Payment Insights" /></div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button>

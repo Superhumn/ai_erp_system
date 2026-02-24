@@ -52,6 +52,7 @@ import {
 import { Link, useParams, useLocation } from "wouter";
 import { Streamdown } from "streamdown";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 export default function RFQDetail() {
   const { id } = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
@@ -374,10 +375,13 @@ export default function RFQDetail() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+            <div className="flex items-center justify-between w-full">
+              <CardTitle className="flex items-center gap-2">
               <MapPin className="h-4 w-4" />
               Route
             </CardTitle>
+            <AITriggerButton message="Analyze this freight RFQ - compare quotes and recommend the best option" label="AI Analysis" />
+          </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>

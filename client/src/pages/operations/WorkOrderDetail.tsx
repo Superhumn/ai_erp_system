@@ -11,6 +11,7 @@ import { ArrowLeft, Play, CheckCircle, Package, AlertTriangle } from "lucide-rea
 import { toast } from "sonner";
 import { Link, useParams } from "wouter";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 export default function WorkOrderDetail() {
   const params = useParams<{ id: string }>();
   const workOrderId = parseInt(params.id || "0");
@@ -138,7 +139,10 @@ export default function WorkOrderDetail() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Quantity</CardTitle>
+              <div className="flex items-center justify-between w-full">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Quantity</CardTitle>
+              <AITriggerButton message="Analyze this work order - optimize task sequencing and resource allocation" label="AI Analysis" />
+            </div>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{workOrder.quantity} {workOrder.unit}</div>

@@ -21,6 +21,7 @@ import {
 import { TrendingUp, Search, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 function formatCurrency(value: string | null | undefined) {
   const num = parseFloat(value || "0");
   return new Intl.NumberFormat("en-US", {
@@ -60,14 +61,17 @@ export default function Transactions() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-          <TrendingUp className="h-8 w-8" />
-          Transactions
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          View all financial transactions and journal entries.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+            <TrendingUp className="h-8 w-8" />
+            Transactions
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            View all financial transactions and journal entries.
+          </p>
+        </div>
+        <AITriggerButton message="Analyze our transactions - categorize entries, identify patterns, and flag any anomalies for review" label="AI Transaction Analysis" />
       </div>
 
       <Card>

@@ -41,6 +41,7 @@ import { cn } from "@/lib/utils";
 import { QuickCreateDialog } from "@/components/QuickCreateDialog";
 import { Link } from "wouter";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 // Types
 interface InventoryItem {
   id: number;
@@ -588,7 +589,8 @@ export default function InventoryHub() {
             {/* Exception List */}
             <Card>
               <CardHeader>
-                <CardTitle>Active Exceptions</CardTitle>
+                <div className="flex items-center justify-between w-full">
+                  <CardTitle>Active Exceptions</CardTitle>
                 <CardDescription>Issues requiring attention</CardDescription>
               </CardHeader>
               <CardContent>

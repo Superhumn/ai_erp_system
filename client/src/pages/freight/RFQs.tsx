@@ -45,6 +45,7 @@ import {
 } from "lucide-react";
 import { Link } from "wouter";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 const statusColors: Record<string, string> = {
   draft: "secondary",
   sent: "outline",
@@ -469,7 +470,10 @@ export default function RFQs() {
       {/* RFQs Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Quote Requests ({filteredRfqs?.length || 0})</CardTitle>
+          <div className="flex items-center justify-between w-full">
+            <CardTitle>Quote Requests ({filteredRfqs?.length || 0})</CardTitle>
+          <AITriggerButton message="Analyze freight RFQs - compare carrier quotes, recommend best options, and check compliance" label="AI Freight RFQ Analysis" />
+        </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (

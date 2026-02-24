@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
   FileText, Building2, Package, Search, Plus, Eye, 
   CheckCircle, Clock, AlertTriangle, DollarSign, Calendar,
   Truck, Mail, Phone
@@ -26,7 +27,10 @@ export default function Procurement() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Procurement</h1>
+            <div className="flex items-center justify-between">
+          <h1 className="text-3xl font-bold">Procurement</h1>
+          <AITriggerButton message="Analyze our procurement - show spend patterns, identify consolidation opportunities, and suggest cost savings" label="AI Procurement Insights" />
+        </div>
             <p className="text-muted-foreground">
               Manage purchase orders, vendors, and raw materials
             </p>

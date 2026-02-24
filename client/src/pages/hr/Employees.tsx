@@ -34,6 +34,7 @@ import { UserCircle, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 export default function People() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -115,7 +116,8 @@ export default function People() {
           <p className="text-muted-foreground mt-1">
             Manage employees, contractors, and consultants.
           </p>
-        </div>
+        
+          <AITriggerButton message="Analyze our workforce - show team composition, identify skill gaps, and provide HR insights" label="AI HR Insights" /></div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button>

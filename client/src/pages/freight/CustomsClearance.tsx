@@ -46,6 +46,7 @@ import {
 } from "lucide-react";
 import { Link } from "wouter";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 const statusColors: Record<string, string> = {
   pending_documents: "secondary",
   documents_submitted: "outline",
@@ -292,7 +293,10 @@ export default function CustomsClearance() {
       {/* Clearances Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Customs Clearances ({filteredClearances?.length || 0})</CardTitle>
+          <div className="flex items-center justify-between w-full">
+            <CardTitle>Customs Clearances ({filteredClearances?.length || 0})</CardTitle>
+          <AITriggerButton message="Analyze customs clearance - predict HS codes, verify documentation, and assess compliance risks" label="AI Customs Analysis" />
+        </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (

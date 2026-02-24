@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Package, Truck, CheckCircle, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 interface ReceivingItem {
   purchaseOrderItemId: number;
   rawMaterialId?: number;
@@ -118,7 +119,8 @@ export default function POReceiving() {
         {/* Pending POs */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+            <div className="flex items-center justify-between w-full">
+              <CardTitle className="flex items-center gap-2">
               <Truck className="w-5 h-5" />
               Pending Purchase Orders
             </CardTitle>

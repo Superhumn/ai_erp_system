@@ -33,6 +33,7 @@ import {
 import { Package, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 function formatCurrency(value: string | null | undefined) {
   const num = parseFloat(value || "0");
   return new Intl.NumberFormat("en-US", {
@@ -117,7 +118,8 @@ export default function Products() {
           <p className="text-muted-foreground mt-1">
             Manage your product catalog.
           </p>
-        </div>
+        
+          <AITriggerButton message="Analyze our products - show sales trends, suggest pricing optimizations, identify top performers and slow movers" label="AI Product Analysis" /></div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button>

@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { Plus, ArrowRight, Truck, Package, Eye, Send, CheckCircle } from "lucide-react";
 import { useLocation } from "wouter";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 export default function Transfers() {
   const [, setLocation] = useLocation();
   const [isOpen, setIsOpen] = useState(false);
@@ -186,7 +187,10 @@ export default function Transfers() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Draft</CardTitle>
+              <div className="flex items-center justify-between w-full">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Draft</CardTitle>
+              <AITriggerButton message="Analyze inventory transfers - optimize routes and timing, identify consolidation opportunities" label="AI Transfer Analysis" />
+            </div>
             </CardHeader>
             <CardContent>
               <p className="text-2xl font-bold">

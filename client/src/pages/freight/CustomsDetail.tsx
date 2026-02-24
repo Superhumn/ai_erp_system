@@ -47,6 +47,7 @@ import {
 import { Link, useParams } from "wouter";
 import { Streamdown } from "streamdown";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 const documentTypes = [
   { value: 'commercial_invoice', label: 'Commercial Invoice' },
   { value: 'packing_list', label: 'Packing List' },
@@ -221,10 +222,13 @@ export default function CustomsDetail() {
       {aiSummary && (
         <Card className="border-blue-200 bg-blue-50/50">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+            <div className="flex items-center justify-between w-full">
+              <CardTitle className="flex items-center gap-2">
               <Sparkles className="h-5 w-5 text-blue-600" />
               AI Status Summary
             </CardTitle>
+            <AITriggerButton message="Analyze this customs case - verify documentation completeness and compliance" label="AI Analysis" />
+          </div>
           </CardHeader>
           <CardContent>
             <div className="prose prose-sm max-w-none">

@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import SpreadsheetTable, { Column } from "@/components/SpreadsheetTable";
 import { 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
   ShoppingCart, FileText, Users, CreditCard, Package, Search,
   Send, Download
 } from "lucide-react";
@@ -286,7 +287,10 @@ export default function SalesHub() {
     <div className="p-6 space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Sales Hub</h1>
+            <div className="flex items-center justify-between">
+          <h1 className="text-3xl font-bold">Sales Hub</h1>
+          <AITriggerButton message="Analyze our sales - show pipeline health, predict deal outcomes, and identify growth opportunities" label="AI Sales Insights" />
+        </div>
             <p className="text-muted-foreground">Products, Orders, Invoices, Customers, and Payments</p>
           </div>
 

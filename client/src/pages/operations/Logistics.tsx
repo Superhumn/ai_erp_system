@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
   Truck, Package, ArrowRightLeft, Search, Plus, Eye, 
   CheckCircle, Clock, AlertTriangle, MapPin, Calendar,
   FileText, PackageCheck
@@ -257,7 +258,8 @@ function ReceivingTab({ searchTerm }: { searchTerm: string }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Pending Receiving</CardTitle>
+        <div className="flex items-center justify-between w-full">
+          <CardTitle>Pending Receiving</CardTitle>
         <CardDescription>Purchase orders awaiting receipt of goods</CardDescription>
       </CardHeader>
       <CardContent>

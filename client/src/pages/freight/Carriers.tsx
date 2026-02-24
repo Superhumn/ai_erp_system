@@ -33,6 +33,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import {
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
   Ship,
   Plane,
   Truck,
@@ -297,7 +298,10 @@ export default function Carriers() {
       {/* Carriers Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Carrier Network ({filteredCarriers?.length || 0})</CardTitle>
+          <div className="flex items-center justify-between w-full">
+            <CardTitle>Carrier Network ({filteredCarriers?.length || 0})</CardTitle>
+          <AITriggerButton message="Analyze our carriers - compare performance metrics, identify cost optimization opportunities, and suggest consolidation" label="AI Carrier Analysis" />
+        </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (

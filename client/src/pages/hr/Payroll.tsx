@@ -21,6 +21,7 @@ import {
 import { Wallet, Search, Loader2, DollarSign, Users, TrendingUp } from "lucide-react";
 import { format } from "date-fns";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 type Employee = {
   id: number;
   firstName: string;
@@ -76,14 +77,17 @@ export default function Payroll() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-          <Wallet className="h-8 w-8" />
-          Payroll & Compensation
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          Manage employee compensation and payroll information.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+            <Wallet className="h-8 w-8" />
+            Payroll & Compensation
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            Manage employee compensation and payroll information.
+          </p>
+        </div>
+        <AITriggerButton message="Analyze payroll data - identify anomalies, ensure compliance, and show compensation trends" label="AI Payroll Analysis" />
       </div>
 
       {/* Summary Cards */}

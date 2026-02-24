@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { UserPlus, Mail, Shield, Building2, Warehouse, Copy, Users, Clock, CheckCircle, XCircle, AlertCircle } from "lucide-react";
 
+import { AITriggerButton } from "@/components/FloatingAIAssistant";
 const ROLE_LABELS: Record<string, string> = {
   admin: "Administrator",
   finance: "Finance",
@@ -267,7 +268,8 @@ export default function Team() {
           <TabsContent value="members" className="mt-4">
             <Card>
               <CardHeader>
-                <CardTitle>Active Team Members</CardTitle>
+                <div className="flex items-center justify-between w-full">
+                  <CardTitle>Active Team Members</CardTitle>
                 <CardDescription>
                   Users who have access to your ERP system
                 </CardDescription>
@@ -481,6 +483,8 @@ export default function Team() {
                     <CardTitle className="text-lg flex items-center gap-2">
                       <Badge variant={getRoleBadgeVariant(role)}>{label}</Badge>
                     </CardTitle>
+                    <AITriggerButton message="Analyze team composition - show roles, identify gaps, and suggest organizational improvements" label="AI Team Analysis" />
+                  </div>
                   </CardHeader>
                   <CardContent>
                     <p className="text-sm text-muted-foreground mb-3">
