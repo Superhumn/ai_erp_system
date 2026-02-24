@@ -46,6 +46,8 @@ import {
   Truck,
   Package,
   ChevronRight,
+  DollarSign,
+  ShoppingCart,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -102,6 +104,7 @@ const callTypeLabels: Record<string, string> = {
   general_inquiry: "General Inquiry",
   claims_filing: "Claims Filing",
   payment_followup: "Payment Follow-up",
+  quote_request: "Quote Request",
 };
 
 export default function PhoneCalls() {
@@ -489,6 +492,14 @@ function CallCard({
               </p>
             )}
 
+            {call.quotedTotalAmount && (
+              <p className="text-sm font-medium text-green-600 mt-1 flex items-center gap-1">
+                <DollarSign className="h-3.5 w-3.5" />
+                Quoted: {call.quoteCurrency || "USD"} {parseFloat(call.quotedTotalAmount).toFixed(2)}
+                {call.quoteTerms && <span className="text-xs text-muted-foreground ml-2">({call.quoteTerms})</span>}
+              </p>
+            )}
+
             {call.referenceNumber && (
               <p className="text-xs text-muted-foreground mt-1">
                 Ref: {call.referenceNumber}
@@ -673,6 +684,77 @@ function CallDetailDialog({
                   <p className="text-sm text-muted-foreground bg-muted/50 rounded p-3">{call.resolution}</p>
                 </div>
               )}
+
+              {/* Quote Results */}
+              {call.quoteResults && (() => {
+                const quotes = typeof call.quoteResults === "string" ? JSON.parse(call.quoteResults) : call.quoteResults;
+                if (!Array.isArray(quotes) || quotes.length === 0) return null;
+                return (
+                  <div>
+                    <h4 className="text-sm font-medium mb-2 flex items-center gap-1">
+                      <DollarSign className="h-4 w-4" />
+                      Quote Results
+                    </h4>
+                    <div className="bg-muted/50 rounded p-3 space-y-3">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b text-left">
+                              <th className="pb-2 pr-3 font-medium">Item</th>
+                              <th className="pb-2 pr-3 font-medium text-right">Unit Price</th>
+                              <th className="pb-2 pr-3 font-medium text-right">Qty</th>
+                              <th className="pb-2 pr-3 font-medium text-right">Total</th>
+                              <th className="pb-2 pr-3 font-medium text-right">MOQ</th>
+                              <th className="pb-2 pr-3 font-medium text-right">Lead Time</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {quotes.map((q: any, i: number) => (
+                              <tr key={i} className="border-b border-muted last:border-0">
+                                <td className="py-2 pr-3">
+                                  <div className="font-medium">{q.item}</div>
+                                  {q.description && <div className="text-xs text-muted-foreground">{q.description}</div>}
+                                  {q.volumeDiscounts && <div className="text-xs text-blue-500 mt-0.5">{q.volumeDiscounts}</div>}
+                                </td>
+                                <td className="py-2 pr-3 text-right whitespace-nowrap">
+                                  {q.currency || "USD"} {typeof q.unitPrice === "number" ? q.unitPrice.toFixed(2) : q.unitPrice}/{q.unit || "unit"}
+                                </td>
+                                <td className="py-2 pr-3 text-right">{q.quantity}</td>
+                                <td className="py-2 pr-3 text-right whitespace-nowrap font-medium">
+                                  {q.currency || "USD"} {typeof q.totalPrice === "number" ? q.totalPrice.toFixed(2) : q.totalPrice}
+                                </td>
+                                <td className="py-2 pr-3 text-right">{q.moq || "-"}</td>
+                                <td className="py-2 pr-3 text-right whitespace-nowrap">{q.leadTimeDays ? `${q.leadTimeDays}d` : "-"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {/* Quote Summary */}
+                      <div className="flex flex-wrap gap-4 pt-2 border-t text-sm">
+                        {call.quotedTotalAmount && (
+                          <div>
+                            <span className="text-muted-foreground">Total: </span>
+                            <span className="font-semibold">{call.quoteCurrency || "USD"} {parseFloat(call.quotedTotalAmount).toFixed(2)}</span>
+                          </div>
+                        )}
+                        {call.quoteValidUntil && (
+                          <div>
+                            <span className="text-muted-foreground">Valid Until: </span>
+                            <span>{formatDate(call.quoteValidUntil)}</span>
+                          </div>
+                        )}
+                        {call.quoteTerms && (
+                          <div>
+                            <span className="text-muted-foreground">Terms: </span>
+                            <span>{call.quoteTerms}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Summary */}
               {call.transcriptSummary && (
@@ -901,10 +983,22 @@ function NewCallDialog({
             </div>
           </div>
 
+          {form.callType === "quote_request" && (
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded p-3 text-sm text-blue-700 dark:text-blue-300">
+              <div className="flex items-center gap-1 font-medium mb-1">
+                <ShoppingCart className="h-3.5 w-3.5" />
+                Quote Request Call
+              </div>
+              The AI will call the supplier and gather pricing, MOQs, lead times, volume discounts, and payment terms for the items you specify.
+            </div>
+          )}
+
           <div>
             <Label>Company to Call *</Label>
             <Input
-              placeholder="e.g., UPS, FedEx, Amazon..."
+              placeholder={form.callType === "quote_request"
+                ? "e.g., Supplier name, packaging company, service provider..."
+                : "e.g., UPS, FedEx, Amazon..."}
               value={form.targetCompany}
               onChange={(e) => setForm((prev) => ({ ...prev, targetCompany: e.target.value }))}
             />
@@ -924,7 +1018,7 @@ function NewCallDialog({
             <div>
               <Label>Department</Label>
               <Input
-                placeholder="e.g., Claims Department"
+                placeholder={form.callType === "quote_request" ? "e.g., Sales, Quotes" : "e.g., Claims Department"}
                 value={form.targetDepartment}
                 onChange={(e) =>
                   setForm((prev) => ({ ...prev, targetDepartment: e.target.value }))
@@ -936,7 +1030,9 @@ function NewCallDialog({
           <div>
             <Label>Subject *</Label>
             <Input
-              placeholder="e.g., File claim for damaged package #1Z999AA..."
+              placeholder={form.callType === "quote_request"
+                ? "e.g., Get pricing for 500kg organic flour and 200kg sugar"
+                : "e.g., File claim for damaged package #1Z999AA..."}
               value={form.subject}
               onChange={(e) => setForm((prev) => ({ ...prev, subject: e.target.value }))}
             />
@@ -945,10 +1041,12 @@ function NewCallDialog({
           <div>
             <Label>Objective *</Label>
             <Textarea
-              placeholder="Describe what the AI agent should accomplish on this call. Include any relevant reference numbers, tracking numbers, or account information."
+              placeholder={form.callType === "quote_request"
+                ? "List the items/services you need quotes for, including quantities, specs, and any requirements. E.g., 'Get pricing for 500kg organic unbleached flour, 200kg raw cane sugar, and 100kg cocoa powder. Need pricing at 500kg and 1000kg tiers, lead times, and payment terms.'"
+                : "Describe what the AI agent should accomplish on this call. Include any relevant reference numbers, tracking numbers, or account information."}
               value={form.objective}
               onChange={(e) => setForm((prev) => ({ ...prev, objective: e.target.value }))}
-              rows={3}
+              rows={4}
             />
           </div>
         </div>

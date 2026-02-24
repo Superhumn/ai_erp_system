@@ -404,7 +404,7 @@ const AI_TOOLS: Tool[] = [
     type: "function",
     function: {
       name: "make_phone_call",
-      description: "Initiate an AI-powered phone call to a vendor, carrier, or service provider. The AI agent will autonomously navigate IVR menus, speak with representatives, and work to resolve the issue. Common uses: filing shipping claims with UPS/FedEx, checking order status, resolving billing disputes, following up on service requests.",
+      description: "Initiate an AI-powered phone call to a vendor, carrier, or service provider. The AI agent will autonomously navigate IVR menus, speak with representatives, and work to resolve the issue. Common uses: filing shipping claims with UPS/FedEx, checking order status, resolving billing disputes, following up on service requests, and gathering price quotes from suppliers for any item or service the company needs.",
       parameters: {
         type: "object",
         properties: {
@@ -423,16 +423,21 @@ const AI_TOOLS: Tool[] = [
               "general_inquiry",
               "claims_filing",
               "payment_followup",
+              "quote_request",
             ],
-            description: "Type of phone call to make",
+            description: "Type of phone call to make. Use 'quote_request' when gathering price quotes from vendors/suppliers for items or services.",
           },
           targetCompany: {
             type: "string",
-            description: "Company to call (e.g., 'UPS', 'FedEx', 'Amazon Seller Support')",
+            description: "Company to call (e.g., 'UPS', 'FedEx', 'Amazon Seller Support', or any vendor/supplier name)",
           },
           targetPhoneNumber: {
             type: "string",
             description: "Phone number to call (optional if playbook exists for the company)",
+          },
+          targetDepartment: {
+            type: "string",
+            description: "Department to reach (e.g., 'Sales', 'Quotes', 'Customer Service')",
           },
           subject: {
             type: "string",
@@ -440,19 +445,21 @@ const AI_TOOLS: Tool[] = [
           },
           objective: {
             type: "string",
-            description: "What the AI agent should accomplish on this call",
+            description: "What the AI agent should accomplish on this call. For quote_request calls, specify what items/services need pricing, quantities, and any requirements.",
           },
           context: {
             type: "object",
-            description: "Additional context like tracking numbers, account numbers, order IDs",
+            description: "Additional context like tracking numbers, account numbers, order IDs, items to quote, quantities needed, specifications, etc.",
           },
           priority: {
             type: "string",
             enum: ["low", "medium", "high", "urgent"],
           },
           vendorId: { type: "number", description: "Related vendor ID" },
+          customerId: { type: "number", description: "Related customer ID" },
           shipmentId: { type: "number", description: "Related shipment ID" },
           orderId: { type: "number", description: "Related order ID" },
+          playbookId: { type: "string", description: "Specific playbook to use (e.g., 'vendor_quote_request', 'raw_materials_quote', 'equipment_service_quote', 'packaging_quote')" },
         },
         required: ["callType", "targetCompany", "subject", "objective"],
       },
@@ -1285,13 +1292,16 @@ async function executeMakePhoneCall(params: any, ctx: AIAgentContext): Promise<a
     callType: params.callType,
     targetCompany: params.targetCompany,
     targetPhoneNumber: params.targetPhoneNumber,
+    targetDepartment: params.targetDepartment,
     subject: params.subject,
     objective: params.objective,
     context: params.context,
     priority: params.priority,
     vendorId: params.vendorId,
+    customerId: params.customerId,
     shipmentId: params.shipmentId,
     orderId: params.orderId,
+    playbookId: params.playbookId,
     requiresApproval: true,
     createdBy: ctx.userId,
   });
@@ -1435,13 +1445,14 @@ export async function processAIAgentRequest(
 
 10. **Create Tasks**: Create tasks that require approval before execution.
 
-11. **Make Phone Calls**: Initiate AI-powered phone calls to vendors, carriers, and service providers. The AI agent can autonomously navigate phone menus (IVR), speak with customer service representatives, file complaints, track shipments, and resolve issues. Common scenarios include:
+11. **Make Phone Calls**: Initiate AI-powered phone calls to vendors, carriers, and service providers. The AI agent can autonomously navigate phone menus (IVR), speak with customer service representatives, file complaints, track shipments, gather quotes, and resolve issues. Common scenarios include:
     - Filing shipping claims with UPS, FedEx, USPS, DHL
     - Checking order/delivery status
     - Resolving billing disputes
     - Following up on service requests
     - Filing insurance claims
     - Negotiating with vendors
+    - **Gathering price quotes** from any vendor or supplier for items or services the company needs (raw materials, packaging, equipment, services, etc.). Use callType "quote_request" for these calls. The AI will collect unit prices, MOQs, lead times, volume discounts, and payment terms.
 
 12. **Check Phone Call Status**: View recent calls, check call outcomes, and review transcripts.
 

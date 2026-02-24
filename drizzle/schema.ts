@@ -4497,6 +4497,7 @@ export const aiPhoneCalls = mysqlTable("ai_phone_calls", {
     "general_inquiry",
     "claims_filing",
     "payment_followup",
+    "quote_request",
   ]).notNull(),
   direction: mysqlEnum("direction", ["outbound", "inbound"]).default("outbound").notNull(),
   status: mysqlEnum("status", [
@@ -4555,6 +4556,12 @@ export const aiPhoneCalls = mysqlTable("ai_phone_calls", {
   referenceNumber: varchar("referenceNumber", { length: 128 }), // Case/ticket number from vendor
   callbackDate: timestamp("callbackDate"),
   followupActions: text("followupActions"), // JSON array of followup items
+  // Quote gathering results (for quote_request calls)
+  quoteResults: text("quoteResults"), // JSON: array of {item, unitPrice, quantity, totalPrice, leadTime, moq, notes}
+  quotedTotalAmount: decimal("quotedTotalAmount", { precision: 15, scale: 2 }), // Total quoted amount
+  quoteCurrency: varchar("quoteCurrency", { length: 3 }), // Currency of the quote
+  quoteValidUntil: timestamp("quoteValidUntil"), // Quote expiration date
+  quoteTerms: text("quoteTerms"), // Payment terms, delivery terms, etc.
   // Transcript
   recordingUrl: text("recordingUrl"),
   transcriptUrl: text("transcriptUrl"),

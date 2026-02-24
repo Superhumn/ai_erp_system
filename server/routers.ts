@@ -13703,6 +13703,7 @@ Ask if they received the original request and if they can provide a quote.`;
           'vendor_complaint', 'shipping_inquiry', 'order_status', 'billing_dispute',
           'return_request', 'account_inquiry', 'service_cancellation', 'delivery_reschedule',
           'price_negotiation', 'general_inquiry', 'claims_filing', 'payment_followup',
+          'quote_request',
         ]),
         targetCompany: z.string(),
         targetPhoneNumber: z.string().optional(),

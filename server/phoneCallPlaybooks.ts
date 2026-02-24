@@ -440,6 +440,205 @@ export const PLAYBOOK_TEMPLATES: PlaybookTemplate[] = [
     },
     maxCallDuration: 1800,
   },
+
+  // ============================================
+  // QUOTE GATHERING PLAYBOOKS
+  // ============================================
+
+  // Generic vendor quote request
+  {
+    playbookKey: "vendor_quote_request",
+    name: "Vendor/Supplier - Request Price Quote",
+    description: "Call a vendor or supplier to request pricing quotes for products, raw materials, or services. Gathers unit prices, lead times, minimum order quantities, volume discounts, and payment terms.",
+    targetCompany: "Generic Vendor",
+    phoneNumber: "",
+    department: "Sales / Quotes",
+    operatingHours: "Business hours (varies)",
+    ivrInstructions: {
+      steps: [
+        { step: 1, prompt: "Language selection", action: "Press 1 for English" },
+        { step: 2, prompt: "Main menu", action: "Press 2 for Sales or say 'New order'" },
+        { step: 3, prompt: "Sales options", action: "Say 'Price quote' or 'Speak to a representative'" },
+      ],
+    },
+    openingScript: "Hello, my name is [Agent Name] and I'm calling from [Company Name]. I'm looking to get a price quote for [items/services]. We're an established business and are evaluating suppliers. May I speak with someone in your sales department who can provide pricing?",
+    objectivePrompts: {
+      new_quote: "I need pricing on the following items: [Item List]. For each item, I need the unit price, minimum order quantity, lead time, and any volume discounts available.",
+      bulk_pricing: "We're looking at ordering [Quantity] units of [Item]. What's your best price at that volume? Do you offer tiered pricing?",
+      service_quote: "I need a quote for [Service Description]. What are your rates, and what's included in the pricing?",
+      compare_pricing: "We're currently paying [Current Price] for [Item] from another supplier. Can you match or beat that price? What would your terms be?",
+    },
+    closingScript: "Thank you for the pricing information. Can you also send a formal written quote to [Email]? What's the validity period for these prices? And who should I contact for follow-up questions?",
+    requiredAccountInfo: {
+      required: ["Company Name", "Items/Services Needed"],
+      helpful: ["Quantity Required", "Delivery Location", "Current Supplier/Price", "Account Number (if existing customer)"],
+    },
+    typicalQuestions: {
+      verification: ["Company name", "Contact information", "Delivery address"],
+      quote_details: [
+        "What specific items do you need?",
+        "What quantity are you looking for?",
+        "When do you need delivery?",
+        "Is this a one-time order or recurring?",
+        "What's your preferred payment method?",
+      ],
+    },
+    escalationTriggers: {
+      triggers: [
+        "Vendor requires an in-person meeting for pricing",
+        "Items are custom/specialized requiring engineering review",
+        "Vendor won't provide pricing without a signed NDA",
+        "Call exceeds 20 minutes without getting pricing",
+        "Vendor requires a formal RFQ submission via their portal",
+      ],
+    },
+    maxCallDuration: 1500,
+  },
+
+  // Raw materials supplier quote
+  {
+    playbookKey: "raw_materials_quote",
+    name: "Raw Materials Supplier - Bulk Pricing Quote",
+    description: "Call raw materials suppliers to get pricing on bulk ingredients, packaging materials, or manufacturing inputs. Focuses on bulk pricing tiers, MOQs, certifications, and delivery terms.",
+    targetCompany: "Raw Materials Supplier",
+    phoneNumber: "",
+    department: "Sales / Account Management",
+    operatingHours: "Mon-Fri 8am-5pm local time",
+    ivrInstructions: {
+      steps: [
+        { step: 1, prompt: "Main menu", action: "Press 1 for Sales or new orders" },
+        { step: 2, prompt: "Sales options", action: "Say 'New customer quote' or press 2" },
+        { step: 3, prompt: "Representative", action: "Wait to be connected to sales" },
+      ],
+    },
+    openingScript: "Hello, I'm calling from [Company Name]. We're a [industry type] company looking to source [material type]. I'd like to get pricing on bulk quantities. Could I speak with someone about wholesale pricing?",
+    objectivePrompts: {
+      bulk_quote: "I need pricing for [Quantity] [units] of [Material]. Can you provide your price per [unit] at different volume tiers? What's your minimum order quantity?",
+      material_specs: "For [Material], what specifications or grades do you offer? What certifications do you hold (organic, non-GMO, food-grade, etc.)?",
+      recurring_supply: "We need approximately [Quantity] per [week/month]. What pricing and terms can you offer for a recurring supply agreement?",
+    },
+    closingScript: "Thank you for the pricing details. Can you send a formal quote with spec sheets to [Email]? What's the lead time from order placement? And do you offer samples we could evaluate?",
+    requiredAccountInfo: {
+      required: ["Company Name", "Material Name/Type", "Approximate Quantity"],
+      helpful: ["Required Certifications", "Delivery Location", "Urgency/Timeline", "Current Supplier"],
+    },
+    typicalQuestions: {
+      verification: ["Company name", "Industry", "End use for materials"],
+      quote_details: [
+        "Material specifications needed",
+        "Order quantity and frequency",
+        "Required certifications",
+        "Delivery requirements",
+        "Payment terms preference",
+      ],
+    },
+    escalationTriggers: {
+      triggers: [
+        "Material requires custom formulation",
+        "Vendor needs site visit or audit",
+        "Pricing requires executive approval",
+        "Material has regulatory/compliance considerations",
+      ],
+    },
+    maxCallDuration: 1200,
+  },
+
+  // Equipment/service quote
+  {
+    playbookKey: "equipment_service_quote",
+    name: "Equipment/Service Provider - Quote Request",
+    description: "Call equipment dealers, service providers, or contractors to get quotes for machinery, maintenance, repairs, IT services, or professional services.",
+    targetCompany: "Service/Equipment Provider",
+    phoneNumber: "",
+    department: "Sales / Estimating",
+    operatingHours: "Mon-Fri 8am-6pm local time",
+    ivrInstructions: {
+      steps: [
+        { step: 1, prompt: "Main menu", action: "Press 1 for Sales or Estimates" },
+        { step: 2, prompt: "Inquiry type", action: "Select equipment or service" },
+        { step: 3, prompt: "Representative", action: "Wait for sales representative" },
+      ],
+    },
+    openingScript: "Hello, I'm calling from [Company Name]. We're looking to get a quote for [equipment/service]. I'd like to discuss our requirements and get pricing information.",
+    objectivePrompts: {
+      equipment_purchase: "I need pricing on [Equipment]. What models do you carry, what are the price ranges, and what's included (warranty, installation, training)?",
+      service_contract: "I need a quote for [Service] on a [one-time/recurring] basis. What are your rates and what's included in the service?",
+      repair_estimate: "I need an estimate for repairing/servicing [Equipment/System]. The issue is [description]. What would the typical cost and timeline be?",
+      lease_options: "I'm interested in [Equipment]. Do you offer leasing options? What are the monthly payments and terms?",
+    },
+    closingScript: "Thank you for the information. Can you email a formal proposal/quote to [Email]? What's the typical turnaround time for a formal quote? And what's the quote validity period?",
+    requiredAccountInfo: {
+      required: ["Company Name", "Equipment/Service Description"],
+      helpful: ["Current Equipment/Setup", "Budget Range", "Timeline", "Location"],
+    },
+    typicalQuestions: {
+      verification: ["Company name", "Location", "Current setup"],
+      quote_details: [
+        "Specific equipment model or service needed",
+        "Quantity or scope of work",
+        "Installation/implementation requirements",
+        "Budget range",
+        "Decision timeline",
+      ],
+    },
+    escalationTriggers: {
+      triggers: [
+        "Requires on-site assessment for accurate quote",
+        "Custom engineering or design needed",
+        "Quote exceeds $50,000 requiring management approval",
+        "Vendor requires formal RFP",
+      ],
+    },
+    maxCallDuration: 1500,
+  },
+
+  // Packaging supplier quote
+  {
+    playbookKey: "packaging_quote",
+    name: "Packaging Supplier - Quote Request",
+    description: "Call packaging suppliers to get quotes on boxes, labels, bottles, pouches, custom packaging, and other packaging materials. Covers pricing tiers, setup fees, and lead times.",
+    targetCompany: "Packaging Supplier",
+    phoneNumber: "",
+    department: "Sales",
+    operatingHours: "Mon-Fri 8am-5pm local time",
+    ivrInstructions: {
+      steps: [
+        { step: 1, prompt: "Main menu", action: "Press 1 for Sales" },
+        { step: 2, prompt: "Sales type", action: "Say 'New quote' or press 1" },
+        { step: 3, prompt: "Representative", action: "Wait for sales representative" },
+      ],
+    },
+    openingScript: "Hi, I'm calling from [Company Name]. We're looking for packaging for our [product type] and need pricing on [packaging type]. Can you help me with a quote?",
+    objectivePrompts: {
+      standard_packaging: "I need pricing on [Quantity] units of [Packaging Type] in size [Dimensions]. What are your prices at different volume tiers?",
+      custom_packaging: "We need custom [packaging type] with our branding. What are the setup/tooling fees, per-unit costs at [Quantity], and lead time for custom orders?",
+      label_printing: "I need pricing on [Quantity] labels, size [Dimensions], [number] colors. What's the cost per unit and what are your minimum runs?",
+    },
+    closingScript: "Great, thank you. Can you email a detailed quote with volume pricing tiers to [Email]? Do you have samples available? And what's the typical production lead time?",
+    requiredAccountInfo: {
+      required: ["Company Name", "Packaging Type", "Estimated Quantity"],
+      helpful: ["Product Dimensions", "Artwork Ready (yes/no)", "Material Preference", "Delivery Timeline"],
+    },
+    typicalQuestions: {
+      verification: ["Company name", "Product type", "Where are you located?"],
+      quote_details: [
+        "Packaging type and material",
+        "Dimensions and specifications",
+        "Quantity needed",
+        "Custom printing requirements",
+        "Delivery timeline",
+      ],
+    },
+    escalationTriggers: {
+      triggers: [
+        "Custom packaging requires design consultation",
+        "Material not in stock, requires special order",
+        "Structural design review needed",
+        "Food-grade or regulatory certification questions",
+      ],
+    },
+    maxCallDuration: 1200,
+  },
 ];
 
 // ============================================

@@ -539,12 +539,28 @@ async function simulatePhoneCall(callId: number, call: any): Promise<PhoneCallRe
   const callScript = call.callScript ? JSON.parse(call.callScript) : null;
   const callContext = call.context ? JSON.parse(call.context) : {};
 
+  const isQuoteRequest = call.callType === "quote_request";
+
+  // Build quote-specific prompt additions
+  const quotePromptAddition = isQuoteRequest
+    ? `\n\nIMPORTANT: This is a QUOTE REQUEST call. The AI agent is calling to gather pricing information. Generate realistic quote data including:
+- Specific unit prices for each item discussed
+- Minimum order quantities (MOQs)
+- Volume discount tiers if applicable
+- Lead times for delivery
+- Payment terms offered
+- Quote validity period
+- Any setup fees or additional charges
+
+Populate the "quoteResults" field with realistic pricing data. Each item should have a unitPrice, quantity discussed, totalPrice, leadTime, and any relevant notes.`
+    : "";
+
   // Use AI to simulate the entire call conversation
   const simulationResponse = await invokeLLM({
     messages: [
       {
         role: "system",
-        content: `You are simulating a phone call between an AI business agent and a customer service representative at ${call.targetCompany}.
+        content: `You are simulating a phone call between an AI business agent and a ${isQuoteRequest ? "sales representative" : "customer service representative"} at ${call.targetCompany}.
 
 The AI agent is calling to: ${call.objective}
 
@@ -554,7 +570,7 @@ Generate a realistic phone call simulation including:
 3. Conversation with the representative
 4. Resolution or outcome
 
-Be realistic about what ${call.targetCompany} customer service can actually do. Include realistic hold times, transfers, verification questions, etc.
+Be realistic about what ${call.targetCompany} ${isQuoteRequest ? "sales team" : "customer service"} can actually do. Include realistic hold times, transfers, verification questions, etc.${quotePromptAddition}
 
 Context about the issue:
 ${JSON.stringify(callContext, null, 2)}
@@ -568,9 +584,9 @@ Respond in JSON format with the simulation results.`,
         content: `Simulate the full phone call for: ${call.subject}
 
 The call type is: ${call.callType}
-Target department: ${call.targetDepartment || "Customer Service"}
+Target department: ${call.targetDepartment || (isQuoteRequest ? "Sales" : "Customer Service")}
 
-Generate realistic results including a transcript, outcome, and any reference numbers.`,
+Generate realistic results including a transcript, outcome, and any reference numbers.${isQuoteRequest ? " Include detailed pricing/quote information gathered from the call." : ""}`,
       },
     ],
     response_format: {
@@ -612,6 +628,31 @@ Generate realistic results including a transcript, outcome, and any reference nu
               items: { type: "string" },
             },
             confidence: { type: "number" },
+            quoteResults: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  item: { type: "string" },
+                  description: { type: "string" },
+                  unitPrice: { type: "number" },
+                  currency: { type: "string" },
+                  quantity: { type: "number" },
+                  unit: { type: "string" },
+                  totalPrice: { type: "number" },
+                  leadTimeDays: { type: "number" },
+                  moq: { type: "number" },
+                  volumeDiscounts: { type: "string" },
+                  notes: { type: "string" },
+                },
+                required: ["item", "description", "unitPrice", "currency", "quantity", "unit", "totalPrice", "leadTimeDays", "moq", "volumeDiscounts", "notes"],
+                additionalProperties: false,
+              },
+            },
+            quotedTotalAmount: { type: "number" },
+            quoteCurrency: { type: "string" },
+            quoteValidDays: { type: "number" },
+            quoteTerms: { type: "string" },
           },
           required: [
             "transcript",
@@ -625,6 +666,11 @@ Generate realistic results including a transcript, outcome, and any reference nu
             "informationGathered",
             "followupActions",
             "confidence",
+            "quoteResults",
+            "quotedTotalAmount",
+            "quoteCurrency",
+            "quoteValidDays",
+            "quoteTerms",
           ],
           additionalProperties: false,
         },
@@ -644,6 +690,17 @@ Generate realistic results including a transcript, outcome, and any reference nu
     { eventType: "call_ended" as const, message: `Call ended. Outcome: ${simulation.outcome}` },
   ];
 
+  // Add quote-specific log event if quote data was gathered
+  if (isQuoteRequest && simulation.quoteResults?.length > 0) {
+    const quoteItemsSummary = simulation.quoteResults
+      .map((q: any) => `${q.item}: ${q.currency || "USD"} ${q.unitPrice}/${q.unit} (MOQ: ${q.moq}, Lead: ${q.leadTimeDays}d)`)
+      .join("; ");
+    events.push({
+      eventType: "info_gathered" as const,
+      message: `Quote received - ${simulation.quoteResults.length} item(s): ${quoteItemsSummary}. Total: ${simulation.quoteCurrency || "USD"} ${simulation.quotedTotalAmount}`,
+    });
+  }
+
   for (const event of events) {
     await db.insert(aiPhoneCallLogs).values({
       phoneCallId: callId,
@@ -652,6 +709,11 @@ Generate realistic results including a transcript, outcome, and any reference nu
       message: `[SIMULATION] ${event.message}`,
     });
   }
+
+  // Calculate quote valid-until date
+  const quoteValidUntil = simulation.quoteValidDays
+    ? new Date(Date.now() + simulation.quoteValidDays * 86400000)
+    : null;
 
   // Update the call record with results
   await db
@@ -670,6 +732,16 @@ Generate realistic results including a transcript, outcome, and any reference nu
       followupActions: JSON.stringify(simulation.followupActions),
       aiConfidence: simulation.confidence?.toString(),
       objectiveCompleted: simulation.outcome === "resolved",
+      // Quote-specific fields
+      ...(isQuoteRequest && simulation.quoteResults?.length > 0
+        ? {
+            quoteResults: JSON.stringify(simulation.quoteResults),
+            quotedTotalAmount: simulation.quotedTotalAmount?.toString() || null,
+            quoteCurrency: simulation.quoteCurrency || "USD",
+            quoteValidUntil,
+            quoteTerms: simulation.quoteTerms || null,
+          }
+        : {}),
     })
     .where(eq(aiPhoneCalls.id, callId));
 
@@ -694,7 +766,19 @@ Generate realistic results including a transcript, outcome, and any reference nu
     transcript: simulation.transcript,
     summary: simulation.summary,
     followupActions: simulation.followupActions,
-    message: `[SIMULATED] Call to ${call.targetCompany} completed. Outcome: ${simulation.outcome}. ${simulation.resolution}`,
+    ...(isQuoteRequest && simulation.quoteResults?.length > 0
+      ? {
+          quoteResults: simulation.quoteResults,
+          quotedTotalAmount: simulation.quotedTotalAmount,
+          quoteCurrency: simulation.quoteCurrency,
+          quoteTerms: simulation.quoteTerms,
+        }
+      : {}),
+    message: `[SIMULATED] Call to ${call.targetCompany} completed. Outcome: ${simulation.outcome}. ${simulation.resolution}${
+      isQuoteRequest && simulation.quotedTotalAmount
+        ? ` Total quoted: ${simulation.quoteCurrency || "USD"} ${simulation.quotedTotalAmount}`
+        : ""
+    }`,
   };
 }
 
