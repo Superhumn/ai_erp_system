@@ -3022,6 +3022,12 @@ export const emailTemplates = mysqlTable("emailTemplates", {
     "payment_reminder",
     "vendor_followup",
     "quality_issue",
+    "sales_outreach",
+    "sales_follow_up",
+    "sales_proposal",
+    "sales_meeting_request",
+    "sales_onboarding",
+    "sales_renewal",
     "general"
   ]).notNull(),
   subject: varchar("subject", { length: 500 }).notNull(),
@@ -3580,6 +3586,12 @@ export const supplyChainWorkflows = mysqlTable("supplyChainWorkflows", {
     "exception_handling",
     "vendor_quote_procurement",
     "vendor_quote_analysis",
+    "sales_lead_scoring",
+    "sales_sequence_execution",
+    "sales_pipeline_automation",
+    "sales_proposal_generation",
+    "sales_forecasting",
+    "sales_deal_conversion",
     "custom"
   ]).notNull(),
 
@@ -4471,3 +4483,337 @@ export const copackerShippingDocuments = mysqlTable("copacker_shipping_documents
 
 export type CopackerShippingDocument = typeof copackerShippingDocuments.$inferSelect;
 export type InsertCopackerShippingDocument = typeof copackerShippingDocuments.$inferInsert;
+
+// ============================================
+// B2B SALES AUTOMATION SYSTEM
+// ============================================
+
+// Sales outreach sequences (multi-step cadences)
+export const salesSequences = mysqlTable("sales_sequences", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  type: mysqlEnum("type", ["outbound_cold", "outbound_warm", "inbound_follow_up", "re_engagement", "onboarding", "expansion", "renewal"]).default("outbound_cold").notNull(),
+  status: mysqlEnum("status", ["draft", "active", "paused", "archived"]).default("draft").notNull(),
+
+  // Targeting criteria
+  targetIndustries: text("targetIndustries"), // JSON array
+  targetCompanySizes: text("targetCompanySizes"), // JSON array: ["1-50", "51-200", ...]
+  targetRoles: text("targetRoles"), // JSON array of job titles
+  minLeadScore: int("minLeadScore").default(0),
+
+  // Performance stats
+  totalEnrolled: int("totalEnrolled").default(0),
+  totalCompleted: int("totalCompleted").default(0),
+  totalConverted: int("totalConverted").default(0),
+  avgResponseRate: decimal("avgResponseRate", { precision: 5, scale: 2 }).default("0"),
+  avgConversionRate: decimal("avgConversionRate", { precision: 5, scale: 2 }).default("0"),
+
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SalesSequence = typeof salesSequences.$inferSelect;
+export type InsertSalesSequence = typeof salesSequences.$inferInsert;
+
+// Steps within a sales sequence
+export const salesSequenceSteps = mysqlTable("sales_sequence_steps", {
+  id: int("id").autoincrement().primaryKey(),
+  sequenceId: int("sequenceId").notNull(),
+  stepOrder: int("stepOrder").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+
+  // Step type and channel
+  stepType: mysqlEnum("stepType", ["email", "phone_call", "linkedin_message", "linkedin_connect", "task", "wait", "condition"]).notNull(),
+  channel: mysqlEnum("channel", ["email", "phone", "linkedin", "whatsapp", "sms", "internal"]).default("email"),
+
+  // Timing
+  delayDays: int("delayDays").default(0),
+  delayHours: int("delayHours").default(0),
+  sendTimePreference: mysqlEnum("sendTimePreference", ["morning", "afternoon", "evening", "optimal"]).default("optimal"),
+
+  // Email content (AI-generated or template)
+  subject: varchar("subject", { length: 500 }),
+  bodyTemplate: text("bodyTemplate"), // Template with {{placeholders}}
+  aiPrompt: text("aiPrompt"), // Prompt for AI to generate personalized email
+  useAiPersonalization: boolean("useAiPersonalization").default(true),
+
+  // Condition logic (for condition steps)
+  conditionType: mysqlEnum("conditionType", ["email_opened", "email_replied", "link_clicked", "meeting_booked", "no_response", "lead_score_above", "custom"]),
+  conditionValue: varchar("conditionValue", { length: 255 }),
+  trueBranchStepId: int("trueBranchStepId"),
+  falseBranchStepId: int("falseBranchStepId"),
+
+  // Call script (for phone steps)
+  callScript: text("callScript"),
+  callObjective: varchar("callObjective", { length: 500 }),
+
+  // Performance
+  totalSent: int("totalSent").default(0),
+  totalOpened: int("totalOpened").default(0),
+  totalReplied: int("totalReplied").default(0),
+  totalConverted: int("totalConverted").default(0),
+
+  isActive: boolean("isActive").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type SalesSequenceStep = typeof salesSequenceSteps.$inferSelect;
+export type InsertSalesSequenceStep = typeof salesSequenceSteps.$inferInsert;
+
+// Enrollments - contacts enrolled in sequences
+export const salesSequenceEnrollments = mysqlTable("sales_sequence_enrollments", {
+  id: int("id").autoincrement().primaryKey(),
+  sequenceId: int("sequenceId").notNull(),
+  contactId: int("contactId").notNull(),
+  dealId: int("dealId"),
+
+  status: mysqlEnum("status", ["active", "paused", "completed", "replied", "bounced", "unsubscribed", "meeting_booked", "converted", "removed"]).default("active").notNull(),
+  currentStepId: int("currentStepId"),
+  currentStepOrder: int("currentStepOrder").default(1),
+  nextActionAt: timestamp("nextActionAt"),
+
+  // Tracking
+  stepsCompleted: int("stepsCompleted").default(0),
+  emailsSent: int("emailsSent").default(0),
+  emailsOpened: int("emailsOpened").default(0),
+  emailsReplied: int("emailsReplied").default(0),
+  callsMade: int("callsMade").default(0),
+
+  // Outcome
+  completedAt: timestamp("completedAt"),
+  convertedAt: timestamp("convertedAt"),
+  removedReason: varchar("removedReason", { length: 255 }),
+
+  enrolledBy: int("enrolledBy"),
+  enrolledAt: timestamp("enrolledAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SalesSequenceEnrollment = typeof salesSequenceEnrollments.$inferSelect;
+export type InsertSalesSequenceEnrollment = typeof salesSequenceEnrollments.$inferInsert;
+
+// Lead scoring rules (AI-powered)
+export const leadScoringRules = mysqlTable("lead_scoring_rules", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  isActive: boolean("isActive").default(true),
+
+  // Rule category
+  category: mysqlEnum("category", ["demographic", "firmographic", "behavioral", "engagement", "negative"]).notNull(),
+
+  // Condition
+  field: varchar("field", { length: 128 }).notNull(), // e.g., "industry", "companySize", "emailOpened"
+  operator: mysqlEnum("operator", ["equals", "not_equals", "contains", "greater_than", "less_than", "in_list", "exists", "not_exists"]).notNull(),
+  value: text("value").notNull(), // JSON value or simple string
+
+  // Score impact
+  scoreChange: int("scoreChange").notNull(), // positive or negative
+  maxApplications: int("maxApplications").default(1), // how many times this rule can apply per contact
+
+  priority: int("priority").default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type LeadScoringRule = typeof leadScoringRules.$inferSelect;
+export type InsertLeadScoringRule = typeof leadScoringRules.$inferInsert;
+
+// Sales proposals / quotes
+export const salesProposals = mysqlTable("sales_proposals", {
+  id: int("id").autoincrement().primaryKey(),
+  proposalNumber: varchar("proposalNumber", { length: 64 }).notNull(),
+  dealId: int("dealId"),
+  contactId: int("contactId").notNull(),
+  customerId: int("customerId"),
+
+  // Proposal details
+  title: varchar("title", { length: 500 }).notNull(),
+  summary: text("summary"),
+  status: mysqlEnum("status", ["draft", "review", "sent", "viewed", "accepted", "rejected", "expired", "revised"]).default("draft").notNull(),
+
+  // Pricing
+  subtotal: decimal("subtotal", { precision: 15, scale: 2 }).default("0"),
+  discountPercent: decimal("discountPercent", { precision: 5, scale: 2 }).default("0"),
+  discountAmount: decimal("discountAmount", { precision: 15, scale: 2 }).default("0"),
+  taxAmount: decimal("taxAmount", { precision: 15, scale: 2 }).default("0"),
+  totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).default("0"),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+
+  // Terms
+  paymentTerms: varchar("paymentTerms", { length: 255 }),
+  validUntil: timestamp("validUntil"),
+  deliveryTerms: text("deliveryTerms"),
+  specialConditions: text("specialConditions"),
+
+  // AI-generated content
+  aiGeneratedSummary: text("aiGeneratedSummary"),
+  aiGeneratedPitch: text("aiGeneratedPitch"),
+  competitiveAnalysis: text("competitiveAnalysis"), // JSON
+
+  // Tracking
+  sentAt: timestamp("sentAt"),
+  viewedAt: timestamp("viewedAt"),
+  viewCount: int("viewCount").default(0),
+  acceptedAt: timestamp("acceptedAt"),
+  rejectedAt: timestamp("rejectedAt"),
+  rejectionReason: text("rejectionReason"),
+
+  // Document
+  documentUrl: text("documentUrl"),
+  publicLinkId: varchar("publicLinkId", { length: 64 }),
+
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SalesProposal = typeof salesProposals.$inferSelect;
+export type InsertSalesProposal = typeof salesProposals.$inferInsert;
+
+// Proposal line items
+export const salesProposalItems = mysqlTable("sales_proposal_items", {
+  id: int("id").autoincrement().primaryKey(),
+  proposalId: int("proposalId").notNull(),
+  productId: int("productId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),
+  unitPrice: decimal("unitPrice", { precision: 15, scale: 2 }).notNull(),
+  discountPercent: decimal("discountPercent", { precision: 5, scale: 2 }).default("0"),
+  totalPrice: decimal("totalPrice", { precision: 15, scale: 2 }).notNull(),
+  sortOrder: int("sortOrder").default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type SalesProposalItem = typeof salesProposalItems.$inferSelect;
+export type InsertSalesProposalItem = typeof salesProposalItems.$inferInsert;
+
+// Sales automation rules (trigger → action)
+export const salesAutomationRules = mysqlTable("sales_automation_rules", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  isActive: boolean("isActive").default(true),
+
+  // Trigger
+  triggerEvent: mysqlEnum("triggerEvent", [
+    "lead_created", "lead_score_changed", "deal_stage_changed", "email_opened",
+    "email_replied", "proposal_viewed", "proposal_accepted", "proposal_rejected",
+    "meeting_completed", "no_activity_days", "deal_stalled", "contract_signed",
+    "deal_won", "deal_lost"
+  ]).notNull(),
+  triggerConditions: text("triggerConditions"), // JSON conditions
+
+  // Action
+  actionType: mysqlEnum("actionType", [
+    "change_deal_stage", "update_lead_score", "enroll_in_sequence",
+    "remove_from_sequence", "send_email", "create_task", "assign_owner",
+    "send_notification", "create_proposal", "convert_to_customer",
+    "create_sales_order", "send_slack_notification", "update_contact_field",
+    "add_tag", "remove_tag"
+  ]).notNull(),
+  actionConfig: text("actionConfig").notNull(), // JSON config for the action
+
+  // Execution
+  executionCount: int("executionCount").default(0),
+  lastExecutedAt: timestamp("lastExecutedAt"),
+
+  priority: int("priority").default(0),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SalesAutomationRule = typeof salesAutomationRules.$inferSelect;
+export type InsertSalesAutomationRule = typeof salesAutomationRules.$inferInsert;
+
+// Sales automation execution log
+export const salesAutomationLog = mysqlTable("sales_automation_log", {
+  id: int("id").autoincrement().primaryKey(),
+  ruleId: int("ruleId").notNull(),
+  contactId: int("contactId"),
+  dealId: int("dealId"),
+
+  triggerEvent: varchar("triggerEvent", { length: 128 }).notNull(),
+  triggerData: text("triggerData"), // JSON
+  actionType: varchar("actionType", { length: 128 }).notNull(),
+  actionResult: text("actionResult"), // JSON
+
+  status: mysqlEnum("status", ["success", "failed", "skipped"]).notNull(),
+  errorMessage: text("errorMessage"),
+  executedAt: timestamp("executedAt").defaultNow().notNull(),
+});
+
+export type SalesAutomationLogEntry = typeof salesAutomationLog.$inferSelect;
+export type InsertSalesAutomationLogEntry = typeof salesAutomationLog.$inferInsert;
+
+// Sales activity/task queue (auto-generated tasks for reps)
+export const salesTasks = mysqlTable("sales_tasks", {
+  id: int("id").autoincrement().primaryKey(),
+  contactId: int("contactId"),
+  dealId: int("dealId"),
+  assignedTo: int("assignedTo"),
+
+  // Task details
+  title: varchar("title", { length: 500 }).notNull(),
+  description: text("description"),
+  taskType: mysqlEnum("taskType", ["call", "email", "meeting", "follow_up", "proposal", "demo", "contract_review", "onboarding", "other"]).default("follow_up").notNull(),
+  priority: mysqlEnum("priority", ["low", "medium", "high", "urgent"]).default("medium").notNull(),
+  status: mysqlEnum("status", ["pending", "in_progress", "completed", "skipped", "overdue"]).default("pending").notNull(),
+
+  // Timing
+  dueAt: timestamp("dueAt"),
+  completedAt: timestamp("completedAt"),
+
+  // Auto-generated metadata
+  source: mysqlEnum("source", ["automation_rule", "sequence_step", "ai_suggestion", "manual"]).default("manual").notNull(),
+  sourceRuleId: int("sourceRuleId"),
+  sourceSequenceId: int("sourceSequenceId"),
+
+  // AI suggestions
+  aiSuggestedAction: text("aiSuggestedAction"),
+  aiTalkingPoints: text("aiTalkingPoints"), // JSON array
+
+  outcome: text("outcome"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SalesTask = typeof salesTasks.$inferSelect;
+export type InsertSalesTask = typeof salesTasks.$inferInsert;
+
+// Sales forecast snapshots
+export const salesForecasts = mysqlTable("sales_forecasts", {
+  id: int("id").autoincrement().primaryKey(),
+  periodStart: timestamp("periodStart").notNull(),
+  periodEnd: timestamp("periodEnd").notNull(),
+  periodType: mysqlEnum("periodType", ["week", "month", "quarter"]).notNull(),
+
+  // Forecast values
+  pipelineValue: decimal("pipelineValue", { precision: 15, scale: 2 }).default("0"),
+  weightedValue: decimal("weightedValue", { precision: 15, scale: 2 }).default("0"),
+  bestCaseValue: decimal("bestCaseValue", { precision: 15, scale: 2 }).default("0"),
+  worstCaseValue: decimal("worstCaseValue", { precision: 15, scale: 2 }).default("0"),
+  aiForecastValue: decimal("aiForecastValue", { precision: 15, scale: 2 }).default("0"),
+  actualValue: decimal("actualValue", { precision: 15, scale: 2 }),
+
+  // Breakdown
+  dealCount: int("dealCount").default(0),
+  avgDealSize: decimal("avgDealSize", { precision: 15, scale: 2 }).default("0"),
+  avgCycleLength: int("avgCycleLength").default(0), // days
+  winRate: decimal("winRate", { precision: 5, scale: 2 }).default("0"),
+
+  // AI analysis
+  aiInsights: text("aiInsights"), // JSON
+  riskFactors: text("riskFactors"), // JSON
+
+  snapshotDate: timestamp("snapshotDate").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type SalesForecast = typeof salesForecasts.$inferSelect;
+export type InsertSalesForecast = typeof salesForecasts.$inferInsert;

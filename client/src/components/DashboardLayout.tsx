@@ -69,6 +69,7 @@ import {
   Heart,
   Mic,
   BookOpen,
+  Zap,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -97,6 +98,7 @@ const menuGroups = [
     label: "Sales & Finance",
     items: [
       { icon: ShoppingCart, label: "Sales Hub", path: "/sales/hub" },
+      { icon: Zap, label: "Sales Automation", path: "/sales/automation" },
       { icon: Heart, label: "Fundraising CRM", path: "/crm" },
       { icon: Users, label: "Investors", path: "/crm/investors" },
       { icon: Target, label: "Campaigns", path: "/crm/campaigns" },

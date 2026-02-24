@@ -12,6 +12,7 @@ import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
+import { eq, and, desc, asc, sql } from "drizzle-orm";
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
@@ -13112,6 +13113,533 @@ Ask if they received the original request and if they can provide a quote.`;
           return { success: true };
         }),
     }),
+  }),
+
+  // ============================================
+  // B2B SALES AUTOMATION
+  // ============================================
+  salesAutomation: router({
+    // --- Pipeline Overview ---
+    pipelineSummary: protectedProcedure.query(async () => {
+      const { getPipelineSummary } = await import("./b2bSalesAutomation");
+      return getPipelineSummary();
+    }),
+
+    automationStats: protectedProcedure.query(async () => {
+      const { getAutomationStats } = await import("./b2bSalesAutomation");
+      return getAutomationStats();
+    }),
+
+    // --- Lead Scoring ---
+    scoreContact: protectedProcedure
+      .input(z.object({ contactId: z.number() }))
+      .mutation(async ({ input }) => {
+        const { calculateLeadScore } = await import("./b2bSalesAutomation");
+        return calculateLeadScore(input.contactId);
+      }),
+
+    scoreAllLeads: protectedProcedure.mutation(async () => {
+      const { scoreAllLeads } = await import("./b2bSalesAutomation");
+      return scoreAllLeads();
+    }),
+
+    // --- Scoring Rules ---
+    scoringRules: router({
+      list: protectedProcedure.query(async () => {
+        const database = await db.getDb();
+        if (!database) return [];
+        const { leadScoringRules } = await import("../drizzle/schema");
+        return database.select().from(leadScoringRules).orderBy(desc(leadScoringRules.priority));
+      }),
+
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          description: z.string().optional(),
+          category: z.enum(["demographic", "firmographic", "behavioral", "engagement", "negative"]),
+          field: z.string(),
+          operator: z.enum(["equals", "not_equals", "contains", "greater_than", "less_than", "in_list", "exists", "not_exists"]),
+          value: z.string(),
+          scoreChange: z.number(),
+          maxApplications: z.number().optional(),
+          priority: z.number().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const database = await db.getDb();
+          if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB not available" });
+          const { leadScoringRules } = await import("../drizzle/schema");
+          const [result] = await database.insert(leadScoringRules).values(input).$returningId();
+          return { id: result.id };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          description: z.string().optional(),
+          isActive: z.boolean().optional(),
+          scoreChange: z.number().optional(),
+          priority: z.number().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const database = await db.getDb();
+          if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+          const { leadScoringRules } = await import("../drizzle/schema");
+          const { id, ...data } = input;
+          await database.update(leadScoringRules).set(data).where(eq(leadScoringRules.id, id));
+          return { success: true };
+        }),
+
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          const database = await db.getDb();
+          if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+          const { leadScoringRules } = await import("../drizzle/schema");
+          await database.delete(leadScoringRules).where(eq(leadScoringRules.id, input.id));
+          return { success: true };
+        }),
+    }),
+
+    // --- Sales Sequences ---
+    sequences: router({
+      list: protectedProcedure
+        .input(z.object({ status: z.string().optional() }).optional())
+        .query(async ({ input }) => {
+          const database = await db.getDb();
+          if (!database) return [];
+          const { salesSequences } = await import("../drizzle/schema");
+          const conditions = [];
+          if (input?.status) conditions.push(eq(salesSequences.status, input.status as any));
+          return database.select().from(salesSequences)
+            .where(conditions.length > 0 ? and(...conditions) : undefined)
+            .orderBy(desc(salesSequences.createdAt));
+        }),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => {
+          const database = await db.getDb();
+          if (!database) return null;
+          const { salesSequences, salesSequenceSteps } = await import("../drizzle/schema");
+          const [sequence] = await database.select().from(salesSequences).where(eq(salesSequences.id, input.id));
+          if (!sequence) return null;
+          const steps = await database.select().from(salesSequenceSteps)
+            .where(eq(salesSequenceSteps.sequenceId, input.id))
+            .orderBy(asc(salesSequenceSteps.stepOrder));
+          return { ...sequence, steps };
+        }),
+
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          description: z.string().optional(),
+          type: z.enum(["outbound_cold", "outbound_warm", "inbound_follow_up", "re_engagement", "onboarding", "expansion", "renewal"]).optional(),
+          targetIndustries: z.string().optional(),
+          targetCompanySizes: z.string().optional(),
+          targetRoles: z.string().optional(),
+          minLeadScore: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const database = await db.getDb();
+          if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+          const { salesSequences } = await import("../drizzle/schema");
+          const [result] = await database.insert(salesSequences).values({
+            ...input,
+            createdBy: ctx.user.id,
+          }).$returningId();
+          return { id: result.id };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          description: z.string().optional(),
+          status: z.enum(["draft", "active", "paused", "archived"]).optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const database = await db.getDb();
+          if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+          const { salesSequences } = await import("../drizzle/schema");
+          const { id, ...data } = input;
+          await database.update(salesSequences).set(data).where(eq(salesSequences.id, id));
+          return { success: true };
+        }),
+
+      // Add step to sequence
+      addStep: protectedProcedure
+        .input(z.object({
+          sequenceId: z.number(),
+          stepOrder: z.number(),
+          name: z.string(),
+          stepType: z.enum(["email", "phone_call", "linkedin_message", "linkedin_connect", "task", "wait", "condition"]),
+          channel: z.enum(["email", "phone", "linkedin", "whatsapp", "sms", "internal"]).optional(),
+          delayDays: z.number().optional(),
+          delayHours: z.number().optional(),
+          subject: z.string().optional(),
+          bodyTemplate: z.string().optional(),
+          aiPrompt: z.string().optional(),
+          useAiPersonalization: z.boolean().optional(),
+          callScript: z.string().optional(),
+          callObjective: z.string().optional(),
+          conditionType: z.enum(["email_opened", "email_replied", "link_clicked", "meeting_booked", "no_response", "lead_score_above", "custom"]).optional(),
+          conditionValue: z.string().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const database = await db.getDb();
+          if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+          const { salesSequenceSteps } = await import("../drizzle/schema");
+          const [result] = await database.insert(salesSequenceSteps).values(input).$returningId();
+          return { id: result.id };
+        }),
+
+      // Enroll contact
+      enroll: protectedProcedure
+        .input(z.object({
+          sequenceId: z.number(),
+          contactId: z.number(),
+          dealId: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { enrollContactInSequence } = await import("./b2bSalesAutomation");
+          return enrollContactInSequence(input.contactId, input.sequenceId, input.dealId, ctx.user.id);
+        }),
+
+      // Get enrollments
+      enrollments: protectedProcedure
+        .input(z.object({
+          sequenceId: z.number().optional(),
+          contactId: z.number().optional(),
+          status: z.string().optional(),
+        }))
+        .query(async ({ input }) => {
+          const database = await db.getDb();
+          if (!database) return [];
+          const { salesSequenceEnrollments, crmContacts } = await import("../drizzle/schema");
+          const conditions = [];
+          if (input.sequenceId) conditions.push(eq(salesSequenceEnrollments.sequenceId, input.sequenceId));
+          if (input.contactId) conditions.push(eq(salesSequenceEnrollments.contactId, input.contactId));
+          if (input.status) conditions.push(eq(salesSequenceEnrollments.status, input.status as any));
+
+          return database
+            .select({
+              enrollment: salesSequenceEnrollments,
+              contactName: sql<string>`CONCAT(${crmContacts.firstName}, ' ', COALESCE(${crmContacts.lastName}, ''))`,
+              contactEmail: crmContacts.email,
+              contactCompany: crmContacts.organization,
+            })
+            .from(salesSequenceEnrollments)
+            .leftJoin(crmContacts, eq(salesSequenceEnrollments.contactId, crmContacts.id))
+            .where(conditions.length > 0 ? and(...conditions) : undefined)
+            .orderBy(desc(salesSequenceEnrollments.enrolledAt));
+        }),
+
+      // Process due steps (manual trigger)
+      processDue: protectedProcedure.mutation(async () => {
+        const { processDueSequenceSteps } = await import("./b2bSalesAutomation");
+        return processDueSequenceSteps();
+      }),
+    }),
+
+    // --- Proposals ---
+    proposals: router({
+      list: protectedProcedure
+        .input(z.object({
+          status: z.string().optional(),
+          contactId: z.number().optional(),
+          dealId: z.number().optional(),
+        }).optional())
+        .query(async ({ input }) => {
+          const database = await db.getDb();
+          if (!database) return [];
+          const { salesProposals, crmContacts } = await import("../drizzle/schema");
+          const conditions = [];
+          if (input?.status) conditions.push(eq(salesProposals.status, input.status as any));
+          if (input?.contactId) conditions.push(eq(salesProposals.contactId, input.contactId));
+          if (input?.dealId) conditions.push(eq(salesProposals.dealId, input.dealId));
+
+          return database
+            .select({
+              proposal: salesProposals,
+              contactName: sql<string>`CONCAT(${crmContacts.firstName}, ' ', COALESCE(${crmContacts.lastName}, ''))`,
+              contactEmail: crmContacts.email,
+            })
+            .from(salesProposals)
+            .leftJoin(crmContacts, eq(salesProposals.contactId, crmContacts.id))
+            .where(conditions.length > 0 ? and(...conditions) : undefined)
+            .orderBy(desc(salesProposals.createdAt));
+        }),
+
+      generate: protectedProcedure
+        .input(z.object({
+          dealId: z.number(),
+          contactId: z.number(),
+          productIds: z.array(z.number()).optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { generateProposal } = await import("./b2bSalesAutomation");
+          return generateProposal(input.dealId, input.contactId, input.productIds);
+        }),
+
+      updateStatus: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(["draft", "review", "sent", "viewed", "accepted", "rejected", "expired", "revised"]),
+          rejectionReason: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const database = await db.getDb();
+          if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+          const { salesProposals } = await import("../drizzle/schema");
+          const updateData: any = { status: input.status };
+          if (input.status === "sent") updateData.sentAt = new Date();
+          if (input.status === "accepted") updateData.acceptedAt = new Date();
+          if (input.status === "rejected") {
+            updateData.rejectedAt = new Date();
+            updateData.rejectionReason = input.rejectionReason;
+          }
+          await database.update(salesProposals).set(updateData).where(eq(salesProposals.id, input.id));
+
+          // Trigger automation
+          const [proposal] = await database.select().from(salesProposals).where(eq(salesProposals.id, input.id));
+          if (proposal) {
+            const { executePipelineAutomation } = await import("./b2bSalesAutomation");
+            if (input.status === "accepted") {
+              await executePipelineAutomation("proposal_accepted", {
+                contactId: proposal.contactId,
+                dealId: proposal.dealId ?? undefined,
+              });
+            } else if (input.status === "rejected") {
+              await executePipelineAutomation("proposal_rejected", {
+                contactId: proposal.contactId,
+                dealId: proposal.dealId ?? undefined,
+              });
+            }
+          }
+          return { success: true };
+        }),
+    }),
+
+    // --- Automation Rules ---
+    rules: router({
+      list: protectedProcedure.query(async () => {
+        const database = await db.getDb();
+        if (!database) return [];
+        const { salesAutomationRules } = await import("../drizzle/schema");
+        return database.select().from(salesAutomationRules).orderBy(desc(salesAutomationRules.priority));
+      }),
+
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          description: z.string().optional(),
+          triggerEvent: z.enum([
+            "lead_created", "lead_score_changed", "deal_stage_changed", "email_opened",
+            "email_replied", "proposal_viewed", "proposal_accepted", "proposal_rejected",
+            "meeting_completed", "no_activity_days", "deal_stalled", "contract_signed",
+            "deal_won", "deal_lost",
+          ]),
+          triggerConditions: z.string().optional(),
+          actionType: z.enum([
+            "change_deal_stage", "update_lead_score", "enroll_in_sequence",
+            "remove_from_sequence", "send_email", "create_task", "assign_owner",
+            "send_notification", "create_proposal", "convert_to_customer",
+            "create_sales_order", "send_slack_notification", "update_contact_field",
+            "add_tag", "remove_tag",
+          ]),
+          actionConfig: z.string(),
+          priority: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const database = await db.getDb();
+          if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+          const { salesAutomationRules } = await import("../drizzle/schema");
+          const [result] = await database.insert(salesAutomationRules).values({
+            ...input,
+            createdBy: ctx.user.id,
+          }).$returningId();
+          return { id: result.id };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          isActive: z.boolean().optional(),
+          priority: z.number().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const database = await db.getDb();
+          if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+          const { salesAutomationRules } = await import("../drizzle/schema");
+          const { id, ...data } = input;
+          await database.update(salesAutomationRules).set(data).where(eq(salesAutomationRules.id, id));
+          return { success: true };
+        }),
+
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          const database = await db.getDb();
+          if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+          const { salesAutomationRules } = await import("../drizzle/schema");
+          await database.delete(salesAutomationRules).where(eq(salesAutomationRules.id, input.id));
+          return { success: true };
+        }),
+
+      // View execution log
+      log: protectedProcedure
+        .input(z.object({
+          ruleId: z.number().optional(),
+          contactId: z.number().optional(),
+          limit: z.number().optional(),
+        }).optional())
+        .query(async ({ input }) => {
+          const database = await db.getDb();
+          if (!database) return [];
+          const { salesAutomationLog } = await import("../drizzle/schema");
+          const conditions = [];
+          if (input?.ruleId) conditions.push(eq(salesAutomationLog.ruleId, input.ruleId));
+          if (input?.contactId) conditions.push(eq(salesAutomationLog.contactId, input.contactId));
+          return database.select().from(salesAutomationLog)
+            .where(conditions.length > 0 ? and(...conditions) : undefined)
+            .orderBy(desc(salesAutomationLog.executedAt))
+            .limit(input?.limit || 50);
+        }),
+
+      // Manually trigger an automation event
+      triggerEvent: protectedProcedure
+        .input(z.object({
+          event: z.string(),
+          contactId: z.number().optional(),
+          dealId: z.number().optional(),
+          data: z.record(z.any()).optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { executePipelineAutomation } = await import("./b2bSalesAutomation");
+          return executePipelineAutomation(input.event, {
+            contactId: input.contactId,
+            dealId: input.dealId,
+            ...input.data,
+          });
+        }),
+    }),
+
+    // --- Sales Tasks ---
+    tasks: router({
+      list: protectedProcedure
+        .input(z.object({
+          assignedTo: z.number().optional(),
+          status: z.string().optional(),
+          taskType: z.string().optional(),
+          priority: z.string().optional(),
+        }).optional())
+        .query(async ({ input }) => {
+          const database = await db.getDb();
+          if (!database) return [];
+          const { salesTasks, crmContacts } = await import("../drizzle/schema");
+          const conditions = [];
+          if (input?.status) conditions.push(eq(salesTasks.status, input.status as any));
+          if (input?.taskType) conditions.push(eq(salesTasks.taskType, input.taskType as any));
+          if (input?.priority) conditions.push(eq(salesTasks.priority, input.priority as any));
+          if (input?.assignedTo) conditions.push(eq(salesTasks.assignedTo, input.assignedTo));
+
+          return database
+            .select({
+              task: salesTasks,
+              contactName: sql<string>`CONCAT(COALESCE(${crmContacts.firstName}, ''), ' ', COALESCE(${crmContacts.lastName}, ''))`,
+              contactEmail: crmContacts.email,
+            })
+            .from(salesTasks)
+            .leftJoin(crmContacts, eq(salesTasks.contactId, crmContacts.id))
+            .where(conditions.length > 0 ? and(...conditions) : undefined)
+            .orderBy(asc(salesTasks.dueAt));
+        }),
+
+      complete: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          outcome: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const database = await db.getDb();
+          if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+          const { salesTasks } = await import("../drizzle/schema");
+          await database.update(salesTasks).set({
+            status: "completed",
+            completedAt: new Date(),
+            outcome: input.outcome,
+            notes: input.notes,
+          }).where(eq(salesTasks.id, input.id));
+          return { success: true };
+        }),
+
+      create: protectedProcedure
+        .input(z.object({
+          contactId: z.number().optional(),
+          dealId: z.number().optional(),
+          assignedTo: z.number().optional(),
+          title: z.string(),
+          description: z.string().optional(),
+          taskType: z.enum(["call", "email", "meeting", "follow_up", "proposal", "demo", "contract_review", "onboarding", "other"]).optional(),
+          priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
+          dueAt: z.date().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const database = await db.getDb();
+          if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+          const { salesTasks } = await import("../drizzle/schema");
+          const [result] = await database.insert(salesTasks).values({
+            ...input,
+            source: "manual",
+          }).$returningId();
+          return { id: result.id };
+        }),
+    }),
+
+    // --- Forecasting ---
+    forecast: protectedProcedure
+      .input(z.object({
+        periodType: z.enum(["week", "month", "quarter"]),
+      }))
+      .mutation(async ({ input }) => {
+        const { generateSalesForecast } = await import("./b2bSalesAutomation");
+        return generateSalesForecast(input.periodType);
+      }),
+
+    forecastHistory: protectedProcedure
+      .input(z.object({
+        periodType: z.string().optional(),
+        limit: z.number().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) return [];
+        const { salesForecasts } = await import("../drizzle/schema");
+        const conditions = [];
+        if (input?.periodType) conditions.push(eq(salesForecasts.periodType, input.periodType as any));
+        return database.select().from(salesForecasts)
+          .where(conditions.length > 0 ? and(...conditions) : undefined)
+          .orderBy(desc(salesForecasts.snapshotDate))
+          .limit(input?.limit || 10);
+      }),
+
+    // --- Deal Conversion ---
+    convertToDeal: protectedProcedure
+      .input(z.object({ contactId: z.number() }))
+      .mutation(async ({ input }) => {
+        const { convertLeadToCustomer } = await import("./b2bSalesAutomation");
+        return convertLeadToCustomer(input.contactId);
+      }),
+
+    createOrderFromDeal: protectedProcedure
+      .input(z.object({ dealId: z.number() }))
+      .mutation(async ({ input }) => {
+        const { createSalesOrderFromDeal } = await import("./b2bSalesAutomation");
+        return createSalesOrderFromDeal(input.dealId);
+      }),
   }),
 
   // ============================================

@@ -29,6 +29,7 @@ import SalesHub from "./pages/sales/SalesHub";
 import CRMDashboard from "./pages/sales/CRMDashboard";
 import CRMInvestors from "./pages/sales/CRMInvestors";
 import FundraisingCampaigns from "./pages/sales/FundraisingCampaigns";
+import B2BSalesAutomation from "./pages/sales/B2BSalesAutomation";
 
 // CRM
 import CRMHub from "./pages/crm/CRMHub";
@@ -153,6 +154,7 @@ function Router() {
         <Route path="/crm" component={CRMDashboard} />
         <Route path="/crm/investors" component={CRMInvestors} />
         <Route path="/crm/campaigns" component={FundraisingCampaigns} />
+        <Route path="/sales/automation" component={B2BSalesAutomation} />
 
         {/* CRM */}
         <Route path="/crm" component={CRMHub} />
