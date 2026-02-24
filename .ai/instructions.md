@@ -18,7 +18,7 @@ AI-native ERP system for a CPG (Consumer Packaged Goods) company. Manages financ
 - **Testing**: Vitest (server-side tests in `server/**/*.test.ts`)
 - **Package Manager**: pnpm (do NOT use npm or yarn)
 - **Module System**: ESM (`"type": "module"` in package.json)
-- **Formatting**: Prettier
+- **Formatting**: Prettier (semicolons, double quotes, trailing commas es5, 80 char width, 2-space indent, avoid arrow parens)
 
 ## Project Structure
 
