@@ -109,6 +109,7 @@ import DataRoomPublic from "./pages/DataRoomPublic";
 
 // AI Agent
 import ApprovalQueue from "./pages/ai/ApprovalQueue";
+import PhoneCalls from "./pages/ai/PhoneCalls";
 
 // Autonomous Supply Chain
 import AutonomousDashboard from "./pages/autonomous/Dashboard";
@@ -124,6 +125,7 @@ function Router() {
         <Route path="/" component={Home} />
         <Route path="/ai" component={AIAssistant} />
         <Route path="/ai/approvals" component={ApprovalQueue} />
+        <Route path="/ai/phone-calls" component={PhoneCalls} />
         <Route path="/search" component={GlobalSearch} />
 
         {/* Autonomous Supply Chain */}

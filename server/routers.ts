@@ -4143,7 +4143,7 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
       
       create: protectedProcedure
         .input(z.object({
-          taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query', 'reply_email', 'approve_po', 'approve_invoice', 'create_vendor', 'create_material', 'create_product', 'create_bom', 'create_customer']),
+          taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query', 'reply_email', 'approve_po', 'approve_invoice', 'create_vendor', 'create_material', 'create_product', 'create_bom', 'create_customer', 'phone_call']),
           priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
           taskData: z.string(), // JSON string with task-specific data
           aiReasoning: z.string().optional(),
@@ -13661,6 +13661,129 @@ Ask if they received the original request and if they can provide a quote.`;
 
         return { taskId: taskResult.id };
       }),
+  }),
+
+  // ============================================
+  // AI PHONE CALLS
+  // ============================================
+  phoneCalls: router({
+    // List phone calls
+    list: protectedProcedure
+      .input(z.object({
+        status: z.string().optional(),
+        callType: z.string().optional(),
+        targetCompany: z.string().optional(),
+        limit: z.number().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const { getPhoneCalls: getCallsFn } = await import("./aiPhoneCallService");
+        return getCallsFn(input);
+      }),
+
+    // Get a specific call with its logs
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const { getPhoneCallById: getCallFn } = await import("./aiPhoneCallService");
+        const call = await getCallFn(input.id);
+        if (!call) throw new TRPCError({ code: 'NOT_FOUND', message: 'Phone call not found' });
+        return call;
+      }),
+
+    // Get phone call statistics
+    stats: protectedProcedure.query(async () => {
+      const { getPhoneCallStats: getStatsFn } = await import("./aiPhoneCallService");
+      return getStatsFn();
+    }),
+
+    // Create a new phone call
+    create: protectedProcedure
+      .input(z.object({
+        callType: z.enum([
+          'vendor_complaint', 'shipping_inquiry', 'order_status', 'billing_dispute',
+          'return_request', 'account_inquiry', 'service_cancellation', 'delivery_reschedule',
+          'price_negotiation', 'general_inquiry', 'claims_filing', 'payment_followup',
+        ]),
+        targetCompany: z.string(),
+        targetPhoneNumber: z.string().optional(),
+        targetDepartment: z.string().optional(),
+        subject: z.string(),
+        objective: z.string(),
+        context: z.string().optional(), // JSON string
+        priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
+        vendorId: z.number().optional(),
+        customerId: z.number().optional(),
+        shipmentId: z.number().optional(),
+        orderId: z.number().optional(),
+        playbookId: z.string().optional(),
+        scheduledFor: z.date().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { createPhoneCall: createCallFn } = await import("./aiPhoneCallService");
+        return createCallFn({
+          ...input,
+          context: input.context ? JSON.parse(input.context) : undefined,
+          requiresApproval: true,
+          createdBy: ctx.user.id,
+        });
+      }),
+
+    // Approve a phone call
+    approve: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const { approvePhoneCall: approveFn } = await import("./aiPhoneCallService");
+        await approveFn(input.id, ctx.user.id);
+        return { success: true };
+      }),
+
+    // Reject a phone call
+    reject: protectedProcedure
+      .input(z.object({ id: z.number(), reason: z.string().optional() }))
+      .mutation(async ({ input, ctx }) => {
+        const { rejectPhoneCall: rejectFn } = await import("./aiPhoneCallService");
+        await rejectFn(input.id, ctx.user.id, input.reason);
+        return { success: true };
+      }),
+
+    // Execute (start) a phone call
+    execute: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        const { executePhoneCall: executeFn } = await import("./aiPhoneCallService");
+        return executeFn(input.id);
+      }),
+
+    // Cancel a phone call
+    cancel: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        const { cancelPhoneCall: cancelFn } = await import("./aiPhoneCallService");
+        await cancelFn(input.id);
+        return { success: true };
+      }),
+
+    // Playbooks
+    playbooks: router({
+      list: protectedProcedure.query(async () => {
+        const { getPlaybooks: getPlaybooksFn } = await import("./aiPhoneCallService");
+        return getPlaybooksFn();
+      }),
+
+      get: protectedProcedure
+        .input(z.object({ key: z.string() }))
+        .query(async ({ input }) => {
+          const { getPlaybookByKey: getPlaybookFn } = await import("./aiPhoneCallService");
+          const playbook = await getPlaybookFn(input.key);
+          if (!playbook) throw new TRPCError({ code: 'NOT_FOUND', message: 'Playbook not found' });
+          return playbook;
+        }),
+
+      seed: adminProcedure.mutation(async () => {
+        const { seedPlaybooks: seedFn } = await import("./phoneCallPlaybooks");
+        return seedFn();
+      }),
+    }),
   }),
 });
 

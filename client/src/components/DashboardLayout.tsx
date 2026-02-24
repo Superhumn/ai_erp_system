@@ -69,6 +69,7 @@ import {
   Heart,
   Mic,
   BookOpen,
+  Phone,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -91,6 +92,7 @@ const menuGroups = [
       { icon: LayoutDashboard, label: "Dashboard", path: "/" },
       { icon: Bot, label: "AI Assistant", path: "/ai" },
       { icon: ClipboardList, label: "Approval Queue", path: "/ai/approvals" },
+      { icon: Phone, label: "AI Phone Calls", path: "/ai/phone-calls" },
     ],
   },
   {

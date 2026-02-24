@@ -33,6 +33,10 @@ export const ENV = {
   shopifyClientId: process.env.SHOPIFY_CLIENT_ID ?? "",
   shopifyClientSecret: process.env.SHOPIFY_CLIENT_SECRET ?? "",
   shopifyRedirectUri: process.env.SHOPIFY_REDIRECT_URI ?? "",
+  // Twilio configuration for AI phone calls
+  twilioAccountSid: process.env.TWILIO_ACCOUNT_SID ?? "",
+  twilioAuthToken: process.env.TWILIO_AUTH_TOKEN ?? "",
+  twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER ?? "", // Your Twilio phone number e.g. +15551234567
 };
 
 /**

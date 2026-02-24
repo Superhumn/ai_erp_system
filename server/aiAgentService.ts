@@ -1,6 +1,7 @@
 import { invokeLLM, Tool, Message } from "./_core/llm";
 import { getDb } from "./db";
 import { sendEmail, formatEmailHtml } from "./_core/email";
+import { createPhoneCall, getPhoneCalls, getPhoneCallById, getPhoneCallStats, getPlaybooks } from "./aiPhoneCallService";
 import {
   vendors,
   customers,
@@ -395,6 +396,86 @@ const AI_TOOLS: Tool[] = [
           requiresApproval: { type: "boolean" },
         },
         required: ["taskType", "description", "taskData"],
+      },
+    },
+  },
+  // Phone Call Tools
+  {
+    type: "function",
+    function: {
+      name: "make_phone_call",
+      description: "Initiate an AI-powered phone call to a vendor, carrier, or service provider. The AI agent will autonomously navigate IVR menus, speak with representatives, and work to resolve the issue. Common uses: filing shipping claims with UPS/FedEx, checking order status, resolving billing disputes, following up on service requests.",
+      parameters: {
+        type: "object",
+        properties: {
+          callType: {
+            type: "string",
+            enum: [
+              "vendor_complaint",
+              "shipping_inquiry",
+              "order_status",
+              "billing_dispute",
+              "return_request",
+              "account_inquiry",
+              "service_cancellation",
+              "delivery_reschedule",
+              "price_negotiation",
+              "general_inquiry",
+              "claims_filing",
+              "payment_followup",
+            ],
+            description: "Type of phone call to make",
+          },
+          targetCompany: {
+            type: "string",
+            description: "Company to call (e.g., 'UPS', 'FedEx', 'Amazon Seller Support')",
+          },
+          targetPhoneNumber: {
+            type: "string",
+            description: "Phone number to call (optional if playbook exists for the company)",
+          },
+          subject: {
+            type: "string",
+            description: "Brief subject of the call",
+          },
+          objective: {
+            type: "string",
+            description: "What the AI agent should accomplish on this call",
+          },
+          context: {
+            type: "object",
+            description: "Additional context like tracking numbers, account numbers, order IDs",
+          },
+          priority: {
+            type: "string",
+            enum: ["low", "medium", "high", "urgent"],
+          },
+          vendorId: { type: "number", description: "Related vendor ID" },
+          shipmentId: { type: "number", description: "Related shipment ID" },
+          orderId: { type: "number", description: "Related order ID" },
+        },
+        required: ["callType", "targetCompany", "subject", "objective"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "check_phone_calls",
+      description: "Check the status of AI phone calls, view recent calls, or get phone call statistics",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["list_recent", "get_call", "get_stats", "list_playbooks"],
+            description: "What to check",
+          },
+          callId: { type: "number", description: "Specific call ID to look up" },
+          status: { type: "string", description: "Filter by status" },
+          targetCompany: { type: "string", description: "Filter by company" },
+        },
+        required: ["action"],
       },
     },
   },
@@ -1196,6 +1277,81 @@ async function executeCreateTask(params: any, ctx: AIAgentContext): Promise<any>
 }
 
 // ============================================
+// PHONE CALL EXECUTION FUNCTIONS
+// ============================================
+
+async function executeMakePhoneCall(params: any, ctx: AIAgentContext): Promise<any> {
+  const result = await createPhoneCall({
+    callType: params.callType,
+    targetCompany: params.targetCompany,
+    targetPhoneNumber: params.targetPhoneNumber,
+    subject: params.subject,
+    objective: params.objective,
+    context: params.context,
+    priority: params.priority,
+    vendorId: params.vendorId,
+    shipmentId: params.shipmentId,
+    orderId: params.orderId,
+    requiresApproval: true,
+    createdBy: ctx.userId,
+  });
+
+  return result;
+}
+
+async function executeCheckPhoneCalls(params: any, ctx: AIAgentContext): Promise<any> {
+  const { action, callId, status, targetCompany } = params;
+
+  switch (action) {
+    case "list_recent": {
+      const calls = await getPhoneCalls({ status, targetCompany, limit: 20 });
+      return {
+        calls: calls.map((c: any) => ({
+          id: c.id,
+          callNumber: c.callNumber,
+          targetCompany: c.targetCompany,
+          subject: c.subject,
+          status: c.status,
+          outcome: c.outcome,
+          createdAt: c.createdAt,
+          durationSeconds: c.durationSeconds,
+        })),
+        total: calls.length,
+      };
+    }
+
+    case "get_call": {
+      if (!callId) throw new Error("Call ID required");
+      const call = await getPhoneCallById(callId);
+      if (!call) throw new Error("Call not found");
+      return call;
+    }
+
+    case "get_stats": {
+      return getPhoneCallStats();
+    }
+
+    case "list_playbooks": {
+      const playbooks = await getPlaybooks();
+      return {
+        playbooks: playbooks.map((p: any) => ({
+          key: p.playbookKey,
+          name: p.name,
+          targetCompany: p.targetCompany,
+          department: p.department,
+          phoneNumber: p.phoneNumber,
+          description: p.description,
+        })),
+        total: playbooks.length,
+      };
+    }
+
+    default:
+      throw new Error(`Unknown phone call action: ${action}`);
+  }
+}
+
+// ============================================
 // TOOL EXECUTION DISPATCHER
 // ============================================
 
@@ -1227,6 +1383,10 @@ async function executeTool(toolName: string, params: any, ctx: AIAgentContext): 
       return executeGenerateReport(params, ctx);
     case "create_task":
       return executeCreateTask(params, ctx);
+    case "make_phone_call":
+      return executeMakePhoneCall(params, ctx);
+    case "check_phone_calls":
+      return executeCheckPhoneCalls(params, ctx);
     default:
       throw new Error(`Unknown tool: ${toolName}`);
   }
@@ -1274,6 +1434,16 @@ export async function processAIAgentRequest(
 9. **Generate Reports**: Create various business reports.
 
 10. **Create Tasks**: Create tasks that require approval before execution.
+
+11. **Make Phone Calls**: Initiate AI-powered phone calls to vendors, carriers, and service providers. The AI agent can autonomously navigate phone menus (IVR), speak with customer service representatives, file complaints, track shipments, and resolve issues. Common scenarios include:
+    - Filing shipping claims with UPS, FedEx, USPS, DHL
+    - Checking order/delivery status
+    - Resolving billing disputes
+    - Following up on service requests
+    - Filing insurance claims
+    - Negotiating with vendors
+
+12. **Check Phone Call Status**: View recent calls, check call outcomes, and review transcripts.
 
 Current System Status:
 - Vendors: ${vendorCount[0]?.count || 0}

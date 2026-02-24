@@ -2909,7 +2909,8 @@ export const aiAgentTasks = mysqlTable("aiAgentTasks", {
     "create_material",
     "create_product",
     "create_bom",
-    "create_customer"
+    "create_customer",
+    "phone_call"
   ]).notNull(),
   status: mysqlEnum("status", [
     "pending_approval",
@@ -4471,3 +4472,190 @@ export const copackerShippingDocuments = mysqlTable("copacker_shipping_documents
 
 export type CopackerShippingDocument = typeof copackerShippingDocuments.$inferSelect;
 export type InsertCopackerShippingDocument = typeof copackerShippingDocuments.$inferInsert;
+
+// ============================================
+// AI PHONE CALLS - Autonomous phone call handling
+// ============================================
+
+export const aiPhoneCalls = mysqlTable("ai_phone_calls", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  // Call identification
+  callSid: varchar("callSid", { length: 64 }), // Twilio Call SID
+  callNumber: varchar("callNumber", { length: 32 }), // Internal reference e.g. CALL-001
+  // Call type and purpose
+  callType: mysqlEnum("callType", [
+    "vendor_complaint",
+    "shipping_inquiry",
+    "order_status",
+    "billing_dispute",
+    "return_request",
+    "account_inquiry",
+    "service_cancellation",
+    "delivery_reschedule",
+    "price_negotiation",
+    "general_inquiry",
+    "claims_filing",
+    "payment_followup",
+  ]).notNull(),
+  direction: mysqlEnum("direction", ["outbound", "inbound"]).default("outbound").notNull(),
+  status: mysqlEnum("status", [
+    "queued",
+    "preparing",
+    "in_progress",
+    "on_hold",
+    "completed",
+    "failed",
+    "cancelled",
+    "requires_human",
+  ]).default("queued").notNull(),
+  priority: mysqlEnum("callPriority", ["low", "medium", "high", "urgent"]).default("medium").notNull(),
+  // Who we're calling
+  targetCompany: varchar("targetCompany", { length: 255 }).notNull(), // e.g. "UPS", "FedEx"
+  targetPhoneNumber: varchar("targetPhoneNumber", { length: 32 }),
+  targetDepartment: varchar("targetDepartment", { length: 128 }), // e.g. "Claims Department"
+  // What the call is about
+  subject: varchar("subject", { length: 500 }).notNull(),
+  objective: text("objective").notNull(), // What the AI needs to accomplish
+  context: text("context"), // Background info the AI should know (JSON)
+  // Related entities
+  relatedEntityType: varchar("relatedEntityType", { length: 50 }), // "shipment", "purchaseOrder", "vendor", etc.
+  relatedEntityId: int("relatedEntityId"),
+  vendorId: int("vendorId"),
+  customerId: int("customerId"),
+  shipmentId: int("shipmentId"),
+  orderId: int("orderId"),
+  // Call script & playbook
+  playbookId: varchar("playbookId", { length: 64 }), // Reference to which playbook to use
+  callScript: text("callScript"), // AI-generated or manual call script (JSON)
+  requiredInfo: text("requiredInfo"), // Info the AI needs to gather (JSON array)
+  // Call execution details
+  fromPhoneNumber: varchar("fromPhoneNumber", { length: 32 }),
+  startedAt: timestamp("startedAt"),
+  endedAt: timestamp("endedAt"),
+  durationSeconds: int("durationSeconds"),
+  // IVR navigation
+  ivrPath: text("ivrPath"), // Path taken through IVR menus (JSON array)
+  menuSelections: text("menuSelections"), // IVR selections made (JSON)
+  waitTimeSeconds: int("waitTimeSeconds"), // Time spent on hold
+  // AI performance
+  aiConfidence: decimal("aiConfidence", { precision: 5, scale: 2 }),
+  objectiveCompleted: boolean("objectiveCompleted").default(false),
+  // Results
+  outcome: mysqlEnum("outcome", [
+    "resolved",
+    "partial_resolution",
+    "escalated_to_human",
+    "callback_scheduled",
+    "needs_followup",
+    "failed",
+    "voicemail_left",
+  ]),
+  resolution: text("resolution"), // Summary of what was accomplished
+  referenceNumber: varchar("referenceNumber", { length: 128 }), // Case/ticket number from vendor
+  callbackDate: timestamp("callbackDate"),
+  followupActions: text("followupActions"), // JSON array of followup items
+  // Transcript
+  recordingUrl: text("recordingUrl"),
+  transcriptUrl: text("transcriptUrl"),
+  transcript: text("transcript"), // Full call transcript
+  transcriptSummary: text("transcriptSummary"), // AI-generated summary
+  // Approval
+  requiresApproval: boolean("requiresApproval").default(true).notNull(),
+  approvedBy: int("approvedBy"),
+  approvedAt: timestamp("approvedAt"),
+  rejectedBy: int("rejectedBy"),
+  rejectedAt: timestamp("rejectedAt"),
+  rejectionReason: text("rejectionReason"),
+  // Cost tracking
+  callCost: decimal("callCost", { precision: 8, scale: 4 }),
+  aiTokensUsed: int("aiTokensUsed"),
+  // Retry logic
+  retryCount: int("retryCount").default(0),
+  maxRetries: int("maxRetries").default(3),
+  lastError: text("lastError"),
+  // Scheduling
+  scheduledFor: timestamp("scheduledFor"),
+  // Audit
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type AiPhoneCall = typeof aiPhoneCalls.$inferSelect;
+export type InsertAiPhoneCall = typeof aiPhoneCalls.$inferInsert;
+
+// Phone call event log - tracks every step of a call
+export const aiPhoneCallLogs = mysqlTable("ai_phone_call_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  phoneCallId: int("phoneCallId").notNull(),
+  // Event details
+  eventType: mysqlEnum("eventType", [
+    "call_queued",
+    "call_preparing",
+    "call_started",
+    "ivr_navigation",
+    "agent_connected",
+    "ai_speaking",
+    "ai_listening",
+    "info_gathered",
+    "on_hold",
+    "transferred",
+    "objective_progress",
+    "call_ended",
+    "transcript_ready",
+    "error",
+    "human_takeover",
+  ]).notNull(),
+  status: mysqlEnum("logStatus", ["info", "success", "warning", "error"]).default("info").notNull(),
+  message: text("message").notNull(),
+  details: text("details"), // JSON with event-specific data
+  // Timing
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
+  durationMs: int("durationMs"),
+  // AI state
+  aiConfidence: decimal("logAiConfidence", { precision: 5, scale: 2 }),
+  tokensUsed: int("tokensUsed"),
+});
+
+export type AiPhoneCallLog = typeof aiPhoneCallLogs.$inferSelect;
+export type InsertAiPhoneCallLog = typeof aiPhoneCallLogs.$inferInsert;
+
+// Phone call playbooks - templates for common call scenarios
+export const aiPhoneCallPlaybooks = mysqlTable("ai_phone_call_playbooks", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  // Playbook identification
+  playbookKey: varchar("playbookKey", { length: 64 }).notNull(), // e.g. "ups_claim", "fedex_trace"
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  // Target company info
+  targetCompany: varchar("targetCompany", { length: 255 }).notNull(),
+  phoneNumber: varchar("phoneNumber", { length: 32 }),
+  department: varchar("department", { length: 128 }),
+  operatingHours: varchar("operatingHours", { length: 255 }), // e.g. "Mon-Fri 8am-8pm EST"
+  // IVR navigation guide
+  ivrInstructions: text("ivrInstructions"), // JSON: step-by-step IVR menu navigation
+  // Call script template
+  openingScript: text("openingScript"),
+  objectivePrompts: text("objectivePrompts"), // JSON: prompts for different objectives
+  closingScript: text("closingScript"),
+  // Required information for the call
+  requiredAccountInfo: text("requiredAccountInfo"), // JSON: what account info is needed
+  typicalQuestions: text("typicalQuestions"), // JSON: questions the agent typically asks
+  // Escalation rules
+  escalationTriggers: text("escalationTriggers"), // JSON: when to hand off to human
+  maxCallDuration: int("maxCallDuration"), // Max seconds before auto-escalation
+  // Performance
+  avgCallDuration: int("avgCallDuration"),
+  successRate: decimal("successRate", { precision: 5, scale: 2 }),
+  totalCalls: int("totalCalls").default(0),
+  // Status
+  isActive: boolean("isActive").default(true).notNull(),
+  // Audit
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type AiPhoneCallPlaybook = typeof aiPhoneCallPlaybooks.$inferSelect;
+export type InsertAiPhoneCallPlaybook = typeof aiPhoneCallPlaybooks.$inferInsert;
