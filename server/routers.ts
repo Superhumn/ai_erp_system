@@ -13115,6 +13115,83 @@ Ask if they received the original request and if they can provide a quote.`;
   }),
 
   // ============================================
+  // LINKEDIN SEARCH
+  // ============================================
+  linkedinSearch: router({
+    // Execute a new LinkedIn search
+    search: protectedProcedure
+      .input(z.object({
+        purpose: z.enum(["hiring", "investor", "sales_prospect"]),
+        keywords: z.string().min(1),
+        jobTitle: z.string().optional(),
+        company: z.string().optional(),
+        industry: z.string().optional(),
+        location: z.string().optional(),
+        country: z.string().optional(),
+        seniority: z.string().optional(),
+        limit: z.number().min(1).max(30).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { searchLinkedIn } = await import("./linkedinSearchService");
+        const result = await searchLinkedIn(input, ctx.user.id);
+        await createAuditLog(ctx.user.id, 'create', 'linkedin_search', result.searchId, `LinkedIn search: ${input.keywords}`);
+        return result;
+      }),
+
+    // List past searches
+    listSearches: protectedProcedure
+      .query(async ({ ctx }) => {
+        return db.getLinkedInSearches(ctx.user.id);
+      }),
+
+    // Get a specific search with its results
+    getSearch: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const search = await db.getLinkedInSearchById(input.id);
+        if (!search) return null;
+        const results = await db.getLinkedInSearchResults(input.id);
+        return {
+          ...search,
+          results: results.map(r => ({
+            ...r,
+            enrichedData: r.enrichedData ? JSON.parse(r.enrichedData) : null,
+          })),
+        };
+      }),
+
+    // Export selected results to CRM contacts
+    exportToCRM: protectedProcedure
+      .input(z.object({
+        resultIds: z.array(z.number()).min(1),
+        contactType: z.enum(["lead", "prospect", "customer", "partner", "investor", "donor", "vendor", "other"]).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { exportResultsToCRM } = await import("./linkedinSearchService");
+        const result = await exportResultsToCRM(
+          input.resultIds,
+          ctx.user.id,
+          input.contactType || "lead"
+        );
+        await createAuditLog(ctx.user.id, 'create', 'linkedin_crm_export', 0, `Exported ${result.imported} LinkedIn results to CRM`);
+        return result;
+      }),
+
+    // Update a search result (e.g., add notes, dismiss)
+    updateResult: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        status: z.enum(["new", "saved", "exported_to_crm", "already_in_crm", "dismissed"]).optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        await db.updateLinkedInSearchResult(id, data);
+        return { success: true };
+      }),
+  }),
+
+  // ============================================
   // FIREFLIES.AI INTEGRATION
   // ============================================
   fireflies: router({

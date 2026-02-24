@@ -4471,3 +4471,51 @@ export const copackerShippingDocuments = mysqlTable("copacker_shipping_documents
 
 export type CopackerShippingDocument = typeof copackerShippingDocuments.$inferSelect;
 export type InsertCopackerShippingDocument = typeof copackerShippingDocuments.$inferInsert;
+
+// ============================================
+// LINKEDIN SEARCH
+// ============================================
+
+export const linkedinSearches = mysqlTable("linkedin_searches", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  purpose: mysqlEnum("purpose", ["hiring", "investor", "sales_prospect"]).notNull(),
+  keywords: varchar("keywords", { length: 500 }).notNull(),
+  jobTitle: varchar("jobTitle", { length: 255 }),
+  company: varchar("company", { length: 255 }),
+  industry: varchar("industry", { length: 255 }),
+  location: varchar("location", { length: 255 }),
+  country: varchar("country", { length: 128 }),
+  seniority: varchar("seniority", { length: 128 }),
+  searchQuery: text("searchQuery").notNull(),
+  resultCount: int("resultCount").default(0).notNull(),
+  status: mysqlEnum("status", ["processing", "completed", "failed"]).default("processing").notNull(),
+  errorMessage: text("errorMessage"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type LinkedinSearch = typeof linkedinSearches.$inferSelect;
+export type InsertLinkedinSearch = typeof linkedinSearches.$inferInsert;
+
+export const linkedinSearchResults = mysqlTable("linkedin_search_results", {
+  id: int("id").autoincrement().primaryKey(),
+  searchId: int("searchId").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  headline: varchar("headline", { length: 500 }),
+  profileUrl: varchar("profileUrl", { length: 512 }).notNull(),
+  snippet: text("snippet"),
+  location: varchar("location", { length: 255 }),
+  company: varchar("company", { length: 255 }),
+  jobTitle: varchar("jobTitle", { length: 255 }),
+  industry: varchar("industry", { length: 255 }),
+  relevanceScore: int("relevanceScore").default(0),
+  enrichedData: text("enrichedData"), // JSON
+  status: mysqlEnum("status", ["new", "saved", "exported_to_crm", "already_in_crm", "dismissed"]).default("new").notNull(),
+  crmContactId: int("crmContactId"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type LinkedinSearchResult = typeof linkedinSearchResults.$inferSelect;
+export type InsertLinkedinSearchResult = typeof linkedinSearchResults.$inferInsert;

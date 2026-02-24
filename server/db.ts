@@ -93,7 +93,10 @@ import {
   InsertFirefliesMeeting, InsertFirefliesActionItem, InsertFirefliesContactMapping,
   // Copacker portal
   copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
-  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument
+  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
+  // LinkedIn search
+  linkedinSearches, linkedinSearchResults,
+  InsertLinkedinSearch, InsertLinkedinSearchResult
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8333,5 +8336,74 @@ export async function getProductByName(name: string) {
   const db = await getDb();
   if (!db) return null;
   const results = await db.select().from(products).where(sql`LOWER(${products.name}) = LOWER(${name})`).limit(1);
+  return results[0] || null;
+}
+
+// ============================================
+// LINKEDIN SEARCH
+// ============================================
+
+export async function createLinkedInSearch(data: InsertLinkedinSearch): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(linkedinSearches).values(data).$returningId();
+  return result.id;
+}
+
+export async function updateLinkedInSearch(id: number, data: Partial<InsertLinkedinSearch>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(linkedinSearches).set(data).where(eq(linkedinSearches.id, id));
+}
+
+export async function getLinkedInSearches(userId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = userId ? [eq(linkedinSearches.userId, userId)] : [];
+  return db.select().from(linkedinSearches)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(linkedinSearches.createdAt))
+    .limit(50);
+}
+
+export async function getLinkedInSearchById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(linkedinSearches).where(eq(linkedinSearches.id, id)).limit(1);
+  return results[0] || null;
+}
+
+export async function createLinkedInSearchResult(data: InsertLinkedinSearchResult): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(linkedinSearchResults).values(data).$returningId();
+  return result.id;
+}
+
+export async function getLinkedInSearchResults(searchId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(linkedinSearchResults)
+    .where(eq(linkedinSearchResults.searchId, searchId))
+    .orderBy(desc(linkedinSearchResults.relevanceScore));
+}
+
+export async function getLinkedInSearchResult(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(linkedinSearchResults).where(eq(linkedinSearchResults.id, id)).limit(1);
+  return results[0] || null;
+}
+
+export async function updateLinkedInSearchResult(id: number, data: Partial<InsertLinkedinSearchResult>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(linkedinSearchResults).set(data).where(eq(linkedinSearchResults.id, id));
+}
+
+export async function getCrmContactByLinkedInUrl(linkedinUrl: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(crmContacts).where(eq(crmContacts.linkedinUrl, linkedinUrl)).limit(1);
   return results[0] || null;
 }

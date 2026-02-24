@@ -100,6 +100,7 @@ const menuGroups = [
       { icon: Heart, label: "Fundraising CRM", path: "/crm" },
       { icon: Users, label: "Investors", path: "/crm/investors" },
       { icon: Target, label: "Campaigns", path: "/crm/campaigns" },
+      { icon: Search, label: "LinkedIn Search", path: "/crm/linkedin-search" },
       { icon: DollarSign, label: "Accounts", path: "/finance/accounts" },
       { icon: TrendingUp, label: "Transactions", path: "/finance/transactions" },
     ],
