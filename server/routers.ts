@@ -653,13 +653,53 @@ export const appRouter = router({
         const { items, ...invoiceData } = input;
         const invoiceNumber = generateNumber('INV');
         const result = await db.createInvoice({ ...invoiceData, invoiceNumber, createdBy: ctx.user.id });
-        
+
         if (items && items.length > 0) {
           for (const item of items) {
             await db.createInvoiceItem({ ...item, invoiceId: result.id });
           }
         }
-        
+
+        // Auto-post GL journal entry: Debit AR, Credit Revenue (+ tax if applicable)
+        if (input.type !== 'quote') {
+          try {
+            const defaultAccounts = await db.ensureDefaultAccounts(input.companyId);
+            const totalAmount = parseFloat(input.totalAmount);
+            const taxAmount = parseFloat(input.taxAmount || '0');
+            const discountAmount = parseFloat(input.discountAmount || '0');
+            const revenueAmount = totalAmount - taxAmount + discountAmount;
+
+            const lines: Array<{ accountId: number; debit: string; credit: string; description?: string }> = [
+              { accountId: defaultAccounts.accounts_receivable, debit: totalAmount.toFixed(2), credit: '0.00', description: `AR for ${invoiceNumber}` },
+              { accountId: defaultAccounts.revenue, debit: '0.00', credit: revenueAmount.toFixed(2), description: `Revenue for ${invoiceNumber}` },
+            ];
+            if (taxAmount > 0) {
+              lines.push({ accountId: defaultAccounts.sales_tax_payable, debit: '0.00', credit: taxAmount.toFixed(2), description: `Tax for ${invoiceNumber}` });
+            }
+            if (discountAmount > 0) {
+              lines.push({ accountId: defaultAccounts.sales_discounts, debit: discountAmount.toFixed(2), credit: '0.00', description: `Discount for ${invoiceNumber}` });
+            }
+
+            await db.createTransactionWithLines({
+              companyId: input.companyId,
+              transactionNumber: generateNumber('TXN'),
+              type: 'invoice',
+              referenceType: 'invoice',
+              referenceId: result.id,
+              date: input.issueDate,
+              description: `Invoice ${invoiceNumber} created`,
+              totalAmount: totalAmount.toFixed(2),
+              currency: input.currency || 'USD',
+              status: 'posted',
+              createdBy: ctx.user.id,
+              postedBy: ctx.user.id,
+              postedAt: new Date(),
+            }, lines);
+          } catch (err) {
+            console.warn('[GL Auto-Post] Failed to post invoice journal entry:', err);
+          }
+        }
+
         await createAuditLog(ctx.user.id, 'create', 'invoice', result.id, invoiceNumber);
         return result;
       }),
@@ -967,10 +1007,36 @@ export const appRouter = router({
           status: newStatus,
         });
         
+        // Auto-post GL journal entry: Debit Cash, Credit AR
+        try {
+          const defaultAccounts = await db.ensureDefaultAccounts(invoice.companyId);
+          const amount = parseFloat(input.amount);
+          await db.createTransactionWithLines({
+            companyId: invoice.companyId,
+            transactionNumber: generateNumber('TXN'),
+            type: 'payment',
+            referenceType: 'payment',
+            referenceId: paymentResult.id,
+            date: new Date(),
+            description: `Payment received for invoice ${invoice.invoiceNumber}`,
+            totalAmount: amount.toFixed(2),
+            currency: invoice.currency || 'USD',
+            status: 'posted',
+            createdBy: ctx.user.id,
+            postedBy: ctx.user.id,
+            postedAt: new Date(),
+          }, [
+            { accountId: defaultAccounts.cash, debit: amount.toFixed(2), credit: '0.00', description: `Cash received for ${invoice.invoiceNumber}` },
+            { accountId: defaultAccounts.accounts_receivable, debit: '0.00', credit: amount.toFixed(2), description: `AR cleared for ${invoice.invoiceNumber}` },
+          ]);
+        } catch (err) {
+          console.warn('[GL Auto-Post] Failed to post recordPayment journal entry:', err);
+        }
+
         await createAuditLog(ctx.user.id, 'update', 'invoice', input.invoiceId, `Payment recorded: ${input.amount}`);
-        
-        return { 
-          success: true, 
+
+        return {
+          success: true,
           paymentId: paymentResult.id,
           newStatus,
           totalPaid: totalPaid.toString(),
@@ -1010,7 +1076,7 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         const paymentNumber = generateNumber('PAY');
         const result = await db.createPayment({ ...input, paymentNumber, createdBy: ctx.user.id });
-        
+
         // Update invoice paid amount if linked
         if (input.invoiceId) {
           const invoice = await db.getInvoiceById(input.invoiceId);
@@ -1020,7 +1086,46 @@ export const appRouter = router({
             await db.updateInvoice(input.invoiceId, { paidAmount: newPaidAmount, status: newStatus });
           }
         }
-        
+
+        // Auto-post GL journal entry for payment
+        try {
+          const defaultAccounts = await db.ensureDefaultAccounts(input.companyId);
+          const amount = parseFloat(input.amount);
+          const lines: Array<{ accountId: number; debit: string; credit: string; description?: string }> = [];
+
+          if (input.type === 'received') {
+            // Payment received: Debit Cash, Credit AR
+            lines.push(
+              { accountId: defaultAccounts.cash, debit: amount.toFixed(2), credit: '0.00', description: `Cash received ${paymentNumber}` },
+              { accountId: defaultAccounts.accounts_receivable, debit: '0.00', credit: amount.toFixed(2), description: `AR cleared ${paymentNumber}` },
+            );
+          } else {
+            // Payment made: Debit AP, Credit Cash
+            lines.push(
+              { accountId: defaultAccounts.accounts_payable, debit: amount.toFixed(2), credit: '0.00', description: `AP cleared ${paymentNumber}` },
+              { accountId: defaultAccounts.cash, debit: '0.00', credit: amount.toFixed(2), description: `Cash paid ${paymentNumber}` },
+            );
+          }
+
+          await db.createTransactionWithLines({
+            companyId: input.companyId,
+            transactionNumber: generateNumber('TXN'),
+            type: 'payment',
+            referenceType: 'payment',
+            referenceId: result.id,
+            date: input.paymentDate,
+            description: `Payment ${paymentNumber} - ${input.type}`,
+            totalAmount: amount.toFixed(2),
+            currency: input.currency || 'USD',
+            status: 'posted',
+            createdBy: ctx.user.id,
+            postedBy: ctx.user.id,
+            postedAt: new Date(),
+          }, lines);
+        } catch (err) {
+          console.warn('[GL Auto-Post] Failed to post payment journal entry:', err);
+        }
+
         await createAuditLog(ctx.user.id, 'create', 'payment', result.id, paymentNumber);
         return result;
       }),
@@ -3869,6 +3974,239 @@ export const appRouter = router({
         companyName: result.data?.CompanyInfo?.CompanyName 
       };
     }),
+  }),
+
+  // ============================================
+  // FINANCE - FINANCIAL REPORTS
+  // ============================================
+  financialReports: router({
+    trialBalance: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        asOfDate: z.date().optional(),
+        periodStart: z.date().optional(),
+      }).optional())
+      .query(({ input }) => db.getTrialBalance(input)),
+
+    balanceSheet: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        asOfDate: z.date().optional(),
+      }).optional())
+      .query(({ input }) => db.getBalanceSheet(input)),
+
+    profitAndLoss: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+      }).optional())
+      .query(({ input }) => db.getProfitAndLoss(input)),
+
+    arAging: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        asOfDate: z.date().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const aging = await db.getARaging(input);
+        // Summarize by bucket
+        const summary = { current: 0, '1-30': 0, '31-60': 0, '61-90': 0, '90+': 0, total: 0 };
+        for (const inv of aging) {
+          summary[inv.bucket as keyof typeof summary] += inv.outstanding;
+          summary.total += inv.outstanding;
+        }
+        return { details: aging, summary };
+      }),
+
+    apAging: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        asOfDate: z.date().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const aging = await db.getAPaging(input);
+        const summary = { current: 0, '1-30': 0, '31-60': 0, '61-90': 0, '90+': 0, total: 0 };
+        for (const po of aging) {
+          summary[po.bucket as keyof typeof summary] += po.amount;
+          summary.total += po.amount;
+        }
+        return { details: aging, summary };
+      }),
+
+    // General Ledger detail for a specific account
+    generalLedger: financeProcedure
+      .input(z.object({
+        accountId: z.number(),
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+      }))
+      .query(async ({ input }) => {
+        const trialBalance = await db.getTrialBalance({
+          periodStart: input.startDate,
+          asOfDate: input.endDate,
+        });
+        // Filter to requested account
+        return trialBalance.filter(row => row.accountId === input.accountId);
+      }),
+  }),
+
+  // ============================================
+  // FINANCE - TRANSACTIONS (ENHANCED)
+  // ============================================
+  transactionsEnhanced: router({
+    getWithLines: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getTransactionWithLines(input.id)),
+
+    createWithLines: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        type: z.enum(['journal', 'invoice', 'payment', 'expense', 'transfer', 'adjustment']),
+        date: z.date(),
+        description: z.string().optional(),
+        totalAmount: z.string(),
+        currency: z.string().optional(),
+        lines: z.array(z.object({
+          accountId: z.number(),
+          debit: z.string(),
+          credit: z.string(),
+          description: z.string().optional(),
+        })).min(2),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { lines, ...header } = input;
+        // Validate debits equal credits
+        const totalDebits = lines.reduce((sum, l) => sum + parseFloat(l.debit), 0);
+        const totalCredits = lines.reduce((sum, l) => sum + parseFloat(l.credit), 0);
+        if (Math.abs(totalDebits - totalCredits) > 0.01) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: `Debits (${totalDebits.toFixed(2)}) must equal credits (${totalCredits.toFixed(2)})` });
+        }
+        const transactionNumber = generateNumber('TXN');
+        const result = await db.createTransactionWithLines({ ...header, transactionNumber, createdBy: ctx.user.id }, lines);
+        await createAuditLog(ctx.user.id, 'create', 'transaction', result.id, transactionNumber);
+        return result;
+      }),
+
+    post: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.postTransaction(input.id, ctx.user.id);
+        await createAuditLog(ctx.user.id, 'approve', 'transaction', input.id);
+        return { success: true };
+      }),
+
+    void: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.voidTransaction(input.id);
+        await createAuditLog(ctx.user.id, 'update', 'transaction', input.id, 'Voided');
+        return { success: true };
+      }),
+  }),
+
+  // ============================================
+  // FINANCE - FISCAL PERIODS
+  // ============================================
+  fiscalPeriods: router({
+    list: financeProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(({ input }) => db.getFiscalPeriods(input?.companyId)),
+
+    get: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getFiscalPeriodById(input.id)),
+
+    generateYear: financeProcedure
+      .input(z.object({
+        year: z.number().min(2020).max(2050),
+        companyId: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.generateFiscalYear(input.year, input.companyId);
+        await createAuditLog(ctx.user.id, 'create', 'fiscal_period', 0, `FY${input.year}`);
+        return result;
+      }),
+
+    close: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const period = await db.getFiscalPeriodById(input.id);
+        if (!period) throw new TRPCError({ code: 'NOT_FOUND', message: 'Fiscal period not found' });
+        if (period.status === 'closed') throw new TRPCError({ code: 'BAD_REQUEST', message: 'Period is already closed' });
+
+        await db.updateFiscalPeriod(input.id, {
+          status: 'closed',
+          closedBy: ctx.user.id,
+          closedAt: new Date(),
+        });
+        await createAuditLog(ctx.user.id, 'approve', 'fiscal_period', input.id, period.name);
+        return { success: true };
+      }),
+
+    reopen: adminProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.updateFiscalPeriod(input.id, { status: 'open', closedBy: null, closedAt: null });
+        await createAuditLog(ctx.user.id, 'update', 'fiscal_period', input.id, 'Reopened');
+        return { success: true };
+      }),
+  }),
+
+  // ============================================
+  // QUICKBOOKS SYNC
+  // ============================================
+  quickbooksSync: router({
+    syncAll: protectedProcedure.mutation(async ({ ctx }) => {
+      const { runFullSync } = await import('./quickbooksSyncService');
+      return runFullSync(ctx.user.id);
+    }),
+
+    syncCustomers: protectedProcedure.mutation(async ({ ctx }) => {
+      const { syncCustomersFromQB } = await import('./quickbooksSyncService');
+      return syncCustomersFromQB(ctx.user.id);
+    }),
+
+    syncVendors: protectedProcedure.mutation(async ({ ctx }) => {
+      const { syncVendorsFromQB } = await import('./quickbooksSyncService');
+      return syncVendorsFromQB(ctx.user.id);
+    }),
+
+    syncInvoices: protectedProcedure.mutation(async ({ ctx }) => {
+      const { syncInvoicesFromQB } = await import('./quickbooksSyncService');
+      return syncInvoicesFromQB(ctx.user.id);
+    }),
+
+    syncAccounts: protectedProcedure.mutation(async ({ ctx }) => {
+      const { syncAccountsFromQB } = await import('./quickbooksSyncService');
+      return syncAccountsFromQB(ctx.user.id);
+    }),
+
+    syncPayments: protectedProcedure.mutation(async ({ ctx }) => {
+      const { syncPaymentsFromQB } = await import('./quickbooksSyncService');
+      return syncPaymentsFromQB(ctx.user.id);
+    }),
+
+    pushCustomer: protectedProcedure
+      .input(z.object({ customerId: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        const { pushCustomerToQB } = await import('./quickbooksSyncService');
+        return pushCustomerToQB(ctx.user.id, input.customerId);
+      }),
+
+    pushVendor: protectedProcedure
+      .input(z.object({ vendorId: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        const { pushVendorToQB } = await import('./quickbooksSyncService');
+        return pushVendorToQB(ctx.user.id, input.vendorId);
+      }),
+
+    pushInvoice: protectedProcedure
+      .input(z.object({ invoiceId: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        const { pushInvoiceToQB } = await import('./quickbooksSyncService');
+        return pushInvoiceToQB(ctx.user.id, input.invoiceId);
+      }),
   }),
 
   // ============================================

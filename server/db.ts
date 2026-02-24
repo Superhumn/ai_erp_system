@@ -93,7 +93,9 @@ import {
   InsertFirefliesMeeting, InsertFirefliesActionItem, InsertFirefliesContactMapping,
   // Copacker portal
   copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
-  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument
+  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
+  // Fiscal periods
+  fiscalPeriods, InsertFiscalPeriod
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8334,4 +8336,523 @@ export async function getProductByName(name: string) {
   if (!db) return null;
   const results = await db.select().from(products).where(sql`LOWER(${products.name}) = LOWER(${name})`).limit(1);
   return results[0] || null;
+}
+
+// ============================================
+// QUICKBOOKS LOOKUP HELPERS
+// ============================================
+
+export async function getCustomerByQuickbooksId(qbId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(customers).where(eq(customers.quickbooksCustomerId, qbId)).limit(1);
+  return result[0];
+}
+
+export async function getVendorByQuickbooksId(qbId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(vendors).where(eq(vendors.quickbooksVendorId, qbId)).limit(1);
+  return result[0];
+}
+
+export async function getAccountByQuickbooksId(qbId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(accounts).where(eq(accounts.quickbooksAccountId, qbId)).limit(1);
+  return result[0];
+}
+
+export async function getInvoiceByQuickbooksId(qbId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(invoices).where(eq(invoices.quickbooksInvoiceId, qbId)).limit(1);
+  return result[0];
+}
+
+export async function getPaymentByQuickbooksId(qbId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(payments).where(eq(payments.quickbooksPaymentId, qbId)).limit(1);
+  return result[0];
+}
+
+// ============================================
+// ACCOUNTING - GL AUTO-POSTING
+// ============================================
+
+export async function createTransactionWithLines(
+  header: InsertTransaction,
+  lines: Array<{ accountId: number; debit: string; credit: string; description?: string }>
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db.insert(transactions).values(header);
+  const transactionId = result[0].insertId;
+
+  for (const line of lines) {
+    await db.insert(transactionLines).values({
+      transactionId,
+      accountId: line.accountId,
+      debit: line.debit,
+      credit: line.credit,
+      description: line.description,
+    });
+  }
+
+  return { id: transactionId };
+}
+
+export async function getTransactionWithLines(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const txn = await db.select().from(transactions).where(eq(transactions.id, id)).limit(1);
+  if (!txn[0]) return undefined;
+  const lines = await db.select({
+    id: transactionLines.id,
+    transactionId: transactionLines.transactionId,
+    accountId: transactionLines.accountId,
+    debit: transactionLines.debit,
+    credit: transactionLines.credit,
+    description: transactionLines.description,
+    accountName: accounts.name,
+    accountCode: accounts.code,
+    accountType: accounts.type,
+  }).from(transactionLines)
+    .leftJoin(accounts, eq(transactionLines.accountId, accounts.id))
+    .where(eq(transactionLines.transactionId, id));
+  return { ...txn[0], lines };
+}
+
+export async function postTransaction(id: number, userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(transactions).set({
+    status: 'posted',
+    postedBy: userId,
+    postedAt: new Date(),
+  }).where(eq(transactions.id, id));
+}
+
+export async function voidTransaction(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(transactions).set({ status: 'void' }).where(eq(transactions.id, id));
+}
+
+/**
+ * Find an account by its subtype (e.g., "accounts_receivable", "accounts_payable", "revenue", "cash")
+ * Used for auto-posting to find the correct GL accounts.
+ */
+export async function getAccountBySubtype(subtype: string, companyId?: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const conditions = [eq(accounts.subtype, subtype), eq(accounts.isActive, true)];
+  if (companyId) conditions.push(eq(accounts.companyId, companyId));
+  const results = await db.select().from(accounts).where(and(...conditions)).limit(1);
+  return results[0] || null;
+}
+
+/**
+ * Ensure default GL accounts exist for auto-posting.
+ * Creates them if they don't exist yet.
+ */
+export async function ensureDefaultAccounts(companyId?: number) {
+  const defaults = [
+    { code: '1100', name: 'Accounts Receivable', type: 'asset' as const, subtype: 'accounts_receivable' },
+    { code: '1000', name: 'Cash', type: 'asset' as const, subtype: 'cash' },
+    { code: '2100', name: 'Accounts Payable', type: 'liability' as const, subtype: 'accounts_payable' },
+    { code: '4000', name: 'Revenue', type: 'revenue' as const, subtype: 'revenue' },
+    { code: '4010', name: 'Sales Tax Payable', type: 'liability' as const, subtype: 'sales_tax_payable' },
+    { code: '4020', name: 'Sales Discounts', type: 'revenue' as const, subtype: 'sales_discounts' },
+  ];
+
+  const created: Record<string, number> = {};
+  for (const acct of defaults) {
+    const existing = await getAccountBySubtype(acct.subtype, companyId);
+    if (existing) {
+      created[acct.subtype] = existing.id;
+    } else {
+      const result = await createAccount({ ...acct, companyId });
+      created[acct.subtype] = result.id;
+    }
+  }
+  return created;
+}
+
+// ============================================
+// ACCOUNTING - FINANCIAL REPORTS
+// ============================================
+
+/**
+ * Trial Balance: Sum of all debits and credits per account from posted transactions.
+ */
+export async function getTrialBalance(filters?: { companyId?: number; asOfDate?: Date; periodStart?: Date }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [eq(transactions.status, 'posted')];
+  if (filters?.companyId) conditions.push(eq(transactions.companyId, filters.companyId));
+  if (filters?.asOfDate) conditions.push(lte(transactions.date, filters.asOfDate));
+  if (filters?.periodStart) conditions.push(gte(transactions.date, filters.periodStart));
+
+  const results = await db.select({
+    accountId: transactionLines.accountId,
+    accountCode: accounts.code,
+    accountName: accounts.name,
+    accountType: accounts.type,
+    accountSubtype: accounts.subtype,
+    totalDebit: sum(transactionLines.debit),
+    totalCredit: sum(transactionLines.credit),
+  })
+    .from(transactionLines)
+    .innerJoin(transactions, eq(transactionLines.transactionId, transactions.id))
+    .innerJoin(accounts, eq(transactionLines.accountId, accounts.id))
+    .where(and(...conditions))
+    .groupBy(transactionLines.accountId, accounts.code, accounts.name, accounts.type, accounts.subtype)
+    .orderBy(accounts.code);
+
+  return results.map(row => ({
+    ...row,
+    totalDebit: parseFloat(row.totalDebit || '0'),
+    totalCredit: parseFloat(row.totalCredit || '0'),
+    balance: parseFloat(row.totalDebit || '0') - parseFloat(row.totalCredit || '0'),
+  }));
+}
+
+/**
+ * Balance Sheet: Assets, Liabilities, and Equity as of a specific date.
+ * Uses all posted transactions up to asOfDate.
+ */
+export async function getBalanceSheet(filters?: { companyId?: number; asOfDate?: Date }) {
+  const db = await getDb();
+  if (!db) return { assets: [], liabilities: [], equity: [], totalAssets: 0, totalLiabilities: 0, totalEquity: 0 };
+
+  const asOfDate = filters?.asOfDate || new Date();
+  const conditions = [eq(transactions.status, 'posted'), lte(transactions.date, asOfDate)];
+  if (filters?.companyId) conditions.push(eq(transactions.companyId, filters.companyId));
+
+  const results = await db.select({
+    accountId: transactionLines.accountId,
+    accountCode: accounts.code,
+    accountName: accounts.name,
+    accountType: accounts.type,
+    accountSubtype: accounts.subtype,
+    totalDebit: sum(transactionLines.debit),
+    totalCredit: sum(transactionLines.credit),
+  })
+    .from(transactionLines)
+    .innerJoin(transactions, eq(transactionLines.transactionId, transactions.id))
+    .innerJoin(accounts, eq(transactionLines.accountId, accounts.id))
+    .where(and(...conditions))
+    .groupBy(transactionLines.accountId, accounts.code, accounts.name, accounts.type, accounts.subtype)
+    .orderBy(accounts.code);
+
+  const assets: Array<{ accountId: number | null; accountCode: string; accountName: string; accountSubtype: string | null; balance: number }> = [];
+  const liabilities: typeof assets = [];
+  const equity: typeof assets = [];
+
+  for (const row of results) {
+    const debit = parseFloat(row.totalDebit || '0');
+    const credit = parseFloat(row.totalCredit || '0');
+    // Assets have normal debit balance (debit - credit)
+    // Liabilities and equity have normal credit balance (credit - debit)
+    const entry = {
+      accountId: row.accountId,
+      accountCode: row.accountCode,
+      accountName: row.accountName,
+      accountSubtype: row.accountSubtype,
+      balance: 0,
+    };
+
+    if (row.accountType === 'asset') {
+      entry.balance = debit - credit;
+      assets.push(entry);
+    } else if (row.accountType === 'liability') {
+      entry.balance = credit - debit;
+      liabilities.push(entry);
+    } else if (row.accountType === 'equity') {
+      entry.balance = credit - debit;
+      equity.push(entry);
+    } else if (row.accountType === 'revenue') {
+      // Revenue rolls into retained earnings (equity)
+      equity.push({ ...entry, accountName: `${entry.accountName} (Retained)`, balance: credit - debit });
+    } else if (row.accountType === 'expense') {
+      // Expenses reduce retained earnings
+      equity.push({ ...entry, accountName: `${entry.accountName} (Retained)`, balance: -(debit - credit) });
+    }
+  }
+
+  const totalAssets = assets.reduce((sum, a) => sum + a.balance, 0);
+  const totalLiabilities = liabilities.reduce((sum, a) => sum + a.balance, 0);
+  const totalEquity = equity.reduce((sum, a) => sum + a.balance, 0);
+
+  return { assets, liabilities, equity, totalAssets, totalLiabilities, totalEquity };
+}
+
+/**
+ * Profit & Loss (Income Statement): Revenue minus Expenses for a given period.
+ */
+export async function getProfitAndLoss(filters?: { companyId?: number; startDate?: Date; endDate?: Date }) {
+  const db = await getDb();
+  if (!db) return { revenue: [], expenses: [], totalRevenue: 0, totalExpenses: 0, netIncome: 0 };
+
+  const conditions = [eq(transactions.status, 'posted')];
+  if (filters?.companyId) conditions.push(eq(transactions.companyId, filters.companyId));
+  if (filters?.startDate) conditions.push(gte(transactions.date, filters.startDate));
+  if (filters?.endDate) conditions.push(lte(transactions.date, filters.endDate));
+
+  const results = await db.select({
+    accountId: transactionLines.accountId,
+    accountCode: accounts.code,
+    accountName: accounts.name,
+    accountType: accounts.type,
+    accountSubtype: accounts.subtype,
+    totalDebit: sum(transactionLines.debit),
+    totalCredit: sum(transactionLines.credit),
+  })
+    .from(transactionLines)
+    .innerJoin(transactions, eq(transactionLines.transactionId, transactions.id))
+    .innerJoin(accounts, eq(transactionLines.accountId, accounts.id))
+    .where(and(...conditions))
+    .groupBy(transactionLines.accountId, accounts.code, accounts.name, accounts.type, accounts.subtype)
+    .orderBy(accounts.code);
+
+  const revenue: Array<{ accountId: number | null; accountCode: string; accountName: string; amount: number }> = [];
+  const expenses: typeof revenue = [];
+
+  for (const row of results) {
+    const debit = parseFloat(row.totalDebit || '0');
+    const credit = parseFloat(row.totalCredit || '0');
+
+    if (row.accountType === 'revenue') {
+      // Revenue has normal credit balance
+      revenue.push({
+        accountId: row.accountId,
+        accountCode: row.accountCode,
+        accountName: row.accountName,
+        amount: credit - debit,
+      });
+    } else if (row.accountType === 'expense') {
+      // Expenses have normal debit balance
+      expenses.push({
+        accountId: row.accountId,
+        accountCode: row.accountCode,
+        accountName: row.accountName,
+        amount: debit - credit,
+      });
+    }
+  }
+
+  const totalRevenue = revenue.reduce((sum, r) => sum + r.amount, 0);
+  const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
+
+  return { revenue, expenses, totalRevenue, totalExpenses, netIncome: totalRevenue - totalExpenses };
+}
+
+/**
+ * Accounts Receivable Aging: Outstanding invoices bucketed by age (0-30, 31-60, 61-90, 90+).
+ */
+export async function getARaging(filters?: { companyId?: number; asOfDate?: Date }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const asOfDate = filters?.asOfDate || new Date();
+  const conditions = [
+    inArray(invoices.status, ['sent', 'partial', 'overdue']),
+  ];
+  if (filters?.companyId) conditions.push(eq(invoices.companyId, filters.companyId));
+
+  const results = await db.select({
+    invoiceId: invoices.id,
+    invoiceNumber: invoices.invoiceNumber,
+    customerId: invoices.customerId,
+    customerName: customers.name,
+    issueDate: invoices.issueDate,
+    dueDate: invoices.dueDate,
+    totalAmount: invoices.totalAmount,
+    paidAmount: invoices.paidAmount,
+    currency: invoices.currency,
+  })
+    .from(invoices)
+    .leftJoin(customers, eq(invoices.customerId, customers.id))
+    .where(and(...conditions))
+    .orderBy(invoices.dueDate);
+
+  const now = asOfDate.getTime();
+  return results.map(inv => {
+    const outstanding = parseFloat(inv.totalAmount) - parseFloat(inv.paidAmount || '0');
+    const dueDate = inv.dueDate ? new Date(inv.dueDate).getTime() : new Date(inv.issueDate).getTime();
+    const daysOverdue = Math.max(0, Math.floor((now - dueDate) / (1000 * 60 * 60 * 24)));
+    let bucket: string;
+    if (daysOverdue <= 0) bucket = 'current';
+    else if (daysOverdue <= 30) bucket = '1-30';
+    else if (daysOverdue <= 60) bucket = '31-60';
+    else if (daysOverdue <= 90) bucket = '61-90';
+    else bucket = '90+';
+
+    return {
+      ...inv,
+      outstanding,
+      daysOverdue,
+      bucket,
+    };
+  });
+}
+
+/**
+ * Accounts Payable Aging: Outstanding purchase orders bucketed by age.
+ */
+export async function getAPaging(filters?: { companyId?: number; asOfDate?: Date }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const asOfDate = filters?.asOfDate || new Date();
+  const conditions = [
+    inArray(purchaseOrders.status, ['sent', 'confirmed', 'partial']),
+  ];
+  if (filters?.companyId) conditions.push(eq(purchaseOrders.companyId, filters.companyId));
+
+  const results = await db.select({
+    poId: purchaseOrders.id,
+    poNumber: purchaseOrders.poNumber,
+    vendorId: purchaseOrders.vendorId,
+    vendorName: vendors.name,
+    orderDate: purchaseOrders.orderDate,
+    expectedDate: purchaseOrders.expectedDate,
+    totalAmount: purchaseOrders.totalAmount,
+    currency: purchaseOrders.currency,
+    status: purchaseOrders.status,
+  })
+    .from(purchaseOrders)
+    .leftJoin(vendors, eq(purchaseOrders.vendorId, vendors.id))
+    .where(and(...conditions))
+    .orderBy(purchaseOrders.orderDate);
+
+  const now = asOfDate.getTime();
+  return results.map(po => {
+    const amount = parseFloat(po.totalAmount);
+    const refDate = po.expectedDate ? new Date(po.expectedDate).getTime() : new Date(po.orderDate).getTime();
+    const daysOutstanding = Math.max(0, Math.floor((now - refDate) / (1000 * 60 * 60 * 24)));
+    let bucket: string;
+    if (daysOutstanding <= 0) bucket = 'current';
+    else if (daysOutstanding <= 30) bucket = '1-30';
+    else if (daysOutstanding <= 60) bucket = '31-60';
+    else if (daysOutstanding <= 90) bucket = '61-90';
+    else bucket = '90+';
+
+    return {
+      ...po,
+      amount,
+      daysOutstanding,
+      bucket,
+    };
+  });
+}
+
+// ============================================
+// ACCOUNTING - FISCAL PERIOD MANAGEMENT
+// ============================================
+
+export async function getFiscalPeriods(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (companyId) conditions.push(eq(fiscalPeriods.companyId, companyId));
+  if (conditions.length > 0) {
+    return db.select().from(fiscalPeriods).where(and(...conditions)).orderBy(desc(fiscalPeriods.startDate));
+  }
+  return db.select().from(fiscalPeriods).orderBy(desc(fiscalPeriods.startDate));
+}
+
+export async function getFiscalPeriodById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(fiscalPeriods).where(eq(fiscalPeriods.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createFiscalPeriod(data: InsertFiscalPeriod) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(fiscalPeriods).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateFiscalPeriod(id: number, data: Partial<InsertFiscalPeriod>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(fiscalPeriods).set(data).where(eq(fiscalPeriods.id, id));
+}
+
+/**
+ * Check if a date falls within an open fiscal period
+ */
+export async function isDateInOpenPeriod(date: Date, companyId?: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return true; // Default allow if DB unavailable
+  const conditions = [
+    eq(fiscalPeriods.status, 'open'),
+    lte(fiscalPeriods.startDate, date),
+    gte(fiscalPeriods.endDate, date),
+  ];
+  if (companyId) conditions.push(eq(fiscalPeriods.companyId, companyId));
+  const result = await db.select({ id: fiscalPeriods.id }).from(fiscalPeriods).where(and(...conditions)).limit(1);
+  // If no fiscal periods exist, allow (not yet configured)
+  const allPeriods = await getFiscalPeriods(companyId);
+  if (allPeriods.length === 0) return true;
+  return result.length > 0;
+}
+
+/**
+ * Generate fiscal periods for a year (12 monthly + 4 quarterly + 1 annual)
+ */
+export async function generateFiscalYear(year: number, companyId?: number) {
+  const created: Array<{ id: number; name: string }> = [];
+
+  // Monthly periods
+  for (let month = 0; month < 12; month++) {
+    const startDate = new Date(year, month, 1);
+    const endDate = new Date(year, month + 1, 0, 23, 59, 59);
+    const name = startDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+    const result = await createFiscalPeriod({
+      companyId,
+      name,
+      periodType: 'month',
+      startDate,
+      endDate,
+      status: 'open',
+    });
+    created.push({ id: result.id, name });
+  }
+
+  // Quarterly periods
+  for (let q = 0; q < 4; q++) {
+    const startDate = new Date(year, q * 3, 1);
+    const endDate = new Date(year, q * 3 + 3, 0, 23, 59, 59);
+    const name = `Q${q + 1} ${year}`;
+    const result = await createFiscalPeriod({
+      companyId,
+      name,
+      periodType: 'quarter',
+      startDate,
+      endDate,
+      status: 'open',
+    });
+    created.push({ id: result.id, name });
+  }
+
+  // Annual period
+  const annualResult = await createFiscalPeriod({
+    companyId,
+    name: `FY${year}`,
+    periodType: 'year',
+    startDate: new Date(year, 0, 1),
+    endDate: new Date(year, 11, 31, 23, 59, 59),
+    status: 'open',
+  });
+  created.push({ id: annualResult.id, name: `FY${year}` });
+
+  return created;
 }

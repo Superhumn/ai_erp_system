@@ -4471,3 +4471,25 @@ export const copackerShippingDocuments = mysqlTable("copacker_shipping_documents
 
 export type CopackerShippingDocument = typeof copackerShippingDocuments.$inferSelect;
 export type InsertCopackerShippingDocument = typeof copackerShippingDocuments.$inferInsert;
+
+// ============================================
+// ACCOUNTING - FISCAL PERIODS
+// ============================================
+
+export const fiscalPeriods = mysqlTable("fiscal_periods", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 64 }).notNull(), // e.g., "January 2026", "Q1 2026", "FY2026"
+  periodType: mysqlEnum("periodType", ["month", "quarter", "year"]).notNull(),
+  startDate: timestamp("startDate").notNull(),
+  endDate: timestamp("endDate").notNull(),
+  status: mysqlEnum("status", ["open", "closing", "closed"]).default("open").notNull(),
+  closedBy: int("closedBy"),
+  closedAt: timestamp("closedAt"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FiscalPeriod = typeof fiscalPeriods.$inferSelect;
+export type InsertFiscalPeriod = typeof fiscalPeriods.$inferInsert;
