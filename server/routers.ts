@@ -20,6 +20,7 @@ import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, create
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo } from "./_core/quickbooks";
 import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
+import { summarizeThread, ghostwriteEmail, learnWritingStyle, searchEmailsWithAI, suggestSmartLabels, organizeInbox, extractEmailTodos, translateEmail } from "./shortwaveEmailService";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -13660,6 +13661,473 @@ Ask if they received the original request and if they can provide a quote.`;
         });
 
         return { taskId: taskResult.id };
+      }),
+  }),
+
+  // ============================================
+  // SHORTWAVE-STYLE AI EMAIL HUB
+  // ============================================
+  shortwaveEmail: router({
+    // --- Thread Summaries ---
+    summarizeThread: protectedProcedure
+      .input(z.object({ emailIds: z.array(z.number()) }))
+      .mutation(async ({ input }) => {
+        const emails = [];
+        for (const id of input.emailIds) {
+          const email = await db.getInboundEmailById(id);
+          if (email) {
+            emails.push({
+              from: email.fromEmail,
+              fromName: email.fromName || undefined,
+              subject: email.subject || "",
+              bodyText: email.bodyText || "",
+              date: email.receivedAt?.toISOString() || new Date().toISOString(),
+            });
+          }
+        }
+        if (emails.length === 0) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "No emails found" });
+        }
+        const result = await summarizeThread(emails);
+
+        // Save to DB
+        const threadId = `thread-${input.emailIds.sort().join("-")}`;
+        await db.createEmailThreadSummary({
+          threadId,
+          summary: result.summary,
+          keyTakeaways: result.keyTakeaways,
+          actionItems: result.actionItems,
+          participants: result.participants,
+          sentiment: result.sentiment as any,
+          messageCount: emails.length,
+          lastMessageAt: new Date(),
+        });
+
+        return result;
+      }),
+
+    getThreadSummary: protectedProcedure
+      .input(z.object({ threadId: z.string() }))
+      .query(async ({ input }) => {
+        return db.getEmailThreadSummaryByThreadId(input.threadId);
+      }),
+
+    // --- Ghostwriter ---
+    ghostwrite: protectedProcedure
+      .input(z.object({
+        prompt: z.string(),
+        replyToEmailId: z.number().optional(),
+        recipientName: z.string().optional(),
+        recipientEmail: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Get user's writing profile
+        const profiles = await db.getEmailWritingProfilesByUserId(ctx.user.id);
+        const activeProfile = profiles.find((p: any) => p.isActive) || null;
+
+        let context: any = undefined;
+        if (input.replyToEmailId) {
+          const email = await db.getInboundEmailById(input.replyToEmailId);
+          if (email) {
+            context = {
+              replyToSubject: email.subject,
+              replyToBody: email.bodyText,
+              replyToFrom: email.fromEmail,
+            };
+          }
+        }
+
+        const result = await ghostwriteEmail({
+          prompt: input.prompt,
+          context,
+          styleProfile: activeProfile ? {
+            toneProfile: activeProfile.toneProfile as any,
+            commonPhrases: activeProfile.commonPhrases as any,
+            greetingStyle: activeProfile.greetingStyle || undefined,
+            closingStyle: activeProfile.closingStyle || undefined,
+            vocabularyLevel: activeProfile.vocabularyLevel || undefined,
+            useEmoji: activeProfile.useEmoji || false,
+          } : undefined,
+          recipientName: input.recipientName,
+          recipientEmail: input.recipientEmail,
+        });
+
+        // Save the draft
+        await db.createEmailAiDraft({
+          userId: ctx.user.id,
+          profileId: activeProfile?.id,
+          inReplyToEmailId: input.replyToEmailId,
+          toEmail: input.recipientEmail,
+          toName: input.recipientName,
+          subject: result.subject,
+          bodyText: result.body,
+          prompt: input.prompt,
+          originalDraft: result.body,
+          styleMatchScore: result.styleMatchScore?.toString(),
+          confidenceScore: result.styleMatchScore?.toString(),
+        });
+
+        return result;
+      }),
+
+    learnStyle: protectedProcedure.mutation(async ({ ctx }) => {
+      // Get user's recent sent emails to learn style
+      const sentEmails = await db.getSentEmailsByUserId(ctx.user.id, 20);
+      if (sentEmails.length < 3) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Need at least 3 sent emails to learn your writing style",
+        });
+      }
+
+      const style = await learnWritingStyle(
+        sentEmails.map((e: any) => ({
+          subject: e.subject || "",
+          body: e.bodyText || e.bodyHtml || "",
+        }))
+      );
+
+      // Upsert writing profile
+      const existing = await db.getEmailWritingProfilesByUserId(ctx.user.id);
+      if (existing.length > 0) {
+        await db.updateEmailWritingProfile(existing[0].id, {
+          toneProfile: style.toneProfile,
+          commonPhrases: style.commonPhrases,
+          greetingStyle: style.greetingStyle,
+          closingStyle: style.closingStyle,
+          averageSentenceLength: style.averageSentenceLength,
+          vocabularyLevel: style.vocabularyLevel as any,
+          useEmoji: style.useEmoji,
+          emailsSampled: sentEmails.length,
+          lastTrainedAt: new Date(),
+        });
+      } else {
+        await db.createEmailWritingProfile({
+          userId: ctx.user.id,
+          name: "Default",
+          toneProfile: style.toneProfile,
+          commonPhrases: style.commonPhrases,
+          greetingStyle: style.greetingStyle,
+          closingStyle: style.closingStyle,
+          averageSentenceLength: style.averageSentenceLength,
+          vocabularyLevel: style.vocabularyLevel as any,
+          useEmoji: style.useEmoji,
+          emailsSampled: sentEmails.length,
+          lastTrainedAt: new Date(),
+          isActive: true,
+        });
+      }
+
+      return { success: true, style };
+    }),
+
+    getWritingProfile: protectedProcedure.query(async ({ ctx }) => {
+      const profiles = await db.getEmailWritingProfilesByUserId(ctx.user.id);
+      return profiles[0] || null;
+    }),
+
+    // --- AI Search & Q&A ---
+    aiSearch: protectedProcedure
+      .input(z.object({ query: z.string() }))
+      .mutation(async ({ input }) => {
+        const emails = await db.getRecentInboundEmails(100);
+        return searchEmailsWithAI(
+          input.query,
+          emails.map((e: any) => ({
+            id: e.id,
+            from: e.fromEmail,
+            fromName: e.fromName,
+            subject: e.subject || "",
+            bodyText: e.bodyText || "",
+            date: e.receivedAt?.toISOString() || "",
+            category: e.category,
+          }))
+        );
+      }),
+
+    // --- Smart Labels ---
+    getSmartLabels: protectedProcedure.query(async () => {
+      return db.getEmailSmartLabels();
+    }),
+
+    createSmartLabel: protectedProcedure
+      .input(z.object({
+        name: z.string(),
+        color: z.string().optional(),
+        icon: z.string().optional(),
+        description: z.string().optional(),
+        isAutoApplied: z.boolean().optional(),
+        matchRules: z.any().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.createEmailSmartLabel({
+          ...input,
+          createdBy: ctx.user.id,
+        });
+      }),
+
+    deleteSmartLabel: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        return db.deleteEmailSmartLabel(input.id);
+      }),
+
+    autoLabelEmail: protectedProcedure
+      .input(z.object({ emailId: z.number() }))
+      .mutation(async ({ input }) => {
+        const email = await db.getInboundEmailById(input.emailId);
+        if (!email) throw new TRPCError({ code: "NOT_FOUND" });
+
+        const labels = await db.getEmailSmartLabels();
+        const suggestions = await suggestSmartLabels(
+          {
+            from: email.fromEmail,
+            subject: email.subject || "",
+            bodyText: email.bodyText || "",
+          },
+          labels.map((l: any) => ({ id: l.id, name: l.name, matchRules: l.matchRules }))
+        );
+
+        // Apply labels with confidence > 70
+        for (const suggestion of suggestions.filter((s) => s.confidence > 70)) {
+          await db.createEmailLabelAssignment({
+            emailId: input.emailId,
+            labelId: suggestion.labelId,
+            confidence: suggestion.confidence.toString(),
+            appliedBy: "ai" as any,
+          });
+        }
+
+        return suggestions;
+      }),
+
+    getEmailLabels: protectedProcedure
+      .input(z.object({ emailId: z.number() }))
+      .query(async ({ input }) => {
+        return db.getEmailLabelAssignmentsByEmailId(input.emailId);
+      }),
+
+    // --- Email Bundles ---
+    getBundles: protectedProcedure.query(async () => {
+      return db.getEmailBundles();
+    }),
+
+    createBundle: protectedProcedure
+      .input(z.object({
+        name: z.string(),
+        description: z.string().optional(),
+        icon: z.string().optional(),
+        color: z.string().optional(),
+        matchType: z.enum(["sender_domain", "label", "subject_pattern", "ai_category", "custom"]),
+        matchRules: z.any().optional(),
+        collapseByDefault: z.boolean().optional(),
+        deliverySchedule: z.enum(["instant", "hourly", "morning", "afternoon", "evening", "daily", "weekly"]).optional(),
+        deliveryTime: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.createEmailBundle({
+          ...input,
+          collapseByDefault: input.collapseByDefault ?? true,
+          createdBy: ctx.user.id,
+        });
+      }),
+
+    updateBundle: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        description: z.string().optional(),
+        isEnabled: z.boolean().optional(),
+        deliverySchedule: z.enum(["instant", "hourly", "morning", "afternoon", "evening", "daily", "weekly"]).optional(),
+        deliveryTime: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        return db.updateEmailBundle(id, data);
+      }),
+
+    deleteBundle: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        return db.deleteEmailBundle(input.id);
+      }),
+
+    getBundleEmails: protectedProcedure
+      .input(z.object({ bundleId: z.number() }))
+      .query(async ({ input }) => {
+        return db.getEmailBundleItems(input.bundleId);
+      }),
+
+    // --- Inbox Splits ---
+    getInboxSplits: protectedProcedure.query(async () => {
+      return db.getEmailInboxSplits();
+    }),
+
+    createInboxSplit: protectedProcedure
+      .input(z.object({
+        name: z.string(),
+        icon: z.string().optional(),
+        color: z.string().optional(),
+        filterType: z.enum(["important", "team", "notifications", "newsletters", "custom"]),
+        filterRules: z.any().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.createEmailInboxSplit({
+          ...input,
+          createdBy: ctx.user.id,
+        });
+      }),
+
+    deleteInboxSplit: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        return db.deleteEmailInboxSplit(input.id);
+      }),
+
+    // --- Email Todos ---
+    getEmailTodos: protectedProcedure
+      .input(z.object({
+        status: z.enum(["pending", "in_progress", "done", "dismissed"]).optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        return db.getEmailTodos(input?.status);
+      }),
+
+    createEmailTodo: protectedProcedure
+      .input(z.object({
+        emailId: z.number(),
+        title: z.string(),
+        description: z.string().optional(),
+        priority: z.enum(["high", "medium", "low"]).optional(),
+        dueDate: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.createEmailTodo({
+          ...input,
+          dueDate: input.dueDate ? new Date(input.dueDate) : undefined,
+          createdBy: ctx.user.id,
+        });
+      }),
+
+    updateEmailTodo: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        status: z.enum(["pending", "in_progress", "done", "dismissed"]).optional(),
+        title: z.string().optional(),
+        priority: z.enum(["high", "medium", "low"]).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        return db.updateEmailTodo(id, {
+          ...data,
+          completedAt: data.status === "done" ? new Date() : undefined,
+        });
+      }),
+
+    extractTodos: protectedProcedure
+      .input(z.object({ emailId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const email = await db.getInboundEmailById(input.emailId);
+        if (!email) throw new TRPCError({ code: "NOT_FOUND" });
+
+        const todos = await extractEmailTodos({
+          from: email.fromEmail,
+          subject: email.subject || "",
+          bodyText: email.bodyText || "",
+        });
+
+        // Save extracted todos
+        const created = [];
+        for (const todo of todos) {
+          if (todo.confidence > 60) {
+            const result = await db.createEmailTodo({
+              emailId: input.emailId,
+              title: todo.title,
+              description: todo.description,
+              priority: todo.priority as any,
+              dueDate: todo.dueDate ? new Date(todo.dueDate) : undefined,
+              extractedByAi: true,
+              aiConfidence: todo.confidence.toString(),
+              createdBy: ctx.user.id,
+            });
+            created.push(result);
+          }
+        }
+
+        return { extracted: todos, created };
+      }),
+
+    // --- Organize Inbox ---
+    organizeInbox: protectedProcedure.mutation(async () => {
+      const emails = await db.getRecentInboundEmails(50);
+      return organizeInbox(
+        emails.map((e: any) => ({
+          id: e.id,
+          from: e.fromEmail,
+          fromName: e.fromName,
+          subject: e.subject || "",
+          bodyText: e.bodyText || "",
+          date: e.receivedAt?.toISOString() || "",
+          category: e.category,
+          isRead: e.parsingStatus === "reviewed" || e.parsingStatus === "archived",
+        }))
+      );
+    }),
+
+    // --- Delivery Schedules ---
+    getDeliverySchedules: protectedProcedure.query(async ({ ctx }) => {
+      return db.getEmailDeliverySchedulesByUserId(ctx.user.id);
+    }),
+
+    createDeliverySchedule: protectedProcedure
+      .input(z.object({
+        name: z.string(),
+        deliveryWindows: z.any(),
+        allowUrgent: z.boolean().optional(),
+        allowFromVips: z.boolean().optional(),
+        vipSenders: z.array(z.string()).optional(),
+        timezone: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.createEmailDeliverySchedule({
+          ...input,
+          userId: ctx.user.id,
+          isEnabled: true,
+        });
+      }),
+
+    updateDeliverySchedule: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        isEnabled: z.boolean().optional(),
+        deliveryWindows: z.any().optional(),
+        allowUrgent: z.boolean().optional(),
+        vipSenders: z.array(z.string()).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        return db.updateEmailDeliverySchedule(id, data);
+      }),
+
+    // --- Translation ---
+    translate: protectedProcedure
+      .input(z.object({
+        text: z.string(),
+        targetLanguage: z.string(),
+      }))
+      .mutation(async ({ input }) => {
+        return translateEmail(input.text, input.targetLanguage);
+      }),
+
+    // --- AI Drafts ---
+    getDrafts: protectedProcedure.query(async ({ ctx }) => {
+      return db.getEmailAiDraftsByUserId(ctx.user.id);
+    }),
+
+    deleteDraft: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        return db.deleteEmailAiDraft(input.id);
       }),
   }),
 });

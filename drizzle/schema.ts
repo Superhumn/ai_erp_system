@@ -4471,3 +4471,225 @@ export const copackerShippingDocuments = mysqlTable("copacker_shipping_documents
 
 export type CopackerShippingDocument = typeof copackerShippingDocuments.$inferSelect;
 export type InsertCopackerShippingDocument = typeof copackerShippingDocuments.$inferInsert;
+
+// ============================================
+// SHORTWAVE-STYLE AI EMAIL FEATURES
+// ============================================
+
+// Email thread summaries - instant AI summaries at top of threads
+export const emailThreadSummaries = mysqlTable("email_thread_summaries", {
+  id: int("id").autoincrement().primaryKey(),
+  threadId: varchar("threadId", { length: 255 }).notNull(),
+  summary: text("summary").notNull(),
+  keyTakeaways: json("keyTakeaways"),
+  actionItems: json("actionItems"),
+  participants: json("participants"),
+  sentiment: mysqlEnum("sentiment", ["positive", "neutral", "negative", "mixed"]).default("neutral"),
+  messageCount: int("messageCount").default(1),
+  lastMessageAt: timestamp("lastMessageAt"),
+  generatedAt: timestamp("generatedAt").defaultNow().notNull(),
+  modelVersion: varchar("modelVersion", { length: 64 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailThreadSummary = typeof emailThreadSummaries.$inferSelect;
+export type InsertEmailThreadSummary = typeof emailThreadSummaries.$inferInsert;
+
+// Smart labels - AI auto-applied labels
+export const emailSmartLabels = mysqlTable("email_smart_labels", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 128 }).notNull(),
+  color: varchar("color", { length: 32 }).default("gray"),
+  icon: varchar("icon", { length: 64 }),
+  description: text("description"),
+  isSystem: boolean("isSystem").default(false).notNull(),
+  isAutoApplied: boolean("isAutoApplied").default(true).notNull(),
+  matchRules: json("matchRules"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailSmartLabel = typeof emailSmartLabels.$inferSelect;
+export type InsertEmailSmartLabel = typeof emailSmartLabels.$inferInsert;
+
+// Junction: emails <-> smart labels
+export const emailLabelAssignments = mysqlTable("email_label_assignments", {
+  id: int("id").autoincrement().primaryKey(),
+  emailId: int("emailId").notNull(),
+  labelId: int("labelId").notNull(),
+  confidence: decimal("confidence", { precision: 5, scale: 2 }),
+  appliedBy: mysqlEnum("appliedBy", ["ai", "user", "rule"]).default("ai").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type EmailLabelAssignment = typeof emailLabelAssignments.$inferSelect;
+export type InsertEmailLabelAssignment = typeof emailLabelAssignments.$inferInsert;
+
+// Email bundles - group related emails for batch processing
+export const emailBundles = mysqlTable("email_bundles", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  icon: varchar("icon", { length: 64 }),
+  color: varchar("color", { length: 32 }).default("blue"),
+  matchType: mysqlEnum("matchType", ["sender_domain", "label", "subject_pattern", "ai_category", "custom"]).notNull(),
+  matchRules: json("matchRules"),
+  collapseByDefault: boolean("collapseByDefault").default(true).notNull(),
+  sortOrder: int("sortOrder").default(0),
+  isEnabled: boolean("isEnabled").default(true).notNull(),
+  deliverySchedule: mysqlEnum("deliverySchedule", ["instant", "hourly", "morning", "afternoon", "evening", "daily", "weekly"]).default("instant"),
+  deliveryTime: varchar("deliveryTime", { length: 5 }),
+  deliveryDays: json("deliveryDays"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailBundle = typeof emailBundles.$inferSelect;
+export type InsertEmailBundle = typeof emailBundles.$inferInsert;
+
+// Junction: emails <-> bundles
+export const emailBundleItems = mysqlTable("email_bundle_items", {
+  id: int("id").autoincrement().primaryKey(),
+  bundleId: int("bundleId").notNull(),
+  emailId: int("emailId").notNull(),
+  isRead: boolean("isRead").default(false),
+  isArchived: boolean("isArchived").default(false),
+  addedAt: timestamp("addedAt").defaultNow().notNull(),
+});
+
+export type EmailBundleItem = typeof emailBundleItems.$inferSelect;
+export type InsertEmailBundleItem = typeof emailBundleItems.$inferInsert;
+
+// Inbox splits - divide inbox into focused tabs
+export const emailInboxSplits = mysqlTable("email_inbox_splits", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 128 }).notNull(),
+  icon: varchar("icon", { length: 64 }),
+  color: varchar("color", { length: 32 }),
+  filterType: mysqlEnum("filterType", ["important", "team", "notifications", "newsletters", "custom"]).notNull(),
+  filterRules: json("filterRules"),
+  sortOrder: int("sortOrder").default(0),
+  isDefault: boolean("isDefault").default(false),
+  isEnabled: boolean("isEnabled").default(true).notNull(),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailInboxSplit = typeof emailInboxSplits.$inferSelect;
+export type InsertEmailInboxSplit = typeof emailInboxSplits.$inferInsert;
+
+// Email todos - turn emails into actionable tasks
+export const emailTodos = mysqlTable("email_todos", {
+  id: int("id").autoincrement().primaryKey(),
+  emailId: int("emailId").notNull(),
+  threadId: varchar("threadId", { length: 255 }),
+  title: varchar("title", { length: 500 }).notNull(),
+  description: text("description"),
+  status: mysqlEnum("status", ["pending", "in_progress", "done", "dismissed"]).default("pending").notNull(),
+  priority: mysqlEnum("priority", ["high", "medium", "low"]).default("medium"),
+  dueDate: timestamp("dueDate"),
+  reminderAt: timestamp("reminderAt"),
+  assignedTo: int("assignedTo"),
+  extractedByAi: boolean("extractedByAi").default(false),
+  aiConfidence: decimal("aiConfidence", { precision: 5, scale: 2 }),
+  completedAt: timestamp("completedAt"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailTodo = typeof emailTodos.$inferSelect;
+export type InsertEmailTodo = typeof emailTodos.$inferInsert;
+
+// Ghostwriter - writing style profiles
+export const emailWritingProfiles = mysqlTable("email_writing_profiles", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  name: varchar("name", { length: 128 }).default("Default").notNull(),
+  toneProfile: json("toneProfile"),
+  commonPhrases: json("commonPhrases"),
+  signatureBlock: text("signatureBlock"),
+  greetingStyle: varchar("greetingStyle", { length: 255 }),
+  closingStyle: varchar("closingStyle", { length: 255 }),
+  averageSentenceLength: int("averageSentenceLength"),
+  vocabularyLevel: mysqlEnum("vocabularyLevel", ["simple", "moderate", "advanced"]).default("moderate"),
+  useEmoji: boolean("useEmoji").default(false),
+  emailsSampled: int("emailsSampled").default(0),
+  lastTrainedAt: timestamp("lastTrainedAt"),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailWritingProfile = typeof emailWritingProfiles.$inferSelect;
+export type InsertEmailWritingProfile = typeof emailWritingProfiles.$inferInsert;
+
+// AI email drafts - Ghostwriter generated drafts
+export const emailAiDrafts = mysqlTable("email_ai_drafts", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  profileId: int("profileId"),
+  inReplyToEmailId: int("inReplyToEmailId"),
+  threadId: varchar("threadId", { length: 255 }),
+  toEmail: varchar("toEmail", { length: 320 }),
+  toName: varchar("toName", { length: 255 }),
+  subject: varchar("subject", { length: 500 }),
+  bodyHtml: text("bodyHtml"),
+  bodyText: text("bodyText"),
+  prompt: text("prompt"),
+  originalDraft: text("originalDraft"),
+  editCount: int("editCount").default(0),
+  wasAccepted: boolean("wasAccepted"),
+  wasSent: boolean("wasSent").default(false),
+  sentAt: timestamp("sentAt"),
+  styleMatchScore: decimal("styleMatchScore", { precision: 5, scale: 2 }),
+  confidenceScore: decimal("confidenceScore", { precision: 5, scale: 2 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailAiDraft = typeof emailAiDrafts.$inferSelect;
+export type InsertEmailAiDraft = typeof emailAiDrafts.$inferInsert;
+
+// Email delivery schedules - defer when emails arrive
+export const emailDeliverySchedules = mysqlTable("email_delivery_schedules", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  name: varchar("name", { length: 128 }).notNull(),
+  isEnabled: boolean("isEnabled").default(true).notNull(),
+  deliveryWindows: json("deliveryWindows"),
+  allowUrgent: boolean("allowUrgent").default(true),
+  allowFromVips: boolean("allowFromVips").default(true),
+  vipSenders: json("vipSenders"),
+  timezone: varchar("timezone", { length: 64 }).default("America/New_York"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailDeliverySchedule = typeof emailDeliverySchedules.$inferSelect;
+export type InsertEmailDeliverySchedule = typeof emailDeliverySchedules.$inferInsert;
+
+// Email search index - for AI-powered search and Q&A
+export const emailSearchIndex = mysqlTable("email_search_index", {
+  id: int("id").autoincrement().primaryKey(),
+  emailId: int("emailId").notNull(),
+  threadId: varchar("threadId", { length: 255 }),
+  fromEmail: varchar("fromEmail", { length: 255 }),
+  fromName: varchar("fromName", { length: 255 }),
+  subject: varchar("subject", { length: 500 }),
+  bodySnippet: text("bodySnippet"),
+  topics: json("topics"),
+  entities: json("entities"),
+  sentiment: mysqlEnum("sentiment", ["positive", "neutral", "negative"]),
+  language: varchar("language", { length: 10 }).default("en"),
+  hasAttachments: boolean("hasAttachments").default(false),
+  attachmentTypes: json("attachmentTypes"),
+  indexedAt: timestamp("indexedAt").defaultNow().notNull(),
+});
+
+export type EmailSearchIndex = typeof emailSearchIndex.$inferSelect;
+export type InsertEmailSearchIndex = typeof emailSearchIndex.$inferInsert;

@@ -93,7 +93,12 @@ import {
   InsertFirefliesMeeting, InsertFirefliesActionItem, InsertFirefliesContactMapping,
   // Copacker portal
   copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
-  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument
+  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
+  // Shortwave-style AI Email features
+  emailThreadSummaries, emailSmartLabels, emailLabelAssignments, emailBundles, emailBundleItems,
+  emailInboxSplits, emailTodos, emailWritingProfiles, emailAiDrafts, emailDeliverySchedules, emailSearchIndex,
+  InsertEmailThreadSummary, InsertEmailSmartLabel, InsertEmailLabelAssignment, InsertEmailBundle, InsertEmailBundleItem,
+  InsertEmailInboxSplit, InsertEmailTodo, InsertEmailWritingProfile, InsertEmailAiDraft, InsertEmailDeliverySchedule, InsertEmailSearchIndex
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8333,5 +8338,243 @@ export async function getProductByName(name: string) {
   const db = await getDb();
   if (!db) return null;
   const results = await db.select().from(products).where(sql`LOWER(${products.name}) = LOWER(${name})`).limit(1);
+  return results[0] || null;
+}
+
+// ============================================
+// SHORTWAVE-STYLE AI EMAIL FEATURES
+// ============================================
+
+// --- Thread Summaries ---
+export async function createEmailThreadSummary(data: InsertEmailThreadSummary) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(emailThreadSummaries).values(data).$returningId();
+  return { id: result[0].id, ...data };
+}
+
+export async function getEmailThreadSummaryByThreadId(threadId: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(emailThreadSummaries).where(eq(emailThreadSummaries.threadId, threadId)).limit(1);
+  return results[0] || null;
+}
+
+// --- Smart Labels ---
+export async function getEmailSmartLabels() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailSmartLabels).orderBy(emailSmartLabels.name);
+}
+
+export async function createEmailSmartLabel(data: InsertEmailSmartLabel) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(emailSmartLabels).values(data).$returningId();
+  return { id: result[0].id, ...data };
+}
+
+export async function deleteEmailSmartLabel(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(emailLabelAssignments).where(eq(emailLabelAssignments.labelId, id));
+  await db.delete(emailSmartLabels).where(eq(emailSmartLabels.id, id));
+}
+
+// --- Label Assignments ---
+export async function createEmailLabelAssignment(data: InsertEmailLabelAssignment) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(emailLabelAssignments).values(data).$returningId();
+  return { id: result[0].id, ...data };
+}
+
+export async function getEmailLabelAssignmentsByEmailId(emailId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    assignment: emailLabelAssignments,
+    label: emailSmartLabels,
+  }).from(emailLabelAssignments)
+    .innerJoin(emailSmartLabels, eq(emailLabelAssignments.labelId, emailSmartLabels.id))
+    .where(eq(emailLabelAssignments.emailId, emailId));
+}
+
+// --- Email Bundles ---
+export async function getEmailBundles() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailBundles).where(eq(emailBundles.isEnabled, true)).orderBy(emailBundles.sortOrder);
+}
+
+export async function createEmailBundle(data: InsertEmailBundle) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(emailBundles).values(data).$returningId();
+  return { id: result[0].id, ...data };
+}
+
+export async function updateEmailBundle(id: number, data: Partial<InsertEmailBundle>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailBundles).set(data).where(eq(emailBundles.id, id));
+}
+
+export async function deleteEmailBundle(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(emailBundleItems).where(eq(emailBundleItems.bundleId, id));
+  await db.delete(emailBundles).where(eq(emailBundles.id, id));
+}
+
+export async function getEmailBundleItems(bundleId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    item: emailBundleItems,
+    email: inboundEmails,
+  }).from(emailBundleItems)
+    .innerJoin(inboundEmails, eq(emailBundleItems.emailId, inboundEmails.id))
+    .where(eq(emailBundleItems.bundleId, bundleId))
+    .orderBy(desc(inboundEmails.receivedAt));
+}
+
+export async function addEmailToBundle(data: InsertEmailBundleItem) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(emailBundleItems).values(data).$returningId();
+  return { id: result[0].id, ...data };
+}
+
+// --- Inbox Splits ---
+export async function getEmailInboxSplits() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailInboxSplits).where(eq(emailInboxSplits.isEnabled, true)).orderBy(emailInboxSplits.sortOrder);
+}
+
+export async function createEmailInboxSplit(data: InsertEmailInboxSplit) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(emailInboxSplits).values(data).$returningId();
+  return { id: result[0].id, ...data };
+}
+
+export async function deleteEmailInboxSplit(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(emailInboxSplits).where(eq(emailInboxSplits.id, id));
+}
+
+// --- Email Todos ---
+export async function getEmailTodos(status?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  if (status) {
+    return db.select().from(emailTodos).where(eq(emailTodos.status, status as any)).orderBy(desc(emailTodos.createdAt));
+  }
+  return db.select().from(emailTodos).orderBy(desc(emailTodos.createdAt));
+}
+
+export async function createEmailTodo(data: InsertEmailTodo) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(emailTodos).values(data).$returningId();
+  return { id: result[0].id, ...data };
+}
+
+export async function updateEmailTodo(id: number, data: Partial<InsertEmailTodo>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailTodos).set(data).where(eq(emailTodos.id, id));
+}
+
+// --- Writing Profiles (Ghostwriter) ---
+export async function getEmailWritingProfilesByUserId(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailWritingProfiles).where(eq(emailWritingProfiles.userId, userId));
+}
+
+export async function createEmailWritingProfile(data: InsertEmailWritingProfile) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(emailWritingProfiles).values(data).$returningId();
+  return { id: result[0].id, ...data };
+}
+
+export async function updateEmailWritingProfile(id: number, data: Partial<InsertEmailWritingProfile>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailWritingProfiles).set(data).where(eq(emailWritingProfiles.id, id));
+}
+
+// --- AI Drafts ---
+export async function getEmailAiDraftsByUserId(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailAiDrafts).where(eq(emailAiDrafts.userId, userId)).orderBy(desc(emailAiDrafts.createdAt));
+}
+
+export async function createEmailAiDraft(data: InsertEmailAiDraft) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(emailAiDrafts).values(data).$returningId();
+  return { id: result[0].id, ...data };
+}
+
+export async function deleteEmailAiDraft(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(emailAiDrafts).where(eq(emailAiDrafts.id, id));
+}
+
+// --- Delivery Schedules ---
+export async function getEmailDeliverySchedulesByUserId(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailDeliverySchedules).where(eq(emailDeliverySchedules.userId, userId));
+}
+
+export async function createEmailDeliverySchedule(data: InsertEmailDeliverySchedule) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(emailDeliverySchedules).values(data).$returningId();
+  return { id: result[0].id, ...data };
+}
+
+export async function updateEmailDeliverySchedule(id: number, data: Partial<InsertEmailDeliverySchedule>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailDeliverySchedules).set(data).where(eq(emailDeliverySchedules.id, id));
+}
+
+// --- Search Index ---
+export async function indexEmail(data: InsertEmailSearchIndex) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.insert(emailSearchIndex).values(data).$returningId();
+  return { id: result[0].id, ...data };
+}
+
+// --- Helper: get recent inbound emails ---
+export async function getRecentInboundEmails(limit: number = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(inboundEmails).orderBy(desc(inboundEmails.receivedAt)).limit(limit);
+}
+
+// --- Helper: get sent emails by user ---
+export async function getSentEmailsByUserId(userId: number, limit: number = 20) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(sentEmails).where(eq(sentEmails.sentBy, userId)).orderBy(desc(sentEmails.createdAt)).limit(limit);
+}
+
+// --- Helper: get inbound email by ID ---
+export async function getInboundEmailById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(inboundEmails).where(eq(inboundEmails.id, id)).limit(1);
   return results[0] || null;
 }

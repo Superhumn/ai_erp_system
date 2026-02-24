@@ -122,6 +122,7 @@ const menuGroups = [
       { icon: Building2, label: "Procurement", path: "/operations/procurement-hub" },
       { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
+      { icon: Mail, label: "AI Email Hub", path: "/operations/email-hub" },
       { icon: FileSpreadsheet, label: "Document Import", path: "/operations/document-import" },
     ],
   },

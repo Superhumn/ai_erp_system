@@ -52,6 +52,7 @@ import POReceiving from "./pages/operations/POReceiving";
 import Forecasting from "./pages/operations/Forecasting";
 import CoreOperations from "./pages/operations/CoreOperations";
 import EmailInbox from "./pages/operations/EmailInbox";
+import EmailHub from "./pages/operations/EmailHub";
 import Logistics from "./pages/operations/Logistics";
 import Procurement from "./pages/operations/Procurement";
 import ManufacturingHub from "./pages/operations/ManufacturingHub";
@@ -178,6 +179,7 @@ function Router() {
         <Route path="/operations/forecasting" component={Forecasting} />
         <Route path="/operations/core" component={CoreOperations} />
         <Route path="/operations/email-inbox" component={EmailInbox} />
+        <Route path="/operations/email-hub" component={EmailHub} />
         <Route path="/operations/logistics" component={Logistics} />
         <Route path="/operations/procurement" component={Procurement} />
         <Route path="/operations/manufacturing-hub" component={ManufacturingHub} />
