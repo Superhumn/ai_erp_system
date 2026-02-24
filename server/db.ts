@@ -1426,15 +1426,60 @@ export async function getGoogleOAuthToken(userId: number) {
   return result[0];
 }
 
+// Get all Google OAuth tokens for a user (multi-account support)
+export async function getGoogleOAuthTokens(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(googleOAuthTokens).where(eq(googleOAuthTokens.userId, userId));
+}
+
+// Get a specific Google OAuth token by its ID
+export async function getGoogleOAuthTokenById(tokenId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(googleOAuthTokens).where(eq(googleOAuthTokens.id, tokenId)).limit(1);
+  return result[0];
+}
+
+// Get Google OAuth token by userId + email combination
+export async function getGoogleOAuthTokenByEmail(userId: number, email: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(googleOAuthTokens)
+    .where(and(eq(googleOAuthTokens.userId, userId), eq(googleOAuthTokens.googleEmail, email)))
+    .limit(1);
+  return result[0];
+}
+
 export async function upsertGoogleOAuthToken(data: InsertGoogleOAuthToken) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
-  // Check if token exists for this user
+
+  // If we know the email, check if a token already exists for this user+email combo
+  // This allows multiple accounts per user (different emails)
+  if (data.googleEmail) {
+    const existingByEmail = await getGoogleOAuthTokenByEmail(data.userId, data.googleEmail);
+    if (existingByEmail) {
+      await db.update(googleOAuthTokens)
+        .set({
+          accessToken: data.accessToken,
+          refreshToken: data.refreshToken || existingByEmail.refreshToken,
+          expiresAt: data.expiresAt,
+          scope: data.scope,
+          googleEmail: data.googleEmail,
+        })
+        .where(eq(googleOAuthTokens.id, existingByEmail.id));
+      return { id: existingByEmail.id };
+    }
+    // New email for this user - insert a new row
+    const result = await db.insert(googleOAuthTokens).values(data);
+    return { id: result[0].insertId };
+  }
+
+  // Fallback: no email known, update first token for user (legacy behavior)
   const existing = await getGoogleOAuthToken(data.userId);
-  
+
   if (existing) {
-    // Update existing token
     await db.update(googleOAuthTokens)
       .set({
         accessToken: data.accessToken,
@@ -1443,10 +1488,9 @@ export async function upsertGoogleOAuthToken(data: InsertGoogleOAuthToken) {
         scope: data.scope,
         googleEmail: data.googleEmail,
       })
-      .where(eq(googleOAuthTokens.userId, data.userId));
+      .where(eq(googleOAuthTokens.id, existing.id));
     return { id: existing.id };
   } else {
-    // Insert new token
     const result = await db.insert(googleOAuthTokens).values(data);
     return { id: result[0].insertId };
   }
@@ -1456,6 +1500,16 @@ export async function deleteGoogleOAuthToken(userId: number) {
   const db = await getDb();
   if (!db) return;
   await db.delete(googleOAuthTokens).where(eq(googleOAuthTokens.userId, userId));
+}
+
+// Delete a specific Google OAuth token by ID (for disconnecting individual accounts)
+export async function deleteGoogleOAuthTokenById(tokenId: number, userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  // Require both tokenId and userId to prevent unauthorized deletion
+  await db.delete(googleOAuthTokens).where(
+    and(eq(googleOAuthTokens.id, tokenId), eq(googleOAuthTokens.userId, userId))
+  );
 }
 
 // QuickBooks OAuth token management

@@ -193,27 +193,30 @@ async function startServer() {
     handleShopifyWebhook(req, res, 'inventory')
   );
   
-  // Google OAuth callback for Drive/Sheets integration
+  // Google OAuth callback for Drive/Sheets/Gmail integration (supports multiple accounts)
   app.get('/api/google/callback', async (req, res) => {
     const { code, state } = req.query;
-    
+    // Determine where to redirect after OAuth (default to integrations settings)
+    const redirectBase = (req.query.redirect as string) || '/settings/integrations';
+
     if (!code || !state) {
-      return res.redirect('/import?error=missing_params');
+      return res.redirect(`${redirectBase}?error=missing_params`);
     }
-    
-    // Validate state parameter (user ID)
-    const userId = parseInt(state as string, 10);
+
+    // State format: "userId" or "userId:redirect_path"
+    const stateParts = (state as string).split(':');
+    const userId = parseInt(stateParts[0], 10);
     if (isNaN(userId) || userId <= 0) {
-      return res.redirect('/import?error=invalid_state');
+      return res.redirect(`${redirectBase}?error=invalid_state`);
     }
-    
+
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    
+
     if (!clientId || !clientSecret) {
-      return res.redirect('/import?error=not_configured');
+      return res.redirect(`${redirectBase}?error=not_configured`);
     }
-    
+
     try {
       // Exchange code for tokens
       const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
@@ -227,29 +230,29 @@ async function startServer() {
           redirect_uri: `${process.env.VITE_APP_URL || 'http://localhost:3000'}/api/google/callback`,
         }),
       });
-      
+
       if (!tokenResponse.ok) {
         console.error('Token exchange failed:', await tokenResponse.text());
-        return res.redirect('/import?error=token_exchange_failed');
+        return res.redirect(`${redirectBase}?error=token_exchange_failed`);
       }
-      
+
       const tokens = await tokenResponse.json();
-      
+
       // Get user info from Google
       const userInfoResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
         headers: { Authorization: `Bearer ${tokens.access_token}` },
       });
-      
+
       let googleEmail = null;
       if (userInfoResponse.ok) {
         const userInfo = await userInfoResponse.json();
         googleEmail = userInfo.email;
       }
-      
+
       // Import db functions dynamically to avoid circular deps
       const { upsertGoogleOAuthToken } = await import('../db');
-      
-      // Save tokens to database
+
+      // Save tokens to database (upsert by userId+email allows multiple accounts)
       await upsertGoogleOAuthToken({
         userId,
         accessToken: tokens.access_token,
@@ -258,11 +261,12 @@ async function startServer() {
         scope: tokens.scope,
         googleEmail,
       });
-      
-      res.redirect('/import?success=connected');
+
+      const emailParam = googleEmail ? `&email=${encodeURIComponent(googleEmail)}` : '';
+      res.redirect(`${redirectBase}?success=connected${emailParam}`);
     } catch (error) {
       console.error('Google OAuth error:', error);
-      res.redirect('/import?error=oauth_failed');
+      res.redirect(`${redirectBase}?error=oauth_failed`);
     }
   });
 

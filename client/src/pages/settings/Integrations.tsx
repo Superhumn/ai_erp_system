@@ -127,6 +127,16 @@ export default function IntegrationsPage() {
     },
   });
 
+  const gmailDisconnectMutation = trpc.gmail.disconnect.useMutation({
+    onSuccess: () => {
+      toast.success("Gmail account disconnected");
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
   // Check for OAuth callback success/error in URL
   React.useEffect(() => {
     if (!searchParams) return;
@@ -375,26 +385,17 @@ export default function IntegrationsPage() {
                 </CardHeader>
                 <CardContent>
                   <p className="text-sm text-muted-foreground mb-4">
-                    {status?.gmail?.configured 
-                      ? `Connected as ${status.gmail.email}. Send and manage emails via Gmail API.`
-                      : "Connect Gmail to send emails and manage your inbox."}
+                    {status?.gmail?.configured
+                      ? `${status.gmail.accountCount || 1} account${(status.gmail.accountCount || 1) > 1 ? 's' : ''} connected. Send and manage emails via Gmail API.`
+                      : "Connect Gmail to send emails and manage your inbox. Supports personal and business accounts."}
                   </p>
-                  <Button 
-                    variant="outline" 
+                  <Button
+                    variant="outline"
                     size="sm"
-                    onClick={() => {
-                      if (status?.gmail?.configured) {
-                        const tab = document.querySelector('[data-value="gmail"]');
-                        if (tab) (tab as HTMLElement).click();
-                      } else if (gmailAuthUrl?.url) {
-                        window.location.href = gmailAuthUrl.url;
-                      } else {
-                        toast.error(gmailAuthUrl?.error || "Google OAuth not configured");
-                      }
-                    }}
+                    onClick={() => setActiveTab("gmail")}
                   >
                     <Settings className="w-4 h-4 mr-2" />
-                    Configure
+                    {status?.gmail?.configured ? 'Manage Accounts' : 'Configure'}
                   </Button>
                 </CardContent>
               </Card>
@@ -768,115 +769,111 @@ export default function IntegrationsPage() {
             </Card>
           </TabsContent>
 
-          {/* Gmail Tab */}
+          {/* Gmail Tab - Multi-Account */}
           <TabsContent value="gmail" className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle>Gmail Integration</CardTitle>
-                <CardDescription>
-                  Send emails and manage your inbox via Gmail API
-                </CardDescription>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Gmail Integration</CardTitle>
+                    <CardDescription>
+                      Connect multiple Gmail accounts to send and manage emails. Supports personal and business accounts.
+                    </CardDescription>
+                  </div>
+                  <Button onClick={() => {
+                    if (gmailAuthUrl?.url) {
+                      window.location.href = gmailAuthUrl.url;
+                    } else {
+                      toast.error(gmailAuthUrl?.error || "Google OAuth not configured");
+                    }
+                  }}>
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add Gmail Account
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent className="space-y-6">
-                <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
-                  <div className={`p-3 rounded-full ${status?.gmail?.configured ? 'bg-green-500/10' : 'bg-yellow-500/10'}`}>
-                    {status?.gmail?.configured ? (
-                      <CheckCircle2 className="w-6 h-6 text-green-500" />
-                    ) : (
-                      <AlertCircle className="w-6 h-6 text-yellow-500" />
-                    )}
-                  </div>
-                  <div>
-                    <h4 className="font-medium">
-                      {status?.gmail?.configured ? 'Gmail Connected' : 'Gmail Not Connected'}
+                {/* Connected Accounts List */}
+                {status?.gmail?.accounts && status.gmail.accounts.length > 0 ? (
+                  <div className="space-y-3">
+                    <h4 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">
+                      Connected Accounts ({status.gmail.accounts.length})
                     </h4>
-                    <p className="text-sm text-muted-foreground">
-                      {status?.gmail?.configured 
-                        ? `Connected as ${status.gmail.email}`
-                        : 'Connect your Google account to send and receive emails via Gmail'}
-                    </p>
-                  </div>
-                </div>
-
-                {!status?.gmail?.configured ? (
-                  <div className="space-y-4">
-                    <div className="p-4 border rounded-lg">
-                      <h4 className="font-medium mb-2">Connect Gmail Account</h4>
-                      <p className="text-sm text-muted-foreground mb-4">
-                        Authorize this application to access your Gmail account to send and manage emails.
-                      </p>
-                      <Button onClick={() => {
-                        if (gmailAuthUrl?.url) {
-                          window.location.href = gmailAuthUrl.url;
-                        } else {
-                          toast.error(gmailAuthUrl?.error || "Google OAuth not configured");
-                        }
-                      }}>
-                        <Mail className="w-4 h-4 mr-2" />
-                        Connect Gmail
-                      </Button>
-                    </div>
-
-                    <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-lg">
-                      <h4 className="font-medium text-blue-600 dark:text-blue-400 mb-2">
-                        What you can do with Gmail integration:
-                      </h4>
-                      <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
-                        <li>Send emails directly from the ERP system</li>
-                        <li>Create draft emails</li>
-                        <li>View and search your email messages</li>
-                        <li>Reply to emails with threading support</li>
-                        <li>Automate email workflows</li>
-                      </ul>
-                    </div>
+                    {status.gmail.accounts.map((account: { id: number; email: string | null; connected: boolean }) => (
+                      <div key={account.id} className="flex items-center justify-between p-4 border rounded-lg">
+                        <div className="flex items-center gap-3">
+                          <div className={`p-2 rounded-full ${account.connected ? 'bg-green-500/10' : 'bg-yellow-500/10'}`}>
+                            <Mail className={`w-5 h-5 ${account.connected ? 'text-green-500' : 'text-yellow-500'}`} />
+                          </div>
+                          <div>
+                            <p className="font-medium">{account.email || 'Unknown email'}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {account.connected ? 'Active' : 'Needs reconnection'}
+                              {account.email?.endsWith('@gmail.com') ? ' \u00b7 Personal Gmail' : ' \u00b7 Google Workspace'}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge className={account.connected
+                            ? "bg-green-500/10 text-green-500 border-green-500/20"
+                            : "bg-yellow-500/10 text-yellow-500 border-yellow-500/20"
+                          }>
+                            {account.connected ? 'Connected' : 'Expired'}
+                          </Badge>
+                          {!account.connected && (
+                            <Button variant="outline" size="sm" onClick={() => {
+                              if (gmailAuthUrl?.url) {
+                                window.location.href = gmailAuthUrl.url;
+                              }
+                            }}>
+                              <RefreshCw className="w-3 h-3 mr-1" />
+                              Reconnect
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => {
+                              if (confirm(`Disconnect ${account.email}? You can reconnect it later.`)) {
+                                gmailDisconnectMutation.mutate({ accountId: account.id });
+                              }
+                            }}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 ) : (
-                  <div className="space-y-4">
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="p-4 border rounded-lg">
-                        <h4 className="font-medium mb-2">Account Info</h4>
-                        <div className="space-y-2 text-sm">
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">Email:</span>
-                            <span className="font-medium">{status.gmail.email}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">Status:</span>
-                            <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Active</Badge>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="p-4 border rounded-lg">
-                        <h4 className="font-medium mb-2">Quick Actions</h4>
-                        <div className="space-y-2">
-                          <Button variant="outline" size="sm" className="w-full justify-start">
-                            <Mail className="w-4 h-4 mr-2" />
-                            Compose Email
-                          </Button>
-                          <Button variant="outline" size="sm" className="w-full justify-start">
-                            <ExternalLink className="w-4 h-4 mr-2" />
-                            View in Gmail
-                          </Button>
-                        </div>
-                      </div>
+                  <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
+                    <div className="p-3 rounded-full bg-yellow-500/10">
+                      <AlertCircle className="w-6 h-6 text-yellow-500" />
                     </div>
-
-                    <div className="p-4 bg-muted/50 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h4 className="font-medium">Disconnect Gmail</h4>
-                          <p className="text-sm text-muted-foreground">
-                            Remove Gmail integration from your account
-                          </p>
-                        </div>
-                        <Button variant="outline" size="sm">
-                          Disconnect
-                        </Button>
-                      </div>
+                    <div>
+                      <h4 className="font-medium">No Gmail Accounts Connected</h4>
+                      <p className="text-sm text-muted-foreground">
+                        Connect your Google account to send and receive emails via Gmail. Both personal (@gmail.com) and business (Google Workspace) accounts are supported.
+                      </p>
                     </div>
                   </div>
                 )}
+
+                {/* Features info */}
+                <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-lg">
+                  <h4 className="font-medium text-blue-600 dark:text-blue-400 mb-2">
+                    What you can do with Gmail integration:
+                  </h4>
+                  <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+                    <li>Connect multiple Gmail accounts (personal and business)</li>
+                    <li>Send emails from any connected account</li>
+                    <li>Create draft emails</li>
+                    <li>View and search your email messages</li>
+                    <li>Reply to emails with threading support</li>
+                    <li>Automate email workflows</li>
+                  </ul>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>

@@ -121,17 +121,25 @@ async function refreshGoogleToken(refreshToken: string): Promise<{ accessToken?:
 }
 
 // Helper to get valid Google access token (refreshes if needed)
-async function getValidGoogleToken(userId: number): Promise<{ accessToken: string; error?: string }> {
-  const token = await db.getGoogleOAuthToken(userId);
-  
+// Supports multi-account: pass accountId to select a specific account, otherwise uses the first one
+async function getValidGoogleToken(userId: number, accountId?: number): Promise<{ accessToken: string; tokenId?: number; error?: string }> {
+  const token = accountId
+    ? await db.getGoogleOAuthTokenById(accountId)
+    : await db.getGoogleOAuthToken(userId);
+
   if (!token) {
     return { accessToken: '', error: 'Google account not connected' };
   }
-  
+
+  // Verify ownership when using accountId
+  if (accountId && token.userId !== userId) {
+    return { accessToken: '', error: 'Google account not found' };
+  }
+
   // Check if token needs refresh
   if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
     const refreshed = await refreshGoogleToken(token.refreshToken);
-    
+
     if (refreshed.accessToken && refreshed.expiresAt) {
       // Update database with new token
       await db.upsertGoogleOAuthToken({
@@ -139,14 +147,15 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
         accessToken: refreshed.accessToken,
         refreshToken: token.refreshToken,
         expiresAt: refreshed.expiresAt,
+        googleEmail: token.googleEmail,
       });
-      return { accessToken: refreshed.accessToken };
+      return { accessToken: refreshed.accessToken, tokenId: token.id };
     }
-    
+
     return { accessToken: '', error: refreshed.error || 'Failed to refresh token' };
   }
-  
-  return { accessToken: token.accessToken };
+
+  return { accessToken: token.accessToken, tokenId: token.id };
 }
 
 // Helper to generate unique numbers
@@ -2617,14 +2626,21 @@ export const appRouter = router({
       const activeShopifyStores = shopifyStores.filter(s => s.isEnabled);
       const syncHistory = await db.getSyncHistory(10);
       
-      // Check Google OAuth connection
-      const googleToken = await db.getGoogleOAuthToken(ctx.user.id);
-      const googleConnected = googleToken && (!googleToken.expiresAt || new Date(googleToken.expiresAt) > new Date());
-      
+      // Check Google OAuth connections (multi-account)
+      const googleTokens = await db.getGoogleOAuthTokens(ctx.user.id);
+      const activeGoogleAccounts = googleTokens.filter(t => !t.expiresAt || new Date(t.expiresAt) > new Date());
+      const googleConnected = activeGoogleAccounts.length > 0;
+      const primaryGoogleEmail = activeGoogleAccounts[0]?.googleEmail || googleTokens[0]?.googleEmail;
+      const googleAccountsList = googleTokens.map(t => ({
+        id: t.id,
+        email: t.googleEmail,
+        connected: !t.expiresAt || new Date(t.expiresAt) > new Date(),
+      }));
+
       // Check QuickBooks OAuth connection
       const quickbooksToken = await db.getQuickBooksOAuthToken(ctx.user.id);
       const quickbooksConnected = quickbooksToken && (!quickbooksToken.expiresAt || new Date(quickbooksToken.expiresAt) > new Date());
-      
+
       return {
         sendgrid: {
           configured: sendgridConfigured,
@@ -2639,17 +2655,21 @@ export const appRouter = router({
         google: {
           configured: googleConnected,
           status: googleConnected ? 'connected' : 'not_configured',
-          email: googleToken?.googleEmail,
+          email: primaryGoogleEmail,
+          accounts: googleAccountsList,
         },
         gmail: {
           configured: googleConnected,
           status: googleConnected ? 'connected' : 'not_configured',
-          email: googleToken?.googleEmail,
+          email: primaryGoogleEmail,
+          accountCount: googleTokens.length,
+          accounts: googleAccountsList,
         },
         googleWorkspace: {
           configured: googleConnected,
           status: googleConnected ? 'connected' : 'not_configured',
-          email: googleToken?.googleEmail,
+          email: primaryGoogleEmail,
+          accounts: googleAccountsList,
         },
         quickbooks: {
           configured: quickbooksConnected,
@@ -3448,50 +3468,110 @@ export const appRouter = router({
   }),
 
   // ============================================
-  // GMAIL INTEGRATION
+  // GMAIL INTEGRATION (Multi-Account Support)
   // ============================================
   gmail: router({
-    // Get connection status
+    // List all connected Gmail accounts
+    listAccounts: protectedProcedure.query(async ({ ctx }) => {
+      const tokens = await db.getGoogleOAuthTokens(ctx.user.id);
+      const accounts = [];
+
+      for (const token of tokens) {
+        const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+        let email = token.googleEmail;
+        let messagesTotal: number | undefined;
+        let threadsTotal: number | undefined;
+
+        // Try to get profile info for non-expired tokens
+        if (!isExpired) {
+          try {
+            const profileResult = await getGmailProfile(token.accessToken);
+            if (profileResult.profile) {
+              email = profileResult.profile.emailAddress || email;
+              messagesTotal = profileResult.profile.messagesTotal;
+              threadsTotal = profileResult.profile.threadsTotal;
+            }
+          } catch {
+            // Profile fetch failed, use stored email
+          }
+        }
+
+        accounts.push({
+          id: token.id,
+          email,
+          connected: !isExpired,
+          needsRefresh: !!isExpired,
+          messagesTotal,
+          threadsTotal,
+          scope: token.scope,
+          createdAt: token.createdAt,
+        });
+      }
+
+      return { accounts };
+    }),
+
+    // Get connection status (backward-compatible: returns first account info)
     getConnectionStatus: protectedProcedure.query(async ({ ctx }) => {
-      const token = await db.getGoogleOAuthToken(ctx.user.id);
-      if (!token) {
-        return { connected: false, email: null };
+      const tokens = await db.getGoogleOAuthTokens(ctx.user.id);
+      if (tokens.length === 0) {
+        return { connected: false, email: null, accounts: [] as Array<{ id: number; email: string | null; connected: boolean }> };
       }
-      // Check if token is expired
-      const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
-      
-      // Get Gmail profile if connected
-      if (!isExpired) {
-        const profileResult = await getGmailProfile(token.accessToken);
-        return { 
-          connected: true, 
-          email: profileResult.profile?.emailAddress || token.googleEmail,
-          messagesTotal: profileResult.profile?.messagesTotal,
-          threadsTotal: profileResult.profile?.threadsTotal,
-        };
+
+      // Build info for all accounts
+      const accounts = [];
+      for (const token of tokens) {
+        const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+        let email = token.googleEmail;
+
+        if (!isExpired) {
+          try {
+            const profileResult = await getGmailProfile(token.accessToken);
+            email = profileResult.profile?.emailAddress || email;
+          } catch {
+            // Use stored email
+          }
+        }
+
+        accounts.push({
+          id: token.id,
+          email,
+          connected: !isExpired,
+        });
       }
-      
-      return { 
-        connected: false, 
-        email: token.googleEmail,
-        needsRefresh: isExpired 
+
+      // Primary account is the first one
+      const primary = accounts[0];
+      return {
+        connected: primary.connected,
+        email: primary.email,
+        accounts,
       };
     }),
-    
-    // Get full access OAuth URL
+
+    // Get full access OAuth URL (always allows adding another account)
     getAuthUrl: protectedProcedure.query(async ({ ctx }) => {
       const clientId = process.env.GOOGLE_CLIENT_ID;
       if (!clientId) {
         return { url: null, error: 'Google OAuth not configured' };
       }
-      
+
       const url = getGoogleFullAccessAuthUrl(ctx.user.id);
       return { url, error: null };
     }),
-    
-    // Send email via Gmail
+
+    // Disconnect a specific Gmail account
+    disconnect: protectedProcedure
+      .input(z.object({ accountId: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        await db.deleteGoogleOAuthTokenById(input.accountId, ctx.user.id);
+        return { success: true };
+      }),
+
+    // Send email via Gmail (optional accountId to choose which account sends)
     sendEmail: protectedProcedure
       .input(z.object({
+        accountId: z.number().optional(),
         to: z.union([z.string(), z.array(z.string())]),
         subject: z.string(),
         body: z.string(),
@@ -3501,26 +3581,28 @@ export const appRouter = router({
         html: z.boolean().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        const { accountId, ...emailInput } = input;
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id, accountId);
         if (error) {
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
         }
-        
-        const result = await sendGmailMessage(accessToken, input);
-        
+
+        const result = await sendGmailMessage(accessToken, emailInput);
+
         if (!result.success) {
           throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to send email' });
         }
-        
+
         // Create audit log
         await createAuditLog(ctx.user.id, 'create', 'gmail_message', 0, `Sent email to ${Array.isArray(input.to) ? input.to.join(', ') : input.to}`);
-        
+
         return { success: true, messageId: result.messageId };
       }),
-    
-    // Create draft
+
+    // Create draft (optional accountId)
     createDraft: protectedProcedure
       .input(z.object({
+        accountId: z.number().optional(),
         to: z.union([z.string(), z.array(z.string())]),
         subject: z.string(),
         body: z.string(),
@@ -3530,64 +3612,69 @@ export const appRouter = router({
         html: z.boolean().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        const { accountId, ...draftInput } = input;
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id, accountId);
         if (error) {
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
         }
-        
-        const result = await createGmailDraft(accessToken, input);
-        
+
+        const result = await createGmailDraft(accessToken, draftInput);
+
         if (!result.success) {
           throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to create draft' });
         }
-        
+
         return { success: true, draftId: result.draftId };
       }),
-    
-    // List emails
+
+    // List emails (optional accountId)
     listMessages: protectedProcedure
       .input(z.object({
+        accountId: z.number().optional(),
         maxResults: z.number().optional(),
         pageToken: z.string().optional(),
         labelIds: z.array(z.string()).optional(),
         q: z.string().optional(),
       }).optional())
       .query(async ({ ctx, input }) => {
-        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        const accountId = input?.accountId;
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id, accountId);
         if (error) {
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
         }
-        
-        const result = await listGmailMessages(accessToken, input || {});
-        
+
+        const { accountId: _, ...listInput } = input || {};
+        const result = await listGmailMessages(accessToken, listInput);
+
         if (!result.success) {
           throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to list messages' });
         }
-        
+
         return result.result;
       }),
-    
-    // Get message
+
+    // Get message (optional accountId)
     getMessage: protectedProcedure
-      .input(z.object({ messageId: z.string() }))
+      .input(z.object({ messageId: z.string(), accountId: z.number().optional() }))
       .query(async ({ ctx, input }) => {
-        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id, input.accountId);
         if (error) {
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
         }
-        
+
         const result = await getGmailMessage(accessToken, input.messageId);
-        
+
         if (!result.success) {
           throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to get message' });
         }
-        
+
         return result.message;
       }),
-    
-    // Reply to message
+
+    // Reply to message (optional accountId)
     replyToMessage: protectedProcedure
       .input(z.object({
+        accountId: z.number().optional(),
         threadId: z.string(),
         messageId: z.string(),
         to: z.union([z.string(), z.array(z.string())]),
@@ -3597,18 +3684,18 @@ export const appRouter = router({
         html: z.boolean().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        const { accountId, threadId, messageId, ...emailOptions } = input;
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id, accountId);
         if (error) {
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
         }
-        
-        const { threadId, messageId, ...emailOptions } = input;
+
         const result = await replyToGmailMessage(accessToken, threadId, messageId, emailOptions);
-        
+
         if (!result.success) {
           throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to send reply' });
         }
-        
+
         return { success: true, messageId: result.messageId };
       }),
   }),
@@ -3617,27 +3704,32 @@ export const appRouter = router({
   // GOOGLE WORKSPACE (DOCS & SHEETS)
   // ============================================
   googleWorkspace: router({
-    // Get connection status (shared with Gmail)
+    // Get connection status (shared with Gmail, shows all accounts)
     getConnectionStatus: protectedProcedure.query(async ({ ctx }) => {
-      const token = await db.getGoogleOAuthToken(ctx.user.id);
-      if (!token) {
-        return { connected: false, email: null };
+      const tokens = await db.getGoogleOAuthTokens(ctx.user.id);
+      if (tokens.length === 0) {
+        return { connected: false, email: null, accounts: [] as Array<{ id: number; email: string | null; connected: boolean }> };
       }
-      const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
-      return { 
-        connected: !isExpired, 
-        email: token.googleEmail,
-        needsRefresh: isExpired 
+      const accounts = tokens.map(token => {
+        const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+        return { id: token.id, email: token.googleEmail, connected: !isExpired };
+      });
+      const primary = accounts[0];
+      return {
+        connected: primary.connected,
+        email: primary.email,
+        accounts,
+        needsRefresh: !primary.connected,
       };
     }),
-    
+
     // Get full access OAuth URL
     getAuthUrl: protectedProcedure.query(async ({ ctx }) => {
       const clientId = process.env.GOOGLE_CLIENT_ID;
       if (!clientId) {
         return { url: null, error: 'Google OAuth not configured' };
       }
-      
+
       const url = getGoogleFullAccessAuthUrl(ctx.user.id);
       return { url, error: null };
     }),
