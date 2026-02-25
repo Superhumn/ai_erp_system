@@ -470,6 +470,77 @@ async function startServer() {
     }
   });
 
+  // ============================================
+  // TWILIO WEBHOOK ENDPOINTS (AI Phone Calls)
+  // ============================================
+
+  // Call webhook - handles real-time AI conversation during active calls
+  app.post('/api/phone-call/webhook/:callId', async (req, res) => {
+    try {
+      const callId = parseInt(req.params.callId, 10);
+      if (isNaN(callId)) {
+        return res.status(400).send('Invalid call ID');
+      }
+
+      const speechResult = req.body.SpeechResult || undefined;
+      const digits = req.body.Digits || undefined;
+
+      const { handleCallWebhook } = await import('../aiPhoneCallService');
+      const twiml = await handleCallWebhook(callId, speechResult, digits);
+
+      res.type('text/xml');
+      res.send(twiml);
+    } catch (error) {
+      console.error('[Phone Call Webhook] Error:', error);
+      res.type('text/xml');
+      res.send('<?xml version="1.0" encoding="UTF-8"?><Response><Say>An error occurred. Goodbye.</Say><Hangup/></Response>');
+    }
+  });
+
+  // Call status callback - Twilio reports call status changes
+  app.post('/api/phone-call/status/:callId', async (req, res) => {
+    try {
+      const callId = parseInt(req.params.callId, 10);
+      if (isNaN(callId)) {
+        return res.status(400).send('Invalid call ID');
+      }
+
+      const status = req.body.CallStatus;
+      const duration = req.body.CallDuration ? parseInt(req.body.CallDuration, 10) : undefined;
+
+      const { handleCallStatusUpdate } = await import('../aiPhoneCallService');
+      await handleCallStatusUpdate(callId, status, duration);
+
+      res.status(200).send('OK');
+    } catch (error) {
+      console.error('[Phone Call Status] Error:', error);
+      res.status(500).send('Error processing status update');
+    }
+  });
+
+  // Recording callback - Twilio reports recording completion
+  app.post('/api/phone-call/recording/:callId', async (req, res) => {
+    try {
+      const callId = parseInt(req.params.callId, 10);
+      if (isNaN(callId)) {
+        return res.status(400).send('Invalid call ID');
+      }
+
+      const recordingUrl = req.body.RecordingUrl;
+      if (!recordingUrl) {
+        return res.status(400).send('Missing recording URL');
+      }
+
+      const { handleRecordingComplete } = await import('../aiPhoneCallService');
+      await handleRecordingComplete(callId, recordingUrl);
+
+      res.status(200).send('OK');
+    } catch (error) {
+      console.error('[Phone Call Recording] Error:', error);
+      res.status(500).send('Error processing recording');
+    }
+  });
+
   // tRPC API
   app.use(
     "/api/trpc",
