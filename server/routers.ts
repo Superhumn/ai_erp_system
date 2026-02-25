@@ -13662,6 +13662,618 @@ Ask if they received the original request and if they can provide a quote.`;
         return { taskId: taskResult.id };
       }),
   }),
+
+  // ============================================
+  // PRODUCT SPECIFICATIONS, ALLERGENS & CERTIFICATIONS
+  // ============================================
+  productSpecs: router({
+    list: protectedProcedure
+      .input(z.object({ productId: z.number() }))
+      .query(({ input }) => db.getProductSpecifications(input.productId)),
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getProductSpecificationById(input.id)),
+    getActive: protectedProcedure
+      .input(z.object({ productId: z.number() }))
+      .query(({ input }) => db.getActiveProductSpecification(input.productId)),
+    create: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        version: z.number().optional(),
+        status: z.enum(["draft", "active", "superseded", "archived"]).optional(),
+        appearance: z.string().optional(),
+        color: z.string().optional(),
+        odor: z.string().optional(),
+        taste: z.string().optional(),
+        texture: z.string().optional(),
+        form: z.enum(["powder", "liquid", "granule", "paste", "flake", "oil", "extract", "whole", "other"]).optional(),
+        meshSize: z.string().optional(),
+        moisture: z.string().optional(),
+        protein: z.string().optional(),
+        fat: z.string().optional(),
+        fiber: z.string().optional(),
+        ash: z.string().optional(),
+        pH: z.string().optional(),
+        waterActivity: z.string().optional(),
+        totalPlateCount: z.string().optional(),
+        yeastAndMold: z.string().optional(),
+        coliform: z.string().optional(),
+        eColi: z.string().optional(),
+        salmonella: z.string().optional(),
+        listeria: z.string().optional(),
+        staphAureus: z.string().optional(),
+        lead: z.string().optional(),
+        arsenic: z.string().optional(),
+        cadmium: z.string().optional(),
+        mercury: z.string().optional(),
+        shelfLifeMonths: z.number().optional(),
+        storageConditions: z.string().optional(),
+        packagingDescription: z.string().optional(),
+        countryOfOrigin: z.string().optional(),
+        hsCode: z.string().optional(),
+        ingredientStatement: z.string().optional(),
+        allergenDeclaration: z.string().optional(),
+        customFields: z.any().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createProductSpecification({ ...input, createdBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'productSpecification', result.id);
+        return result;
+      }),
+    update: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        status: z.enum(["draft", "active", "superseded", "archived"]).optional(),
+        appearance: z.string().optional(),
+        color: z.string().optional(),
+        odor: z.string().optional(),
+        taste: z.string().optional(),
+        texture: z.string().optional(),
+        form: z.enum(["powder", "liquid", "granule", "paste", "flake", "oil", "extract", "whole", "other"]).optional(),
+        meshSize: z.string().optional(),
+        moisture: z.string().optional(),
+        protein: z.string().optional(),
+        fat: z.string().optional(),
+        fiber: z.string().optional(),
+        ash: z.string().optional(),
+        pH: z.string().optional(),
+        waterActivity: z.string().optional(),
+        totalPlateCount: z.string().optional(),
+        yeastAndMold: z.string().optional(),
+        coliform: z.string().optional(),
+        eColi: z.string().optional(),
+        salmonella: z.string().optional(),
+        listeria: z.string().optional(),
+        staphAureus: z.string().optional(),
+        lead: z.string().optional(),
+        arsenic: z.string().optional(),
+        cadmium: z.string().optional(),
+        mercury: z.string().optional(),
+        shelfLifeMonths: z.number().optional(),
+        storageConditions: z.string().optional(),
+        packagingDescription: z.string().optional(),
+        countryOfOrigin: z.string().optional(),
+        hsCode: z.string().optional(),
+        ingredientStatement: z.string().optional(),
+        allergenDeclaration: z.string().optional(),
+        customFields: z.any().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateProductSpecification(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'productSpecification', id);
+        return { success: true };
+      }),
+  }),
+
+  productAllergens: router({
+    list: protectedProcedure
+      .input(z.object({ productId: z.number() }))
+      .query(({ input }) => db.getProductAllergens(input.productId)),
+    create: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        allergen: z.enum(["milk", "eggs", "fish", "shellfish", "tree_nuts", "peanuts", "wheat", "soybeans", "sesame", "other"]),
+        customAllergenName: z.string().optional(),
+        presenceType: z.enum(["contains", "may_contain", "free_from", "not_tested"]).optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createProductAllergen(input);
+        await createAuditLog(ctx.user.id, 'create', 'productAllergen', result.id);
+        return result;
+      }),
+    update: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        allergen: z.enum(["milk", "eggs", "fish", "shellfish", "tree_nuts", "peanuts", "wheat", "soybeans", "sesame", "other"]).optional(),
+        customAllergenName: z.string().optional(),
+        presenceType: z.enum(["contains", "may_contain", "free_from", "not_tested"]).optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateProductAllergen(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'productAllergen', id);
+        return { success: true };
+      }),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteProductAllergen(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'productAllergen', input.id);
+        return { success: true };
+      }),
+  }),
+
+  productCertifications: router({
+    list: protectedProcedure
+      .input(z.object({ productId: z.number() }))
+      .query(({ input }) => db.getProductCertifications(input.productId)),
+    listAll: protectedProcedure
+      .input(z.object({ status: z.string().optional() }).optional())
+      .query(({ input }) => db.getAllCertifications(input)),
+    create: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        certificationType: z.enum([
+          "organic_usda", "organic_eu", "kosher", "halal", "non_gmo",
+          "gluten_free", "fair_trade", "rainforest_alliance", "brc",
+          "sqf", "fssc_22000", "ifs", "iso_22000", "gmp", "haccp", "other"
+        ]),
+        customCertName: z.string().optional(),
+        certifyingBody: z.string().optional(),
+        certificateNumber: z.string().optional(),
+        issueDate: z.string().optional().transform(v => v ? new Date(v) : undefined),
+        expiryDate: z.string().optional().transform(v => v ? new Date(v) : undefined),
+        status: z.enum(["active", "expired", "pending", "revoked"]).optional(),
+        documentUrl: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createProductCertification(input);
+        await createAuditLog(ctx.user.id, 'create', 'productCertification', result.id);
+        return result;
+      }),
+    update: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        certificationType: z.enum([
+          "organic_usda", "organic_eu", "kosher", "halal", "non_gmo",
+          "gluten_free", "fair_trade", "rainforest_alliance", "brc",
+          "sqf", "fssc_22000", "ifs", "iso_22000", "gmp", "haccp", "other"
+        ]).optional(),
+        customCertName: z.string().optional(),
+        certifyingBody: z.string().optional(),
+        certificateNumber: z.string().optional(),
+        issueDate: z.string().optional().transform(v => v ? new Date(v) : undefined),
+        expiryDate: z.string().optional().transform(v => v ? new Date(v) : undefined),
+        status: z.enum(["active", "expired", "pending", "revoked"]).optional(),
+        documentUrl: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateProductCertification(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'productCertification', id);
+        return { success: true };
+      }),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteProductCertification(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'productCertification', input.id);
+        return { success: true };
+      }),
+  }),
+
+  // ============================================
+  // QC / COA MODULE
+  // ============================================
+  qcTestDefinitions: router({
+    list: protectedProcedure
+      .input(z.object({ productId: z.number().optional() }).optional())
+      .query(({ input }) => db.getQcTestDefinitions(input?.productId)),
+    create: opsProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        category: z.enum(["chemical", "microbiological", "physical", "sensory", "heavy_metal", "allergen", "other"]),
+        method: z.string().optional(),
+        unit: z.string().optional(),
+        specMin: z.string().optional(),
+        specMax: z.string().optional(),
+        specTarget: z.string().optional(),
+        isRequired: z.boolean().optional(),
+        productId: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createQcTestDefinition(input);
+        await createAuditLog(ctx.user.id, 'create', 'qcTestDefinition', result.id, input.name);
+        return result;
+      }),
+    update: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        category: z.enum(["chemical", "microbiological", "physical", "sensory", "heavy_metal", "allergen", "other"]).optional(),
+        method: z.string().optional(),
+        unit: z.string().optional(),
+        specMin: z.string().optional(),
+        specMax: z.string().optional(),
+        specTarget: z.string().optional(),
+        isRequired: z.boolean().optional(),
+        productId: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateQcTestDefinition(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'qcTestDefinition', id);
+        return { success: true };
+      }),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteQcTestDefinition(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'qcTestDefinition', input.id);
+        return { success: true };
+      }),
+  }),
+
+  qcInspections: router({
+    list: protectedProcedure
+      .input(z.object({
+        productId: z.number().optional(),
+        status: z.string().optional(),
+        inspectionType: z.string().optional(),
+      }).optional())
+      .query(({ input }) => db.getQcInspections(input)),
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const inspection = await db.getQcInspectionById(input.id);
+        if (!inspection) return null;
+        const testResults = await db.getQcTestResults(input.id);
+        return { ...inspection, testResults };
+      }),
+    create: opsProcedure
+      .input(z.object({
+        lotId: z.number().optional(),
+        productId: z.number(),
+        inspectionType: z.enum(["incoming", "in_process", "finished_goods", "stability", "customer_complaint", "retest"]),
+        purchaseOrderId: z.number().optional(),
+        workOrderId: z.number().optional(),
+        vendorId: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const inspectionNumber = generateNumber("QC");
+        const result = await db.createQcInspection({ ...input, inspectionNumber, inspectedBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'qcInspection', result.id, inspectionNumber);
+        return result;
+      }),
+    update: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        status: z.enum(["pending", "in_progress", "pass", "fail", "conditional_pass", "on_hold"]).optional(),
+        disposition: z.enum(["accept", "reject", "rework", "use_as_is", "return_to_vendor"]).optional(),
+        dispositionNotes: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        const updateData: any = { ...data };
+        if (data.status && ['pass', 'fail', 'conditional_pass'].includes(data.status)) {
+          updateData.reviewedBy = ctx.user.id;
+          updateData.reviewedAt = new Date();
+        }
+        if (data.disposition) {
+          updateData.dispositionBy = ctx.user.id;
+          updateData.dispositionAt = new Date();
+        }
+        await db.updateQcInspection(id, updateData);
+        await createAuditLog(ctx.user.id, 'update', 'qcInspection', id);
+        return { success: true };
+      }),
+    addTestResults: opsProcedure
+      .input(z.object({
+        inspectionId: z.number(),
+        results: z.array(z.object({
+          testDefinitionId: z.number().optional(),
+          testName: z.string(),
+          method: z.string().optional(),
+          specMin: z.string().optional(),
+          specMax: z.string().optional(),
+          specTarget: z.string().optional(),
+          actualResult: z.string(),
+          unit: z.string().optional(),
+          status: z.enum(["pass", "fail", "marginal", "not_tested"]).optional(),
+          notes: z.string().optional(),
+        })),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const resultsWithMeta = input.results.map(r => ({
+          ...r,
+          inspectionId: input.inspectionId,
+          testedBy: ctx.user.id,
+          testedAt: new Date(),
+        }));
+        await db.createQcTestResultsBatch(resultsWithMeta);
+        await createAuditLog(ctx.user.id, 'create', 'qcTestResult', input.inspectionId);
+        return { success: true };
+      }),
+  }),
+
+  coa: router({
+    list: protectedProcedure
+      .input(z.object({
+        productId: z.number().optional(),
+        customerId: z.number().optional(),
+        status: z.string().optional(),
+      }).optional())
+      .query(({ input }) => db.getCertificatesOfAnalysis(input)),
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const coa = await db.getCertificateOfAnalysisById(input.id);
+        if (!coa) return null;
+        // Fetch linked inspection and test results
+        const inspection = coa.inspectionId ? await db.getQcInspectionById(coa.inspectionId) : null;
+        const testResults = coa.inspectionId ? await db.getQcTestResults(coa.inspectionId) : [];
+        return { ...coa, inspection, testResults };
+      }),
+    create: opsProcedure
+      .input(z.object({
+        inspectionId: z.number(),
+        lotId: z.number().optional(),
+        productId: z.number(),
+        issuedTo: z.string().optional(),
+        customerId: z.number().optional(),
+        lotCode: z.string().optional(),
+        manufactureDate: z.string().optional().transform(v => v ? new Date(v) : undefined),
+        expiryDate: z.string().optional().transform(v => v ? new Date(v) : undefined),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const coaNumber = generateNumber("COA");
+        const result = await db.createCertificateOfAnalysis({
+          ...input,
+          coaNumber,
+          status: "draft",
+          issuedBy: ctx.user.id,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'certificateOfAnalysis', result.id, coaNumber);
+        return result;
+      }),
+    update: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        status: z.enum(["draft", "issued", "superseded", "voided"]).optional(),
+        issuedTo: z.string().optional(),
+        customerId: z.number().optional(),
+        documentUrl: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        const updateData: any = { ...data };
+        if (data.status === 'issued') {
+          updateData.issuedAt = new Date();
+          updateData.issuedBy = ctx.user.id;
+        }
+        await db.updateCertificateOfAnalysis(id, updateData);
+        await createAuditLog(ctx.user.id, 'update', 'certificateOfAnalysis', id);
+        return { success: true };
+      }),
+  }),
+
+  // ============================================
+  // CUSTOMER-SPECIFIC PRICING
+  // ============================================
+  priceLists: router({
+    list: protectedProcedure
+      .input(z.object({ status: z.string().optional(), type: z.string().optional() }).optional())
+      .query(({ input }) => db.getPriceLists(input)),
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const priceList = await db.getPriceListById(input.id);
+        if (!priceList) return null;
+        const items = await db.getPriceListItems(input.id);
+        const customerAssignments = await db.getPriceListCustomers(input.id);
+        return { ...priceList, items, customerAssignments };
+      }),
+    create: financeProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        currency: z.string().optional(),
+        type: z.enum(["standard", "distributor", "foodservice", "retail", "broker", "contract", "promotional"]).optional(),
+        status: z.enum(["active", "inactive", "draft"]).optional(),
+        effectiveDate: z.string().optional().transform(v => v ? new Date(v) : undefined),
+        expiryDate: z.string().optional().transform(v => v ? new Date(v) : undefined),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createPriceList({ ...input, createdBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'priceList', result.id, input.name);
+        return result;
+      }),
+    update: financeProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        description: z.string().optional(),
+        currency: z.string().optional(),
+        type: z.enum(["standard", "distributor", "foodservice", "retail", "broker", "contract", "promotional"]).optional(),
+        status: z.enum(["active", "inactive", "draft"]).optional(),
+        effectiveDate: z.string().optional().transform(v => v ? new Date(v) : undefined),
+        expiryDate: z.string().optional().transform(v => v ? new Date(v) : undefined),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updatePriceList(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'priceList', id);
+        return { success: true };
+      }),
+    delete: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deletePriceList(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'priceList', input.id);
+        return { success: true };
+      }),
+    // Price list items
+    addItem: financeProcedure
+      .input(z.object({
+        priceListId: z.number(),
+        productId: z.number(),
+        minQuantity: z.string().optional(),
+        maxQuantity: z.string().optional(),
+        unitPrice: z.string(),
+        unit: z.string().optional(),
+        discountPercent: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createPriceListItem(input);
+        await createAuditLog(ctx.user.id, 'create', 'priceListItem', result.id);
+        return result;
+      }),
+    updateItem: financeProcedure
+      .input(z.object({
+        id: z.number(),
+        minQuantity: z.string().optional(),
+        maxQuantity: z.string().optional(),
+        unitPrice: z.string().optional(),
+        unit: z.string().optional(),
+        discountPercent: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updatePriceListItem(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'priceListItem', id);
+        return { success: true };
+      }),
+    deleteItem: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deletePriceListItem(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'priceListItem', input.id);
+        return { success: true };
+      }),
+    // Customer assignments
+    assignCustomer: financeProcedure
+      .input(z.object({
+        customerId: z.number(),
+        priceListId: z.number(),
+        isPrimary: z.boolean().optional(),
+        effectiveDate: z.string().optional().transform(v => v ? new Date(v) : undefined),
+        expiryDate: z.string().optional().transform(v => v ? new Date(v) : undefined),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.assignCustomerPriceList({ ...input, assignedBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'customerPriceList', result.id);
+        return result;
+      }),
+    removeCustomer: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.removeCustomerPriceList(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'customerPriceList', input.id);
+        return { success: true };
+      }),
+    // Lookup price for customer
+    getCustomerPrice: protectedProcedure
+      .input(z.object({
+        customerId: z.number(),
+        productId: z.number(),
+        quantity: z.number(),
+      }))
+      .query(({ input }) => db.getCustomerPrice(input.customerId, input.productId, input.quantity)),
+    // Get customer's assigned price lists
+    getCustomerPriceLists: protectedProcedure
+      .input(z.object({ customerId: z.number() }))
+      .query(({ input }) => db.getCustomerPriceLists(input.customerId)),
+  }),
+
+  // ============================================
+  // LOT TRACEABILITY
+  // ============================================
+  lotTrace: router({
+    // Full trace for a lot
+    getFullTrace: protectedProcedure
+      .input(z.object({ lotId: z.number() }))
+      .query(({ input }) => db.getFullLotTrace(input.lotId)),
+    // Supplier links
+    getSupplierLinks: protectedProcedure
+      .input(z.object({ lotId: z.number() }))
+      .query(({ input }) => db.getLotSupplierLinks(input.lotId)),
+    addSupplierLink: opsProcedure
+      .input(z.object({
+        lotId: z.number(),
+        vendorId: z.number(),
+        vendorLotCode: z.string(),
+        vendorCoaUrl: z.string().optional(),
+        purchaseOrderId: z.number().optional(),
+        receivingRecordId: z.number().optional(),
+        receivedQuantity: z.string().optional(),
+        unit: z.string().optional(),
+        receivedDate: z.string().optional().transform(v => v ? new Date(v) : undefined),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createLotSupplierLink(input);
+        await createAuditLog(ctx.user.id, 'create', 'lotSupplierLink', result.id);
+        return result;
+      }),
+    // Production links
+    getProductionLinks: protectedProcedure
+      .input(z.object({
+        inputLotId: z.number().optional(),
+        outputLotId: z.number().optional(),
+        workOrderId: z.number().optional(),
+      }))
+      .query(({ input }) => db.getLotProductionLinks(input)),
+    addProductionLink: opsProcedure
+      .input(z.object({
+        workOrderId: z.number(),
+        inputLotId: z.number(),
+        outputLotId: z.number(),
+        inputProductId: z.number(),
+        outputProductId: z.number(),
+        quantityConsumed: z.string(),
+        unit: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createLotProductionLink(input);
+        await createAuditLog(ctx.user.id, 'create', 'lotProductionLink', result.id);
+        return result;
+      }),
+    // Customer shipment links
+    getCustomerShipments: protectedProcedure
+      .input(z.object({ lotId: z.number() }))
+      .query(({ input }) => db.getLotCustomerShipments(input.lotId)),
+    addCustomerShipment: opsProcedure
+      .input(z.object({
+        lotId: z.number(),
+        customerId: z.number(),
+        salesOrderId: z.number().optional(),
+        shipmentId: z.number().optional(),
+        invoiceId: z.number().optional(),
+        quantityShipped: z.string(),
+        unit: z.string().optional(),
+        shippedDate: z.string().optional().transform(v => v ? new Date(v) : undefined),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createLotCustomerShipment(input);
+        await createAuditLog(ctx.user.id, 'create', 'lotCustomerShipment', result.id);
+        return result;
+      }),
+  }),
 });
 
 // Helper function to calculate next generation date for recurring invoices

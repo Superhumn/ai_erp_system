@@ -69,6 +69,9 @@ import {
   Heart,
   Mic,
   BookOpen,
+  FlaskConical,
+  GitBranch,
+  Award,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -123,6 +126,10 @@ const menuGroups = [
       { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: FileSpreadsheet, label: "Document Import", path: "/operations/document-import" },
+      { icon: Award, label: "Product Specs", path: "/operations/product-specs" },
+      { icon: FlaskConical, label: "Quality / COA", path: "/operations/quality-control" },
+      { icon: DollarSign, label: "Customer Pricing", path: "/operations/customer-pricing" },
+      { icon: GitBranch, label: "Lot Traceability", path: "/operations/lot-traceability" },
     ],
   },
   {

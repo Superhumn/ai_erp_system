@@ -93,7 +93,19 @@ import {
   InsertFirefliesMeeting, InsertFirefliesActionItem, InsertFirefliesContactMapping,
   // Copacker portal
   copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
-  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument
+  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
+  // Product specs, allergens, certifications
+  productSpecifications, productAllergens, productCertifications,
+  InsertProductSpecification, InsertProductAllergen, InsertProductCertification,
+  // QC / COA
+  qcTestDefinitions, qcInspections, qcTestResults, certificatesOfAnalysis,
+  InsertQcTestDefinition, InsertQcInspection, InsertQcTestResult, InsertCertificateOfAnalysis,
+  // Customer pricing
+  priceLists, priceListItems, customerPriceLists,
+  InsertPriceList, InsertPriceListItem, InsertCustomerPriceList,
+  // Lot traceability
+  lotSupplierLinks, lotProductionLinks, lotCustomerShipments,
+  InsertLotSupplierLink, InsertLotProductionLink, InsertLotCustomerShipment
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8334,4 +8346,447 @@ export async function getProductByName(name: string) {
   if (!db) return null;
   const results = await db.select().from(products).where(sql`LOWER(${products.name}) = LOWER(${name})`).limit(1);
   return results[0] || null;
+}
+
+// ============================================
+// PRODUCT SPECIFICATIONS
+// ============================================
+
+export async function getProductSpecifications(productId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(productSpecifications).where(eq(productSpecifications.productId, productId)).orderBy(desc(productSpecifications.version));
+}
+
+export async function getProductSpecificationById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(productSpecifications).where(eq(productSpecifications.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getActiveProductSpecification(productId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(productSpecifications)
+    .where(and(eq(productSpecifications.productId, productId), eq(productSpecifications.status, "active")))
+    .orderBy(desc(productSpecifications.version)).limit(1);
+  return result[0];
+}
+
+export async function createProductSpecification(data: InsertProductSpecification) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(productSpecifications).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateProductSpecification(id: number, data: Partial<InsertProductSpecification>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(productSpecifications).set(data).where(eq(productSpecifications.id, id));
+}
+
+// ============================================
+// PRODUCT ALLERGENS
+// ============================================
+
+export async function getProductAllergens(productId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(productAllergens).where(eq(productAllergens.productId, productId));
+}
+
+export async function createProductAllergen(data: InsertProductAllergen) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(productAllergens).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateProductAllergen(id: number, data: Partial<InsertProductAllergen>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(productAllergens).set(data).where(eq(productAllergens.id, id));
+}
+
+export async function deleteProductAllergen(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(productAllergens).where(eq(productAllergens.id, id));
+}
+
+// ============================================
+// PRODUCT CERTIFICATIONS
+// ============================================
+
+export async function getProductCertifications(productId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(productCertifications).where(eq(productCertifications.productId, productId));
+}
+
+export async function getAllCertifications(filters?: { status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(productCertifications.status, filters.status as any));
+  if (conditions.length > 0) {
+    return db.select().from(productCertifications).where(and(...conditions)).orderBy(desc(productCertifications.createdAt));
+  }
+  return db.select().from(productCertifications).orderBy(desc(productCertifications.createdAt));
+}
+
+export async function createProductCertification(data: InsertProductCertification) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(productCertifications).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateProductCertification(id: number, data: Partial<InsertProductCertification>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(productCertifications).set(data).where(eq(productCertifications.id, id));
+}
+
+export async function deleteProductCertification(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(productCertifications).where(eq(productCertifications.id, id));
+}
+
+// ============================================
+// QC TEST DEFINITIONS
+// ============================================
+
+export async function getQcTestDefinitions(productId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (productId) {
+    return db.select().from(qcTestDefinitions)
+      .where(or(eq(qcTestDefinitions.productId, productId), isNull(qcTestDefinitions.productId)))
+      .orderBy(qcTestDefinitions.category);
+  }
+  return db.select().from(qcTestDefinitions).orderBy(qcTestDefinitions.category);
+}
+
+export async function createQcTestDefinition(data: InsertQcTestDefinition) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(qcTestDefinitions).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateQcTestDefinition(id: number, data: Partial<InsertQcTestDefinition>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(qcTestDefinitions).set(data).where(eq(qcTestDefinitions.id, id));
+}
+
+export async function deleteQcTestDefinition(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(qcTestDefinitions).where(eq(qcTestDefinitions.id, id));
+}
+
+// ============================================
+// QC INSPECTIONS
+// ============================================
+
+export async function getQcInspections(filters?: { productId?: number; status?: string; inspectionType?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.productId) conditions.push(eq(qcInspections.productId, filters.productId));
+  if (filters?.status) conditions.push(eq(qcInspections.status, filters.status as any));
+  if (filters?.inspectionType) conditions.push(eq(qcInspections.inspectionType, filters.inspectionType as any));
+  if (conditions.length > 0) {
+    return db.select().from(qcInspections).where(and(...conditions)).orderBy(desc(qcInspections.createdAt));
+  }
+  return db.select().from(qcInspections).orderBy(desc(qcInspections.createdAt));
+}
+
+export async function getQcInspectionById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(qcInspections).where(eq(qcInspections.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createQcInspection(data: InsertQcInspection) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(qcInspections).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateQcInspection(id: number, data: Partial<InsertQcInspection>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(qcInspections).set(data).where(eq(qcInspections.id, id));
+}
+
+// ============================================
+// QC TEST RESULTS
+// ============================================
+
+export async function getQcTestResults(inspectionId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(qcTestResults).where(eq(qcTestResults.inspectionId, inspectionId));
+}
+
+export async function createQcTestResult(data: InsertQcTestResult) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(qcTestResults).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function createQcTestResultsBatch(data: InsertQcTestResult[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (data.length === 0) return;
+  await db.insert(qcTestResults).values(data);
+}
+
+// ============================================
+// CERTIFICATES OF ANALYSIS
+// ============================================
+
+export async function getCertificatesOfAnalysis(filters?: { productId?: number; customerId?: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.productId) conditions.push(eq(certificatesOfAnalysis.productId, filters.productId));
+  if (filters?.customerId) conditions.push(eq(certificatesOfAnalysis.customerId, filters.customerId));
+  if (filters?.status) conditions.push(eq(certificatesOfAnalysis.status, filters.status as any));
+  if (conditions.length > 0) {
+    return db.select().from(certificatesOfAnalysis).where(and(...conditions)).orderBy(desc(certificatesOfAnalysis.createdAt));
+  }
+  return db.select().from(certificatesOfAnalysis).orderBy(desc(certificatesOfAnalysis.createdAt));
+}
+
+export async function getCertificateOfAnalysisById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(certificatesOfAnalysis).where(eq(certificatesOfAnalysis.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createCertificateOfAnalysis(data: InsertCertificateOfAnalysis) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(certificatesOfAnalysis).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateCertificateOfAnalysis(id: number, data: Partial<InsertCertificateOfAnalysis>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(certificatesOfAnalysis).set(data).where(eq(certificatesOfAnalysis.id, id));
+}
+
+// ============================================
+// PRICE LISTS
+// ============================================
+
+export async function getPriceLists(filters?: { status?: string; type?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(priceLists.status, filters.status as any));
+  if (filters?.type) conditions.push(eq(priceLists.type, filters.type as any));
+  if (conditions.length > 0) {
+    return db.select().from(priceLists).where(and(...conditions)).orderBy(desc(priceLists.createdAt));
+  }
+  return db.select().from(priceLists).orderBy(desc(priceLists.createdAt));
+}
+
+export async function getPriceListById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(priceLists).where(eq(priceLists.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createPriceList(data: InsertPriceList) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(priceLists).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updatePriceList(id: number, data: Partial<InsertPriceList>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(priceLists).set(data).where(eq(priceLists.id, id));
+}
+
+export async function deletePriceList(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(priceListItems).where(eq(priceListItems.priceListId, id));
+  await db.delete(customerPriceLists).where(eq(customerPriceLists.priceListId, id));
+  await db.delete(priceLists).where(eq(priceLists.id, id));
+}
+
+// ============================================
+// PRICE LIST ITEMS
+// ============================================
+
+export async function getPriceListItems(priceListId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(priceListItems).where(eq(priceListItems.priceListId, priceListId)).orderBy(priceListItems.productId, priceListItems.minQuantity);
+}
+
+export async function createPriceListItem(data: InsertPriceListItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(priceListItems).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updatePriceListItem(id: number, data: Partial<InsertPriceListItem>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(priceListItems).set(data).where(eq(priceListItems.id, id));
+}
+
+export async function deletePriceListItem(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(priceListItems).where(eq(priceListItems.id, id));
+}
+
+// Get effective price for a customer/product/quantity
+export async function getCustomerPrice(customerId: number, productId: number, quantity: number) {
+  const db = await getDb();
+  if (!db) return null;
+  // Get customer's active price lists
+  const assignments = await db.select().from(customerPriceLists)
+    .where(and(eq(customerPriceLists.customerId, customerId), eq(customerPriceLists.isPrimary, true)));
+  if (assignments.length === 0) return null;
+  // Find matching price tier
+  for (const assignment of assignments) {
+    const items = await db.select().from(priceListItems)
+      .where(and(
+        eq(priceListItems.priceListId, assignment.priceListId),
+        eq(priceListItems.productId, productId),
+        lte(priceListItems.minQuantity, String(quantity))
+      ))
+      .orderBy(desc(priceListItems.minQuantity))
+      .limit(1);
+    if (items.length > 0) {
+      return { priceListId: assignment.priceListId, ...items[0] };
+    }
+  }
+  return null;
+}
+
+// ============================================
+// CUSTOMER PRICE LISTS
+// ============================================
+
+export async function getCustomerPriceLists(customerId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(customerPriceLists).where(eq(customerPriceLists.customerId, customerId));
+}
+
+export async function getPriceListCustomers(priceListId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(customerPriceLists).where(eq(customerPriceLists.priceListId, priceListId));
+}
+
+export async function assignCustomerPriceList(data: InsertCustomerPriceList) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(customerPriceLists).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function removeCustomerPriceList(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(customerPriceLists).where(eq(customerPriceLists.id, id));
+}
+
+// ============================================
+// LOT TRACEABILITY
+// ============================================
+
+export async function getLotSupplierLinks(lotId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(lotSupplierLinks).where(eq(lotSupplierLinks.lotId, lotId));
+}
+
+export async function createLotSupplierLink(data: InsertLotSupplierLink) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(lotSupplierLinks).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getLotProductionLinks(filters: { inputLotId?: number; outputLotId?: number; workOrderId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters.inputLotId) conditions.push(eq(lotProductionLinks.inputLotId, filters.inputLotId));
+  if (filters.outputLotId) conditions.push(eq(lotProductionLinks.outputLotId, filters.outputLotId));
+  if (filters.workOrderId) conditions.push(eq(lotProductionLinks.workOrderId, filters.workOrderId));
+  if (conditions.length > 0) {
+    return db.select().from(lotProductionLinks).where(and(...conditions));
+  }
+  return db.select().from(lotProductionLinks);
+}
+
+export async function createLotProductionLink(data: InsertLotProductionLink) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(lotProductionLinks).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getLotCustomerShipments(lotId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(lotCustomerShipments).where(eq(lotCustomerShipments.lotId, lotId));
+}
+
+export async function getCustomerLotShipments(customerId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(lotCustomerShipments).where(eq(lotCustomerShipments.customerId, customerId));
+}
+
+export async function createLotCustomerShipment(data: InsertLotCustomerShipment) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(lotCustomerShipments).values(data);
+  return { id: result[0].insertId };
+}
+
+// Full forward trace: supplier lot -> production lots -> customer shipments
+export async function getFullLotTrace(lotId: number) {
+  const db = await getDb();
+  if (!db) return { lot: null, supplierLinks: [], productionInputs: [], productionOutputs: [], customerShipments: [] };
+
+  const lot = await db.select().from(inventoryLots).where(eq(inventoryLots.id, lotId)).limit(1);
+  const supplierLinks = await db.select().from(lotSupplierLinks).where(eq(lotSupplierLinks.lotId, lotId));
+  const productionInputs = await db.select().from(lotProductionLinks).where(eq(lotProductionLinks.inputLotId, lotId));
+  const productionOutputs = await db.select().from(lotProductionLinks).where(eq(lotProductionLinks.outputLotId, lotId));
+  const customerShipments = await db.select().from(lotCustomerShipments).where(eq(lotCustomerShipments.lotId, lotId));
+
+  return {
+    lot: lot[0] || null,
+    supplierLinks,
+    productionInputs,  // This lot was consumed to make these output lots
+    productionOutputs, // This lot was produced from these input lots
+    customerShipments, // This lot was shipped to these customers
+  };
 }

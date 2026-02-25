@@ -4471,3 +4471,326 @@ export const copackerShippingDocuments = mysqlTable("copacker_shipping_documents
 
 export type CopackerShippingDocument = typeof copackerShippingDocuments.$inferSelect;
 export type InsertCopackerShippingDocument = typeof copackerShippingDocuments.$inferInsert;
+
+// ============================================
+// PRODUCT SPECIFICATIONS, ALLERGENS & CERTIFICATIONS
+// ============================================
+
+// Product specifications (spec sheets for B2B ingredient sales)
+export const productSpecifications = mysqlTable("productSpecifications", {
+  id: int("id").autoincrement().primaryKey(),
+  productId: int("productId").notNull(),
+  version: int("version").default(1).notNull(),
+  status: mysqlEnum("status", ["draft", "active", "superseded", "archived"]).default("draft").notNull(),
+  // Physical properties
+  appearance: varchar("appearance", { length: 512 }),
+  color: varchar("color", { length: 128 }),
+  odor: varchar("odor", { length: 128 }),
+  taste: varchar("taste", { length: 128 }),
+  texture: varchar("texture", { length: 128 }),
+  form: mysqlEnum("form", ["powder", "liquid", "granule", "paste", "flake", "oil", "extract", "whole", "other"]),
+  meshSize: varchar("meshSize", { length: 64 }),
+  // Chemical / nutritional
+  moisture: varchar("moisture", { length: 64 }), // e.g. "<5%"
+  protein: varchar("protein", { length: 64 }),
+  fat: varchar("fat", { length: 64 }),
+  fiber: varchar("fiber", { length: 64 }),
+  ash: varchar("ash", { length: 64 }),
+  pH: varchar("pH", { length: 32 }),
+  waterActivity: varchar("waterActivity", { length: 32 }),
+  // Microbiological limits
+  totalPlateCount: varchar("totalPlateCount", { length: 64 }),
+  yeastAndMold: varchar("yeastAndMold", { length: 64 }),
+  coliform: varchar("coliform", { length: 64 }),
+  eColi: varchar("eColi", { length: 64 }),
+  salmonella: varchar("salmonella", { length: 64 }),
+  listeria: varchar("listeria", { length: 64 }),
+  staphAureus: varchar("staphAureus", { length: 64 }),
+  // Heavy metals
+  lead: varchar("lead", { length: 64 }),
+  arsenic: varchar("arsenic", { length: 64 }),
+  cadmium: varchar("cadmium", { length: 64 }),
+  mercury: varchar("mercury", { length: 64 }),
+  // Storage & handling
+  shelfLifeMonths: int("shelfLifeMonths"),
+  storageConditions: varchar("storageConditions", { length: 512 }),
+  packagingDescription: varchar("packagingDescription", { length: 512 }),
+  // Regulatory
+  countryOfOrigin: varchar("countryOfOrigin", { length: 128 }),
+  hsCode: varchar("hsCode", { length: 20 }),
+  ingredientStatement: text("ingredientStatement"),
+  allergenDeclaration: text("allergenDeclaration"),
+  // Custom fields
+  customFields: json("customFields"), // Array of { label, value, unit }
+  specSheetUrl: text("specSheetUrl"), // Generated PDF URL
+  approvedBy: int("approvedBy"),
+  approvedAt: timestamp("approvedAt"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ProductSpecification = typeof productSpecifications.$inferSelect;
+export type InsertProductSpecification = typeof productSpecifications.$inferInsert;
+
+// Product allergens (Big 9 + custom)
+export const productAllergens = mysqlTable("productAllergens", {
+  id: int("id").autoincrement().primaryKey(),
+  productId: int("productId").notNull(),
+  allergen: mysqlEnum("allergen", [
+    "milk", "eggs", "fish", "shellfish", "tree_nuts", "peanuts",
+    "wheat", "soybeans", "sesame", "other"
+  ]).notNull(),
+  customAllergenName: varchar("customAllergenName", { length: 128 }), // When allergen = "other"
+  presenceType: mysqlEnum("presenceType", ["contains", "may_contain", "free_from", "not_tested"]).default("contains").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ProductAllergen = typeof productAllergens.$inferSelect;
+export type InsertProductAllergen = typeof productAllergens.$inferInsert;
+
+// Product certifications (Organic, Kosher, Non-GMO, etc.)
+export const productCertifications = mysqlTable("productCertifications", {
+  id: int("id").autoincrement().primaryKey(),
+  productId: int("productId").notNull(),
+  certificationType: mysqlEnum("certificationType", [
+    "organic_usda", "organic_eu", "kosher", "halal", "non_gmo",
+    "gluten_free", "fair_trade", "rainforest_alliance", "brc",
+    "sqf", "fssc_22000", "ifs", "iso_22000", "gmp", "haccp", "other"
+  ]).notNull(),
+  customCertName: varchar("customCertName", { length: 128 }), // When type = "other"
+  certifyingBody: varchar("certifyingBody", { length: 255 }),
+  certificateNumber: varchar("certificateNumber", { length: 128 }),
+  issueDate: timestamp("issueDate"),
+  expiryDate: timestamp("expiryDate"),
+  status: mysqlEnum("status", ["active", "expired", "pending", "revoked"]).default("active").notNull(),
+  documentUrl: text("documentUrl"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ProductCertification = typeof productCertifications.$inferSelect;
+export type InsertProductCertification = typeof productCertifications.$inferInsert;
+
+// ============================================
+// QC / COA (Certificate of Analysis) MODULE
+// ============================================
+
+// QC test definitions (templates for what to test)
+export const qcTestDefinitions = mysqlTable("qcTestDefinitions", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  category: mysqlEnum("category", [
+    "chemical", "microbiological", "physical", "sensory", "heavy_metal", "allergen", "other"
+  ]).notNull(),
+  method: varchar("method", { length: 255 }), // e.g., "AOAC 990.03"
+  unit: varchar("unit", { length: 64 }),
+  specMin: varchar("specMin", { length: 64 }),
+  specMax: varchar("specMax", { length: 64 }),
+  specTarget: varchar("specTarget", { length: 64 }),
+  isRequired: boolean("isRequired").default(true).notNull(),
+  productId: int("productId"), // null = applies to all products
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type QcTestDefinition = typeof qcTestDefinitions.$inferSelect;
+export type InsertQcTestDefinition = typeof qcTestDefinitions.$inferInsert;
+
+// QC inspections (per lot/batch)
+export const qcInspections = mysqlTable("qcInspections", {
+  id: int("id").autoincrement().primaryKey(),
+  inspectionNumber: varchar("inspectionNumber", { length: 64 }).notNull(),
+  lotId: int("lotId"), // Links to inventoryLots
+  productId: int("productId").notNull(),
+  inspectionType: mysqlEnum("inspectionType", [
+    "incoming", "in_process", "finished_goods", "stability", "customer_complaint", "retest"
+  ]).notNull(),
+  status: mysqlEnum("status", ["pending", "in_progress", "pass", "fail", "conditional_pass", "on_hold"]).default("pending").notNull(),
+  inspectedBy: int("inspectedBy"),
+  inspectedAt: timestamp("inspectedAt"),
+  reviewedBy: int("reviewedBy"),
+  reviewedAt: timestamp("reviewedAt"),
+  // Source references
+  purchaseOrderId: int("purchaseOrderId"),
+  workOrderId: int("workOrderId"),
+  vendorId: int("vendorId"),
+  // Disposition
+  disposition: mysqlEnum("disposition", ["accept", "reject", "rework", "use_as_is", "return_to_vendor"]),
+  dispositionNotes: text("dispositionNotes"),
+  dispositionBy: int("dispositionBy"),
+  dispositionAt: timestamp("dispositionAt"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type QcInspection = typeof qcInspections.$inferSelect;
+export type InsertQcInspection = typeof qcInspections.$inferInsert;
+
+// QC test results (individual test results within an inspection)
+export const qcTestResults = mysqlTable("qcTestResults", {
+  id: int("id").autoincrement().primaryKey(),
+  inspectionId: int("inspectionId").notNull(),
+  testDefinitionId: int("testDefinitionId"),
+  testName: varchar("testName", { length: 255 }).notNull(),
+  method: varchar("method", { length: 255 }),
+  specMin: varchar("specMin", { length: 64 }),
+  specMax: varchar("specMax", { length: 64 }),
+  specTarget: varchar("specTarget", { length: 64 }),
+  actualResult: varchar("actualResult", { length: 128 }).notNull(),
+  unit: varchar("unit", { length: 64 }),
+  status: mysqlEnum("status", ["pass", "fail", "marginal", "not_tested"]).default("pass").notNull(),
+  notes: text("notes"),
+  testedBy: int("testedBy"),
+  testedAt: timestamp("testedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type QcTestResult = typeof qcTestResults.$inferSelect;
+export type InsertQcTestResult = typeof qcTestResults.$inferInsert;
+
+// Certificates of Analysis (COAs)
+export const certificatesOfAnalysis = mysqlTable("certificatesOfAnalysis", {
+  id: int("id").autoincrement().primaryKey(),
+  coaNumber: varchar("coaNumber", { length: 64 }).notNull(),
+  inspectionId: int("inspectionId").notNull(),
+  lotId: int("lotId"),
+  productId: int("productId").notNull(),
+  status: mysqlEnum("status", ["draft", "issued", "superseded", "voided"]).default("draft").notNull(),
+  issuedTo: varchar("issuedTo", { length: 255 }), // Customer name
+  customerId: int("customerId"),
+  documentUrl: text("documentUrl"), // Generated PDF URL
+  // Lot info baked in for the COA
+  lotCode: varchar("lotCode", { length: 64 }),
+  manufactureDate: timestamp("manufactureDate"),
+  expiryDate: timestamp("expiryDate"),
+  issuedBy: int("issuedBy"),
+  issuedAt: timestamp("issuedAt"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CertificateOfAnalysis = typeof certificatesOfAnalysis.$inferSelect;
+export type InsertCertificateOfAnalysis = typeof certificatesOfAnalysis.$inferInsert;
+
+// ============================================
+// CUSTOMER-SPECIFIC PRICING
+// ============================================
+
+// Price lists (named pricing tiers)
+export const priceLists = mysqlTable("priceLists", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  type: mysqlEnum("type", ["standard", "distributor", "foodservice", "retail", "broker", "contract", "promotional"]).default("standard").notNull(),
+  status: mysqlEnum("status", ["active", "inactive", "draft"]).default("active").notNull(),
+  effectiveDate: timestamp("effectiveDate"),
+  expiryDate: timestamp("expiryDate"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PriceList = typeof priceLists.$inferSelect;
+export type InsertPriceList = typeof priceLists.$inferInsert;
+
+// Price list items (product prices within a price list, with volume tiers)
+export const priceListItems = mysqlTable("priceListItems", {
+  id: int("id").autoincrement().primaryKey(),
+  priceListId: int("priceListId").notNull(),
+  productId: int("productId").notNull(),
+  // Volume tier pricing
+  minQuantity: decimal("minQuantity", { precision: 15, scale: 4 }).default("1").notNull(),
+  maxQuantity: decimal("maxQuantity", { precision: 15, scale: 4 }), // null = unlimited
+  unitPrice: decimal("unitPrice", { precision: 15, scale: 4 }).notNull(),
+  unit: varchar("unit", { length: 32 }).default("EA"),
+  // Optional discount-based pricing (alternative to fixed price)
+  discountPercent: decimal("discountPercent", { precision: 5, scale: 2 }),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PriceListItem = typeof priceListItems.$inferSelect;
+export type InsertPriceListItem = typeof priceListItems.$inferInsert;
+
+// Customer price list assignments
+export const customerPriceLists = mysqlTable("customerPriceLists", {
+  id: int("id").autoincrement().primaryKey(),
+  customerId: int("customerId").notNull(),
+  priceListId: int("priceListId").notNull(),
+  isPrimary: boolean("isPrimary").default(true).notNull(),
+  effectiveDate: timestamp("effectiveDate"),
+  expiryDate: timestamp("expiryDate"),
+  notes: text("notes"),
+  assignedBy: int("assignedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CustomerPriceList = typeof customerPriceLists.$inferSelect;
+export type InsertCustomerPriceList = typeof customerPriceLists.$inferInsert;
+
+// ============================================
+// LOT TRACEABILITY
+// ============================================
+
+// Links supplier lots to inventory lots (forward trace from supplier)
+export const lotSupplierLinks = mysqlTable("lotSupplierLinks", {
+  id: int("id").autoincrement().primaryKey(),
+  lotId: int("lotId").notNull(), // Our inventory lot
+  vendorId: int("vendorId").notNull(),
+  vendorLotCode: varchar("vendorLotCode", { length: 128 }).notNull(),
+  vendorCoaUrl: text("vendorCoaUrl"),
+  purchaseOrderId: int("purchaseOrderId"),
+  receivingRecordId: int("receivingRecordId"),
+  receivedQuantity: decimal("receivedQuantity", { precision: 15, scale: 4 }),
+  unit: varchar("unit", { length: 32 }).default("EA"),
+  receivedDate: timestamp("receivedDate"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type LotSupplierLink = typeof lotSupplierLinks.$inferSelect;
+export type InsertLotSupplierLink = typeof lotSupplierLinks.$inferInsert;
+
+// Links input lots to output lots through production (BOM consumption trace)
+export const lotProductionLinks = mysqlTable("lotProductionLinks", {
+  id: int("id").autoincrement().primaryKey(),
+  workOrderId: int("workOrderId").notNull(),
+  inputLotId: int("inputLotId").notNull(), // Raw material lot consumed
+  outputLotId: int("outputLotId").notNull(), // Finished good lot produced
+  inputProductId: int("inputProductId").notNull(),
+  outputProductId: int("outputProductId").notNull(),
+  quantityConsumed: decimal("quantityConsumed", { precision: 15, scale: 4 }).notNull(),
+  unit: varchar("unit", { length: 32 }).default("EA"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type LotProductionLink = typeof lotProductionLinks.$inferSelect;
+export type InsertLotProductionLink = typeof lotProductionLinks.$inferInsert;
+
+// Links lots to customer shipments (forward trace to customer)
+export const lotCustomerShipments = mysqlTable("lotCustomerShipments", {
+  id: int("id").autoincrement().primaryKey(),
+  lotId: int("lotId").notNull(),
+  customerId: int("customerId").notNull(),
+  salesOrderId: int("salesOrderId"),
+  shipmentId: int("shipmentId"),
+  invoiceId: int("invoiceId"),
+  quantityShipped: decimal("quantityShipped", { precision: 15, scale: 4 }).notNull(),
+  unit: varchar("unit", { length: 32 }).default("EA"),
+  shippedDate: timestamp("shippedDate"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type LotCustomerShipment = typeof lotCustomerShipments.$inferSelect;
+export type InsertLotCustomerShipment = typeof lotCustomerShipments.$inferInsert;
