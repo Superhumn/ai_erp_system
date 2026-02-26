@@ -119,11 +119,12 @@ export interface ImportedCustomsDocument {
 
 export interface DocumentParseResult {
   success: boolean;
-  documentType: "purchase_order" | "freight_invoice" | "vendor_invoice" | "customs_document" | "unknown";
+  documentType: "purchase_order" | "freight_invoice" | "vendor_invoice" | "customs_document" | "coa" | "unknown";
   purchaseOrder?: ImportedPurchaseOrder;
   freightInvoice?: ImportedFreightInvoice;
   vendorInvoice?: ImportedVendorInvoice;
   customsDocument?: ImportedCustomsDocument;
+  isCoa?: boolean; // Flag when document is detected as a COA
   rawText?: string;
   error?: string;
 }
@@ -168,6 +169,7 @@ INSTRUCTIONS:
    - Vendor Invoice: A bill/invoice from a vendor for goods/services (has invoice number, line items with prices, amount due)
    - Freight Invoice: A shipping/logistics bill specifically for transportation/freight charges
    - Customs Document: Import/export documents like Bill of Lading, Customs Entry, Commercial Invoice for customs, Packing List, Certificate of Origin, Import Permit
+   - COA (Certificate of Analysis): Lab test results document from a supplier showing quality/safety test results for an ingredient or product (has test parameters, specifications, results, pass/fail)
 2. Extract all relevant structured data
 3. For Purchase Orders: extract PO number, vendor info, line items with quantities/prices, dates, totals
 4. For Vendor Invoices: extract invoice number, vendor info, line items with quantities/prices, due date, totals
@@ -178,7 +180,7 @@ INSTRUCTIONS:
 
 Return a JSON object with this structure:
 {
-  "documentType": "purchase_order" | "vendor_invoice" | "freight_invoice" | "customs_document" | "unknown",
+  "documentType": "purchase_order" | "vendor_invoice" | "freight_invoice" | "customs_document" | "coa" | "unknown",
   "confidence": 85,
   "purchaseOrder": {
     "poNumber": "PO-12345",
@@ -489,7 +491,7 @@ If document type is unknown, return all as null.`;
             schema: {
               type: "object",
               properties: {
-                documentType: { type: "string", enum: ["purchase_order", "vendor_invoice", "freight_invoice", "customs_document", "unknown"] },
+                documentType: { type: "string", enum: ["purchase_order", "vendor_invoice", "freight_invoice", "customs_document", "coa", "unknown"] },
                 confidence: { type: "number" },
                 purchaseOrder: {
                   type: ["object", "null"],
@@ -694,6 +696,7 @@ If document type is unknown, return all as null.`;
       vendorInvoice: parsed.vendorInvoice,
       freightInvoice: parsed.freightInvoice,
       customsDocument: parsed.customsDocument,
+      isCoa: parsed.documentType === "coa",
       rawText: `Document parsed from: ${fileUrl}`
     };
   } catch (error) {

@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Upload, FileText, Truck, Package, AlertCircle, CheckCircle, Clock, Edit2, X, ChevronRight, History, Loader2, FolderOpen, Cloud, ChevronLeft, File, RefreshCw } from "lucide-react";
+import { Upload, FileText, Truck, Package, AlertCircle, CheckCircle, Clock, Edit2, X, ChevronRight, History, Loader2, FolderOpen, Cloud, ChevronLeft, File, RefreshCw, FlaskConical, Mail } from "lucide-react";
 import { useDropzone } from "react-dropzone";
 
 interface ParsedLineItem {
@@ -119,6 +119,37 @@ interface ParsedCustomsDocument {
   confidence: number;
 }
 
+interface ParsedCoaTestResult {
+  testName: string;
+  category: "chemical" | "microbiological" | "physical" | "sensory" | "heavy_metal" | "allergen" | "other";
+  method?: string;
+  specification?: string;
+  specMin?: string;
+  specMax?: string;
+  result: string;
+  unit?: string;
+  status: "pass" | "fail" | "marginal";
+}
+
+interface ParsedCoa {
+  coaNumber: string;
+  supplierName: string;
+  supplierEmail?: string;
+  productName: string;
+  productSku?: string;
+  lotCode?: string;
+  batchNumber?: string;
+  manufactureDate?: string;
+  expiryDate?: string;
+  analysisDate?: string;
+  testResults: ParsedCoaTestResult[];
+  overallStatus: "pass" | "fail" | "conditional_pass";
+  allergenDeclarations?: string[];
+  storageConditions?: string;
+  notes?: string;
+  confidence: number;
+}
+
 interface DriveFile {
   id: string;
   name: string;
@@ -136,12 +167,15 @@ interface DriveFolder {
 
 export default function DocumentImport() {
   const [activeTab, setActiveTab] = useState("upload");
-  const [uploadType, setUploadType] = useState<"po" | "freight" | "vendor_invoice" | "customs">("po");
+  const [uploadType, setUploadType] = useState<"po" | "freight" | "vendor_invoice" | "customs" | "coa">("po");
   const [isUploading, setIsUploading] = useState(false);
   const [parsedPO, setParsedPO] = useState<ParsedPO | null>(null);
   const [parsedFreight, setParsedFreight] = useState<ParsedFreightInvoice | null>(null);
   const [parsedVendorInvoice, setParsedVendorInvoice] = useState<ParsedVendorInvoice | null>(null);
   const [parsedCustoms, setParsedCustoms] = useState<ParsedCustomsDocument | null>(null);
+  const [parsedCoa, setParsedCoa] = useState<ParsedCoa | null>(null);
+  const [showEmailScan, setShowEmailScan] = useState(false);
+  const [emailConfig, setEmailConfig] = useState({ host: "", port: 993, user: "", pass: "" });
   const [showPreview, setShowPreview] = useState(false);
   const [markAsReceived, setMarkAsReceived] = useState(true);
   const [updateInventory, setUpdateInventory] = useState(true);
@@ -161,6 +195,9 @@ export default function DocumentImport() {
   const importFreightMutation = trpc.documentImport.importFreightInvoice.useMutation();
   const importVendorInvoiceMutation = trpc.documentImport.importVendorInvoice.useMutation();
   const importCustomsMutation = trpc.documentImport.importCustomsDocument.useMutation();
+  const parseCoaMutation = trpc.documentImport.parseCoa.useMutation();
+  const importCoaMutation = trpc.documentImport.importCoa.useMutation();
+  const scanEmailMutation = trpc.documentImport.scanEmailForCoas.useMutation();
   const matchMaterialsMutation = trpc.documentImport.matchMaterials.useMutation();
   const historyQuery = trpc.documentImport.getHistory.useQuery({ limit: 50 });
   
@@ -264,6 +301,10 @@ export default function DocumentImport() {
         } else if (result.documentType === "customs_document" && result.customsDocument) {
           setParsedCustoms(result.customsDocument);
           setUploadType("customs");
+          setShowPreview(true);
+        } else if (result.documentType === "coa" && result.coa) {
+          setParsedCoa(result.coa);
+          setUploadType("coa");
           setShowPreview(true);
         } else {
           console.error("[DocumentImport] Unknown document type or missing data:", {
@@ -384,6 +425,60 @@ export default function DocumentImport() {
     }
   };
 
+  const handleImportCoa = async () => {
+    if (!parsedCoa) return;
+
+    try {
+      const result = await importCoaMutation.mutateAsync({
+        coaData: parsedCoa,
+        linkToProduct: true,
+        linkToVendor: true,
+        createMissingProduct: true,
+      });
+
+      if (result.success) {
+        toast.success(`COA ${parsedCoa.coaNumber} imported successfully! ${result.createdRecords.length} records created.`);
+      } else {
+        toast.error(result.error || "Failed to import COA");
+      }
+      setParsedCoa(null);
+      setShowPreview(false);
+      historyQuery.refetch();
+    } catch (error) {
+      console.error("COA Import error:", error);
+      toast.error("Failed to import COA. Please try again.");
+    }
+  };
+
+  const handleScanEmail = async () => {
+    if (!emailConfig.host || !emailConfig.user || !emailConfig.pass) {
+      toast.error("Please fill in all email connection fields");
+      return;
+    }
+    try {
+      const result = await scanEmailMutation.mutateAsync({
+        host: emailConfig.host,
+        port: emailConfig.port,
+        secure: true,
+        user: emailConfig.user,
+        pass: emailConfig.pass,
+        limit: 50,
+      });
+
+      if (result.found.length > 0) {
+        toast.success(`Found ${result.found.length} email(s) with potential COA attachments`);
+      } else {
+        toast.info("No COA attachments found in recent emails");
+      }
+      if (result.errors.length > 0) {
+        toast.warning(`${result.errors.length} error(s) during scan`);
+      }
+    } catch (error) {
+      console.error("Email scan error:", error);
+      toast.error("Failed to scan email. Check your connection settings.");
+    }
+  };
+
   const updateLineItem = (index: number, field: string, value: any) => {
     if (parsedPO) {
       const newLineItems = [...parsedPO.lineItems];
@@ -402,7 +497,7 @@ export default function DocumentImport() {
         <div>
           <h1 className="text-2xl font-bold">Document Import</h1>
           <p className="text-muted-foreground">
-            Upload purchase orders and freight invoices to import into inventory and history
+            Upload purchase orders, invoices, COAs, and more to import via AI extraction
           </p>
         </div>
       </div>
@@ -492,6 +587,30 @@ export default function DocumentImport() {
                   <p className="text-xs text-muted-foreground">Documents imported</p>
                 </CardContent>
               </Card>
+
+              <Card className="border-emerald-500/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <FlaskConical className="h-4 w-4 text-emerald-500" />
+                    COAs
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">
+                    {historyQuery.data?.filter(h => h.documentType === "coa").length || 0}
+                  </div>
+                  <p className="text-xs text-muted-foreground">COAs imported</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-2 w-full gap-1"
+                    onClick={() => setShowEmailScan(true)}
+                  >
+                    <Mail className="h-3 w-3" />
+                    Scan Email
+                  </Button>
+                </CardContent>
+              </Card>
             </div>
           </div>
 
@@ -554,6 +673,20 @@ export default function DocumentImport() {
                     </div>
                   </div>
                 </div>
+                <div className="flex items-start gap-3 p-4 rounded-lg border border-primary/20 bg-primary/5">
+                  <FlaskConical className="h-8 w-8 text-emerald-500" />
+                  <div>
+                    <h3 className="font-medium">Certificates of Analysis (COA)</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Import supplier COAs to auto-create QC inspections, test results, and COA records
+                    </p>
+                    <div className="flex gap-2 mt-2 flex-wrap">
+                      <Badge variant="secondary">AI extraction</Badge>
+                      <Badge variant="secondary">QC auto-fill</Badge>
+                      <Badge variant="secondary">Email scan</Badge>
+                    </div>
+                  </div>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -594,8 +727,8 @@ export default function DocumentImport() {
                           {log.fileName}
                         </TableCell>
                         <TableCell>
-                          <Badge variant={log.documentType === "purchase_order" ? "default" : log.documentType === "vendor_invoice" ? "default" : log.documentType === "customs_document" ? "default" : "secondary"}>
-                            {log.documentType === "purchase_order" ? "Purchase Order" : log.documentType === "vendor_invoice" ? "Vendor Invoice" : log.documentType === "customs_document" ? "Customs Doc" : "Freight Invoice"}
+                          <Badge variant={log.documentType === "coa" ? "default" : log.documentType === "purchase_order" ? "default" : log.documentType === "vendor_invoice" ? "default" : log.documentType === "customs_document" ? "default" : "secondary"}>
+                            {log.documentType === "purchase_order" ? "Purchase Order" : log.documentType === "vendor_invoice" ? "Vendor Invoice" : log.documentType === "customs_document" ? "Customs Doc" : log.documentType === "coa" ? "COA" : "Freight Invoice"}
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -893,6 +1026,10 @@ export default function DocumentImport() {
                                 } else if (result.data.documentType === 'customs_document' && result.data.customsDocument) {
                                   setParsedCustoms(result.data.customsDocument);
                                   setUploadType('customs');
+                                  setShowPreview(true);
+                                } else if (result.data.documentType === 'coa' && result.data.coa) {
+                                  setParsedCoa(result.data.coa);
+                                  setUploadType('coa');
                                   setShowPreview(true);
                                 }
                               }}
@@ -1471,6 +1608,287 @@ export default function DocumentImport() {
             <Button onClick={handleImportVendorInvoice} disabled={importVendorInvoiceMutation.isPending}>
               {importVendorInvoiceMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Import Vendor Invoice
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* COA Preview Dialog */}
+      <Dialog open={showPreview && uploadType === "coa" && !!parsedCoa} onOpenChange={(open) => !open && setShowPreview(false)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FlaskConical className="h-5 w-5 text-emerald-500" />
+              Review Certificate of Analysis
+            </DialogTitle>
+            <DialogDescription>
+              Review AI-extracted test results before importing into QC system
+            </DialogDescription>
+          </DialogHeader>
+
+          {parsedCoa && (
+            <div className="space-y-6">
+              {/* Confidence & Overall Status */}
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Confidence:</span>
+                  <Badge variant={parsedCoa.confidence > 0.8 ? "default" : parsedCoa.confidence > 0.6 ? "secondary" : "destructive"}>
+                    {Math.round(parsedCoa.confidence * 100)}%
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Overall:</span>
+                  <Badge className={
+                    parsedCoa.overallStatus === "pass" ? "bg-green-500/10 text-green-600" :
+                    parsedCoa.overallStatus === "fail" ? "bg-red-500/10 text-red-600" :
+                    "bg-amber-500/10 text-amber-600"
+                  }>
+                    {parsedCoa.overallStatus.replace("_", " ").toUpperCase()}
+                  </Badge>
+                </div>
+              </div>
+
+              {/* COA Header Info */}
+              <div className="grid gap-4 md:grid-cols-3">
+                <div>
+                  <Label>COA Number</Label>
+                  <Input
+                    value={parsedCoa.coaNumber}
+                    onChange={(e) => setParsedCoa({ ...parsedCoa, coaNumber: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>Supplier</Label>
+                  <Input
+                    value={parsedCoa.supplierName}
+                    onChange={(e) => setParsedCoa({ ...parsedCoa, supplierName: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>Product Name</Label>
+                  <Input
+                    value={parsedCoa.productName}
+                    onChange={(e) => setParsedCoa({ ...parsedCoa, productName: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-4">
+                <div>
+                  <Label className="text-xs">Lot Code</Label>
+                  <Input
+                    value={parsedCoa.lotCode || ""}
+                    onChange={(e) => setParsedCoa({ ...parsedCoa, lotCode: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Analysis Date</Label>
+                  <Input
+                    type="date"
+                    value={parsedCoa.analysisDate || ""}
+                    onChange={(e) => setParsedCoa({ ...parsedCoa, analysisDate: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Manufacture Date</Label>
+                  <Input
+                    type="date"
+                    value={parsedCoa.manufactureDate || ""}
+                    onChange={(e) => setParsedCoa({ ...parsedCoa, manufactureDate: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Expiry Date</Label>
+                  <Input
+                    type="date"
+                    value={parsedCoa.expiryDate || ""}
+                    onChange={(e) => setParsedCoa({ ...parsedCoa, expiryDate: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              {/* Allergen Declarations */}
+              {parsedCoa.allergenDeclarations && parsedCoa.allergenDeclarations.length > 0 && (
+                <div className="p-3 border rounded-lg bg-amber-500/5">
+                  <Label className="text-xs text-amber-600 mb-1 block">Allergen Declarations</Label>
+                  <div className="flex gap-2 flex-wrap">
+                    {parsedCoa.allergenDeclarations.map((a, i) => (
+                      <Badge key={i} variant="outline" className="text-amber-600 border-amber-300">
+                        {a}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Test Results Table */}
+              <div>
+                <Label className="mb-2 block">Test Results ({parsedCoa.testResults.length} tests)</Label>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Test Name</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Method</TableHead>
+                        <TableHead>Specification</TableHead>
+                        <TableHead>Result</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {parsedCoa.testResults.map((test, index) => (
+                        <TableRow key={index} className={
+                          test.status === "fail" ? "bg-red-500/5" :
+                          test.status === "marginal" ? "bg-amber-500/5" : ""
+                        }>
+                          <TableCell className="font-medium">{test.testName}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="text-xs">
+                              {test.category}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {test.method || "-"}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {test.specification || (test.specMin || test.specMax
+                              ? `${test.specMin || ""}${test.specMin && test.specMax ? " - " : ""}${test.specMax ? `max ${test.specMax}` : ""}`
+                              : "-"
+                            )}
+                            {test.unit ? ` ${test.unit}` : ""}
+                          </TableCell>
+                          <TableCell className="font-mono text-sm font-medium">
+                            {test.result}{test.unit ? ` ${test.unit}` : ""}
+                          </TableCell>
+                          <TableCell>
+                            <Badge className={
+                              test.status === "pass" ? "bg-green-500/10 text-green-600" :
+                              test.status === "fail" ? "bg-red-500/10 text-red-600" :
+                              "bg-amber-500/10 text-amber-600"
+                            }>
+                              {test.status === "pass" && <CheckCircle className="h-3 w-3 mr-1" />}
+                              {test.status === "fail" && <AlertCircle className="h-3 w-3 mr-1" />}
+                              {test.status.toUpperCase()}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+
+              {/* Summary Stats */}
+              <div className="grid grid-cols-3 gap-4 border-t pt-4">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-green-600">
+                    {parsedCoa.testResults.filter(t => t.status === "pass").length}
+                  </div>
+                  <p className="text-xs text-muted-foreground">Passed</p>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-amber-600">
+                    {parsedCoa.testResults.filter(t => t.status === "marginal").length}
+                  </div>
+                  <p className="text-xs text-muted-foreground">Marginal</p>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-red-600">
+                    {parsedCoa.testResults.filter(t => t.status === "fail").length}
+                  </div>
+                  <p className="text-xs text-muted-foreground">Failed</p>
+                </div>
+              </div>
+
+              {/* Storage & Notes */}
+              {(parsedCoa.storageConditions || parsedCoa.notes) && (
+                <div className="space-y-2 border-t pt-4">
+                  {parsedCoa.storageConditions && (
+                    <p className="text-sm"><span className="font-medium">Storage:</span> {parsedCoa.storageConditions}</p>
+                  )}
+                  {parsedCoa.notes && (
+                    <p className="text-sm"><span className="font-medium">Notes:</span> {parsedCoa.notes}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Import Info */}
+              <div className="p-3 bg-muted rounded-lg text-sm text-muted-foreground">
+                Importing this COA will create: a QC Inspection record, {parsedCoa.testResults.length} test result records,
+                and a Certificate of Analysis record linked to the product and vendor.
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPreview(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleImportCoa} disabled={importCoaMutation.isPending} className="gap-2">
+              {importCoaMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              <FlaskConical className="h-4 w-4" />
+              Import COA
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Email Scan Dialog */}
+      <Dialog open={showEmailScan} onOpenChange={setShowEmailScan}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Mail className="h-5 w-5" />
+              Scan Email for COAs
+            </DialogTitle>
+            <DialogDescription>
+              Connect to your email inbox to find supplier COA attachments
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="grid gap-4 grid-cols-2">
+              <div className="col-span-2">
+                <Label>IMAP Server</Label>
+                <Input
+                  placeholder="imap.gmail.com"
+                  value={emailConfig.host}
+                  onChange={(e) => setEmailConfig({ ...emailConfig, host: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label>Email</Label>
+                <Input
+                  type="email"
+                  placeholder="you@company.com"
+                  value={emailConfig.user}
+                  onChange={(e) => setEmailConfig({ ...emailConfig, user: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label>Password / App Password</Label>
+                <Input
+                  type="password"
+                  placeholder="App password"
+                  value={emailConfig.pass}
+                  onChange={(e) => setEmailConfig({ ...emailConfig, pass: e.target.value })}
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              For Gmail, use an App Password. The scan searches for emails with COA-related keywords and PDF/image attachments.
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEmailScan(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleScanEmail} disabled={scanEmailMutation.isPending} className="gap-2">
+              {scanEmailMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              <Mail className="h-4 w-4" />
+              Scan Inbox
             </Button>
           </DialogFooter>
         </DialogContent>

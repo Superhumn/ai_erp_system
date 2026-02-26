@@ -10,6 +10,7 @@ import { processEmailReply, analyzeEmail, generateEmailReply } from "./emailRepl
 import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
+import { parseCoaDocument, importCoa, scanInboxForCoas } from "./coaImportService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import * as db from "./db";
@@ -11815,12 +11816,19 @@ Ask if they received the original request and if they can provide a quote.`;
         const buffer = Buffer.from(input.fileData, 'base64');
         const fileKey = `document-imports/${Date.now()}-${input.fileName}`;
         const { url } = await storagePut(fileKey, buffer, input.mimeType || 'application/octet-stream');
-        
+
         // Determine the mime type for LLM
         const mimeType = input.mimeType || 'application/pdf';
-        
+
         // Parse the document using LLM with file_url
         const result = await parseUploadedDocument(url, input.fileName, undefined, mimeType);
+
+        // If general parser detected this as a COA, re-parse with the dedicated COA parser
+        if (result.documentType === "coa" || result.isCoa) {
+          const coaResult = await parseCoaDocument(url, input.fileName, mimeType);
+          return { ...coaResult, fileUrl: url };
+        }
+
         return { ...result, fileUrl: url };
       }),
 
@@ -11980,6 +11988,90 @@ Ask if they received the original request and if they can provide a quote.`;
       }))
       .mutation(async ({ input }) => {
         return matchLineItemsToMaterials(input.lineItems);
+      }),
+
+    // Parse a COA document specifically
+    parseCoa: protectedProcedure
+      .input(z.object({
+        fileData: z.string(), // base64
+        fileName: z.string(),
+        mimeType: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const buffer = Buffer.from(input.fileData, 'base64');
+        const fileKey = `coa-imports/${Date.now()}-${input.fileName}`;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType || 'application/octet-stream');
+        const result = await parseCoaDocument(url, input.fileName, input.mimeType);
+        return { ...result, fileUrl: url };
+      }),
+
+    // Import a parsed COA into the system
+    importCoa: protectedProcedure
+      .input(z.object({
+        coaData: z.object({
+          coaNumber: z.string(),
+          supplierName: z.string(),
+          supplierEmail: z.string().optional(),
+          productName: z.string(),
+          productSku: z.string().optional(),
+          lotCode: z.string().optional(),
+          batchNumber: z.string().optional(),
+          manufactureDate: z.string().optional(),
+          expiryDate: z.string().optional(),
+          analysisDate: z.string().optional(),
+          overallStatus: z.enum(["pass", "fail", "conditional_pass"]),
+          testResults: z.array(z.object({
+            testName: z.string(),
+            category: z.enum(["chemical", "microbiological", "physical", "sensory", "heavy_metal", "allergen", "other"]),
+            method: z.string().optional(),
+            specification: z.string().optional(),
+            specMin: z.string().optional(),
+            specMax: z.string().optional(),
+            result: z.string(),
+            unit: z.string().optional(),
+            status: z.enum(["pass", "fail", "marginal"]),
+          })),
+          allergenDeclarations: z.array(z.string()).optional(),
+          storageConditions: z.string().optional(),
+          notes: z.string().optional(),
+          confidence: z.number(),
+        }),
+        linkToProduct: z.boolean().default(true),
+        linkToVendor: z.boolean().default(true),
+        createMissingProduct: z.boolean().default(true),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importCoa(input.coaData as any, ctx.user.id, {
+          linkToProduct: input.linkToProduct,
+          linkToVendor: input.linkToVendor,
+          createMissingProduct: input.createMissingProduct,
+        });
+      }),
+
+    // Scan email inbox for COA attachments
+    scanEmailForCoas: protectedProcedure
+      .input(z.object({
+        host: z.string(),
+        port: z.number().default(993),
+        secure: z.boolean().default(true),
+        user: z.string(),
+        pass: z.string(),
+        since: z.string().optional(),
+        limit: z.number().default(50),
+      }))
+      .mutation(async ({ input }) => {
+        return scanInboxForCoas(
+          {
+            host: input.host,
+            port: input.port,
+            secure: input.secure,
+            auth: { user: input.user, pass: input.pass },
+          },
+          {
+            since: input.since ? new Date(input.since) : undefined,
+            limit: input.limit,
+          }
+        );
       }),
 
     // List folders from Google Drive
