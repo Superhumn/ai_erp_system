@@ -826,23 +826,29 @@ export default function SalesAutomationHub() {
 
       {/* Main Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid grid-cols-6 w-full max-w-4xl">
-          <TabsTrigger value="dashboard" className="gap-2">
+        <TabsList className="flex flex-wrap gap-1 w-full max-w-6xl h-auto p-1">
+          <TabsTrigger value="dashboard" className="gap-2 text-sm">
             <BarChart3 className="h-4 w-4" /> Dashboard
           </TabsTrigger>
-          <TabsTrigger value="pipeline" className="gap-2">
+          <TabsTrigger value="pipeline" className="gap-2 text-sm">
             <Briefcase className="h-4 w-4" /> Pipeline
           </TabsTrigger>
-          <TabsTrigger value="automations" className="gap-2">
+          <TabsTrigger value="intelligence" className="gap-2 text-sm">
+            <Bot className="h-4 w-4" /> Intelligence
+          </TabsTrigger>
+          <TabsTrigger value="automations" className="gap-2 text-sm">
             <Zap className="h-4 w-4" /> Automations
           </TabsTrigger>
-          <TabsTrigger value="sequences" className="gap-2">
+          <TabsTrigger value="sequences" className="gap-2 text-sm">
             <Mail className="h-4 w-4" /> Sequences
           </TabsTrigger>
-          <TabsTrigger value="performance" className="gap-2">
+          <TabsTrigger value="battlecards" className="gap-2 text-sm">
+            <Flag className="h-4 w-4" /> Battlecards
+          </TabsTrigger>
+          <TabsTrigger value="performance" className="gap-2 text-sm">
             <Trophy className="h-4 w-4" /> Performance
           </TabsTrigger>
-          <TabsTrigger value="forecasting" className="gap-2">
+          <TabsTrigger value="forecasting" className="gap-2 text-sm">
             <TrendingUp className="h-4 w-4" /> Forecasting
           </TabsTrigger>
         </TabsList>
@@ -1373,6 +1379,416 @@ export default function SalesAutomationHub() {
               <p className="text-muted-foreground text-center py-8">
                 Accuracy data will appear after periods close
               </p>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* INTELLIGENCE TAB - AI-Powered Deal Insights */}
+        <TabsContent value="intelligence" className="space-y-6 mt-4">
+          {/* AI Header */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold flex items-center gap-2">
+                <Bot className="h-6 w-6 text-purple-600" /> Revenue Intelligence
+              </h2>
+              <p className="text-muted-foreground">AI-powered insights to close more deals</p>
+            </div>
+            <Button variant="outline" className="gap-2">
+              <RefreshCw className="h-4 w-4" /> Refresh Insights
+            </Button>
+          </div>
+
+          {/* At Risk Deals */}
+          <Card>
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <AlertTriangle className="h-5 w-5 text-red-500" /> Deals at Risk
+                  </CardTitle>
+                  <CardDescription>Deals requiring immediate attention based on AI analysis</CardDescription>
+                </div>
+                <Badge variant="destructive">Action Required</Badge>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {/* Example Risk Deal */}
+                <div className="border rounded-lg p-4 bg-red-50/50">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-semibold">Enterprise Platform Deal</h4>
+                        <Badge className="bg-red-100 text-red-800">High Risk</Badge>
+                        <span className="text-sm text-muted-foreground">$125,000</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground mt-1">Acme Corporation • Negotiation Stage</p>
+
+                      {/* Risk Factors */}
+                      <div className="flex gap-4 mt-3">
+                        <div className="flex items-center gap-1 text-sm">
+                          <div className="w-2 h-2 rounded-full bg-red-500" />
+                          <span>No activity in 14 days</span>
+                        </div>
+                        <div className="flex items-center gap-1 text-sm">
+                          <div className="w-2 h-2 rounded-full bg-amber-500" />
+                          <span>Champion unresponsive</span>
+                        </div>
+                        <div className="flex items-center gap-1 text-sm">
+                          <div className="w-2 h-2 rounded-full bg-amber-500" />
+                          <span>Competitor mentioned</span>
+                        </div>
+                      </div>
+
+                      {/* AI Recommendation */}
+                      <div className="mt-3 p-3 bg-white rounded border">
+                        <p className="text-sm font-medium flex items-center gap-2">
+                          <Bot className="h-4 w-4 text-purple-600" /> AI Recommendation
+                        </p>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Schedule an executive alignment call. The deal has stalled in negotiation.
+                          Bring in your VP to re-engage the economic buyer and address competitor concerns.
+                        </p>
+                        <div className="flex gap-2 mt-2">
+                          <Button size="sm" className="gap-1">
+                            <Phone className="h-3 w-3" /> Schedule Call
+                          </Button>
+                          <Button size="sm" variant="outline" className="gap-1">
+                            <Mail className="h-3 w-3" /> Send Re-engagement Email
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-3xl font-bold text-red-600">72</div>
+                      <p className="text-xs text-muted-foreground">Risk Score</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* More risk deals would be here */}
+                <p className="text-center text-muted-foreground text-sm py-2">
+                  Showing top at-risk deals. Use filters to view more.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Next Best Actions */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Zap className="h-5 w-5 text-amber-500" /> Next Best Actions
+              </CardTitle>
+              <CardDescription>AI-recommended actions to move deals forward</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-blue-100 rounded-lg">
+                      <Phone className="h-4 w-4 text-blue-600" />
+                    </div>
+                    <div>
+                      <p className="font-medium">Call Sarah Johnson at TechCorp</p>
+                      <p className="text-sm text-muted-foreground">Follow up on proposal sent 3 days ago</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge>High Priority</Badge>
+                    <Button size="sm">Take Action</Button>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-purple-100 rounded-lg">
+                      <Users className="h-4 w-4 text-purple-600" />
+                    </div>
+                    <div>
+                      <p className="font-medium">Engage decision maker at Globex Inc</p>
+                      <p className="text-sm text-muted-foreground">Champion alone can't close - need executive buy-in</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary">Medium Priority</Badge>
+                    <Button size="sm" variant="outline">View Deal</Button>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-green-100 rounded-lg">
+                      <Send className="h-4 w-4 text-green-600" />
+                    </div>
+                    <div>
+                      <p className="font-medium">Send case study to MegaCorp</p>
+                      <p className="text-sm text-muted-foreground">They mentioned needing proof of ROI in last call</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary">Medium Priority</Badge>
+                    <Button size="sm" variant="outline">Send Now</Button>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Recent Call Intelligence */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Phone className="h-5 w-5 text-green-500" /> Call Intelligence
+              </CardTitle>
+              <CardDescription>AI analysis of recent sales calls</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div className="border rounded-lg p-4">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h4 className="font-semibold">Discovery Call - DataFlow Inc</h4>
+                      <p className="text-sm text-muted-foreground">Today at 2:30 PM • 32 min</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge className="bg-green-100 text-green-800">Score: 85</Badge>
+                      <Badge className="bg-blue-100 text-blue-800">Positive</Badge>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-4 mt-4">
+                    <div className="text-center p-2 bg-muted rounded">
+                      <p className="text-lg font-semibold">42%</p>
+                      <p className="text-xs text-muted-foreground">Talk Ratio</p>
+                    </div>
+                    <div className="text-center p-2 bg-muted rounded">
+                      <p className="text-lg font-semibold">12</p>
+                      <p className="text-xs text-muted-foreground">Questions Asked</p>
+                    </div>
+                    <div className="text-center p-2 bg-muted rounded">
+                      <p className="text-lg font-semibold">3</p>
+                      <p className="text-xs text-muted-foreground">Next Steps</p>
+                    </div>
+                    <div className="text-center p-2 bg-muted rounded">
+                      <p className="text-lg font-semibold">2</p>
+                      <p className="text-xs text-muted-foreground">Buying Signals</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-green-500" />
+                      <span className="text-sm">Decision maker was present and engaged</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-green-500" />
+                      <span className="text-sm">Budget discussion initiated by prospect</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-amber-500" />
+                      <span className="text-sm">Competitor (Salesforce) mentioned - need battlecard</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* BATTLECARDS TAB */}
+        <TabsContent value="battlecards" className="space-y-6 mt-4">
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold flex items-center gap-2">
+                <Flag className="h-6 w-6 text-orange-600" /> Competitive Battlecards
+              </h2>
+              <p className="text-muted-foreground">Win against competitors with data-driven insights</p>
+            </div>
+            <Button className="gap-2">
+              <Plus className="h-4 w-4" /> Add Battlecard
+            </Button>
+          </div>
+
+          {/* Competitor Cards */}
+          <div className="grid grid-cols-3 gap-6">
+            {/* Competitor 1 */}
+            <Card className="hover:shadow-lg transition-shadow cursor-pointer">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg">Salesforce</CardTitle>
+                  <Badge variant="destructive">Strong Competitor</Badge>
+                </div>
+                <CardDescription>Enterprise CRM Platform</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Win Rate Against:</span>
+                    <span className="font-semibold text-green-600">62%</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Active Deals:</span>
+                    <span className="font-semibold">8</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Avg Deal Size:</span>
+                    <span className="font-semibold">$85,000</span>
+                  </div>
+
+                  <div className="pt-2 border-t space-y-2">
+                    <p className="text-sm font-medium">Key Differentiators:</p>
+                    <div className="flex flex-wrap gap-1">
+                      <Badge variant="outline" className="text-xs">Faster Implementation</Badge>
+                      <Badge variant="outline" className="text-xs">Better UX</Badge>
+                      <Badge variant="outline" className="text-xs">Lower TCO</Badge>
+                    </div>
+                  </div>
+
+                  <Button variant="outline" className="w-full">View Full Battlecard</Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Competitor 2 */}
+            <Card className="hover:shadow-lg transition-shadow cursor-pointer">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg">HubSpot</CardTitle>
+                  <Badge variant="secondary">Moderate Threat</Badge>
+                </div>
+                <CardDescription>Marketing & Sales Platform</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Win Rate Against:</span>
+                    <span className="font-semibold text-green-600">78%</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Active Deals:</span>
+                    <span className="font-semibold">5</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Avg Deal Size:</span>
+                    <span className="font-semibold">$45,000</span>
+                  </div>
+
+                  <div className="pt-2 border-t space-y-2">
+                    <p className="text-sm font-medium">Key Differentiators:</p>
+                    <div className="flex flex-wrap gap-1">
+                      <Badge variant="outline" className="text-xs">Enterprise Scale</Badge>
+                      <Badge variant="outline" className="text-xs">Custom Workflows</Badge>
+                      <Badge variant="outline" className="text-xs">AI Features</Badge>
+                    </div>
+                  </div>
+
+                  <Button variant="outline" className="w-full">View Full Battlecard</Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Competitor 3 */}
+            <Card className="hover:shadow-lg transition-shadow cursor-pointer">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg">Pipedrive</CardTitle>
+                  <Badge className="bg-green-100 text-green-800">Weak Competitor</Badge>
+                </div>
+                <CardDescription>SMB Sales Tool</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Win Rate Against:</span>
+                    <span className="font-semibold text-green-600">89%</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Active Deals:</span>
+                    <span className="font-semibold">2</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Avg Deal Size:</span>
+                    <span className="font-semibold">$25,000</span>
+                  </div>
+
+                  <div className="pt-2 border-t space-y-2">
+                    <p className="text-sm font-medium">Key Differentiators:</p>
+                    <div className="flex flex-wrap gap-1">
+                      <Badge variant="outline" className="text-xs">Enterprise Ready</Badge>
+                      <Badge variant="outline" className="text-xs">Advanced Analytics</Badge>
+                      <Badge variant="outline" className="text-xs">Integrations</Badge>
+                    </div>
+                  </div>
+
+                  <Button variant="outline" className="w-full">View Full Battlecard</Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Content Library */}
+          <Card>
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Briefcase className="h-5 w-5" /> Sales Content Library
+                  </CardTitle>
+                  <CardDescription>Battle-tested content to win deals</CardDescription>
+                </div>
+                <Button variant="outline" size="sm" className="gap-2">
+                  <Plus className="h-4 w-4" /> Add Content
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-4 gap-4">
+                <div className="p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="p-2 bg-blue-100 rounded">
+                      <Briefcase className="h-4 w-4 text-blue-600" />
+                    </div>
+                    <span className="text-xs text-muted-foreground">Case Study</span>
+                  </div>
+                  <p className="font-medium text-sm">Enterprise ROI Analysis</p>
+                  <p className="text-xs text-muted-foreground mt-1">Used 47 times • 72% conversion</p>
+                </div>
+
+                <div className="p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="p-2 bg-green-100 rounded">
+                      <TrendingUp className="h-4 w-4 text-green-600" />
+                    </div>
+                    <span className="text-xs text-muted-foreground">One Pager</span>
+                  </div>
+                  <p className="font-medium text-sm">Product Overview 2024</p>
+                  <p className="text-xs text-muted-foreground mt-1">Used 128 times • 65% conversion</p>
+                </div>
+
+                <div className="p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="p-2 bg-purple-100 rounded">
+                      <PlayCircle className="h-4 w-4 text-purple-600" />
+                    </div>
+                    <span className="text-xs text-muted-foreground">Demo Video</span>
+                  </div>
+                  <p className="font-medium text-sm">Platform Walkthrough</p>
+                  <p className="text-xs text-muted-foreground mt-1">Used 89 times • 81% conversion</p>
+                </div>
+
+                <div className="p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="p-2 bg-amber-100 rounded">
+                      <DollarSign className="h-4 w-4 text-amber-600" />
+                    </div>
+                    <span className="text-xs text-muted-foreground">ROI Calculator</span>
+                  </div>
+                  <p className="font-medium text-sm">Cost Savings Model</p>
+                  <p className="text-xs text-muted-foreground mt-1">Used 34 times • 88% conversion</p>
+                </div>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

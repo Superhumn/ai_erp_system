@@ -4383,6 +4383,963 @@ export type SalesMetricsDaily = typeof salesMetricsDaily.$inferSelect;
 export type InsertSalesMetricsDaily = typeof salesMetricsDaily.$inferInsert;
 
 // Type exports for new tables
+// ============================================
+// WORLD-CLASS SALES SYSTEM - REVENUE INTELLIGENCE
+// ============================================
+
+// Sales Calls with Recording and AI Analysis
+export const salesCalls = mysqlTable("sales_calls", {
+  id: int("id").autoincrement().primaryKey(),
+  dealId: int("dealId"),
+  contactId: int("contactId"),
+  accountId: int("accountId"),
+  userId: int("userId").notNull(), // Rep who made the call
+
+  // Call details
+  callType: mysqlEnum("callType", ["discovery", "demo", "negotiation", "closing", "followup", "qbr", "other"]).default("other"),
+  direction: mysqlEnum("direction", ["inbound", "outbound"]).default("outbound"),
+  callDate: timestamp("callDate").notNull(),
+  duration: int("duration"), // Seconds
+  phoneNumber: varchar("phoneNumber", { length: 32 }),
+
+  // Recording
+  recordingUrl: text("recordingUrl"),
+  recordingDuration: int("recordingDuration"),
+  transcriptText: text("transcriptText"),
+  transcriptJson: text("transcriptJson"), // Structured with timestamps
+  transcriptStatus: mysqlEnum("transcriptStatus", ["pending", "processing", "completed", "failed"]).default("pending"),
+
+  // AI Analysis
+  aiAnalysisJson: text("aiAnalysisJson"),
+  sentiment: mysqlEnum("sentiment", ["very_positive", "positive", "neutral", "negative", "very_negative"]),
+  talkRatio: decimal("talkRatio", { precision: 5, scale: 2 }), // Rep talk percentage
+  longestMonologue: int("longestMonologue"), // Seconds
+  questionsAsked: int("questionsAsked"),
+  nextStepsIdentified: text("nextStepsIdentified"), // JSON array
+  objectionsMentioned: text("objectionsMentioned"), // JSON array
+  competitorsMentioned: text("competitorsMentioned"), // JSON array
+  pricingDiscussed: boolean("pricingDiscussed").default(false),
+  decisionMakerPresent: boolean("decisionMakerPresent"),
+  followUpRequired: boolean("followUpRequired").default(false),
+  keyTopics: text("keyTopics"), // JSON array
+  actionItems: text("actionItems"), // JSON array
+  riskSignals: text("riskSignals"), // JSON array
+  buyingSignals: text("buyingSignals"), // JSON array
+
+  // Scoring
+  callScore: int("callScore"), // 0-100
+  engagementScore: int("engagementScore"),
+
+  notes: text("notes"),
+  outcome: mysqlEnum("outcome", ["connected", "voicemail", "no_answer", "busy", "wrong_number", "meeting_scheduled", "followup_needed"]),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SalesCall = typeof salesCalls.$inferSelect;
+export type InsertSalesCall = typeof salesCalls.$inferInsert;
+
+// Conversation Insights - Aggregated from calls
+export const conversationInsights = mysqlTable("conversation_insights", {
+  id: int("id").autoincrement().primaryKey(),
+  callId: int("callId").notNull(),
+  insightType: mysqlEnum("insightType", [
+    "competitor_mention", "pricing_objection", "timeline_mention", "budget_discussion",
+    "decision_maker_identified", "champion_identified", "blocker_identified",
+    "technical_requirement", "integration_need", "risk_signal", "buying_signal",
+    "next_step", "action_item", "key_phrase", "sentiment_shift"
+  ]).notNull(),
+  content: text("content").notNull(),
+  confidence: decimal("confidence", { precision: 5, scale: 2 }), // 0-1
+  timestampStart: int("timestampStart"), // Seconds into call
+  timestampEnd: int("timestampEnd"),
+  speaker: mysqlEnum("speaker", ["rep", "prospect", "unknown"]),
+  metadata: text("metadata"), // JSON for additional context
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ConversationInsight = typeof conversationInsights.$inferSelect;
+export type InsertConversationInsight = typeof conversationInsights.$inferInsert;
+
+// ============================================
+// DEAL RISK SCORING & AI INSIGHTS
+// ============================================
+
+// Deal Risk Scores - Real-time AI-powered risk assessment
+export const dealRiskScores = mysqlTable("deal_risk_scores", {
+  id: int("id").autoincrement().primaryKey(),
+  dealId: int("dealId").notNull(),
+
+  // Overall risk
+  riskScore: int("riskScore").notNull(), // 0-100 (100 = highest risk)
+  riskLevel: mysqlEnum("riskLevel", ["low", "medium", "high", "critical"]).notNull(),
+  winProbability: int("winProbability"), // AI-adjusted 0-100
+
+  // Risk factors (each 0-100)
+  engagementRisk: int("engagementRisk"), // Low activity/response
+  velocityRisk: int("velocityRisk"), // Stuck in stage too long
+  stakeholderRisk: int("stakeholderRisk"), // Missing decision makers
+  competitiveRisk: int("competitiveRisk"), // Strong competitor presence
+  budgetRisk: int("budgetRisk"), // Budget concerns detected
+  timelineRisk: int("timelineRisk"), // Timeline slipping
+  championRisk: int("championRisk"), // Champion left or weak
+  technicalRisk: int("technicalRisk"), // Technical blockers
+
+  // Signals
+  positiveSignals: text("positiveSignals"), // JSON array
+  negativeSignals: text("negativeSignals"), // JSON array
+  riskExplanation: text("riskExplanation"), // AI-generated explanation
+  recommendations: text("recommendations"), // JSON array of next best actions
+
+  // Tracking
+  previousRiskScore: int("previousRiskScore"),
+  scoreChangeReason: text("scoreChangeReason"),
+
+  calculatedAt: timestamp("calculatedAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DealRiskScore = typeof dealRiskScores.$inferSelect;
+export type InsertDealRiskScore = typeof dealRiskScores.$inferInsert;
+
+// Next Best Actions - AI recommendations
+export const dealNextActions = mysqlTable("deal_next_actions", {
+  id: int("id").autoincrement().primaryKey(),
+  dealId: int("dealId").notNull(),
+  userId: int("userId"), // Assigned rep
+
+  actionType: mysqlEnum("actionType", [
+    "call_contact", "send_email", "schedule_meeting", "send_proposal",
+    "engage_decision_maker", "address_objection", "provide_reference",
+    "schedule_demo", "send_case_study", "involve_executive",
+    "negotiate_terms", "create_urgency", "re_engage_champion",
+    "competitive_displacement", "technical_deep_dive", "roi_discussion"
+  ]).notNull(),
+
+  priority: mysqlEnum("priority", ["low", "medium", "high", "urgent"]).default("medium"),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  reasoning: text("reasoning"), // Why AI recommends this
+  contactId: int("contactId"), // Which contact to engage
+
+  suggestedScript: text("suggestedScript"), // AI-generated talk track
+  suggestedEmail: text("suggestedEmail"), // AI-generated email draft
+
+  dueDate: timestamp("dueDate"),
+  status: mysqlEnum("status", ["pending", "in_progress", "completed", "dismissed", "snoozed"]).default("pending"),
+  completedAt: timestamp("completedAt"),
+  completedBy: int("completedBy"),
+  outcome: text("outcome"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DealNextAction = typeof dealNextActions.$inferSelect;
+export type InsertDealNextAction = typeof dealNextActions.$inferInsert;
+
+// ============================================
+// MULTI-CHANNEL SEQUENCES
+// ============================================
+
+// Sequence Steps - Extended for multi-channel
+export const sequenceChannelSteps = mysqlTable("sequence_channel_steps", {
+  id: int("id").autoincrement().primaryKey(),
+  sequenceId: int("sequenceId").notNull(),
+  stepNumber: int("stepNumber").notNull(),
+
+  channel: mysqlEnum("channel", ["email", "phone", "linkedin", "sms", "task", "wait", "condition"]).notNull(),
+
+  // Email
+  emailSubject: varchar("emailSubject", { length: 500 }),
+  emailBody: text("emailBody"),
+  emailTemplateId: int("emailTemplateId"),
+
+  // Phone
+  callScript: text("callScript"),
+  voicemailScript: text("voicemailScript"),
+  callObjective: varchar("callObjective", { length: 255 }),
+
+  // LinkedIn
+  linkedinAction: mysqlEnum("linkedinAction", ["connect", "message", "inmail", "view_profile", "engage_post"]),
+  linkedinMessage: text("linkedinMessage"),
+
+  // SMS
+  smsMessage: varchar("smsMessage", { length: 160 }),
+
+  // Task
+  taskTitle: varchar("taskTitle", { length: 255 }),
+  taskDescription: text("taskDescription"),
+  taskAssignTo: mysqlEnum("taskAssignTo", ["owner", "specific_user", "round_robin"]),
+  taskAssignUserId: int("taskAssignUserId"),
+
+  // A/B Testing
+  isAbTest: boolean("isAbTest").default(false),
+  abVariant: varchar("abVariant", { length: 1 }), // A or B
+  abTestId: int("abTestId"),
+
+  // Timing
+  delayDays: int("delayDays").default(0),
+  delayHours: int("delayHours").default(0),
+  delayMinutes: int("delayMinutes").default(0),
+  sendWindow: text("sendWindow"), // JSON { start: "09:00", end: "17:00", timezone: "America/New_York" }
+  sendDays: text("sendDays"), // JSON array ["monday", "tuesday", ...]
+
+  // Conditions
+  conditionType: mysqlEnum("conditionType", [
+    "email_opened", "email_clicked", "email_replied", "call_connected",
+    "linkedin_accepted", "meeting_booked", "deal_created", "tag_added",
+    "custom_field", "time_elapsed"
+  ]),
+  conditionConfig: text("conditionConfig"), // JSON
+  trueNextStep: int("trueNextStep"),
+  falseNextStep: int("falseNextStep"),
+
+  isActive: boolean("isActive").default(true),
+
+  // Stats
+  totalExecuted: int("totalExecuted").default(0),
+  successCount: int("successCount").default(0),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SequenceChannelStep = typeof sequenceChannelSteps.$inferSelect;
+export type InsertSequenceChannelStep = typeof sequenceChannelSteps.$inferInsert;
+
+// A/B Tests for Sequences
+export const sequenceAbTests = mysqlTable("sequence_ab_tests", {
+  id: int("id").autoincrement().primaryKey(),
+  sequenceId: int("sequenceId").notNull(),
+  stepNumber: int("stepNumber").notNull(),
+
+  testName: varchar("testName", { length: 255 }).notNull(),
+  testType: mysqlEnum("testType", ["subject_line", "body", "send_time", "channel"]).notNull(),
+
+  variantAContent: text("variantAContent"),
+  variantBContent: text("variantBContent"),
+
+  // Distribution
+  variantASplit: int("variantASplit").default(50), // Percentage
+
+  // Results
+  variantASent: int("variantASent").default(0),
+  variantBSent: int("variantBSent").default(0),
+  variantAOpens: int("variantAOpens").default(0),
+  variantBOpens: int("variantBOpens").default(0),
+  variantAClicks: int("variantAClicks").default(0),
+  variantBClicks: int("variantBClicks").default(0),
+  variantAReplies: int("variantAReplies").default(0),
+  variantBReplies: int("variantBReplies").default(0),
+  variantAMeetings: int("variantAMeetings").default(0),
+  variantBMeetings: int("variantBMeetings").default(0),
+
+  // Winner
+  winnerVariant: varchar("winnerVariant", { length: 1 }),
+  winnerDeclaredAt: timestamp("winnerDeclaredAt"),
+  autoSelectWinner: boolean("autoSelectWinner").default(true),
+  minSampleSize: int("minSampleSize").default(100),
+
+  status: mysqlEnum("status", ["running", "paused", "completed"]).default("running"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SequenceAbTest = typeof sequenceAbTests.$inferSelect;
+export type InsertSequenceAbTest = typeof sequenceAbTests.$inferInsert;
+
+// ============================================
+// PIPELINE ANALYTICS & VELOCITY
+// ============================================
+
+// Pipeline Health Metrics
+export const pipelineHealthMetrics = mysqlTable("pipeline_health_metrics", {
+  id: int("id").autoincrement().primaryKey(),
+  pipelineId: int("pipelineId").notNull(),
+  userId: int("userId"), // If null, pipeline-wide metrics
+  period: mysqlEnum("period", ["daily", "weekly", "monthly", "quarterly"]).default("daily"),
+  periodStart: timestamp("periodStart").notNull(),
+  periodEnd: timestamp("periodEnd").notNull(),
+
+  // Coverage
+  pipelineCoverage: decimal("pipelineCoverage", { precision: 10, scale: 2 }), // Pipeline / Quota ratio
+  weightedPipeline: decimal("weightedPipeline", { precision: 15, scale: 2 }),
+  totalQuota: decimal("totalQuota", { precision: 15, scale: 2 }),
+
+  // Velocity
+  avgDaysInPipeline: decimal("avgDaysInPipeline", { precision: 10, scale: 2 }),
+  avgDaysPerStage: text("avgDaysPerStage"), // JSON { stage: days }
+  velocityTrend: mysqlEnum("velocityTrend", ["improving", "stable", "declining"]),
+
+  // Stage conversions
+  stageConversions: text("stageConversions"), // JSON { "Discovery->Demo": 0.65, ... }
+  historicalConversions: text("historicalConversions"), // For comparison
+
+  // Deal flow
+  dealsEntered: int("dealsEntered").default(0),
+  dealsWon: int("dealsWon").default(0),
+  dealsLost: int("dealsLost").default(0),
+  dealsPushed: int("dealsPushed").default(0), // Close date moved
+  dealsSlipped: int("dealsSlipped").default(0), // Stage regressed
+
+  // Health scores
+  overallHealthScore: int("overallHealthScore"), // 0-100
+  coverageScore: int("coverageScore"),
+  velocityScore: int("velocityScore"),
+  conversionScore: int("conversionScore"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type PipelineHealthMetric = typeof pipelineHealthMetrics.$inferSelect;
+export type InsertPipelineHealthMetric = typeof pipelineHealthMetrics.$inferInsert;
+
+// Deal Slippage Tracking
+export const dealSlippageEvents = mysqlTable("deal_slippage_events", {
+  id: int("id").autoincrement().primaryKey(),
+  dealId: int("dealId").notNull(),
+
+  eventType: mysqlEnum("eventType", [
+    "close_date_pushed", "stage_regressed", "amount_decreased",
+    "probability_decreased", "went_dark", "champion_left", "competitor_entered"
+  ]).notNull(),
+
+  previousValue: text("previousValue"),
+  newValue: text("newValue"),
+  daysPushed: int("daysPushed"), // For close date changes
+  amountChange: decimal("amountChange", { precision: 15, scale: 2 }),
+
+  reason: text("reason"),
+  detectedBy: mysqlEnum("detectedBy", ["system", "rep", "manager"]).default("system"),
+  userId: int("userId"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DealSlippageEvent = typeof dealSlippageEvents.$inferSelect;
+export type InsertDealSlippageEvent = typeof dealSlippageEvents.$inferInsert;
+
+// ============================================
+// STAKEHOLDER & BUYING COMMITTEE MANAGEMENT
+// ============================================
+
+// Account Stakeholders (Buying Committee)
+export const accountStakeholders = mysqlTable("account_stakeholders", {
+  id: int("id").autoincrement().primaryKey(),
+  accountId: int("accountId").notNull(),
+  dealId: int("dealId"),
+  contactId: int("contactId").notNull(),
+
+  role: mysqlEnum("role", [
+    "decision_maker", "budget_holder", "champion", "influencer",
+    "technical_evaluator", "end_user", "blocker", "coach",
+    "executive_sponsor", "procurement", "legal", "unknown"
+  ]).notNull(),
+
+  influence: mysqlEnum("influence", ["high", "medium", "low"]).default("medium"),
+  sentiment: mysqlEnum("sentiment", ["strong_advocate", "advocate", "neutral", "skeptic", "blocker"]).default("neutral"),
+  engagement: mysqlEnum("engagement", ["high", "medium", "low", "none"]).default("none"),
+
+  // Relationship mapping
+  reportsTo: int("reportsTo"), // contactId
+  influences: text("influences"), // JSON array of contactIds
+
+  // Tracking
+  lastEngagement: timestamp("lastEngagement"),
+  totalTouchpoints: int("totalTouchpoints").default(0),
+
+  // Insights
+  priorities: text("priorities"), // JSON array
+  concerns: text("concerns"), // JSON array
+  personalNotes: text("personalNotes"),
+  preferredContactMethod: mysqlEnum("preferredContactMethod", ["email", "phone", "linkedin", "in_person"]),
+
+  // Verification
+  isVerified: boolean("isVerified").default(false),
+  verifiedBy: int("verifiedBy"),
+  verifiedAt: timestamp("verifiedAt"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type AccountStakeholder = typeof accountStakeholders.$inferSelect;
+export type InsertAccountStakeholder = typeof accountStakeholders.$inferInsert;
+
+// Champion Tracking
+export const championTracking = mysqlTable("champion_tracking", {
+  id: int("id").autoincrement().primaryKey(),
+  dealId: int("dealId").notNull(),
+  contactId: int("contactId").notNull(),
+
+  championScore: int("championScore"), // 0-100
+
+  // Champion indicators
+  internalAdvocacy: int("internalAdvocacy"), // 0-100
+  accessToDecisionMakers: int("accessToDecisionMakers"),
+  responsiveness: int("responsiveness"),
+  dealKnowledge: int("dealKnowledge"),
+  proactiveEngagement: int("proactiveEngagement"),
+
+  // Status
+  status: mysqlEnum("status", ["active", "at_risk", "lost", "inactive"]).default("active"),
+  riskReason: text("riskReason"),
+
+  // Events
+  lastPositiveSignal: timestamp("lastPositiveSignal"),
+  lastNegativeSignal: timestamp("lastNegativeSignal"),
+
+  notes: text("notes"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ChampionTracking = typeof championTracking.$inferSelect;
+export type InsertChampionTracking = typeof championTracking.$inferInsert;
+
+// ============================================
+// ACCOUNT-BASED SELLING
+// ============================================
+
+// Account Health Scores
+export const accountHealthScores = mysqlTable("account_health_scores", {
+  id: int("id").autoincrement().primaryKey(),
+  accountId: int("accountId").notNull(),
+
+  // Overall health
+  healthScore: int("healthScore").notNull(), // 0-100
+  healthTrend: mysqlEnum("healthTrend", ["improving", "stable", "declining"]),
+
+  // Component scores
+  engagementScore: int("engagementScore"),
+  expansionPotential: int("expansionPotential"),
+  revenueScore: int("revenueScore"),
+  relationshipScore: int("relationshipScore"),
+  riskScore: int("riskScore"),
+
+  // Key metrics
+  totalRevenue: decimal("totalRevenue", { precision: 15, scale: 2 }),
+  openOpportunityValue: decimal("openOpportunityValue", { precision: 15, scale: 2 }),
+  lastWonDealDate: timestamp("lastWonDealDate"),
+  avgDealSize: decimal("avgDealSize", { precision: 15, scale: 2 }),
+
+  // Engagement
+  contactsEngaged: int("contactsEngaged"),
+  totalContacts: int("totalContacts"),
+  lastActivityDate: timestamp("lastActivityDate"),
+  activeDays30: int("activeDays30"), // Days with activity in last 30
+
+  // Multi-threading
+  threadsActive: int("threadsActive"), // Number of active relationships
+  executiveEngagement: boolean("executiveEngagement"),
+  departmentsEngaged: int("departmentsEngaged"),
+
+  // White space
+  productsOwned: text("productsOwned"), // JSON array
+  expansionProducts: text("expansionProducts"), // JSON array of upsell opportunities
+  whitespaceValue: decimal("whitespaceValue", { precision: 15, scale: 2 }),
+
+  calculatedAt: timestamp("calculatedAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type AccountHealthScore = typeof accountHealthScores.$inferSelect;
+export type InsertAccountHealthScore = typeof accountHealthScores.$inferInsert;
+
+// Account Hierarchies
+export const accountHierarchies = mysqlTable("account_hierarchies", {
+  id: int("id").autoincrement().primaryKey(),
+  accountId: int("accountId").notNull(),
+  parentAccountId: int("parentAccountId"),
+  ultimateParentId: int("ultimateParentId"),
+
+  hierarchyLevel: int("hierarchyLevel").default(0), // 0 = ultimate parent
+  relationshipType: mysqlEnum("relationshipType", ["parent", "subsidiary", "division", "branch", "partner"]),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type AccountHierarchy = typeof accountHierarchies.$inferSelect;
+export type InsertAccountHierarchy = typeof accountHierarchies.$inferInsert;
+
+// ============================================
+// REP ENABLEMENT - BATTLECARDS & CONTENT
+// ============================================
+
+// Battlecards for Competitive Selling
+export const battlecards = mysqlTable("battlecards", {
+  id: int("id").autoincrement().primaryKey(),
+  competitorName: varchar("competitorName", { length: 255 }).notNull(),
+
+  // Overview
+  overview: text("overview"),
+  websiteUrl: varchar("websiteUrl", { length: 512 }),
+  founded: varchar("founded", { length: 10 }),
+  headquarters: varchar("headquarters", { length: 255 }),
+  employeeCount: varchar("employeeCount", { length: 50 }),
+  funding: varchar("funding", { length: 100 }),
+
+  // Positioning
+  positioning: text("positioning"),
+  targetMarket: text("targetMarket"),
+  pricingModel: text("pricingModel"),
+  pricingRange: varchar("pricingRange", { length: 100 }),
+
+  // Comparison
+  strengths: text("strengths"), // JSON array
+  weaknesses: text("weaknesses"), // JSON array
+  ourAdvantages: text("ourAdvantages"), // JSON array
+  theirAdvantages: text("theirAdvantages"), // JSON array
+
+  // Talk tracks
+  discoveryQuestions: text("discoveryQuestions"), // JSON array
+  objectionHandlers: text("objectionHandlers"), // JSON array of { objection, response }
+  trapQuestions: text("trapQuestions"), // Questions to ask that expose competitor weakness
+  landmines: text("landmines"), // Things to plant early in the deal
+
+  // Win/Loss insights
+  winRate: decimal("winRate", { precision: 5, scale: 2 }),
+  totalDeals: int("totalDeals").default(0),
+  dealsWon: int("dealsWon").default(0),
+  dealsLost: int("dealsLost").default(0),
+  avgDealSize: decimal("avgDealSize", { precision: 15, scale: 2 }),
+  commonLossReasons: text("commonLossReasons"), // JSON array
+  commonWinReasons: text("commonWinReasons"), // JSON array
+
+  // Usage tracking
+  viewCount: int("viewCount").default(0),
+  lastViewedAt: timestamp("lastViewedAt"),
+  lastUpdatedBy: int("lastUpdatedBy"),
+
+  isActive: boolean("isActive").default(true),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Battlecard = typeof battlecards.$inferSelect;
+export type InsertBattlecard = typeof battlecards.$inferInsert;
+
+// Sales Content Library
+export const salesContentLibrary = mysqlTable("sales_content_library", {
+  id: int("id").autoincrement().primaryKey(),
+
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  contentType: mysqlEnum("contentType", [
+    "case_study", "one_pager", "presentation", "proposal_template",
+    "demo_video", "roi_calculator", "whitepaper", "ebook",
+    "testimonial", "reference_customer", "integration_guide",
+    "pricing_sheet", "competitive_intel", "talk_track", "email_template"
+  ]).notNull(),
+
+  // File/Link
+  fileUrl: text("fileUrl"),
+  thumbnailUrl: text("thumbnailUrl"),
+  externalLink: text("externalLink"),
+
+  // Categorization
+  industry: varchar("industry", { length: 128 }),
+  dealStage: varchar("dealStage", { length: 64 }), // When to use
+  persona: varchar("persona", { length: 128 }), // Who it's for
+  useCase: varchar("useCase", { length: 128 }),
+  tags: text("tags"), // JSON array
+
+  // Effectiveness
+  usageCount: int("usageCount").default(0),
+  shareCount: int("shareCount").default(0),
+  viewCount: int("viewCount").default(0),
+  avgEngagementTime: int("avgEngagementTime"), // Seconds
+  conversionRate: decimal("conversionRate", { precision: 5, scale: 2 }), // When shared, % that move stage
+
+  // Freshness
+  lastReviewedAt: timestamp("lastReviewedAt"),
+  reviewedBy: int("reviewedBy"),
+  expiresAt: timestamp("expiresAt"),
+
+  isActive: boolean("isActive").default(true),
+  createdBy: int("createdBy").notNull(),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SalesContentLibrary = typeof salesContentLibrary.$inferSelect;
+export type InsertSalesContentLibrary = typeof salesContentLibrary.$inferInsert;
+
+// Guided Selling - Stage Requirements & Checklists
+export const guidedSellingChecklists = mysqlTable("guided_selling_checklists", {
+  id: int("id").autoincrement().primaryKey(),
+  pipelineId: int("pipelineId").notNull(),
+  stage: varchar("stage", { length: 64 }).notNull(),
+
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+
+  // Items
+  items: text("items").notNull(), // JSON array of { id, text, required, helpText }
+
+  // Requirements
+  requiredForStageExit: boolean("requiredForStageExit").default(false),
+  blockStageChange: boolean("blockStageChange").default(false),
+
+  // Content links
+  relatedContentIds: text("relatedContentIds"), // JSON array of content library IDs
+  relatedBattlecardIds: text("relatedBattlecardIds"), // JSON array
+
+  displayOrder: int("displayOrder").default(0),
+  isActive: boolean("isActive").default(true),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GuidedSellingChecklist = typeof guidedSellingChecklists.$inferSelect;
+export type InsertGuidedSellingChecklist = typeof guidedSellingChecklists.$inferInsert;
+
+// Deal Checklist Completions
+export const dealChecklistCompletions = mysqlTable("deal_checklist_completions", {
+  id: int("id").autoincrement().primaryKey(),
+  dealId: int("dealId").notNull(),
+  checklistId: int("checklistId").notNull(),
+  itemId: varchar("itemId", { length: 64 }).notNull(),
+
+  isCompleted: boolean("isCompleted").default(false),
+  completedBy: int("completedBy"),
+  completedAt: timestamp("completedAt"),
+  notes: text("notes"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DealChecklistCompletion = typeof dealChecklistCompletions.$inferSelect;
+export type InsertDealChecklistCompletion = typeof dealChecklistCompletions.$inferInsert;
+
+// ============================================
+// ACTIVITY CAPTURE & SYNC
+// ============================================
+
+// Email Activity Tracking (Detailed)
+export const emailActivityTracking = mysqlTable("email_activity_tracking", {
+  id: int("id").autoincrement().primaryKey(),
+  contactId: int("contactId"),
+  dealId: int("dealId"),
+  userId: int("userId").notNull(),
+
+  // Email details
+  messageId: varchar("messageId", { length: 255 }),
+  threadId: varchar("threadId", { length: 255 }),
+  direction: mysqlEnum("direction", ["sent", "received"]).notNull(),
+
+  fromEmail: varchar("fromEmail", { length: 320 }),
+  toEmails: text("toEmails"), // JSON array
+  ccEmails: text("ccEmails"), // JSON array
+  subject: varchar("subject", { length: 500 }),
+  bodyPreview: text("bodyPreview"),
+
+  // Tracking
+  sentAt: timestamp("sentAt"),
+  openedAt: timestamp("openedAt"),
+  openCount: int("openCount").default(0),
+  clickedAt: timestamp("clickedAt"),
+  clickCount: int("clickCount").default(0),
+  repliedAt: timestamp("repliedAt"),
+  bouncedAt: timestamp("bouncedAt"),
+  bounceReason: text("bounceReason"),
+
+  // Out of office detection
+  isOutOfOffice: boolean("isOutOfOffice").default(false),
+  oooReturnDate: timestamp("oooReturnDate"),
+
+  // Sentiment (AI-analyzed)
+  sentiment: mysqlEnum("sentiment", ["positive", "neutral", "negative"]),
+  hasQuestion: boolean("hasQuestion").default(false),
+  hasMeetingRequest: boolean("hasMeetingRequest").default(false),
+  hasObjection: boolean("hasObjection").default(false),
+
+  // Classification
+  emailType: mysqlEnum("emailType", [
+    "initial_outreach", "followup", "proposal", "negotiation",
+    "contract", "intro", "nurture", "other"
+  ]),
+
+  // Source
+  source: mysqlEnum("source", ["manual", "sequence", "campaign", "gmail_sync", "outlook_sync"]),
+  sequenceEnrollmentId: int("sequenceEnrollmentId"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailActivityTracking = typeof emailActivityTracking.$inferSelect;
+export type InsertEmailActivityTracking = typeof emailActivityTracking.$inferInsert;
+
+// Calendar Sync & Meeting Tracking
+export const meetingTracking = mysqlTable("meeting_tracking", {
+  id: int("id").autoincrement().primaryKey(),
+  dealId: int("dealId"),
+  contactId: int("contactId"),
+  userId: int("userId").notNull(),
+
+  // Calendar details
+  calendarEventId: varchar("calendarEventId", { length: 255 }),
+  calendarProvider: mysqlEnum("calendarProvider", ["google", "outlook", "manual"]).default("manual"),
+
+  meetingType: mysqlEnum("meetingType", [
+    "discovery", "demo", "technical_deep_dive", "proposal_review",
+    "negotiation", "contract_review", "kickoff", "qbr", "executive_alignment",
+    "internal", "other"
+  ]),
+
+  title: varchar("title", { length: 255 }),
+  description: text("description"),
+  location: varchar("location", { length: 255 }),
+  videoConferenceLink: text("videoConferenceLink"),
+
+  // Timing
+  startTime: timestamp("startTime").notNull(),
+  endTime: timestamp("endTime").notNull(),
+  duration: int("duration"), // Minutes
+  timezone: varchar("timezone", { length: 64 }),
+
+  // Attendees
+  attendees: text("attendees"), // JSON array of { email, name, responseStatus }
+  attendeeCount: int("attendeeCount"),
+  externalAttendeeCount: int("externalAttendeeCount"),
+  executivePresent: boolean("executivePresent").default(false),
+
+  // Tracking
+  status: mysqlEnum("status", ["scheduled", "completed", "cancelled", "no_show", "rescheduled"]).default("scheduled"),
+  outcome: mysqlEnum("outcome", ["positive", "neutral", "negative"]),
+  nextSteps: text("nextSteps"), // JSON array
+
+  // Notes & Recording
+  notes: text("notes"),
+  recordingUrl: text("recordingUrl"),
+  callId: int("callId"), // Link to salesCalls if recorded
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type MeetingTracking = typeof meetingTracking.$inferSelect;
+export type InsertMeetingTracking = typeof meetingTracking.$inferInsert;
+
+// LinkedIn Activity Tracking
+export const linkedinActivityTracking = mysqlTable("linkedin_activity_tracking", {
+  id: int("id").autoincrement().primaryKey(),
+  contactId: int("contactId"),
+  dealId: int("dealId"),
+  userId: int("userId").notNull(),
+
+  linkedinProfileUrl: varchar("linkedinProfileUrl", { length: 512 }),
+
+  activityType: mysqlEnum("activityType", [
+    "profile_view", "connection_request_sent", "connection_accepted",
+    "message_sent", "message_received", "inmail_sent", "inmail_replied",
+    "post_liked", "post_commented", "post_shared"
+  ]).notNull(),
+
+  messageContent: text("messageContent"),
+
+  status: mysqlEnum("status", ["pending", "completed", "failed"]).default("completed"),
+  completedAt: timestamp("completedAt"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type LinkedinActivityTracking = typeof linkedinActivityTracking.$inferSelect;
+export type InsertLinkedinActivityTracking = typeof linkedinActivityTracking.$inferInsert;
+
+// ============================================
+// SALES ENGAGEMENT SCORING
+// ============================================
+
+// Contact Engagement Scores
+export const contactEngagementScores = mysqlTable("contact_engagement_scores", {
+  id: int("id").autoincrement().primaryKey(),
+  contactId: int("contactId").notNull(),
+
+  // Overall engagement
+  engagementScore: int("engagementScore").notNull(), // 0-100
+  engagementTrend: mysqlEnum("engagementTrend", ["hot", "warming", "stable", "cooling", "cold"]),
+
+  // Last 30 days activity
+  emailsOpened30d: int("emailsOpened30d").default(0),
+  emailsClicked30d: int("emailsClicked30d").default(0),
+  emailsReplied30d: int("emailsReplied30d").default(0),
+  callsConnected30d: int("callsConnected30d").default(0),
+  meetingsHeld30d: int("meetingsHeld30d").default(0),
+  websiteVisits30d: int("websiteVisits30d").default(0),
+
+  // Timing
+  lastEngagementAt: timestamp("lastEngagementAt"),
+  avgResponseTime: int("avgResponseTime"), // Hours
+  bestContactTime: varchar("bestContactTime", { length: 32 }), // e.g., "Tuesday 2pm"
+
+  // Status
+  isEngaged: boolean("isEngaged").default(false),
+  wentDarkAt: timestamp("wentDarkAt"),
+  reEngagedAt: timestamp("reEngagedAt"),
+
+  calculatedAt: timestamp("calculatedAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ContactEngagementScore = typeof contactEngagementScores.$inferSelect;
+export type InsertContactEngagementScore = typeof contactEngagementScores.$inferInsert;
+
+// ============================================
+// MEETING PREP & AI BRIEFS
+// ============================================
+
+// AI Meeting Prep Briefs
+export const meetingPrepBriefs = mysqlTable("meeting_prep_briefs", {
+  id: int("id").autoincrement().primaryKey(),
+  meetingId: int("meetingId").notNull(),
+  dealId: int("dealId"),
+  userId: int("userId").notNull(),
+
+  // Brief content (AI-generated)
+  executiveSummary: text("executiveSummary"),
+  accountOverview: text("accountOverview"),
+  stakeholderInsights: text("stakeholderInsights"), // JSON array
+  recentActivity: text("recentActivity"), // JSON array
+  dealHistory: text("dealHistory"),
+  competitiveIntel: text("competitiveIntel"),
+
+  // Recommendations
+  talkingPoints: text("talkingPoints"), // JSON array
+  questionsToAsk: text("questionsToAsk"), // JSON array
+  objectionsToExpect: text("objectionsToExpect"), // JSON array
+  contentToShare: text("contentToShare"), // JSON array of content library IDs
+
+  // Risk/Opportunity
+  dealRisks: text("dealRisks"), // JSON array
+  opportunities: text("opportunities"), // JSON array
+
+  // News & Triggers
+  companyNews: text("companyNews"), // JSON array
+  industryNews: text("industryNews"), // JSON array
+
+  generatedAt: timestamp("generatedAt").defaultNow().notNull(),
+  viewedAt: timestamp("viewedAt"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type MeetingPrepBrief = typeof meetingPrepBriefs.$inferSelect;
+export type InsertMeetingPrepBrief = typeof meetingPrepBriefs.$inferInsert;
+
+// ============================================
+// AUDIT & OPERATIONS
+// ============================================
+
+// Sales Audit Log
+export const salesAuditLog = mysqlTable("sales_audit_log", {
+  id: int("id").autoincrement().primaryKey(),
+
+  entityType: mysqlEnum("entityType", [
+    "deal", "contact", "account", "sequence", "automation",
+    "territory", "quota", "commission", "forecast"
+  ]).notNull(),
+  entityId: int("entityId").notNull(),
+
+  action: mysqlEnum("action", [
+    "created", "updated", "deleted", "stage_changed", "owner_changed",
+    "amount_changed", "close_date_changed", "won", "lost", "reopened"
+  ]).notNull(),
+
+  changes: text("changes"), // JSON { field: { old, new } }
+
+  userId: int("userId").notNull(),
+  userName: varchar("userName", { length: 255 }),
+  ipAddress: varchar("ipAddress", { length: 45 }),
+  userAgent: text("userAgent"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type SalesAuditLog = typeof salesAuditLog.$inferSelect;
+export type InsertSalesAuditLog = typeof salesAuditLog.$inferInsert;
+
+// Assignment Rules for Round Robin
+export const assignmentRules = mysqlTable("assignment_rules", {
+  id: int("id").autoincrement().primaryKey(),
+
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+
+  ruleType: mysqlEnum("ruleType", ["round_robin", "weighted", "territory", "custom"]).notNull(),
+  entityType: mysqlEnum("entityType", ["lead", "deal", "account"]).notNull(),
+
+  // Rule configuration
+  criteria: text("criteria"), // JSON conditions for when rule applies
+  assignees: text("assignees"), // JSON array of { userId, weight, maxActive }
+  fallbackUserId: int("fallbackUserId"),
+
+  // Round robin state
+  currentIndex: int("currentIndex").default(0),
+  lastAssignedAt: timestamp("lastAssignedAt"),
+  lastAssignedTo: int("lastAssignedTo"),
+
+  // Limits
+  maxDealsPerRep: int("maxDealsPerRep"),
+  respectCapacity: boolean("respectCapacity").default(false),
+
+  // Timing
+  onlyDuringBusinessHours: boolean("onlyDuringBusinessHours").default(false),
+  businessHoursStart: varchar("businessHoursStart", { length: 5 }), // "09:00"
+  businessHoursEnd: varchar("businessHoursEnd", { length: 5 }), // "17:00"
+  timezone: varchar("timezone", { length: 64 }),
+
+  priority: int("priority").default(0),
+  isActive: boolean("isActive").default(true),
+
+  // Stats
+  totalAssignments: int("totalAssignments").default(0),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type AssignmentRule = typeof assignmentRules.$inferSelect;
+export type InsertAssignmentRule = typeof assignmentRules.$inferInsert;
+
+// Type exports for world-class tables
+export type {
+  SalesCall, InsertSalesCall,
+  ConversationInsight, InsertConversationInsight,
+  DealRiskScore, InsertDealRiskScore,
+  DealNextAction, InsertDealNextAction,
+  SequenceChannelStep, InsertSequenceChannelStep,
+  SequenceAbTest, InsertSequenceAbTest,
+  PipelineHealthMetric, InsertPipelineHealthMetric,
+  DealSlippageEvent, InsertDealSlippageEvent,
+  AccountStakeholder, InsertAccountStakeholder,
+  ChampionTracking, InsertChampionTracking,
+  AccountHealthScore, InsertAccountHealthScore,
+  AccountHierarchy, InsertAccountHierarchy,
+  Battlecard, InsertBattlecard,
+  SalesContentLibrary, InsertSalesContentLibrary,
+  GuidedSellingChecklist, InsertGuidedSellingChecklist,
+  DealChecklistCompletion, InsertDealChecklistCompletion,
+  EmailActivityTracking, InsertEmailActivityTracking,
+  MeetingTracking, InsertMeetingTracking,
+  LinkedinActivityTracking, InsertLinkedinActivityTracking,
+  ContactEngagementScore, InsertContactEngagementScore,
+  MeetingPrepBrief, InsertMeetingPrepBrief,
+  SalesAuditLog, InsertSalesAuditLog,
+  AssignmentRule, InsertAssignmentRule,
+};
+
 export type {
   SalesTerritory, InsertSalesTerritory,
   SalesQuota, InsertSalesQuota,

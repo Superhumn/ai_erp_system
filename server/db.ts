@@ -97,7 +97,20 @@ import {
   InsertLeadScoringRule, InsertLeadScoreHistory, InsertSalesAutomationRule, InsertSalesAutomationExecution,
   InsertEmailSequence, InsertEmailSequenceStep, InsertEmailSequenceEnrollment, InsertEmailSequenceEvent,
   InsertSalesActivity, InsertDealStageHistory, InsertSalesForecast, InsertSalesGoal, InsertSalesPlaybook,
-  InsertDealPlaybookAssignment, InsertSalesCoachingNote, InsertSalesLeaderboardSnapshot, InsertDealCompetitor, InsertSalesMetricsDaily
+  InsertDealPlaybookAssignment, InsertSalesCoachingNote, InsertSalesLeaderboardSnapshot, InsertDealCompetitor, InsertSalesMetricsDaily,
+  // World-class revenue intelligence tables
+  salesCalls, conversationInsights, dealRiskScores, dealNextActions,
+  sequenceChannelSteps, sequenceAbTests, pipelineHealthMetrics, dealSlippageEvents,
+  accountStakeholders, championTracking, accountHealthScores, accountHierarchies,
+  battlecards, salesContentLibrary, guidedSellingChecklists, dealChecklistCompletions,
+  emailActivityTracking, meetingTracking, linkedinActivityTracking,
+  contactEngagementScores, meetingPrepBriefs, salesAuditLog, assignmentRules,
+  InsertSalesCall, InsertConversationInsight, InsertDealRiskScore, InsertDealNextAction,
+  InsertSequenceChannelStep, InsertSequenceAbTest, InsertPipelineHealthMetric, InsertDealSlippageEvent,
+  InsertAccountStakeholder, InsertChampionTracking, InsertAccountHealthScore, InsertAccountHierarchy,
+  InsertBattlecard, InsertSalesContentLibrary, InsertGuidedSellingChecklist, InsertDealChecklistCompletion,
+  InsertEmailActivityTracking, InsertMeetingTracking, InsertLinkedinActivityTracking,
+  InsertContactEngagementScore, InsertMeetingPrepBrief, InsertSalesAuditLog, InsertAssignmentRule
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8630,4 +8643,289 @@ export async function getSalesVelocityMetrics(filters?: { userId?: number; pipel
     : 0;
 
   return { ...velocity, winRatePercent, salesVelocity, period: filters?.period || "quarter" };
+}
+
+// ============================================
+// WORLD-CLASS REVENUE INTELLIGENCE FUNCTIONS
+// ============================================
+
+// --- SALES CALLS ---
+export async function createSalesCall(data: Omit<InsertSalesCall, 'id' | 'createdAt' | 'updatedAt'>) {
+  const db = await getDb();
+  if (!db) return null;
+  const [result] = await db.insert(salesCalls).values(data);
+  return { id: result.insertId };
+}
+
+export async function getSalesCall(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [call] = await db.select().from(salesCalls).where(eq(salesCalls.id, id));
+  return call;
+}
+
+export async function getSalesCalls(filters: { dealId?: number; contactId?: number; userId?: number; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters.dealId) conditions.push(eq(salesCalls.dealId, filters.dealId));
+  if (filters.contactId) conditions.push(eq(salesCalls.contactId, filters.contactId));
+  if (filters.userId) conditions.push(eq(salesCalls.userId, filters.userId));
+  return db.select().from(salesCalls).where(and(...conditions)).orderBy(desc(salesCalls.callDate)).limit(filters.limit || 50);
+}
+
+export async function getConversationInsights(callId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(conversationInsights).where(eq(conversationInsights.callId, callId));
+}
+
+// --- DEAL RISK SCORES ---
+export async function getDealRiskScore(dealId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [score] = await db.select().from(dealRiskScores).where(eq(dealRiskScores.dealId, dealId)).orderBy(desc(dealRiskScores.calculatedAt)).limit(1);
+  return score;
+}
+
+export async function getAtRiskDeals(filters: { riskLevel?: string; userId?: number; pipelineId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters.riskLevel) conditions.push(eq(dealRiskScores.riskLevel, filters.riskLevel as any));
+
+  const query = db.select({
+    riskScore: dealRiskScores,
+    deal: crmDeals,
+  }).from(dealRiskScores)
+    .innerJoin(crmDeals, eq(dealRiskScores.dealId, crmDeals.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(dealRiskScores.riskScore))
+    .limit(100);
+
+  return query;
+}
+
+// --- NEXT BEST ACTIONS ---
+export async function getDealNextActions(filters: { dealId: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(dealNextActions.dealId, filters.dealId)];
+  if (filters.status) conditions.push(eq(dealNextActions.status, filters.status as any));
+  return db.select().from(dealNextActions).where(and(...conditions)).orderBy(desc(dealNextActions.priority));
+}
+
+export async function updateDealNextAction(id: number, data: Partial<InsertDealNextAction>) {
+  const db = await getDb();
+  if (!db) return null;
+  await db.update(dealNextActions).set({ ...data, updatedAt: new Date() }).where(eq(dealNextActions.id, id));
+  return { id };
+}
+
+// --- PIPELINE HEALTH ---
+export async function getPipelineHealthMetrics(filters: { pipelineId?: number; userId?: number; period?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters.pipelineId) conditions.push(eq(pipelineHealthMetrics.pipelineId, filters.pipelineId));
+  if (filters.userId) conditions.push(eq(pipelineHealthMetrics.userId, filters.userId));
+  if (filters.period) conditions.push(eq(pipelineHealthMetrics.period, filters.period as any));
+  return db.select().from(pipelineHealthMetrics).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(pipelineHealthMetrics.periodStart)).limit(30);
+}
+
+export async function getDealSlippageEvents(filters: { dealId?: number; eventType?: string; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters.dealId) conditions.push(eq(dealSlippageEvents.dealId, filters.dealId));
+  if (filters.eventType) conditions.push(eq(dealSlippageEvents.eventType, filters.eventType as any));
+  return db.select().from(dealSlippageEvents).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(dealSlippageEvents.createdAt)).limit(filters.limit || 100);
+}
+
+// --- STAKEHOLDERS ---
+export async function getAccountStakeholders(filters: { dealId?: number; accountId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters.dealId) conditions.push(eq(accountStakeholders.dealId, filters.dealId));
+  if (filters.accountId) conditions.push(eq(accountStakeholders.accountId, filters.accountId));
+  return db.select().from(accountStakeholders).where(conditions.length > 0 ? and(...conditions) : undefined);
+}
+
+export async function createAccountStakeholder(data: Omit<InsertAccountStakeholder, 'id' | 'createdAt' | 'updatedAt'>) {
+  const db = await getDb();
+  if (!db) return null;
+  const [result] = await db.insert(accountStakeholders).values(data);
+  return { id: result.insertId };
+}
+
+export async function updateAccountStakeholder(id: number, data: Partial<InsertAccountStakeholder>) {
+  const db = await getDb();
+  if (!db) return null;
+  await db.update(accountStakeholders).set({ ...data, updatedAt: new Date() }).where(eq(accountStakeholders.id, id));
+  return { id };
+}
+
+export async function getChampionTracking(dealId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [champion] = await db.select().from(championTracking).where(eq(championTracking.dealId, dealId)).orderBy(desc(championTracking.updatedAt)).limit(1);
+  return champion;
+}
+
+// --- ACCOUNT HEALTH ---
+export async function getAccountHealthScore(accountId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [score] = await db.select().from(accountHealthScores).where(eq(accountHealthScores.accountId, accountId)).orderBy(desc(accountHealthScores.calculatedAt)).limit(1);
+  return score;
+}
+
+export async function getAccountHierarchy(accountId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(accountHierarchies).where(or(eq(accountHierarchies.accountId, accountId), eq(accountHierarchies.parentAccountId, accountId)));
+}
+
+// --- BATTLECARDS ---
+export async function getBattlecards() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(battlecards).where(eq(battlecards.isActive, true)).orderBy(battlecards.competitorName);
+}
+
+export async function createBattlecard(data: Omit<InsertBattlecard, 'id' | 'createdAt' | 'updatedAt'>) {
+  const db = await getDb();
+  if (!db) return null;
+  const [result] = await db.insert(battlecards).values(data);
+  return { id: result.insertId };
+}
+
+export async function updateBattlecard(id: number, data: Partial<InsertBattlecard>) {
+  const db = await getDb();
+  if (!db) return null;
+  await db.update(battlecards).set({ ...data, updatedAt: new Date() }).where(eq(battlecards.id, id));
+  return { id };
+}
+
+// --- CONTENT LIBRARY ---
+export async function getSalesContent(filters: { contentType?: string; dealStage?: string; persona?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(salesContentLibrary.isActive, true)];
+  if (filters.contentType) conditions.push(eq(salesContentLibrary.contentType, filters.contentType as any));
+  if (filters.dealStage) conditions.push(eq(salesContentLibrary.dealStage, filters.dealStage));
+  if (filters.persona) conditions.push(eq(salesContentLibrary.persona, filters.persona));
+  return db.select().from(salesContentLibrary).where(and(...conditions)).orderBy(desc(salesContentLibrary.usageCount));
+}
+
+export async function getSalesContentItem(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [item] = await db.select().from(salesContentLibrary).where(eq(salesContentLibrary.id, id));
+  return item;
+}
+
+export async function createSalesContent(data: Omit<InsertSalesContentLibrary, 'id' | 'createdAt' | 'updatedAt'>) {
+  const db = await getDb();
+  if (!db) return null;
+  const [result] = await db.insert(salesContentLibrary).values(data);
+  return { id: result.insertId };
+}
+
+export async function trackContentUsage(contentId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  await db.update(salesContentLibrary).set({ usageCount: sql`${salesContentLibrary.usageCount} + 1`, updatedAt: new Date() }).where(eq(salesContentLibrary.id, contentId));
+  return { success: true };
+}
+
+// --- GUIDED SELLING ---
+export async function getGuidedSellingChecklists(filters: { pipelineId: number; stage?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(guidedSellingChecklists.pipelineId, filters.pipelineId), eq(guidedSellingChecklists.isActive, true)];
+  if (filters.stage) conditions.push(eq(guidedSellingChecklists.stage, filters.stage));
+  return db.select().from(guidedSellingChecklists).where(and(...conditions)).orderBy(guidedSellingChecklists.displayOrder);
+}
+
+export async function getDealChecklistProgress(dealId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(dealChecklistCompletions).where(eq(dealChecklistCompletions.dealId, dealId));
+}
+
+export async function completeDealChecklistItem(data: Omit<InsertDealChecklistCompletion, 'id' | 'createdAt' | 'updatedAt'>) {
+  const db = await getDb();
+  if (!db) return null;
+  const [result] = await db.insert(dealChecklistCompletions).values(data).onDuplicateKeyUpdate({ set: { isCompleted: data.isCompleted, completedBy: data.completedBy, completedAt: data.completedAt, notes: data.notes } });
+  return { id: result.insertId };
+}
+
+// --- MEETINGS ---
+export async function getMeetings(filters: { dealId?: number; userId?: number; startDate?: Date; endDate?: Date }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters.dealId) conditions.push(eq(meetingTracking.dealId, filters.dealId));
+  if (filters.userId) conditions.push(eq(meetingTracking.userId, filters.userId));
+  if (filters.startDate) conditions.push(gte(meetingTracking.startTime, filters.startDate));
+  if (filters.endDate) conditions.push(lte(meetingTracking.endTime, filters.endDate));
+  return db.select().from(meetingTracking).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(meetingTracking.startTime);
+}
+
+export async function createMeeting(data: Omit<InsertMeetingTracking, 'id' | 'createdAt' | 'updatedAt'>) {
+  const db = await getDb();
+  if (!db) return null;
+  const [result] = await db.insert(meetingTracking).values(data);
+  return { id: result.insertId };
+}
+
+export async function getMeetingPrepBrief(meetingId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [brief] = await db.select().from(meetingPrepBriefs).where(eq(meetingPrepBriefs.meetingId, meetingId)).orderBy(desc(meetingPrepBriefs.generatedAt)).limit(1);
+  return brief;
+}
+
+// --- CONTACT ENGAGEMENT ---
+export async function getContactEngagementScore(contactId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [score] = await db.select().from(contactEngagementScores).where(eq(contactEngagementScores.contactId, contactId)).orderBy(desc(contactEngagementScores.calculatedAt)).limit(1);
+  return score;
+}
+
+export async function getHighlyEngagedContacts(filters: { minScore?: number; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(contactEngagementScores.isEngaged, true)];
+  if (filters.minScore) conditions.push(gte(contactEngagementScores.engagementScore, filters.minScore));
+  return db.select().from(contactEngagementScores).where(and(...conditions)).orderBy(desc(contactEngagementScores.engagementScore)).limit(filters.limit || 100);
+}
+
+// --- ASSIGNMENT RULES ---
+export async function getAssignmentRules() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(assignmentRules).where(eq(assignmentRules.isActive, true)).orderBy(desc(assignmentRules.priority));
+}
+
+export async function createAssignmentRule(data: Omit<InsertAssignmentRule, 'id' | 'createdAt' | 'updatedAt'>) {
+  const db = await getDb();
+  if (!db) return null;
+  const [result] = await db.insert(assignmentRules).values(data);
+  return { id: result.insertId };
+}
+
+// --- AUDIT LOG ---
+export async function getSalesAuditLog(filters: { entityType?: string; entityId?: number; userId?: number; action?: string; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters.entityType) conditions.push(eq(salesAuditLog.entityType, filters.entityType as any));
+  if (filters.entityId) conditions.push(eq(salesAuditLog.entityId, filters.entityId));
+  if (filters.userId) conditions.push(eq(salesAuditLog.userId, filters.userId));
+  if (filters.action) conditions.push(eq(salesAuditLog.action, filters.action as any));
+  return db.select().from(salesAuditLog).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(salesAuditLog.createdAt)).limit(filters.limit || 100);
 }

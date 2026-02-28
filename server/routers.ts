@@ -12,6 +12,7 @@ import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, matchLineItemsToMaterials } from "./documentImportService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import * as salesAutomation from "./salesAutomationService";
+import * as revenueIntelligence from "./revenueIntelligenceService";
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
@@ -13188,6 +13189,546 @@ Ask if they received the original request and if they can provide a quote.`;
         .mutation(async ({ input }) => {
           const result = await salesAutomation.detectStalledDeals(input.stalledDays);
           return result;
+        }),
+    }),
+  }),
+
+  // ============================================
+  // REVENUE INTELLIGENCE - World Class Sales System
+  // ============================================
+  revenueIntelligence: router({
+    // --- CALL ANALYSIS ---
+    calls: router({
+      // Analyze call recording
+      analyzeCall: protectedProcedure
+        .input(z.object({
+          callId: z.number(),
+          transcriptText: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          return revenueIntelligence.analyzeCallRecording(
+            input.callId,
+            input.transcriptText,
+            { userId: ctx.user.id, userName: ctx.user.name || undefined }
+          );
+        }),
+
+      // Get call by ID
+      getCall: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => {
+          return db.getSalesCall(input.id);
+        }),
+
+      // List calls
+      listCalls: protectedProcedure
+        .input(z.object({
+          dealId: z.number().optional(),
+          contactId: z.number().optional(),
+          userId: z.number().optional(),
+          limit: z.number().optional(),
+        }))
+        .query(async ({ input }) => {
+          return db.getSalesCalls(input);
+        }),
+
+      // Create call record
+      createCall: protectedProcedure
+        .input(z.object({
+          dealId: z.number().optional(),
+          contactId: z.number().optional(),
+          callType: z.enum(["discovery", "demo", "negotiation", "closing", "followup", "qbr", "other"]).optional(),
+          direction: z.enum(["inbound", "outbound"]).optional(),
+          callDate: z.date(),
+          duration: z.number().optional(),
+          recordingUrl: z.string().optional(),
+          notes: z.string().optional(),
+          outcome: z.enum(["connected", "voicemail", "no_answer", "busy", "wrong_number", "meeting_scheduled", "followup_needed"]).optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          return db.createSalesCall({ ...input, userId: ctx.user.id });
+        }),
+
+      // Get conversation insights for a call
+      getInsights: protectedProcedure
+        .input(z.object({ callId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getConversationInsights(input.callId);
+        }),
+    }),
+
+    // --- DEAL RISK SCORING ---
+    dealRisk: router({
+      // Calculate risk score for a deal
+      calculateRisk: protectedProcedure
+        .input(z.object({ dealId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          return revenueIntelligence.calculateDealRiskScore(
+            input.dealId,
+            { userId: ctx.user.id, userName: ctx.user.name || undefined }
+          );
+        }),
+
+      // Get current risk score
+      getRiskScore: protectedProcedure
+        .input(z.object({ dealId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getDealRiskScore(input.dealId);
+        }),
+
+      // Get all at-risk deals
+      getAtRiskDeals: protectedProcedure
+        .input(z.object({
+          riskLevel: z.enum(["medium", "high", "critical"]).optional(),
+          userId: z.number().optional(),
+          pipelineId: z.number().optional(),
+        }))
+        .query(async ({ input }) => {
+          return db.getAtRiskDeals(input);
+        }),
+
+      // Get next best actions for a deal
+      getNextActions: protectedProcedure
+        .input(z.object({
+          dealId: z.number(),
+          status: z.enum(["pending", "in_progress", "completed", "dismissed", "snoozed"]).optional(),
+        }))
+        .query(async ({ input }) => {
+          return db.getDealNextActions(input);
+        }),
+
+      // Complete a next action
+      completeAction: protectedProcedure
+        .input(z.object({
+          actionId: z.number(),
+          outcome: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          return db.updateDealNextAction(input.actionId, {
+            status: "completed",
+            completedAt: new Date(),
+            completedBy: ctx.user.id,
+            outcome: input.outcome,
+          });
+        }),
+
+      // Dismiss a next action
+      dismissAction: protectedProcedure
+        .input(z.object({ actionId: z.number() }))
+        .mutation(async ({ input }) => {
+          return db.updateDealNextAction(input.actionId, { status: "dismissed" });
+        }),
+    }),
+
+    // --- PIPELINE HEALTH ---
+    pipelineHealth: router({
+      // Calculate pipeline health
+      calculate: protectedProcedure
+        .input(z.object({
+          pipelineId: z.number(),
+          userId: z.number().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          return revenueIntelligence.calculatePipelineHealth(input.pipelineId, input.userId);
+        }),
+
+      // Get pipeline health metrics
+      getMetrics: protectedProcedure
+        .input(z.object({
+          pipelineId: z.number(),
+          userId: z.number().optional(),
+          period: z.enum(["daily", "weekly", "monthly", "quarterly"]).optional(),
+        }))
+        .query(async ({ input }) => {
+          return db.getPipelineHealthMetrics(input);
+        }),
+
+      // Get slippage events
+      getSlippageEvents: protectedProcedure
+        .input(z.object({
+          dealId: z.number().optional(),
+          eventType: z.string().optional(),
+          limit: z.number().optional(),
+        }))
+        .query(async ({ input }) => {
+          return db.getDealSlippageEvents(input);
+        }),
+    }),
+
+    // --- STAKEHOLDER MANAGEMENT ---
+    stakeholders: router({
+      // List stakeholders for deal/account
+      list: protectedProcedure
+        .input(z.object({
+          dealId: z.number().optional(),
+          accountId: z.number().optional(),
+        }))
+        .query(async ({ input }) => {
+          return db.getAccountStakeholders(input);
+        }),
+
+      // Add stakeholder
+      add: protectedProcedure
+        .input(z.object({
+          accountId: z.number(),
+          dealId: z.number().optional(),
+          contactId: z.number(),
+          role: z.enum([
+            "decision_maker", "budget_holder", "champion", "influencer",
+            "technical_evaluator", "end_user", "blocker", "coach",
+            "executive_sponsor", "procurement", "legal", "unknown"
+          ]),
+          influence: z.enum(["high", "medium", "low"]).optional(),
+          sentiment: z.enum(["strong_advocate", "advocate", "neutral", "skeptic", "blocker"]).optional(),
+        }))
+        .mutation(async ({ input }) => {
+          return db.createAccountStakeholder(input);
+        }),
+
+      // Update stakeholder
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          role: z.enum([
+            "decision_maker", "budget_holder", "champion", "influencer",
+            "technical_evaluator", "end_user", "blocker", "coach",
+            "executive_sponsor", "procurement", "legal", "unknown"
+          ]).optional(),
+          influence: z.enum(["high", "medium", "low"]).optional(),
+          sentiment: z.enum(["strong_advocate", "advocate", "neutral", "skeptic", "blocker"]).optional(),
+          engagement: z.enum(["high", "medium", "low", "none"]).optional(),
+          priorities: z.array(z.string()).optional(),
+          concerns: z.array(z.string()).optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, priorities, concerns, ...data } = input;
+          return db.updateAccountStakeholder(id, {
+            ...data,
+            priorities: priorities ? JSON.stringify(priorities) : undefined,
+            concerns: concerns ? JSON.stringify(concerns) : undefined,
+          });
+        }),
+
+      // Get champion tracking
+      getChampionStatus: protectedProcedure
+        .input(z.object({ dealId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getChampionTracking(input.dealId);
+        }),
+    }),
+
+    // --- ACCOUNT HEALTH ---
+    accountHealth: router({
+      // Calculate account health
+      calculate: protectedProcedure
+        .input(z.object({ accountId: z.number() }))
+        .mutation(async ({ input }) => {
+          return revenueIntelligence.calculateAccountHealth(input.accountId);
+        }),
+
+      // Get account health score
+      getScore: protectedProcedure
+        .input(z.object({ accountId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getAccountHealthScore(input.accountId);
+        }),
+
+      // Get account hierarchy
+      getHierarchy: protectedProcedure
+        .input(z.object({ accountId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getAccountHierarchy(input.accountId);
+        }),
+    }),
+
+    // --- BATTLECARDS ---
+    battlecards: router({
+      // List all battlecards
+      list: protectedProcedure.query(async () => {
+        return db.getBattlecards();
+      }),
+
+      // Get battlecard by competitor name
+      getByCompetitor: protectedProcedure
+        .input(z.object({ competitorName: z.string() }))
+        .query(async ({ input }) => {
+          return revenueIntelligence.getBattlecardForCompetitor(input.competitorName);
+        }),
+
+      // Create battlecard
+      create: protectedProcedure
+        .input(z.object({
+          competitorName: z.string(),
+          overview: z.string().optional(),
+          positioning: z.string().optional(),
+          strengths: z.array(z.string()).optional(),
+          weaknesses: z.array(z.string()).optional(),
+          ourAdvantages: z.array(z.string()).optional(),
+          discoveryQuestions: z.array(z.string()).optional(),
+          objectionHandlers: z.array(z.object({ objection: z.string(), response: z.string() })).optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          return db.createBattlecard({
+            competitorName: input.competitorName,
+            overview: input.overview,
+            positioning: input.positioning,
+            strengths: input.strengths ? JSON.stringify(input.strengths) : undefined,
+            weaknesses: input.weaknesses ? JSON.stringify(input.weaknesses) : undefined,
+            ourAdvantages: input.ourAdvantages ? JSON.stringify(input.ourAdvantages) : undefined,
+            discoveryQuestions: input.discoveryQuestions ? JSON.stringify(input.discoveryQuestions) : undefined,
+            objectionHandlers: input.objectionHandlers ? JSON.stringify(input.objectionHandlers) : undefined,
+            lastUpdatedBy: ctx.user.id,
+          });
+        }),
+
+      // Update battlecard
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          competitorName: z.string().optional(),
+          overview: z.string().optional(),
+          positioning: z.string().optional(),
+          strengths: z.array(z.string()).optional(),
+          weaknesses: z.array(z.string()).optional(),
+          ourAdvantages: z.array(z.string()).optional(),
+          discoveryQuestions: z.array(z.string()).optional(),
+          objectionHandlers: z.array(z.object({ objection: z.string(), response: z.string() })).optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, strengths, weaknesses, ourAdvantages, discoveryQuestions, objectionHandlers, ...data } = input;
+          return db.updateBattlecard(id, {
+            ...data,
+            strengths: strengths ? JSON.stringify(strengths) : undefined,
+            weaknesses: weaknesses ? JSON.stringify(weaknesses) : undefined,
+            ourAdvantages: ourAdvantages ? JSON.stringify(ourAdvantages) : undefined,
+            discoveryQuestions: discoveryQuestions ? JSON.stringify(discoveryQuestions) : undefined,
+            objectionHandlers: objectionHandlers ? JSON.stringify(objectionHandlers) : undefined,
+            lastUpdatedBy: ctx.user.id,
+          });
+        }),
+    }),
+
+    // --- CONTENT LIBRARY ---
+    contentLibrary: router({
+      // List content
+      list: protectedProcedure
+        .input(z.object({
+          contentType: z.string().optional(),
+          dealStage: z.string().optional(),
+          persona: z.string().optional(),
+        }))
+        .query(async ({ input }) => {
+          return db.getSalesContent(input);
+        }),
+
+      // Get content by ID
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => {
+          return db.getSalesContentItem(input.id);
+        }),
+
+      // Create content
+      create: protectedProcedure
+        .input(z.object({
+          title: z.string(),
+          description: z.string().optional(),
+          contentType: z.enum([
+            "case_study", "one_pager", "presentation", "proposal_template",
+            "demo_video", "roi_calculator", "whitepaper", "ebook",
+            "testimonial", "reference_customer", "integration_guide",
+            "pricing_sheet", "competitive_intel", "talk_track", "email_template"
+          ]),
+          fileUrl: z.string().optional(),
+          externalLink: z.string().optional(),
+          industry: z.string().optional(),
+          dealStage: z.string().optional(),
+          persona: z.string().optional(),
+          tags: z.array(z.string()).optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          return db.createSalesContent({
+            ...input,
+            tags: input.tags ? JSON.stringify(input.tags) : undefined,
+            createdBy: ctx.user.id,
+          });
+        }),
+
+      // Track content usage
+      trackUsage: protectedProcedure
+        .input(z.object({ contentId: z.number() }))
+        .mutation(async ({ input }) => {
+          return db.trackContentUsage(input.contentId);
+        }),
+    }),
+
+    // --- GUIDED SELLING ---
+    guidedSelling: router({
+      // Get checklists for pipeline/stage
+      getChecklists: protectedProcedure
+        .input(z.object({
+          pipelineId: z.number(),
+          stage: z.string().optional(),
+        }))
+        .query(async ({ input }) => {
+          return db.getGuidedSellingChecklists(input);
+        }),
+
+      // Get deal checklist completions
+      getDealProgress: protectedProcedure
+        .input(z.object({ dealId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getDealChecklistProgress(input.dealId);
+        }),
+
+      // Complete checklist item
+      completeItem: protectedProcedure
+        .input(z.object({
+          dealId: z.number(),
+          checklistId: z.number(),
+          itemId: z.string(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          return db.completeDealChecklistItem({
+            ...input,
+            completedBy: ctx.user.id,
+            completedAt: new Date(),
+            isCompleted: true,
+          });
+        }),
+    }),
+
+    // --- MEETING PREP ---
+    meetingPrep: router({
+      // Generate meeting prep brief
+      generateBrief: protectedProcedure
+        .input(z.object({ meetingId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          return revenueIntelligence.generateMeetingPrepBrief(
+            input.meetingId,
+            { userId: ctx.user.id, userName: ctx.user.name || undefined }
+          );
+        }),
+
+      // Get meeting brief
+      getBrief: protectedProcedure
+        .input(z.object({ meetingId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getMeetingPrepBrief(input.meetingId);
+        }),
+
+      // List meetings
+      listMeetings: protectedProcedure
+        .input(z.object({
+          dealId: z.number().optional(),
+          userId: z.number().optional(),
+          startDate: z.date().optional(),
+          endDate: z.date().optional(),
+        }))
+        .query(async ({ input }) => {
+          return db.getMeetings(input);
+        }),
+
+      // Create meeting
+      createMeeting: protectedProcedure
+        .input(z.object({
+          dealId: z.number().optional(),
+          contactId: z.number().optional(),
+          meetingType: z.enum([
+            "discovery", "demo", "technical_deep_dive", "proposal_review",
+            "negotiation", "contract_review", "kickoff", "qbr", "executive_alignment",
+            "internal", "other"
+          ]).optional(),
+          title: z.string(),
+          startTime: z.date(),
+          endTime: z.date(),
+          location: z.string().optional(),
+          videoConferenceLink: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          return db.createMeeting({ ...input, userId: ctx.user.id });
+        }),
+    }),
+
+    // --- CONTACT ENGAGEMENT ---
+    engagement: router({
+      // Update contact engagement score
+      updateScore: protectedProcedure
+        .input(z.object({ contactId: z.number() }))
+        .mutation(async ({ input }) => {
+          return revenueIntelligence.updateContactEngagement(input.contactId);
+        }),
+
+      // Get contact engagement score
+      getScore: protectedProcedure
+        .input(z.object({ contactId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getContactEngagementScore(input.contactId);
+        }),
+
+      // Get highly engaged contacts
+      getHighlyEngaged: protectedProcedure
+        .input(z.object({
+          minScore: z.number().optional(),
+          limit: z.number().optional(),
+        }))
+        .query(async ({ input }) => {
+          return db.getHighlyEngagedContacts(input);
+        }),
+    }),
+
+    // --- ASSIGNMENT RULES ---
+    assignments: router({
+      // Assign via round robin
+      assignRoundRobin: protectedProcedure
+        .input(z.object({
+          entityType: z.enum(["lead", "deal", "account"]),
+          entityData: z.any(),
+        }))
+        .mutation(async ({ input }) => {
+          return revenueIntelligence.assignViaRoundRobin(input.entityType, input.entityData);
+        }),
+
+      // List assignment rules
+      listRules: protectedProcedure.query(async () => {
+        return db.getAssignmentRules();
+      }),
+
+      // Create assignment rule
+      createRule: adminProcedure
+        .input(z.object({
+          name: z.string(),
+          ruleType: z.enum(["round_robin", "weighted", "territory", "custom"]),
+          entityType: z.enum(["lead", "deal", "account"]),
+          criteria: z.any().optional(),
+          assignees: z.array(z.object({
+            userId: z.number(),
+            weight: z.number().optional(),
+          })),
+        }))
+        .mutation(async ({ input }) => {
+          return db.createAssignmentRule({
+            ...input,
+            criteria: input.criteria ? JSON.stringify(input.criteria) : undefined,
+            assignees: JSON.stringify(input.assignees),
+          });
+        }),
+    }),
+
+    // --- AUDIT LOG ---
+    auditLog: router({
+      // Get audit log entries
+      list: adminProcedure
+        .input(z.object({
+          entityType: z.string().optional(),
+          entityId: z.number().optional(),
+          userId: z.number().optional(),
+          action: z.string().optional(),
+          limit: z.number().optional(),
+        }))
+        .query(async ({ input }) => {
+          return db.getSalesAuditLog(input);
         }),
     }),
   }),
