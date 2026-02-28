@@ -93,7 +93,14 @@ import {
   InsertFirefliesMeeting, InsertFirefliesActionItem, InsertFirefliesContactMapping,
   // Copacker portal
   copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
-  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument
+  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
+  // FX & Landed Cost & Revenue Recognition
+  exchangeRates, fxGainLoss, landedCostAllocations, landedCostItems,
+  platformFees, channelPayouts, payoutReconciliationLines,
+  revenueRecognitionRules, revenueRecognitionEvents, glEntryTemplates,
+  InsertExchangeRate, InsertFxGainLoss, InsertLandedCostAllocation, InsertLandedCostItem,
+  InsertPlatformFee, InsertChannelPayout, InsertPayoutReconciliationLine,
+  InsertRevenueRecognitionRule, InsertRevenueRecognitionEvent, InsertGlEntryTemplate
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -583,6 +590,19 @@ export async function createTransaction(data: InsertTransaction) {
   if (!db) throw new Error("Database not available");
   const result = await db.insert(transactions).values(data);
   return { id: result[0].insertId };
+}
+
+export async function createTransactionLine(data: { transactionId: number; accountId: number; debit: string; credit: string; description?: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(transactionLines).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getOrderItems(orderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
 }
 
 // ============================================
@@ -8334,4 +8354,286 @@ export async function getProductByName(name: string) {
   if (!db) return null;
   const results = await db.select().from(products).where(sql`LOWER(${products.name}) = LOWER(${name})`).limit(1);
   return results[0] || null;
+}
+
+// ============================================
+// EXCHANGE RATES & FX MANAGEMENT
+// ============================================
+
+export async function getExchangeRates(fromCurrency?: string, toCurrency?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(exchangeRates.isActive, true)];
+  if (fromCurrency) conditions.push(eq(exchangeRates.fromCurrency, fromCurrency));
+  if (toCurrency) conditions.push(eq(exchangeRates.toCurrency, toCurrency));
+  return db.select().from(exchangeRates).where(and(...conditions)).orderBy(desc(exchangeRates.rateDate));
+}
+
+export async function getExchangeRate(fromCurrency: string, toCurrency: string, date?: Date) {
+  const db = await getDb();
+  if (!db) return null;
+  const targetDate = date || new Date();
+  const results = await db.select().from(exchangeRates)
+    .where(and(
+      eq(exchangeRates.fromCurrency, fromCurrency),
+      eq(exchangeRates.toCurrency, toCurrency),
+      eq(exchangeRates.isActive, true),
+      lte(exchangeRates.rateDate, targetDate)
+    ))
+    .orderBy(desc(exchangeRates.rateDate))
+    .limit(1);
+  return results[0] || null;
+}
+
+export async function createExchangeRate(data: InsertExchangeRate) {
+  const db = await getDb();
+  if (!db) return { id: 0 };
+  const result = await db.insert(exchangeRates).values(data);
+  return { id: Number(result[0].insertId) };
+}
+
+export async function updateExchangeRate(id: number, data: Partial<InsertExchangeRate>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(exchangeRates).set(data).where(eq(exchangeRates.id, id));
+}
+
+export async function createFxGainLoss(data: InsertFxGainLoss) {
+  const db = await getDb();
+  if (!db) return { id: 0 };
+  const result = await db.insert(fxGainLoss).values(data);
+  return { id: Number(result[0].insertId) };
+}
+
+export async function getFxGainLosses(companyId?: number, type?: 'realized' | 'unrealized') {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (companyId) conditions.push(eq(fxGainLoss.companyId, companyId));
+  if (type) conditions.push(eq(fxGainLoss.type, type));
+  return db.select().from(fxGainLoss)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(fxGainLoss.periodDate));
+}
+
+// ============================================
+// LANDED COST ALLOCATION
+// ============================================
+
+export async function getLandedCostAllocations(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) {
+    return db.select().from(landedCostAllocations)
+      .where(eq(landedCostAllocations.companyId, companyId))
+      .orderBy(desc(landedCostAllocations.createdAt));
+  }
+  return db.select().from(landedCostAllocations).orderBy(desc(landedCostAllocations.createdAt));
+}
+
+export async function getLandedCostAllocationById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(landedCostAllocations).where(eq(landedCostAllocations.id, id)).limit(1);
+  return results[0] || null;
+}
+
+export async function createLandedCostAllocation(data: InsertLandedCostAllocation) {
+  const db = await getDb();
+  if (!db) return { id: 0 };
+  const result = await db.insert(landedCostAllocations).values(data);
+  return { id: Number(result[0].insertId) };
+}
+
+export async function updateLandedCostAllocation(id: number, data: Partial<InsertLandedCostAllocation>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(landedCostAllocations).set(data).where(eq(landedCostAllocations.id, id));
+}
+
+export async function getLandedCostItems(allocationId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(landedCostItems).where(eq(landedCostItems.allocationId, allocationId));
+}
+
+export async function createLandedCostItem(data: InsertLandedCostItem) {
+  const db = await getDb();
+  if (!db) return { id: 0 };
+  const result = await db.insert(landedCostItems).values(data);
+  return { id: Number(result[0].insertId) };
+}
+
+export async function createLandedCostItemsBatch(items: InsertLandedCostItem[]) {
+  const db = await getDb();
+  if (!db) return;
+  if (items.length === 0) return;
+  await db.insert(landedCostItems).values(items);
+}
+
+export async function deleteLandedCostItems(allocationId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(landedCostItems).where(eq(landedCostItems.allocationId, allocationId));
+}
+
+// ============================================
+// NET REVENUE & CHANNEL PROFITABILITY
+// ============================================
+
+export async function getPlatformFees(companyId?: number, channel?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (companyId) conditions.push(eq(platformFees.companyId, companyId));
+  if (channel) conditions.push(eq(platformFees.channel, channel as any));
+  return db.select().from(platformFees)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(platformFees.feeDate));
+}
+
+export async function createPlatformFee(data: InsertPlatformFee) {
+  const db = await getDb();
+  if (!db) return { id: 0 };
+  const result = await db.insert(platformFees).values(data);
+  return { id: Number(result[0].insertId) };
+}
+
+export async function getChannelPayouts(companyId?: number, channel?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (companyId) conditions.push(eq(channelPayouts.companyId, companyId));
+  if (channel) conditions.push(eq(channelPayouts.channel, channel as any));
+  return db.select().from(channelPayouts)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(channelPayouts.payoutDate));
+}
+
+export async function getChannelPayoutById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(channelPayouts).where(eq(channelPayouts.id, id)).limit(1);
+  return results[0] || null;
+}
+
+export async function createChannelPayout(data: InsertChannelPayout) {
+  const db = await getDb();
+  if (!db) return { id: 0 };
+  const result = await db.insert(channelPayouts).values(data);
+  return { id: Number(result[0].insertId) };
+}
+
+export async function updateChannelPayout(id: number, data: Partial<InsertChannelPayout>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(channelPayouts).set(data).where(eq(channelPayouts.id, id));
+}
+
+export async function getPayoutReconciliationLines(payoutId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(payoutReconciliationLines).where(eq(payoutReconciliationLines.payoutId, payoutId));
+}
+
+export async function createPayoutReconciliationLine(data: InsertPayoutReconciliationLine) {
+  const db = await getDb();
+  if (!db) return { id: 0 };
+  const result = await db.insert(payoutReconciliationLines).values(data);
+  return { id: Number(result[0].insertId) };
+}
+
+export async function createPayoutReconciliationLinesBatch(items: InsertPayoutReconciliationLine[]) {
+  const db = await getDb();
+  if (!db) return;
+  if (items.length === 0) return;
+  await db.insert(payoutReconciliationLines).values(items);
+}
+
+// ============================================
+// REVENUE RECOGNITION
+// ============================================
+
+export async function getRevenueRecognitionRules(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) {
+    return db.select().from(revenueRecognitionRules)
+      .where(and(eq(revenueRecognitionRules.companyId, companyId), eq(revenueRecognitionRules.isActive, true)))
+      .orderBy(desc(revenueRecognitionRules.createdAt));
+  }
+  return db.select().from(revenueRecognitionRules)
+    .where(eq(revenueRecognitionRules.isActive, true))
+    .orderBy(desc(revenueRecognitionRules.createdAt));
+}
+
+export async function getRevenueRecognitionRuleById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(revenueRecognitionRules).where(eq(revenueRecognitionRules.id, id)).limit(1);
+  return results[0] || null;
+}
+
+export async function createRevenueRecognitionRule(data: InsertRevenueRecognitionRule) {
+  const db = await getDb();
+  if (!db) return { id: 0 };
+  const result = await db.insert(revenueRecognitionRules).values(data);
+  return { id: Number(result[0].insertId) };
+}
+
+export async function updateRevenueRecognitionRule(id: number, data: Partial<InsertRevenueRecognitionRule>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(revenueRecognitionRules).set(data).where(eq(revenueRecognitionRules.id, id));
+}
+
+export async function getRevenueRecognitionEvents(companyId?: number, orderId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (companyId) conditions.push(eq(revenueRecognitionEvents.companyId, companyId));
+  if (orderId) conditions.push(eq(revenueRecognitionEvents.orderId, orderId));
+  return db.select().from(revenueRecognitionEvents)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(revenueRecognitionEvents.createdAt));
+}
+
+export async function createRevenueRecognitionEvent(data: InsertRevenueRecognitionEvent) {
+  const db = await getDb();
+  if (!db) return { id: 0 };
+  const result = await db.insert(revenueRecognitionEvents).values(data);
+  return { id: Number(result[0].insertId) };
+}
+
+// ============================================
+// GL ENTRY TEMPLATES
+// ============================================
+
+export async function getGlEntryTemplates(companyId?: number, triggerEvent?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [eq(glEntryTemplates.isActive, true)];
+  if (companyId) conditions.push(eq(glEntryTemplates.companyId, companyId));
+  if (triggerEvent) conditions.push(eq(glEntryTemplates.triggerEvent, triggerEvent as any));
+  return db.select().from(glEntryTemplates).where(and(...conditions));
+}
+
+export async function getGlEntryTemplateById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(glEntryTemplates).where(eq(glEntryTemplates.id, id)).limit(1);
+  return results[0] || null;
+}
+
+export async function createGlEntryTemplate(data: InsertGlEntryTemplate) {
+  const db = await getDb();
+  if (!db) return { id: 0 };
+  const result = await db.insert(glEntryTemplates).values(data);
+  return { id: Number(result[0].insertId) };
+}
+
+export async function updateGlEntryTemplate(id: number, data: Partial<InsertGlEntryTemplate>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(glEntryTemplates).set(data).where(eq(glEntryTemplates.id, id));
 }

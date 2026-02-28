@@ -13662,6 +13662,558 @@ Ask if they received the original request and if they can provide a quote.`;
         return { taskId: taskResult.id };
       }),
   }),
+
+  // ============================================
+  // EXCHANGE RATES & FX MANAGEMENT
+  // ============================================
+  fx: router({
+    listRates: financeProcedure
+      .input(z.object({
+        fromCurrency: z.string().length(3).optional(),
+        toCurrency: z.string().length(3).optional(),
+      }).optional())
+      .query(({ input }) => db.getExchangeRates(input?.fromCurrency, input?.toCurrency)),
+
+    getRate: financeProcedure
+      .input(z.object({
+        fromCurrency: z.string().length(3),
+        toCurrency: z.string().length(3),
+        date: z.date().optional(),
+      }))
+      .query(({ input }) => db.getExchangeRate(input.fromCurrency, input.toCurrency, input.date)),
+
+    createRate: financeProcedure
+      .input(z.object({
+        fromCurrency: z.string().length(3),
+        toCurrency: z.string().length(3),
+        rate: z.string(),
+        rateDate: z.date(),
+        source: z.enum(["manual", "api", "bank"]).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createExchangeRate({
+          fromCurrency: input.fromCurrency,
+          toCurrency: input.toCurrency,
+          rate: input.rate,
+          rateDate: input.rateDate,
+          source: input.source || "manual",
+          isActive: true,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'exchangeRate', result.id);
+        return result;
+      }),
+
+    bulkImport: financeProcedure
+      .input(z.object({
+        rates: z.array(z.object({
+          fromCurrency: z.string().length(3),
+          toCurrency: z.string().length(3),
+          rate: z.number(),
+          rateDate: z.date(),
+          source: z.enum(["manual", "api", "bank"]).optional(),
+        })),
+      }))
+      .mutation(async ({ input }) => {
+        const { bulkImportRates } = await import("./fxService");
+        return bulkImportRates(input.rates);
+      }),
+
+    convert: financeProcedure
+      .input(z.object({
+        fromCurrency: z.string().length(3),
+        toCurrency: z.string().length(3),
+        amount: z.number(),
+        date: z.date().optional(),
+      }))
+      .query(async ({ input }) => {
+        const { convertCurrency } = await import("./fxService");
+        return convertCurrency(input.fromCurrency, input.toCurrency, input.amount, input.date);
+      }),
+
+    calculateRealizedGainLoss: financeProcedure
+      .input(z.object({
+        entityType: z.string(),
+        entityId: z.number(),
+        originalCurrency: z.string().length(3),
+        functionalCurrency: z.string().length(3),
+        originalAmount: z.number(),
+        originalRate: z.number(),
+        settlementRate: z.number(),
+      }))
+      .mutation(async ({ input }) => {
+        const { calculateRealizedGainLoss } = await import("./fxService");
+        return calculateRealizedGainLoss(input);
+      }),
+
+    calculateUnrealizedGainLoss: financeProcedure
+      .input(z.object({
+        entityType: z.string(),
+        entityId: z.number(),
+        originalCurrency: z.string().length(3),
+        functionalCurrency: z.string().length(3),
+        originalAmount: z.number(),
+        bookRate: z.number(),
+        periodEndDate: z.date().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { calculateUnrealizedGainLoss } = await import("./fxService");
+        return calculateUnrealizedGainLoss(input);
+      }),
+
+    getSummary: financeProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(async ({ input }) => {
+        const { getFxSummary } = await import("./fxService");
+        return getFxSummary(input?.companyId);
+      }),
+
+    getGainLosses: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        type: z.enum(["realized", "unrealized"]).optional(),
+      }).optional())
+      .query(({ input }) => db.getFxGainLosses(input?.companyId, input?.type)),
+  }),
+
+  // ============================================
+  // LANDED COST ALLOCATION
+  // ============================================
+  landedCost: router({
+    list: financeProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(({ input }) => db.getLandedCostAllocations(input?.companyId)),
+
+    get: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const header = await db.getLandedCostAllocationById(input.id);
+        if (!header) throw new TRPCError({ code: 'NOT_FOUND' });
+        const items = await db.getLandedCostItems(input.id);
+        return { ...header, items };
+      }),
+
+    create: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        shipmentId: z.number().optional(),
+        purchaseOrderId: z.number().optional(),
+        freightBookingId: z.number().optional(),
+        customsClearanceId: z.number().optional(),
+        freightCost: z.string().optional(),
+        insuranceCost: z.string().optional(),
+        dutyCost: z.string().optional(),
+        customsFees: z.string().optional(),
+        handlingFees: z.string().optional(),
+        otherCosts: z.string().optional(),
+        allocationMethod: z.enum(["by_value", "by_weight", "by_volume", "by_quantity", "equal"]),
+        currency: z.string().optional(),
+        notes: z.string().optional(),
+        lineItems: z.array(z.object({
+          productId: z.number().optional(),
+          rawMaterialId: z.number().optional(),
+          purchaseOrderItemId: z.number().optional(),
+          sku: z.string().optional(),
+          itemDescription: z.string().optional(),
+          quantity: z.string(),
+          unitCost: z.string(),
+          weight: z.string().optional(),
+          volume: z.string().optional(),
+          sellingPrice: z.string().optional(),
+        })),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { createLandedCostAllocation } = await import("./landedCostService");
+        const { lineItems, ...headerInput } = input;
+        const result = await createLandedCostAllocation(
+          { ...headerInput, createdBy: ctx.user.id },
+          lineItems
+        );
+        await createAuditLog(ctx.user.id, 'create', 'landedCostAllocation', result.allocationId);
+        return result;
+      }),
+
+    recalculate: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        const { recalculateLandedCost } = await import("./landedCostService");
+        return recalculateLandedCost(input.id);
+      }),
+
+    getMarginImpact: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const { getMarginImpactAnalysis } = await import("./landedCostService");
+        return getMarginImpactAnalysis(input.id);
+      }),
+
+    postToGL: financeProcedure
+      .input(z.object({
+        allocationId: z.number(),
+        inventoryAccountId: z.number(),
+        accruedLiabilityAccountId: z.number(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const allocation = await db.getLandedCostAllocationById(input.allocationId);
+        if (!allocation) throw new TRPCError({ code: 'NOT_FOUND' });
+        const { postLandedCostEntry } = await import("./glAutomationService");
+        const glResult = await postLandedCostEntry({
+          companyId: allocation.companyId ?? undefined,
+          allocationId: input.allocationId,
+          totalLandedCost: String(allocation.totalLandedCost),
+          inventoryAccountId: input.inventoryAccountId,
+          accruedLiabilityAccountId: input.accruedLiabilityAccountId,
+          createdBy: ctx.user.id,
+        });
+        await db.updateLandedCostAllocation(input.allocationId, {
+          status: "posted",
+          transactionId: glResult.transactionId,
+          postedBy: ctx.user.id,
+          postedAt: new Date(),
+        });
+        return glResult;
+      }),
+  }),
+
+  // ============================================
+  // NET REVENUE & CHANNEL PROFITABILITY
+  // ============================================
+  netRevenue: router({
+    recordFees: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        channel: z.enum(["shopify", "amazon", "wholesale", "retail", "direct", "other"]),
+        orderId: z.number().optional(),
+        invoiceId: z.number().optional(),
+        fees: z.array(z.object({
+          feeType: z.enum(["transaction_fee", "payment_processing", "platform_commission", "listing_fee", "fulfillment_fee", "advertising", "refund_fee", "chargeback", "other"]),
+          feeDescription: z.string().optional(),
+          feeAmount: z.string(),
+          referenceNumber: z.string().optional(),
+        })),
+        feeDate: z.date(),
+      }))
+      .mutation(async ({ input }) => {
+        const { recordPlatformFees } = await import("./netRevenueService");
+        return recordPlatformFees(input);
+      }),
+
+    listFees: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        channel: z.string().optional(),
+      }).optional())
+      .query(({ input }) => db.getPlatformFees(input?.companyId, input?.channel)),
+
+    recordPayout: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        channel: z.enum(["shopify", "amazon", "stripe", "paypal", "other"]),
+        payoutNumber: z.string(),
+        payoutDate: z.date(),
+        grossAmount: z.string(),
+        feesDeducted: z.string().optional(),
+        refundsDeducted: z.string().optional(),
+        chargebacksDeducted: z.string().optional(),
+        adjustments: z.string().optional(),
+        netAmount: z.string(),
+        currency: z.string().optional(),
+        lines: z.array(z.object({
+          orderId: z.number().optional(),
+          invoiceId: z.number().optional(),
+          lineType: z.enum(["sale", "refund", "fee", "chargeback", "adjustment", "other"]),
+          grossAmount: z.string(),
+          feeAmount: z.string().optional(),
+          netAmount: z.string(),
+          referenceNumber: z.string().optional(),
+        })).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { recordChannelPayout } = await import("./netRevenueService");
+        const result = await recordChannelPayout(input);
+        await createAuditLog(ctx.user.id, 'create', 'channelPayout', result.payoutId);
+        return result;
+      }),
+
+    listPayouts: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        channel: z.string().optional(),
+      }).optional())
+      .query(({ input }) => db.getChannelPayouts(input?.companyId, input?.channel)),
+
+    reconcilePayout: financeProcedure
+      .input(z.object({ payoutId: z.number() }))
+      .mutation(async ({ input }) => {
+        const { reconcilePayout } = await import("./netRevenueService");
+        return reconcilePayout(input.payoutId);
+      }),
+
+    getWaterfall: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        channel: z.string().optional(),
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const { getNetRevenueWaterfall } = await import("./netRevenueService");
+        return getNetRevenueWaterfall(input || {});
+      }),
+
+    getChannelProfitability: financeProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(async ({ input }) => {
+        const { getChannelProfitability } = await import("./netRevenueService");
+        return getChannelProfitability(input?.companyId);
+      }),
+  }),
+
+  // ============================================
+  // REVENUE RECOGNITION
+  // ============================================
+  revenueRecognition: router({
+    listRules: financeProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(({ input }) => db.getRevenueRecognitionRules(input?.companyId)),
+
+    getRule: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const rule = await db.getRevenueRecognitionRuleById(input.id);
+        if (!rule) throw new TRPCError({ code: 'NOT_FOUND' });
+        return rule;
+      }),
+
+    createRule: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        name: z.string().min(1),
+        method: z.enum(["point_of_shipment", "point_of_delivery", "point_of_invoice", "over_time", "on_payment"]),
+        channel: z.enum(["shopify", "amazon", "wholesale", "retail", "direct", "all"]).optional(),
+        productCategory: z.string().optional(),
+        revenueAccountId: z.number().optional(),
+        receivableAccountId: z.number().optional(),
+        deferredRevenueAccountId: z.number().optional(),
+        cogsAccountId: z.number().optional(),
+        inventoryAccountId: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createRevenueRecognitionRule({
+          ...input,
+          isActive: true,
+          createdBy: ctx.user.id,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'revenueRecognitionRule', result.id);
+        return result;
+      }),
+
+    updateRule: financeProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        method: z.enum(["point_of_shipment", "point_of_delivery", "point_of_invoice", "over_time", "on_payment"]).optional(),
+        channel: z.enum(["shopify", "amazon", "wholesale", "retail", "direct", "all"]).optional(),
+        revenueAccountId: z.number().optional(),
+        receivableAccountId: z.number().optional(),
+        deferredRevenueAccountId: z.number().optional(),
+        cogsAccountId: z.number().optional(),
+        inventoryAccountId: z.number().optional(),
+        isActive: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateRevenueRecognitionRule(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'revenueRecognitionRule', id);
+        return { success: true };
+      }),
+
+    processShipmentEvent: financeProcedure
+      .input(z.object({
+        shipmentId: z.number(),
+        newStatus: z.string(),
+        orderId: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { onShipmentStatusChange } = await import("./revenueRecognitionService");
+        return onShipmentStatusChange({
+          shipmentId: input.shipmentId,
+          newStatus: input.newStatus,
+          orderId: input.orderId,
+          createdBy: ctx.user.id,
+        });
+      }),
+
+    deferRevenue: financeProcedure
+      .input(z.object({
+        orderId: z.number().optional(),
+        invoiceId: z.number().optional(),
+        amount: z.number(),
+        currency: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { deferRevenue } = await import("./revenueRecognitionService");
+        return deferRevenue({ ...input, createdBy: ctx.user.id });
+      }),
+
+    getOrderStatus: financeProcedure
+      .input(z.object({ orderId: z.number() }))
+      .query(async ({ input }) => {
+        const { getOrderRevenueStatus } = await import("./revenueRecognitionService");
+        return getOrderRevenueStatus(input.orderId);
+      }),
+
+    listEvents: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        orderId: z.number().optional(),
+      }).optional())
+      .query(({ input }) => db.getRevenueRecognitionEvents(input?.companyId, input?.orderId)),
+  }),
+
+  // ============================================
+  // GL AUTOMATION
+  // ============================================
+  glAutomation: router({
+    listTemplates: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        triggerEvent: z.string().optional(),
+      }).optional())
+      .query(({ input }) => db.getGlEntryTemplates(input?.companyId, input?.triggerEvent)),
+
+    getTemplate: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const template = await db.getGlEntryTemplateById(input.id);
+        if (!template) throw new TRPCError({ code: 'NOT_FOUND' });
+        return template;
+      }),
+
+    createTemplate: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        name: z.string().min(1),
+        triggerEvent: z.enum([
+          "po_received", "shipment_created", "shipment_delivered",
+          "invoice_created", "invoice_paid", "payment_received",
+          "inventory_adjustment", "production_completed",
+          "landed_cost_posted", "fx_revaluation",
+        ]),
+        description: z.string().optional(),
+        templateLines: z.array(z.object({
+          accountId: z.number(),
+          isDebit: z.boolean(),
+          description: z.string().optional(),
+        })),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createGlEntryTemplate({
+          ...input,
+          templateLines: input.templateLines,
+          isActive: true,
+          createdBy: ctx.user.id,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'glEntryTemplate', result.id);
+        return result;
+      }),
+
+    updateTemplate: financeProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        description: z.string().optional(),
+        isActive: z.boolean().optional(),
+        templateLines: z.array(z.object({
+          accountId: z.number(),
+          isDebit: z.boolean(),
+          description: z.string().optional(),
+        })).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateGlEntryTemplate(id, data as any);
+        await createAuditLog(ctx.user.id, 'update', 'glEntryTemplate', id);
+        return { success: true };
+      }),
+
+    createJournalEntry: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        triggerEvent: z.string(),
+        referenceType: z.string(),
+        referenceId: z.number(),
+        description: z.string(),
+        currency: z.string().optional(),
+        autoPost: z.boolean().optional(),
+        lines: z.array(z.object({
+          accountId: z.number(),
+          debit: z.string(),
+          credit: z.string(),
+          description: z.string(),
+        })),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { createAutoJournalEntry } = await import("./glAutomationService");
+        const result = await createAutoJournalEntry({
+          ...input,
+          createdBy: ctx.user.id,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'transaction', result.transactionId);
+        return result;
+      }),
+
+    postPurchaseReceipt: financeProcedure
+      .input(z.object({
+        purchaseOrderId: z.number(),
+        totalAmount: z.string(),
+        inventoryAccountId: z.number(),
+        payableAccountId: z.number(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { postPurchaseReceiptEntry } = await import("./glAutomationService");
+        return postPurchaseReceiptEntry({ ...input, createdBy: ctx.user.id });
+      }),
+
+    postShipmentRevenue: financeProcedure
+      .input(z.object({
+        shipmentId: z.number(),
+        revenueAmount: z.string(),
+        cogsAmount: z.string(),
+        receivableAccountId: z.number(),
+        revenueAccountId: z.number(),
+        cogsAccountId: z.number(),
+        inventoryAccountId: z.number(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { postShipmentRevenueEntry } = await import("./glAutomationService");
+        return postShipmentRevenueEntry({ ...input, createdBy: ctx.user.id });
+      }),
+
+    postPaymentReceived: financeProcedure
+      .input(z.object({
+        paymentId: z.number(),
+        amount: z.string(),
+        cashAccountId: z.number(),
+        receivableAccountId: z.number(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { postPaymentReceivedEntry } = await import("./glAutomationService");
+        return postPaymentReceivedEntry({ ...input, createdBy: ctx.user.id });
+      }),
+
+    postFxRevaluation: financeProcedure
+      .input(z.object({
+        entityType: z.string(),
+        entityId: z.number(),
+        gainLossAmount: z.number(),
+        fxGainLossAccountId: z.number(),
+        foreignCurrencyAccountId: z.number(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { postFxRevaluationEntry } = await import("./glAutomationService");
+        return postFxRevaluationEntry({ ...input, createdBy: ctx.user.id });
+      }),
+  }),
 });
 
 // Helper function to calculate next generation date for recurring invoices

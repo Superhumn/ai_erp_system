@@ -4471,3 +4471,259 @@ export const copackerShippingDocuments = mysqlTable("copacker_shipping_documents
 
 export type CopackerShippingDocument = typeof copackerShippingDocuments.$inferSelect;
 export type InsertCopackerShippingDocument = typeof copackerShippingDocuments.$inferInsert;
+
+
+// ============================================
+// EXCHANGE RATES & FX MANAGEMENT
+// ============================================
+
+export const exchangeRates = mysqlTable("exchangeRates", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  fromCurrency: varchar("fromCurrency", { length: 3 }).notNull(),
+  toCurrency: varchar("toCurrency", { length: 3 }).notNull(),
+  rate: decimal("rate", { precision: 18, scale: 8 }).notNull(),
+  rateDate: timestamp("rateDate").notNull(),
+  source: mysqlEnum("source", ["manual", "api", "bank"]).default("manual").notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ExchangeRate = typeof exchangeRates.$inferSelect;
+export type InsertExchangeRate = typeof exchangeRates.$inferInsert;
+
+// FX gain/loss tracking on transactions
+export const fxGainLoss = mysqlTable("fxGainLoss", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  type: mysqlEnum("type", ["realized", "unrealized"]).notNull(),
+  entityType: varchar("entityType", { length: 64 }).notNull(), // invoice, payment, po
+  entityId: int("entityId").notNull(),
+  originalCurrency: varchar("originalCurrency", { length: 3 }).notNull(),
+  functionalCurrency: varchar("functionalCurrency", { length: 3 }).notNull(),
+  originalAmount: decimal("originalAmount", { precision: 15, scale: 2 }).notNull(),
+  originalRate: decimal("originalRate", { precision: 18, scale: 8 }).notNull(),
+  settlementRate: decimal("settlementRate", { precision: 18, scale: 8 }).notNull(),
+  gainLossAmount: decimal("gainLossAmount", { precision: 15, scale: 2 }).notNull(),
+  transactionId: int("transactionId"), // GL journal entry
+  periodDate: timestamp("periodDate").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type FxGainLoss = typeof fxGainLoss.$inferSelect;
+export type InsertFxGainLoss = typeof fxGainLoss.$inferInsert;
+
+// ============================================
+// LANDED COST ALLOCATION
+// ============================================
+
+// Landed cost records linking shipments to cost allocation
+export const landedCostAllocations = mysqlTable("landedCostAllocations", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  allocationNumber: varchar("allocationNumber", { length: 64 }).notNull(),
+  shipmentId: int("shipmentId"),
+  purchaseOrderId: int("purchaseOrderId"),
+  freightBookingId: int("freightBookingId"),
+  customsClearanceId: int("customsClearanceId"),
+  status: mysqlEnum("status", ["draft", "calculated", "posted", "void"]).default("draft").notNull(),
+  // Cost components
+  freightCost: decimal("freightCost", { precision: 15, scale: 2 }).default("0"),
+  insuranceCost: decimal("insuranceCost", { precision: 15, scale: 2 }).default("0"),
+  dutyCost: decimal("dutyCost", { precision: 15, scale: 2 }).default("0"),
+  customsFees: decimal("customsFees", { precision: 15, scale: 2 }).default("0"),
+  handlingFees: decimal("handlingFees", { precision: 15, scale: 2 }).default("0"),
+  otherCosts: decimal("otherCosts", { precision: 15, scale: 2 }).default("0"),
+  totalLandedCost: decimal("totalLandedCost", { precision: 15, scale: 2 }).default("0"),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  // Allocation method
+  allocationMethod: mysqlEnum("allocationMethod", ["by_value", "by_weight", "by_volume", "by_quantity", "equal"]).default("by_value").notNull(),
+  // GL posting
+  transactionId: int("transactionId"), // Link to GL journal entry when posted
+  postedBy: int("postedBy"),
+  postedAt: timestamp("postedAt"),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type LandedCostAllocation = typeof landedCostAllocations.$inferSelect;
+export type InsertLandedCostAllocation = typeof landedCostAllocations.$inferInsert;
+
+// Line items showing cost allocation per SKU/product
+export const landedCostItems = mysqlTable("landedCostItems", {
+  id: int("id").autoincrement().primaryKey(),
+  allocationId: int("allocationId").notNull(),
+  productId: int("productId"),
+  rawMaterialId: int("rawMaterialId"),
+  purchaseOrderItemId: int("purchaseOrderItemId"),
+  sku: varchar("sku", { length: 64 }),
+  itemDescription: varchar("itemDescription", { length: 255 }),
+  quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),
+  unitCost: decimal("unitCost", { precision: 15, scale: 4 }).notNull(), // Original PO unit price
+  totalItemCost: decimal("totalItemCost", { precision: 15, scale: 2 }).notNull(),
+  weight: decimal("weight", { precision: 12, scale: 2 }),
+  volume: decimal("volume", { precision: 12, scale: 2 }),
+  // Allocated costs
+  allocatedFreight: decimal("allocatedFreight", { precision: 15, scale: 2 }).default("0"),
+  allocatedInsurance: decimal("allocatedInsurance", { precision: 15, scale: 2 }).default("0"),
+  allocatedDuty: decimal("allocatedDuty", { precision: 15, scale: 2 }).default("0"),
+  allocatedCustomsFees: decimal("allocatedCustomsFees", { precision: 15, scale: 2 }).default("0"),
+  allocatedHandling: decimal("allocatedHandling", { precision: 15, scale: 2 }).default("0"),
+  allocatedOther: decimal("allocatedOther", { precision: 15, scale: 2 }).default("0"),
+  totalAllocatedCost: decimal("totalAllocatedCost", { precision: 15, scale: 2 }).default("0"),
+  // Final landed cost per unit
+  landedUnitCost: decimal("landedUnitCost", { precision: 15, scale: 4 }),
+  // Margin impact
+  sellingPrice: decimal("sellingPrice", { precision: 15, scale: 2 }),
+  grossMargin: decimal("grossMargin", { precision: 15, scale: 2 }),
+  grossMarginPercent: decimal("grossMarginPercent", { precision: 8, scale: 2 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type LandedCostItem = typeof landedCostItems.$inferSelect;
+export type InsertLandedCostItem = typeof landedCostItems.$inferInsert;
+
+// ============================================
+// NET REVENUE & CHANNEL PROFITABILITY
+// ============================================
+
+// Platform fees and deductions from sales channels
+export const platformFees = mysqlTable("platformFees", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  channel: mysqlEnum("channel", ["shopify", "amazon", "wholesale", "retail", "direct", "other"]).notNull(),
+  orderId: int("orderId"),
+  invoiceId: int("invoiceId"),
+  feeType: mysqlEnum("feeType", ["transaction_fee", "payment_processing", "platform_commission", "listing_fee", "fulfillment_fee", "advertising", "refund_fee", "chargeback", "other"]).notNull(),
+  feeDescription: varchar("feeDescription", { length: 255 }),
+  feeAmount: decimal("feeAmount", { precision: 15, scale: 2 }).notNull(),
+  feeCurrency: varchar("feeCurrency", { length: 3 }).default("USD"),
+  feeDate: timestamp("feeDate").notNull(),
+  referenceNumber: varchar("referenceNumber", { length: 128 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type PlatformFee = typeof platformFees.$inferSelect;
+export type InsertPlatformFee = typeof platformFees.$inferInsert;
+
+// Channel payout records (Shopify payouts, Amazon settlements, etc.)
+export const channelPayouts = mysqlTable("channelPayouts", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  channel: mysqlEnum("channel", ["shopify", "amazon", "stripe", "paypal", "other"]).notNull(),
+  payoutNumber: varchar("payoutNumber", { length: 128 }).notNull(),
+  payoutDate: timestamp("payoutDate").notNull(),
+  grossAmount: decimal("grossAmount", { precision: 15, scale: 2 }).notNull(),
+  feesDeducted: decimal("feesDeducted", { precision: 15, scale: 2 }).default("0"),
+  refundsDeducted: decimal("refundsDeducted", { precision: 15, scale: 2 }).default("0"),
+  chargebacksDeducted: decimal("chargebacksDeducted", { precision: 15, scale: 2 }).default("0"),
+  adjustments: decimal("adjustments", { precision: 15, scale: 2 }).default("0"),
+  netAmount: decimal("netAmount", { precision: 15, scale: 2 }).notNull(),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  status: mysqlEnum("status", ["pending", "in_transit", "deposited", "reconciled", "discrepancy"]).default("pending").notNull(),
+  bankAccountId: int("bankAccountId"), // GL account for bank deposit
+  reconciliationDate: timestamp("reconciliationDate"),
+  reconciliationNotes: text("reconciliationNotes"),
+  rawPayoutData: json("rawPayoutData"), // Original payout data from platform
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ChannelPayout = typeof channelPayouts.$inferSelect;
+export type InsertChannelPayout = typeof channelPayouts.$inferInsert;
+
+// Payout-to-order reconciliation lines
+export const payoutReconciliationLines = mysqlTable("payoutReconciliationLines", {
+  id: int("id").autoincrement().primaryKey(),
+  payoutId: int("payoutId").notNull(),
+  orderId: int("orderId"),
+  invoiceId: int("invoiceId"),
+  lineType: mysqlEnum("lineType", ["sale", "refund", "fee", "chargeback", "adjustment", "other"]).notNull(),
+  grossAmount: decimal("grossAmount", { precision: 15, scale: 2 }).notNull(),
+  feeAmount: decimal("feeAmount", { precision: 15, scale: 2 }).default("0"),
+  netAmount: decimal("netAmount", { precision: 15, scale: 2 }).notNull(),
+  status: mysqlEnum("status", ["matched", "unmatched", "discrepancy"]).default("unmatched").notNull(),
+  referenceNumber: varchar("referenceNumber", { length: 128 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type PayoutReconciliationLine = typeof payoutReconciliationLines.$inferSelect;
+export type InsertPayoutReconciliationLine = typeof payoutReconciliationLines.$inferInsert;
+
+// ============================================
+// REVENUE RECOGNITION & AUTO GL ENTRIES
+// ============================================
+
+// Revenue recognition rules per product/channel
+export const revenueRecognitionRules = mysqlTable("revenueRecognitionRules", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  method: mysqlEnum("method", ["point_of_shipment", "point_of_delivery", "point_of_invoice", "over_time", "on_payment"]).notNull(),
+  channel: mysqlEnum("channel", ["shopify", "amazon", "wholesale", "retail", "direct", "all"]).default("all").notNull(),
+  productCategory: varchar("productCategory", { length: 128 }),
+  revenueAccountId: int("revenueAccountId"), // CR: Revenue
+  receivableAccountId: int("receivableAccountId"), // DR: AR
+  deferredRevenueAccountId: int("deferredRevenueAccountId"), // CR: Deferred revenue (if applicable)
+  cogsAccountId: int("cogsAccountId"), // DR: COGS
+  inventoryAccountId: int("inventoryAccountId"), // CR: Inventory
+  isActive: boolean("isActive").default(true).notNull(),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type RevenueRecognitionRule = typeof revenueRecognitionRules.$inferSelect;
+export type InsertRevenueRecognitionRule = typeof revenueRecognitionRules.$inferInsert;
+
+// Revenue recognition events log
+export const revenueRecognitionEvents = mysqlTable("revenueRecognitionEvents", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  ruleId: int("ruleId").notNull(),
+  eventType: mysqlEnum("eventType", ["recognize", "defer", "reverse", "adjust"]).notNull(),
+  triggerType: mysqlEnum("triggerType", ["shipment", "delivery", "invoice", "payment", "manual"]).notNull(),
+  triggerEntityType: varchar("triggerEntityType", { length: 64 }).notNull(),
+  triggerEntityId: int("triggerEntityId").notNull(),
+  orderId: int("orderId"),
+  invoiceId: int("invoiceId"),
+  shipmentId: int("shipmentId"),
+  revenueAmount: decimal("revenueAmount", { precision: 15, scale: 2 }).notNull(),
+  cogsAmount: decimal("cogsAmount", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  transactionId: int("transactionId"), // Link to GL journal entry
+  status: mysqlEnum("status", ["pending", "posted", "void"]).default("pending").notNull(),
+  postedBy: int("postedBy"),
+  postedAt: timestamp("postedAt"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type RevenueRecognitionEvent = typeof revenueRecognitionEvents.$inferSelect;
+export type InsertRevenueRecognitionEvent = typeof revenueRecognitionEvents.$inferInsert;
+
+// Auto GL journal entry templates for operational workflows
+export const glEntryTemplates = mysqlTable("glEntryTemplates", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  triggerEvent: mysqlEnum("triggerEvent", [
+    "po_received", "shipment_created", "shipment_delivered",
+    "invoice_created", "invoice_paid", "payment_received",
+    "inventory_adjustment", "production_completed",
+    "landed_cost_posted", "fx_revaluation"
+  ]).notNull(),
+  description: text("description"),
+  // Template lines stored as JSON array of {accountId, debitFormula, creditFormula, description}
+  templateLines: json("templateLines").notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GlEntryTemplate = typeof glEntryTemplates.$inferSelect;
+export type InsertGlEntryTemplate = typeof glEntryTemplates.$inferInsert;
