@@ -881,6 +881,15 @@ export const parsedDocumentTypeEnum = mysqlEnum("parsed_document_type", [
   "customs_document",
   "freight_quote",
   "shipping_label",
+  "product_spec_sheet",
+  "certification",
+  "sds_msds",
+  "airway_bill",
+  "phytosanitary_certificate",
+  "fumigation_certificate",
+  "insurance_certificate",
+  "import_export_license",
+  "weight_certificate",
   "other",
 ]);
 

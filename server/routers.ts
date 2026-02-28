@@ -11,6 +11,7 @@ import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
 import { parseCoaDocument, importCoa, scanInboxForCoas } from "./coaImportService";
+import { parseAdditionalDocument, importAdditionalDocument, parseSpecSheet, importSpecSheet, parseCertification, importCertification, parseSds, importSds, parseFreightQuote, importFreightQuote, parseShippingDocument, importShippingDocument, parseCustomsCertificate, importCustomsCertificate, type AdditionalDocumentType } from "./additionalDocumentImportService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import * as db from "./db";
@@ -11829,6 +11830,14 @@ Ask if they received the original request and if they can provide a quote.`;
           return { ...coaResult, fileUrl: url };
         }
 
+        // If the standard parser couldn't identify it, try the additional document parsers
+        if (result.documentType === "unknown") {
+          const additionalResult = await parseAdditionalDocument(url, input.fileName);
+          if (additionalResult.success && additionalResult.documentType !== "unknown") {
+            return { ...additionalResult, fileUrl: url };
+          }
+        }
+
         return { ...result, fileUrl: url };
       }),
 
@@ -12072,6 +12081,378 @@ Ask if they received the original request and if they can provide a quote.`;
             limit: input.limit,
           }
         );
+      }),
+
+    // ============================================
+    // ADDITIONAL DOCUMENT PARSERS
+    // ============================================
+
+    // Auto-detect and parse additional document types (spec sheets, certs, SDS, freight quotes, shipping docs, customs certs)
+    parseAdditional: protectedProcedure
+      .input(z.object({
+        fileData: z.string(), // base64
+        fileName: z.string(),
+        mimeType: z.string().optional(),
+        documentHint: z.enum([
+          "product_spec_sheet", "certification", "sds_msds", "freight_quote",
+          "airway_bill", "receipt", "shipping_label",
+          "phytosanitary_certificate", "fumigation_certificate", "insurance_certificate",
+          "import_license", "export_license", "weight_certificate", "inspection_certificate",
+        ]).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const buffer = Buffer.from(input.fileData, "base64");
+        const fileKey = `document-imports/${Date.now()}-${input.fileName}`;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType || "application/octet-stream");
+        const result = await parseAdditionalDocument(url, input.fileName, input.documentHint as AdditionalDocumentType);
+        return { ...result, fileUrl: url };
+      }),
+
+    // Import a parsed additional document
+    importAdditional: protectedProcedure
+      .input(z.object({
+        parseResult: z.any(), // AdditionalDocParseResult - flexible to accept any parsed result
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importAdditionalDocument(input.parseResult, ctx.user.id);
+      }),
+
+    // Parse a product spec sheet specifically
+    parseSpecSheet: protectedProcedure
+      .input(z.object({
+        fileData: z.string(),
+        fileName: z.string(),
+        mimeType: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const buffer = Buffer.from(input.fileData, "base64");
+        const fileKey = `spec-sheet-imports/${Date.now()}-${input.fileName}`;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType || "application/octet-stream");
+        const result = await parseSpecSheet(url, input.fileName);
+        return { ...result, fileUrl: url };
+      }),
+
+    // Import a parsed spec sheet
+    importSpecSheet: protectedProcedure
+      .input(z.object({
+        specData: z.object({
+          productName: z.string(),
+          productSku: z.string().optional(),
+          supplierName: z.string().optional(),
+          version: z.number().optional(),
+          appearance: z.string().optional(),
+          color: z.string().optional(),
+          odor: z.string().optional(),
+          taste: z.string().optional(),
+          texture: z.string().optional(),
+          form: z.enum(["powder", "liquid", "granule", "paste", "flake", "oil", "extract", "whole", "other"]).optional(),
+          meshSize: z.string().optional(),
+          moisture: z.string().optional(),
+          protein: z.string().optional(),
+          fat: z.string().optional(),
+          fiber: z.string().optional(),
+          ash: z.string().optional(),
+          pH: z.string().optional(),
+          waterActivity: z.string().optional(),
+          totalPlateCount: z.string().optional(),
+          yeastAndMold: z.string().optional(),
+          coliform: z.string().optional(),
+          eColi: z.string().optional(),
+          salmonella: z.string().optional(),
+          listeria: z.string().optional(),
+          staphAureus: z.string().optional(),
+          lead: z.string().optional(),
+          arsenic: z.string().optional(),
+          cadmium: z.string().optional(),
+          mercury: z.string().optional(),
+          shelfLifeMonths: z.number().optional(),
+          storageConditions: z.string().optional(),
+          packagingDescription: z.string().optional(),
+          countryOfOrigin: z.string().optional(),
+          hsCode: z.string().optional(),
+          ingredientStatement: z.string().optional(),
+          allergenDeclaration: z.string().optional(),
+          allergens: z.array(z.string()).optional(),
+          certifications: z.array(z.string()).optional(),
+          confidence: z.number(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importSpecSheet(input.specData as any, ctx.user.id);
+      }),
+
+    // Parse a certification document
+    parseCertification: protectedProcedure
+      .input(z.object({
+        fileData: z.string(),
+        fileName: z.string(),
+        mimeType: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const buffer = Buffer.from(input.fileData, "base64");
+        const fileKey = `cert-imports/${Date.now()}-${input.fileName}`;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType || "application/octet-stream");
+        const result = await parseCertification(url, input.fileName);
+        return { ...result, fileUrl: url };
+      }),
+
+    // Import a parsed certification
+    importCertification: protectedProcedure
+      .input(z.object({
+        certData: z.object({
+          certificationType: z.string(),
+          certificateNumber: z.string(),
+          certifyingBody: z.string(),
+          productName: z.string().optional(),
+          productSku: z.string().optional(),
+          companyName: z.string().optional(),
+          issueDate: z.string().optional(),
+          expiryDate: z.string().optional(),
+          scope: z.string().optional(),
+          status: z.enum(["active", "expired", "pending"]),
+          notes: z.string().optional(),
+          confidence: z.number(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importCertification(input.certData as any, ctx.user.id);
+      }),
+
+    // Parse a Safety Data Sheet (SDS/MSDS)
+    parseSds: protectedProcedure
+      .input(z.object({
+        fileData: z.string(),
+        fileName: z.string(),
+        mimeType: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const buffer = Buffer.from(input.fileData, "base64");
+        const fileKey = `sds-imports/${Date.now()}-${input.fileName}`;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType || "application/octet-stream");
+        const result = await parseSds(url, input.fileName);
+        return { ...result, fileUrl: url };
+      }),
+
+    // Import a parsed SDS
+    importSds: protectedProcedure
+      .input(z.object({
+        sdsData: z.object({
+          productName: z.string(),
+          productSku: z.string().optional(),
+          supplierName: z.string(),
+          supplierPhone: z.string().optional(),
+          supplierEmergencyPhone: z.string().optional(),
+          sdsRevisionDate: z.string().optional(),
+          chemicalName: z.string().optional(),
+          casNumber: z.string().optional(),
+          intendedUse: z.string().optional(),
+          ghsClassification: z.array(z.string()).optional(),
+          signalWord: z.string().optional(),
+          hazardStatements: z.array(z.string()).optional(),
+          precautionaryStatements: z.array(z.string()).optional(),
+          pictograms: z.array(z.string()).optional(),
+          ingredients: z.array(z.object({
+            name: z.string(),
+            casNumber: z.string().optional(),
+            percentage: z.string().optional(),
+          })).optional(),
+          firstAidInhalation: z.string().optional(),
+          firstAidSkin: z.string().optional(),
+          firstAidEyes: z.string().optional(),
+          firstAidIngestion: z.string().optional(),
+          handlingPrecautions: z.string().optional(),
+          storageConditions: z.string().optional(),
+          incompatibleMaterials: z.string().optional(),
+          exposureLimits: z.string().optional(),
+          ppe: z.string().optional(),
+          physicalState: z.string().optional(),
+          color: z.string().optional(),
+          odor: z.string().optional(),
+          meltingPoint: z.string().optional(),
+          boilingPoint: z.string().optional(),
+          flashPoint: z.string().optional(),
+          pH: z.string().optional(),
+          specificGravity: z.string().optional(),
+          unNumber: z.string().optional(),
+          properShippingName: z.string().optional(),
+          transportHazardClass: z.string().optional(),
+          packingGroup: z.string().optional(),
+          confidence: z.number(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importSds(input.sdsData as any, ctx.user.id);
+      }),
+
+    // Parse a freight quote PDF
+    parseFreightQuote: protectedProcedure
+      .input(z.object({
+        fileData: z.string(),
+        fileName: z.string(),
+        mimeType: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const buffer = Buffer.from(input.fileData, "base64");
+        const fileKey = `freight-quote-imports/${Date.now()}-${input.fileName}`;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType || "application/octet-stream");
+        const result = await parseFreightQuote(url, input.fileName);
+        return { ...result, fileUrl: url };
+      }),
+
+    // Import a parsed freight quote
+    importFreightQuote: protectedProcedure
+      .input(z.object({
+        quoteData: z.object({
+          quoteNumber: z.string(),
+          carrierName: z.string(),
+          carrierEmail: z.string().optional(),
+          quoteDate: z.string(),
+          validUntil: z.string().optional(),
+          origin: z.string(),
+          destination: z.string(),
+          serviceType: z.string().optional(),
+          transitDays: z.number().optional(),
+          weight: z.string().optional(),
+          dimensions: z.string().optional(),
+          containerType: z.string().optional(),
+          freightCharges: z.number(),
+          fuelSurcharge: z.number().optional(),
+          accessorialCharges: z.number().optional(),
+          customsFees: z.number().optional(),
+          insuranceFee: z.number().optional(),
+          totalAmount: z.number(),
+          currency: z.string().optional(),
+          incoterms: z.string().optional(),
+          notes: z.string().optional(),
+          confidence: z.number(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importFreightQuote(input.quoteData as any, ctx.user.id);
+      }),
+
+    // Parse a shipping document (AWB, receipt, shipping label)
+    parseShippingDocument: protectedProcedure
+      .input(z.object({
+        fileData: z.string(),
+        fileName: z.string(),
+        mimeType: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const buffer = Buffer.from(input.fileData, "base64");
+        const fileKey = `shipping-doc-imports/${Date.now()}-${input.fileName}`;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType || "application/octet-stream");
+        const result = await parseShippingDocument(url, input.fileName);
+        return { ...result, fileUrl: url };
+      }),
+
+    // Import a parsed shipping document
+    importShippingDocument: protectedProcedure
+      .input(z.object({
+        documentData: z.object({
+          documentType: z.enum(["airway_bill", "receipt", "shipping_label"]),
+          documentNumber: z.string(),
+          carrierName: z.string(),
+          mawbNumber: z.string().optional(),
+          hawbNumber: z.string().optional(),
+          flightNumber: z.string().optional(),
+          shipperName: z.string().optional(),
+          shipperAddress: z.string().optional(),
+          consigneeName: z.string().optional(),
+          consigneeAddress: z.string().optional(),
+          origin: z.string(),
+          destination: z.string(),
+          shipDate: z.string().optional(),
+          deliveryDate: z.string().optional(),
+          weight: z.string().optional(),
+          pieces: z.number().optional(),
+          dimensions: z.string().optional(),
+          declaredValue: z.number().optional(),
+          receivedBy: z.string().optional(),
+          receivedDate: z.string().optional(),
+          conditionOnReceipt: z.string().optional(),
+          temperatureOnReceipt: z.string().optional(),
+          serviceType: z.string().optional(),
+          trackingNumber: z.string().optional(),
+          referenceNumbers: z.array(z.string()).optional(),
+          specialInstructions: z.string().optional(),
+          currency: z.string().optional(),
+          totalCharges: z.number().optional(),
+          notes: z.string().optional(),
+          confidence: z.number(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importShippingDocument(input.documentData as any, ctx.user.id);
+      }),
+
+    // Parse a customs certificate (phytosanitary, fumigation, insurance, license, weight cert)
+    parseCustomsCertificate: protectedProcedure
+      .input(z.object({
+        fileData: z.string(),
+        fileName: z.string(),
+        mimeType: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const buffer = Buffer.from(input.fileData, "base64");
+        const fileKey = `customs-cert-imports/${Date.now()}-${input.fileName}`;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType || "application/octet-stream");
+        const result = await parseCustomsCertificate(url, input.fileName);
+        return { ...result, fileUrl: url };
+      }),
+
+    // Import a parsed customs certificate
+    importCustomsCertificate: protectedProcedure
+      .input(z.object({
+        certData: z.object({
+          documentType: z.enum([
+            "phytosanitary_certificate", "fumigation_certificate", "insurance_certificate",
+            "import_license", "export_license", "weight_certificate", "inspection_certificate",
+          ]),
+          certificateNumber: z.string(),
+          issuerName: z.string(),
+          issuerCountry: z.string().optional(),
+          issueDate: z.string(),
+          expiryDate: z.string().optional(),
+          applicantName: z.string().optional(),
+          exporterName: z.string().optional(),
+          importerName: z.string().optional(),
+          origin: z.string().optional(),
+          destination: z.string().optional(),
+          portOfEntry: z.string().optional(),
+          portOfExit: z.string().optional(),
+          vesselName: z.string().optional(),
+          containerNumber: z.string().optional(),
+          productDescription: z.string(),
+          quantity: z.string().optional(),
+          weight: z.string().optional(),
+          plantHealthDeclaration: z.string().optional(),
+          treatmentType: z.string().optional(),
+          treatmentDate: z.string().optional(),
+          pestsFreeDeclaration: z.string().optional(),
+          fumigant: z.string().optional(),
+          dosage: z.string().optional(),
+          duration: z.string().optional(),
+          temperature: z.string().optional(),
+          insuredValue: z.number().optional(),
+          coverageType: z.string().optional(),
+          policyNumber: z.string().optional(),
+          insurer: z.string().optional(),
+          beneficiary: z.string().optional(),
+          licenseType: z.string().optional(),
+          hsCodesAuthorized: z.array(z.string()).optional(),
+          quotaQuantity: z.string().optional(),
+          grossWeight: z.string().optional(),
+          netWeight: z.string().optional(),
+          tareWeight: z.string().optional(),
+          weighingMethod: z.string().optional(),
+          relatedPoNumber: z.string().optional(),
+          notes: z.string().optional(),
+          confidence: z.number(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importCustomsCertificate(input.certData as any, ctx.user.id);
       }),
 
     // List folders from Google Drive
