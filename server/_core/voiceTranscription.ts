@@ -91,6 +91,18 @@ export async function transcribeAudio(
     }
 
     // Step 2: Download audio from URL
+    // Validate URL to prevent SSRF attacks
+    const { validateExternalUrl } = await import('./security');
+    try {
+      validateExternalUrl(options.audioUrl);
+    } catch (urlError) {
+      return {
+        error: "Invalid audio URL",
+        code: "INVALID_FORMAT",
+        details: urlError instanceof Error ? urlError.message : "URL validation failed"
+      };
+    }
+
     let audioBuffer: Buffer;
     let mimeType: string;
     try {

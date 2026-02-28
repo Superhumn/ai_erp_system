@@ -1,4 +1,24 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
+
+/**
+ * Sanitize HTML to prevent XSS attacks from email content.
+ * Strips script tags, event handlers, and dangerous protocols.
+ */
+function sanitizeHtml(html: string): string {
+  // Remove script tags and their content
+  let clean = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+  // Remove event handlers (onclick, onerror, onload, etc.)
+  clean = clean.replace(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/gi, '');
+  // Remove javascript: protocol from all attributes
+  clean = clean.replace(/\b(href|src|action|data)\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*')/gi, '$1=""');
+  // Remove object, embed, applet, iframe tags
+  clean = clean.replace(/<\s*\/?\s*(object|embed|applet|iframe|form|input|button|textarea)\b[^>]*>/gi, '');
+  // Remove data: URIs in src attributes (except safe image types)
+  clean = clean.replace(/\bsrc\s*=\s*"data:(?!image\/(png|jpeg|jpg|gif|webp|svg\+xml))[^"]*"/gi, 'src=""');
+  // Remove meta refresh and base tags
+  clean = clean.replace(/<\s*(meta|base|link)\b[^>]*>/gi, '');
+  return clean;
+}
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -218,9 +238,9 @@ export function SentEmailsTab() {
                     <p className="text-xs text-muted-foreground mb-2">Body</p>
                     <div className="p-3 bg-muted rounded-lg max-h-[200px] overflow-y-auto">
                       {emailDetail.bodyHtml ? (
-                        <div 
+                        <div
                           className="prose prose-sm dark:prose-invert max-w-none"
-                          dangerouslySetInnerHTML={{ __html: emailDetail.bodyHtml }}
+                          dangerouslySetInnerHTML={{ __html: sanitizeHtml(emailDetail.bodyHtml) }}
                         />
                       ) : (
                         <p className="text-sm whitespace-pre-wrap">{emailDetail.bodyText}</p>

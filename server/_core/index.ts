@@ -45,9 +45,42 @@ async function startServer() {
 
   const app = express();
   const server = createServer(app);
-  // Configure body parser with larger size limit for file uploads
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+  // Security headers
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    if (ENV.isProduction) {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+    next();
+  });
+
+  // Simple in-memory rate limiter for auth-related endpoints
+  const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+  const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+  const RATE_LIMIT_MAX = 100; // max requests per window
+  app.use('/api/oauth', (req, res, next) => {
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    const now = Date.now();
+    const entry = rateLimitMap.get(ip);
+    if (!entry || now > entry.resetAt) {
+      rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+      return next();
+    }
+    entry.count++;
+    if (entry.count > RATE_LIMIT_MAX) {
+      return res.status(429).json({ error: 'Too many requests. Please try again later.' });
+    }
+    next();
+  });
+
+  // Configure body parser with reasonable size limits
+  app.use(express.json({ limit: "10mb" }));
+  app.use(express.urlencoded({ limit: "10mb", extended: true }));
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
 
@@ -59,7 +92,11 @@ async function startServer() {
       // Get the raw body for signature verification
       const rawBody = req.body.toString();
 
-      // Verify webhook signature if configured
+      // Verify webhook signature (mandatory in production)
+      if (!ENV.sendgridWebhookSecret && ENV.isProduction) {
+        console.error('[SendGrid Webhook] SENDGRID_WEBHOOK_SECRET is not configured in production');
+        return res.status(500).json({ error: 'Webhook verification not configured' });
+      }
       if (ENV.sendgridWebhookSecret) {
         const signature = req.headers['x-twilio-email-event-webhook-signature'] as string;
         const timestamp = req.headers['x-twilio-email-event-webhook-timestamp'] as string;

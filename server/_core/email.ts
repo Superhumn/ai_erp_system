@@ -129,6 +129,18 @@ export async function sendBulkEmails(
 }
 
 /**
+ * Escape HTML special characters to prevent XSS
+ */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;');
+}
+
+/**
  * Format plain text email body to HTML with basic styling
  */
 export function formatEmailHtml(text: string): string {
@@ -136,11 +148,12 @@ export function formatEmailHtml(text: string): string {
   const htmlBody = text
     .split("\n")
     .map((line) => {
+      const escaped = escapeHtml(line);
       // Check if line looks like a header (all caps or ends with :)
       if (line.match(/^[A-Z\s]+:?$/) || line.endsWith(":")) {
-        return `<strong>${line}</strong>`;
+        return `<strong>${escaped}</strong>`;
       }
-      return line;
+      return escaped;
     })
     .join("<br>\n");
 

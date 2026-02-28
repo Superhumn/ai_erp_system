@@ -2870,7 +2870,8 @@ Return vendor IDs in order of preference.`;
     const step3 = await engine.recordStep(context, 3, "Create RFQ", "data_create", async () => {
       // Generate unique RFQ number with timestamp and random component
       const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-      const randomPart = Math.random().toString(36).substring(2, 8).toUpperCase();
+      const crypto = require('crypto');
+      const randomPart = crypto.randomBytes(4).toString('hex').toUpperCase().slice(0, 6);
       const rfqNumber = `RFQ-${timestamp}-${randomPart}`;
 
       const [rfq] = await db

@@ -3,7 +3,8 @@ import * as db from "./db";
 import { writeFileSync, readFileSync, unlinkSync, mkdirSync, existsSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { execSync } from "child_process";
+// execSync removed - unused import (security: reduce attack surface)
+import { validateExternalUrl } from "./_core/security";
 import { fromBuffer } from "pdf2pic";
 import { randomBytes } from "crypto";
 
@@ -302,6 +303,8 @@ If document type is unknown, return all as null.`;
     if (isImage) {
       // For images, download and convert to base64 data URL
       try {
+        // Validate URL to prevent SSRF
+        validateExternalUrl(fileUrl);
         console.log("[DocumentImport] Downloading image from:", fileUrl);
         const response = await fetch(fileUrl);
         if (!response.ok) {
@@ -333,6 +336,8 @@ If document type is unknown, return all as null.`;
       // For PDFs, first try text extraction, then fall back to OCR for scanned PDFs
       console.log("[DocumentImport] Extracting text from PDF using pdfjs-dist");
       try {
+        // Validate URL to prevent SSRF
+        validateExternalUrl(fileUrl);
         // Download the PDF
         const response = await fetch(fileUrl);
         if (!response.ok) {

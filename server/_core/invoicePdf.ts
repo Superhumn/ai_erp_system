@@ -3,6 +3,8 @@
  * Generates branded PDF invoices for emailing to customers
  */
 
+import { escapeHtml } from './security';
+
 // Invoice PDF generation service
 
 interface InvoiceLineItem {
@@ -116,8 +118,8 @@ function formatPaymentMethod(method: string | null | undefined): string {
 export function generateInvoiceHtml(invoice: InvoiceData, company: CompanyInfo): string {
   const itemsHtml = invoice.items.map(item => `
     <tr>
-      <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${item.description}</td>
-      <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: center;">${item.quantity}</td>
+      <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${escapeHtml(item.description)}</td>
+      <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: center;">${escapeHtml(item.quantity)}</td>
       <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: right;">${formatCurrency(item.unitPrice, invoice.currency)}</td>
       <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: right;">${formatCurrency(item.totalAmount, invoice.currency)}</td>
     </tr>
@@ -264,12 +266,12 @@ export function generateInvoiceHtml(invoice: InvoiceData, company: CompanyInfo):
   <div class="invoice-header">
     <div class="company-info">
       ${company.logo ? `<img src="${company.logo}" alt="${company.name}" style="max-height: 60px; margin-bottom: 12px;">` : ''}
-      <div class="company-name">${company.name}</div>
+      <div class="company-name">${escapeHtml(company.name)}</div>
       <div class="company-details">
-        ${company.address ? `<p>${company.address}</p>` : ''}
-        ${company.phone ? `<p>Phone: ${company.phone}</p>` : ''}
-        ${company.email ? `<p>Email: ${company.email}</p>` : ''}
-        ${company.taxId ? `<p>Tax ID: ${company.taxId}</p>` : ''}
+        ${company.address ? `<p>${escapeHtml(company.address)}</p>` : ''}
+        ${company.phone ? `<p>Phone: ${escapeHtml(company.phone)}</p>` : ''}
+        ${company.email ? `<p>Email: ${escapeHtml(company.email)}</p>` : ''}
+        ${company.taxId ? `<p>Tax ID: ${escapeHtml(company.taxId)}</p>` : ''}
       </div>
     </div>
     <div class="invoice-title">
@@ -281,10 +283,10 @@ export function generateInvoiceHtml(invoice: InvoiceData, company: CompanyInfo):
   <div class="invoice-meta">
     <div class="bill-to">
       <h3>Bill To</h3>
-      <p><strong>${invoice.customer.name}</strong></p>
-      ${invoice.customer.email ? `<p>${invoice.customer.email}</p>` : ''}
-      ${invoice.customer.address ? `<p>${invoice.customer.address}</p>` : ''}
-      ${invoice.customer.phone ? `<p>${invoice.customer.phone}</p>` : ''}
+      <p><strong>${escapeHtml(invoice.customer.name)}</strong></p>
+      ${invoice.customer.email ? `<p>${escapeHtml(invoice.customer.email)}</p>` : ''}
+      ${invoice.customer.address ? `<p>${escapeHtml(invoice.customer.address)}</p>` : ''}
+      ${invoice.customer.phone ? `<p>${escapeHtml(invoice.customer.phone)}</p>` : ''}
     </div>
     <div class="invoice-dates">
       <p><strong>Issue Date:</strong> ${formatDate(invoice.issueDate)}</p>
@@ -373,8 +375,8 @@ export function generateInvoiceHtml(invoice: InvoiceData, company: CompanyInfo):
 
   ${invoice.notes || invoice.terms ? `
   <div class="notes">
-    ${invoice.notes ? `<h3>Notes</h3><p>${invoice.notes}</p>` : ''}
-    ${invoice.terms ? `<h3 style="margin-top: 16px;">Terms & Conditions</h3><p>${invoice.terms}</p>` : ''}
+    ${invoice.notes ? `<h3>Notes</h3><p>${escapeHtml(invoice.notes)}</p>` : ''}
+    ${invoice.terms ? `<h3 style="margin-top: 16px;">Terms & Conditions</h3><p>${escapeHtml(invoice.terms)}</p>` : ''}
   </div>
   ` : ''}
 

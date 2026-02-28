@@ -150,10 +150,11 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
 
 // Helper to generate unique numbers
 function generateNumber(prefix: string) {
+  const crypto = require('crypto');
   const date = new Date();
   const year = date.getFullYear().toString().slice(-2);
   const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  const random = crypto.randomInt(10000).toString().padStart(4, '0');
   return `${prefix}-${year}${month}-${random}`;
 }
 
@@ -302,8 +303,12 @@ export const appRouter = router({
     syncFromShopify: adminProcedure
       .input(z.object({ shopifyAccessToken: z.string(), shopifyStoreDomain: z.string() }))
       .mutation(async ({ input, ctx }) => {
-        const { shopifyAccessToken, shopifyStoreDomain } = input;
-        
+        const { shopifyAccessToken } = input;
+
+        // Validate Shopify domain to prevent SSRF
+        const { validateShopifyDomain } = await import('./_core/security');
+        const shopifyStoreDomain = validateShopifyDomain(input.shopifyStoreDomain);
+
         // Fetch customers from Shopify
         const response = await fetch(`https://${shopifyStoreDomain}/admin/api/2024-01/customers.json`, {
           headers: {
@@ -797,14 +802,15 @@ export const appRouter = router({
         
         // Send email with PDF attachment
         const { sendEmail } = await import('./_core/email');
+        const { escapeHtml } = await import('./_core/security');
         const emailContent = `
-          <h2>Invoice ${invoice.invoiceNumber}</h2>
-          <p>Dear ${customer.name},</p>
-          ${input.message ? `<p>${input.message}</p>` : '<p>Thank you for your business. Please find your invoice attached.</p>'}
-          <p><strong>Invoice Number:</strong> ${invoice.invoiceNumber}</p>
+          <h2>Invoice ${escapeHtml(invoice.invoiceNumber)}</h2>
+          <p>Dear ${escapeHtml(customer.name)},</p>
+          ${input.message ? `<p>${escapeHtml(input.message)}</p>` : '<p>Thank you for your business. Please find your invoice attached.</p>'}
+          <p><strong>Invoice Number:</strong> ${escapeHtml(invoice.invoiceNumber)}</p>
           <p><strong>Amount Due:</strong> $${Number(invoice.totalAmount).toFixed(2)}</p>
           <p><strong>Due Date:</strong> ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : 'N/A'}</p>
-          ${invoice.notes ? `<p><strong>Notes:</strong> ${invoice.notes}</p>` : ''}
+          ${invoice.notes ? `<p><strong>Notes:</strong> ${escapeHtml(invoice.notes)}</p>` : ''}
           <p>Please see the attached PDF for full details.</p>
           <p>Thank you for your business!</p>
         `;
@@ -854,15 +860,16 @@ export const appRouter = router({
           throw new TRPCError({ code: 'BAD_REQUEST', message: 'Customer has no email address' });
         }
         
-        // Format line items for email
-        const itemsHtml = invoice.items?.map((item: any) => 
-          `<tr><td>${item.description}</td><td>${item.quantity}</td><td>$${Number(item.unitPrice).toFixed(2)}</td><td>$${Number(item.totalAmount).toFixed(2)}</td></tr>`
+        // Format line items for email (escape user-provided fields)
+        const { escapeHtml } = await import('./_core/security');
+        const itemsHtml = invoice.items?.map((item: any) =>
+          `<tr><td>${escapeHtml(item.description)}</td><td>${item.quantity}</td><td>$${Number(item.unitPrice).toFixed(2)}</td><td>$${Number(item.totalAmount).toFixed(2)}</td></tr>`
         ).join('') || '';
-        
+
         const emailContent = `
-          <h2>Invoice ${invoice.invoiceNumber}</h2>
-          <p>Dear ${customer.name},</p>
-          ${input.message ? `<p>${input.message}</p>` : ''}
+          <h2>Invoice ${escapeHtml(invoice.invoiceNumber)}</h2>
+          <p>Dear ${escapeHtml(customer.name)},</p>
+          ${input.message ? `<p>${escapeHtml(input.message)}</p>` : ''}
           <p>Please find your invoice details below:</p>
           <table border="1" cellpadding="8" style="border-collapse: collapse;">
             <tr><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>
@@ -872,7 +879,7 @@ export const appRouter = router({
           <p><strong>Tax:</strong> $${Number(invoice.taxAmount || 0).toFixed(2)}</p>
           <p><strong>Total Due:</strong> $${Number(invoice.totalAmount).toFixed(2)}</p>
           <p><strong>Due Date:</strong> ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : 'N/A'}</p>
-          ${invoice.notes ? `<p><strong>Notes:</strong> ${invoice.notes}</p>` : ''}
+          ${invoice.notes ? `<p><strong>Notes:</strong> ${escapeHtml(invoice.notes)}</p>` : ''}
           <p>Thank you for your business!</p>
         `;
         
@@ -1803,15 +1810,16 @@ export const appRouter = router({
         
         // Send email to supplier
         if (vendor.email && isEmailConfigured()) {
-          const itemsHtml = po.items?.map((item: any) => 
-            `<tr><td>${item.description}</td><td>${item.quantity}</td><td>$${item.unitPrice}</td><td>$${item.totalAmount}</td></tr>`
+          const { escapeHtml } = await import('./_core/security');
+          const itemsHtml = po.items?.map((item: any) =>
+            `<tr><td>${escapeHtml(item.description)}</td><td>${item.quantity}</td><td>$${item.unitPrice}</td><td>$${item.totalAmount}</td></tr>`
           ).join('') || '';
-          
+
           const emailHtml = formatEmailHtml(`
-            <h2>Purchase Order: ${po.poNumber}</h2>
-            <p>Dear ${vendor.contactName || vendor.name},</p>
-            <p>Please find attached our purchase order ${po.poNumber}.</p>
-            ${input.message ? `<p><strong>Message:</strong> ${input.message}</p>` : ''}
+            <h2>Purchase Order: ${escapeHtml(po.poNumber)}</h2>
+            <p>Dear ${escapeHtml(vendor.contactName || vendor.name)},</p>
+            <p>Please find attached our purchase order ${escapeHtml(po.poNumber)}.</p>
+            ${input.message ? `<p><strong>Message:</strong> ${escapeHtml(input.message)}</p>` : ''}
             
             <h3>Order Details</h3>
             <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%;">
@@ -3113,7 +3121,7 @@ export const appRouter = router({
           }
         }
         
-        const url = `https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.spreadsheet'&fields=files(id,name,modifiedTime,owners)&orderBy=modifiedTime desc&pageSize=50${input?.pageToken ? `&pageToken=${input.pageToken}` : ''}`;
+        const url = `https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.spreadsheet'&fields=files(id,name,modifiedTime,owners)&orderBy=modifiedTime desc&pageSize=50${input?.pageToken ? `&pageToken=${encodeURIComponent(input.pageToken)}` : ''}`;
         
         const response = await fetch(url, {
           headers: { Authorization: `Bearer ${accessToken}` },
@@ -7978,7 +7986,8 @@ Ask if they received the original request and if they can provide a quote.`;
           
           // Create PO if requested
           if (input.createPO && rfq) {
-            const poNumber = `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+            const { generateSecureId } = await import('./_core/security');
+            const poNumber = `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${generateSecureId(6)}`;
             const poResult = await db.createPurchaseOrder({
               poNumber,
               vendorId: quote.vendorId,
@@ -8850,7 +8859,7 @@ Ask if they received the original request and if they can provide a quote.`;
         
         // Create inbound email record with initial category
         const { id: emailId } = await db.createInboundEmail({
-          messageId: `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          messageId: `manual-${Date.now()}-${require('crypto').randomBytes(8).toString('hex')}`,
           fromEmail: input.fromEmail,
           fromName: input.fromName || null,
           toEmail: "erp@system.local",
@@ -9603,8 +9612,8 @@ Ask if they received the original request and if they can provide a quote.`;
         // Hash password if provided
         let hashedPassword = null;
         if (input.password) {
-          const crypto = await import('crypto');
-          hashedPassword = crypto.createHash('sha256').update(input.password).digest('hex');
+          const { hashPassword } = await import('./_core/security');
+          hashedPassword = await hashPassword(input.password);
         }
 
         const { id } = await db.createDataRoom({
@@ -9645,8 +9654,8 @@ Ask if they received the original request and if they can provide a quote.`;
           if (password === null) {
             hashedPassword = null;
           } else {
-            const crypto = await import('crypto');
-            hashedPassword = crypto.createHash('sha256').update(password).digest('hex');
+            const { hashPassword } = await import('./_core/security');
+            hashedPassword = await hashPassword(password);
           }
         }
 
@@ -9834,8 +9843,8 @@ Ask if they received the original request and if they can provide a quote.`;
           const linkCode = nanoid(12);
           let hashedPassword = null;
           if (input.password) {
-            const crypto = await import('crypto');
-            hashedPassword = crypto.createHash('sha256').update(input.password).digest('hex');
+            const { hashPassword } = await import('./_core/security');
+            hashedPassword = await hashPassword(input.password);
           }
 
           const { id } = await db.createDataRoomLink({
@@ -10215,9 +10224,9 @@ Ask if they received the original request and if they can provide a quote.`;
             if (!input.password) {
               return { requiresPassword: true, dataRoomId: null, visitorId: null };
             }
-            const crypto = await import('crypto');
-            const hashedPassword = crypto.createHash('sha256').update(input.password).digest('hex');
-            if (hashedPassword !== link.password) {
+            const { verifyPassword } = await import('./_core/security');
+            const isValid = await verifyPassword(input.password, link.password);
+            if (!isValid) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid password' });
             }
           }
@@ -10437,15 +10446,9 @@ Ask if they received the original request and if they can provide a quote.`;
         pollingIntervalMinutes: z.number().min(5).default(15),
       }))
       .mutation(async ({ input, ctx }) => {
-        // Encrypt password
-        const crypto = await import('crypto');
-        const key = process.env.JWT_SECRET || 'default-key';
-        const cipher = crypto.createCipheriv('aes-256-cbc', 
-          crypto.createHash('sha256').update(key).digest().slice(0, 32),
-          Buffer.alloc(16, 0)
-        );
-        let encrypted = cipher.update(input.password, 'utf8', 'hex');
-        encrypted += cipher.final('hex');
+        // Encrypt password using secure encryption with random IV
+        const { encrypt } = await import('./_core/crypto');
+        const encrypted = encrypt(input.password);
 
         const { id } = await db.createImapCredential({
           ...input,
@@ -10497,15 +10500,9 @@ Ask if they received the original request and if they can provide a quote.`;
           throw new TRPCError({ code: 'NOT_FOUND' });
         }
 
-        // Decrypt password
-        const crypto = await import('crypto');
-        const key = process.env.JWT_SECRET || 'default-key';
-        const decipher = crypto.createDecipheriv('aes-256-cbc',
-          crypto.createHash('sha256').update(key).digest().slice(0, 32),
-          Buffer.alloc(16, 0)
-        );
-        let decrypted = decipher.update(credential.encryptedPassword, 'hex', 'utf8');
-        decrypted += decipher.final('utf8');
+        // Decrypt password using secure decryption
+        const { decrypt } = await import('./_core/crypto');
+        const decrypted = decrypt(credential.encryptedPassword);
 
         return {
           ...credential,
@@ -10553,14 +10550,8 @@ Ask if they received the original request and if they can provide a quote.`;
         // Encrypt password if provided
         let encryptedPassword = input.imapPassword;
         if (input.imapPassword) {
-          const crypto = await import('crypto');
-          const key = process.env.JWT_SECRET || 'default-key';
-          const cipher = crypto.createCipheriv('aes-256-cbc',
-            crypto.createHash('sha256').update(key).digest().slice(0, 32),
-            Buffer.alloc(16, 0)
-          );
-          encryptedPassword = cipher.update(input.imapPassword, 'utf8', 'hex');
-          encryptedPassword += cipher.final('hex');
+          const { encrypt } = await import('./_core/crypto');
+          encryptedPassword = encrypt(input.imapPassword);
         }
 
         const { id } = await db.createEmailCredential({
@@ -10598,15 +10589,8 @@ Ask if they received the original request and if they can provide a quote.`;
 
         // Encrypt new password if provided
         if (imapPassword) {
-          const crypto = await import('crypto');
-          const key = process.env.JWT_SECRET || 'default-key';
-          const cipher = crypto.createCipheriv('aes-256-cbc',
-            crypto.createHash('sha256').update(key).digest().slice(0, 32),
-            Buffer.alloc(16, 0)
-          );
-          let encrypted = cipher.update(imapPassword, 'utf8', 'hex');
-          encrypted += cipher.final('hex');
-          updateData.imapPassword = encrypted;
+          const { encrypt } = await import('./_core/crypto');
+          updateData.imapPassword = encrypt(imapPassword);
         }
 
         await db.updateEmailCredential(id, updateData);
@@ -10646,14 +10630,8 @@ Ask if they received the original request and if they can provide a quote.`;
 
           // Decrypt password
           if (credential.imapPassword) {
-            const crypto = await import('crypto');
-            const key = process.env.JWT_SECRET || 'default-key';
-            const decipher = crypto.createDecipheriv('aes-256-cbc',
-              crypto.createHash('sha256').update(key).digest().slice(0, 32),
-              Buffer.alloc(16, 0)
-            );
-            let decrypted = decipher.update(credential.imapPassword, 'hex', 'utf8');
-            decrypted += decipher.final('utf8');
+            const { decrypt } = await import('./_core/crypto');
+            const decrypted = decrypt(credential.imapPassword);
             config = { ...credential, imapPassword: decrypted };
           }
         }
@@ -10917,29 +10895,30 @@ Ask if they received the original request and if they can provide a quote.`;
           // Send signed NDA copy to visitor via email
           try {
             const { sendEmail } = await import('./_core/email');
+            const { escapeHtml } = await import('./_core/security');
             const room = await db.getDataRoomById(input.dataRoomId);
             const roomName = room?.name || 'Data Room';
-            
+
             await sendEmail({
               to: input.signerEmail,
               subject: `Your Signed NDA for ${roomName}`,
               html: `
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
                   <h2>NDA Signed Successfully</h2>
-                  <p>Dear ${input.signerName},</p>
-                  <p>Thank you for signing the Non-Disclosure Agreement for <strong>${roomName}</strong>.</p>
+                  <p>Dear ${escapeHtml(input.signerName)},</p>
+                  <p>Thank you for signing the Non-Disclosure Agreement for <strong>${escapeHtml(roomName)}</strong>.</p>
                   <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
                     <h3 style="margin-top: 0;">Signature Details</h3>
-                    <p><strong>Document:</strong> ${ndaDoc.name}</p>
-                    <p><strong>Signed By:</strong> ${input.signerName}</p>
-                    ${input.signerTitle ? `<p><strong>Title:</strong> ${input.signerTitle}</p>` : ''}
-                    ${input.signerCompany ? `<p><strong>Company:</strong> ${input.signerCompany}</p>` : ''}
-                    <p><strong>Email:</strong> ${input.signerEmail}</p>
+                    <p><strong>Document:</strong> ${escapeHtml(ndaDoc.name)}</p>
+                    <p><strong>Signed By:</strong> ${escapeHtml(input.signerName)}</p>
+                    ${input.signerTitle ? `<p><strong>Title:</strong> ${escapeHtml(input.signerTitle)}</p>` : ''}
+                    ${input.signerCompany ? `<p><strong>Company:</strong> ${escapeHtml(input.signerCompany)}</p>` : ''}
+                    <p><strong>Email:</strong> ${escapeHtml(input.signerEmail)}</p>
                     <p><strong>Date:</strong> ${new Date().toLocaleString()}</p>
-                    <p><strong>IP Address:</strong> ${ipAddress}</p>
+                    <p><strong>IP Address:</strong> ${escapeHtml(ipAddress)}</p>
                     <p><strong>Signature ID:</strong> ${id}</p>
                   </div>
-                  ${signatureImageUrl ? `<p><strong>Your Signature:</strong></p><img src="${signatureImageUrl}" alt="Signature" style="max-width: 300px; border: 1px solid #ddd; padding: 10px;" />` : ''}
+                  ${signatureImageUrl ? `<p><strong>Your Signature:</strong></p><img src="${escapeHtml(signatureImageUrl)}" alt="Signature" style="max-width: 300px; border: 1px solid #ddd; padding: 10px;" />` : ''}
                   <p style="color: #666; font-size: 12px;">This email serves as your confirmation of signing. Please keep it for your records.</p>
                   <p style="color: #666; font-size: 12px;">If you have any questions, please contact the data room administrator.</p>
                 </div>
@@ -11246,7 +11225,8 @@ Ask if they received the original request and if they can provide a quote.`;
           utmCampaign: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const sessionToken = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+          const { generateSecureToken } = await import('./_core/security');
+          const sessionToken = generateSecureToken('sess');
           const ipAddress = (ctx.req.headers['x-forwarded-for'] as string)?.split(',')[0] || ctx.req.socket.remoteAddress || '';
 
           const id = await db.createVisitorSession({
@@ -12031,7 +12011,7 @@ Ask if they received the original request and if they can provide a quote.`;
           : `'root' in parents`;
         const query = `mimeType='application/vnd.google-apps.folder' and ${parentQuery} and trashed=false`;
         
-        const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,modifiedTime)&orderBy=name&pageSize=100${input?.pageToken ? `&pageToken=${input.pageToken}` : ''}`;
+        const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,modifiedTime)&orderBy=name&pageSize=100${input?.pageToken ? `&pageToken=${encodeURIComponent(input.pageToken)}` : ''}`;
         
         const response = await fetch(url, {
           headers: { Authorization: `Bearer ${accessToken}` },
@@ -12106,7 +12086,7 @@ Ask if they received the original request and if they can provide a quote.`;
         ].join(' or ');
         const query = `'${input.folderId}' in parents and (${mimeTypes}) and trashed=false`;
         
-        const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,modifiedTime,webViewLink)&orderBy=name&pageSize=100${input.pageToken ? `&pageToken=${input.pageToken}` : ''}`;
+        const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,modifiedTime,webViewLink)&orderBy=name&pageSize=100${input.pageToken ? `&pageToken=${encodeURIComponent(input.pageToken)}` : ''}`;
         
         const response = await fetch(url, {
           headers: { Authorization: `Bearer ${accessToken}` },

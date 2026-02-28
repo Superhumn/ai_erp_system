@@ -43,6 +43,9 @@ export function validateEmailConfig(): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
   if (ENV.isProduction) {
+    if (!ENV.cookieSecret) {
+      errors.push("JWT_SECRET is required in production for session and encryption security");
+    }
     if (!ENV.sendgridApiKey) {
       errors.push("SENDGRID_API_KEY is required in production");
     }

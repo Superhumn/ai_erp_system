@@ -2161,7 +2161,8 @@ export async function createTeamInvitation(data: Omit<InsertTeamInvitation, 'inv
   const db = await getDb();
   if (!db) return null;
   
-  const inviteCode = `INV-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+  const { generateSecureId } = await import('./_core/security');
+  const inviteCode = `INV-${Date.now().toString(36).toUpperCase()}-${generateSecureId(8)}`;
   
   const result = await db.insert(teamInvitations).values({
     ...data,
@@ -3067,25 +3068,28 @@ export async function getPurchaseOrderItems(purchaseOrderId: number) {
 
 // Generate forecast number
 function generateForecastNumber() {
+  const crypto = require('crypto');
   const date = new Date();
   const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+  const random = crypto.randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
   return `FC-${dateStr}-${random}`;
 }
 
 // Generate production plan number
 function generatePlanNumber() {
+  const crypto = require('crypto');
   const date = new Date();
   const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+  const random = crypto.randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
   return `PP-${dateStr}-${random}`;
 }
 
 // Generate suggested PO number
 function generateSuggestedPoNumber() {
+  const crypto = require('crypto');
   const date = new Date();
   const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+  const random = crypto.randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
   return `SPO-${dateStr}-${random}`;
 }
 
@@ -3487,7 +3491,8 @@ export async function convertSuggestedPoToActualPo(suggestedPoId: number, approv
   }
   
   // Create actual PO
-  const poNumber = `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+  const crypto = require('crypto');
+  const poNumber = `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomBytes(3).toString('hex').toUpperCase().slice(0, 4)}`;
   const poResult = await db.insert(purchaseOrders).values({
     poNumber,
     vendorId: suggestedPo.vendorId,
@@ -3584,7 +3589,8 @@ export async function getPreferredVendorForMaterial(rawMaterialId: number) {
 export async function createInventoryLot(data: Omit<InsertInventoryLot, 'lotCode'>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const lotCode = `LOT-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+  const crypto = require('crypto');
+  const lotCode = `LOT-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase().slice(0, 4)}`;
   const result = await db.insert(inventoryLots).values({ ...data, lotCode });
   return { id: result[0].insertId, lotCode };
 }
@@ -7971,10 +7977,11 @@ export async function checkAndTriggerLowStockPurchaseOrder(
   const totalAmount = orderQty * unitPrice;
 
   // Generate PO number
+  const crypto = require('crypto');
   const date = new Date();
   const year = date.getFullYear().toString().slice(-2);
   const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  const random = crypto.randomInt(10000).toString().padStart(4, '0');
   const poNumber = `PO-${year}${month}-${random}`;
 
   // Create the purchase order
