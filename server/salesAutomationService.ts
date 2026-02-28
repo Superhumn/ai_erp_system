@@ -1,6 +1,7 @@
 import { getDb } from "./db";
 import { sendEmail, formatEmailHtml } from "./_core/email";
 import { invokeLLM, Message } from "./_core/llm";
+import * as revenueIntelligence from "./revenueIntelligenceService";
 import {
   crmContacts,
   crmDeals,
@@ -36,6 +37,9 @@ import {
   users,
   emailTemplates,
   sentEmails,
+  meetingTracking,
+  meetingPrepBriefs,
+  contactEngagementScores,
 } from "../drizzle/schema";
 import { eq, and, or, desc, asc, sql, gte, lte, isNull, isNotNull, like, inArray } from "drizzle-orm";
 
@@ -156,6 +160,31 @@ export async function calculateLeadScore(
         scoreChange: rule.scoreType === "add" ? scoreChange : rule.scoreType === "subtract" ? -scoreChange : scoreChange,
       });
     }
+  }
+
+  // === REVENUE INTELLIGENCE INTEGRATION ===
+  // Boost score based on contact engagement (async lookup)
+  try {
+    const [engagementScore] = await db
+      .select()
+      .from(contactEngagementScores)
+      .where(eq(contactEngagementScores.contactId, contactId))
+      .orderBy(desc(contactEngagementScores.calculatedAt))
+      .limit(1);
+    if (engagementScore?.engagementScore) {
+      // Add up to 20 points based on engagement (0-100 score / 5)
+      const engagementBoost = Math.floor(engagementScore.engagementScore / 5);
+      newScore += engagementBoost;
+      if (engagementBoost > 0) {
+        rulesApplied.push({
+          ruleId: 0,
+          ruleName: "Engagement Score Boost",
+          scoreChange: engagementBoost,
+        });
+      }
+    }
+  } catch (e) {
+    // Engagement score not available, skip
   }
 
   // Ensure score doesn't go below 0
@@ -380,6 +409,35 @@ export async function processDealStageChange(
     subject: `Deal moved from ${fromStage || "new"} to ${newStage}`,
     performedBy: ctx.userId,
   });
+
+  // === REVENUE INTELLIGENCE INTEGRATION ===
+  // Recalculate deal risk score on stage change
+  try {
+    await revenueIntelligence.calculateDealRiskScore(dealId, ctx);
+  } catch (e) {
+    console.warn(`[RevIntel] Risk score calculation failed for deal ${dealId}:`, e);
+  }
+
+  // Detect slippage if stage regressed
+  const stageOrder = ["new", "contacted", "qualified", "proposal", "negotiation"];
+  const fromIndex = stageOrder.indexOf(fromStage || "new");
+  const toIndex = stageOrder.indexOf(newStage);
+  if (toIndex < fromIndex && toIndex >= 0 && fromIndex >= 0) {
+    try {
+      await revenueIntelligence.detectDealSlippage(dealId, { stage: fromStage }, { stage: newStage });
+    } catch (e) {
+      console.warn(`[RevIntel] Slippage detection failed for deal ${dealId}:`, e);
+    }
+  }
+
+  // Update contact engagement score
+  if (deal.contactId) {
+    try {
+      await revenueIntelligence.updateContactEngagement(deal.contactId);
+    } catch (e) {
+      console.warn(`[RevIntel] Engagement update failed for contact ${deal.contactId}:`, e);
+    }
+  }
 
   return { dealId, fromStage, toStage: newStage, automationsTriggered, actions };
 }
@@ -1920,6 +1978,23 @@ export async function processDealWon(
       status: "pending",
     });
   }
+
+  // === REVENUE INTELLIGENCE INTEGRATION ===
+  // Update account health score
+  if (deal.accountId) {
+    try {
+      await revenueIntelligence.calculateAccountHealth(deal.accountId);
+    } catch (e) {
+      console.warn(`[RevIntel] Account health update failed for account ${deal.accountId}:`, e);
+    }
+  }
+
+  // Audit log
+  try {
+    await revenueIntelligence.logSalesAudit("deal", dealId, "won", { amount: deal.amount }, ctx);
+  } catch (e) {
+    console.warn(`[RevIntel] Audit log failed for deal ${dealId}:`, e);
+  }
 }
 
 /**
@@ -2146,6 +2221,132 @@ export async function executePendingAutomations(): Promise<{ executed: number; e
   }
 
   return { executed, errors };
+}
+
+// ============================================
+// REVENUE INTELLIGENCE SCHEDULED TASKS
+// ============================================
+
+/**
+ * Update risk scores for all active deals (scheduled task)
+ */
+export async function updateAllDealRiskScores(): Promise<{ updated: number; errors: number }> {
+  const db = getDb();
+  let updated = 0;
+  let errors = 0;
+
+  const activeDeals = await db
+    .select()
+    .from(crmDeals)
+    .where(eq(crmDeals.status, "open"))
+    .limit(100); // Process in batches
+
+  for (const deal of activeDeals) {
+    try {
+      await revenueIntelligence.calculateDealRiskScore(deal.id, { userId: deal.assignedTo || 1 });
+      updated++;
+    } catch (e) {
+      errors++;
+      console.warn(`[RevIntel] Risk score update failed for deal ${deal.id}:`, e);
+    }
+  }
+
+  return { updated, errors };
+}
+
+/**
+ * Update engagement scores for all active contacts (scheduled task)
+ */
+export async function updateAllContactEngagement(): Promise<{ updated: number; errors: number }> {
+  const db = getDb();
+  let updated = 0;
+  let errors = 0;
+
+  // Get contacts with recent activity
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const activeContacts = await db
+    .select({ id: crmContacts.id })
+    .from(crmContacts)
+    .where(gte(crmContacts.lastContactedAt, thirtyDaysAgo))
+    .limit(200);
+
+  for (const contact of activeContacts) {
+    try {
+      await revenueIntelligence.updateContactEngagement(contact.id);
+      updated++;
+    } catch (e) {
+      errors++;
+    }
+  }
+
+  return { updated, errors };
+}
+
+/**
+ * Generate meeting prep briefs for upcoming meetings (scheduled task)
+ */
+export async function generateUpcomingMeetingBriefs(): Promise<{ generated: number; errors: number }> {
+  const db = getDb();
+  let generated = 0;
+  let errors = 0;
+
+  // Get meetings in the next 24 hours
+  const now = new Date();
+  const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+  const upcomingMeetings = await db
+    .select()
+    .from(meetingTracking)
+    .where(
+      and(
+        gte(meetingTracking.startTime, now),
+        lte(meetingTracking.startTime, tomorrow),
+        eq(meetingTracking.status, "scheduled")
+      )
+    );
+
+  for (const meeting of upcomingMeetings) {
+    try {
+      // Check if brief already exists
+      const existingBrief = await db
+        .select()
+        .from(meetingPrepBriefs)
+        .where(eq(meetingPrepBriefs.meetingId, meeting.id))
+        .limit(1);
+
+      if (existingBrief.length === 0) {
+        await revenueIntelligence.generateMeetingPrepBrief(meeting.id, { userId: meeting.userId });
+        generated++;
+      }
+    } catch (e) {
+      errors++;
+      console.warn(`[RevIntel] Meeting brief generation failed for meeting ${meeting.id}:`, e);
+    }
+  }
+
+  return { generated, errors };
+}
+
+/**
+ * Calculate pipeline health for all pipelines (scheduled task)
+ */
+export async function updateAllPipelineHealth(): Promise<{ updated: number; errors: number }> {
+  const db = getDb();
+  let updated = 0;
+  let errors = 0;
+
+  const pipelines = await db.select().from(crmPipelines).where(eq(crmPipelines.isActive, true));
+
+  for (const pipeline of pipelines) {
+    try {
+      await revenueIntelligence.calculatePipelineHealth(pipeline.id);
+      updated++;
+    } catch (e) {
+      errors++;
+    }
+  }
+
+  return { updated, errors };
 }
 
 // Export all functions for use in routes

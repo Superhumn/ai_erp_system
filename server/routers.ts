@@ -13190,6 +13190,32 @@ Ask if they received the original request and if they can provide a quote.`;
           const result = await salesAutomation.detectStalledDeals(input.stalledDays);
           return result;
         }),
+
+      // === REVENUE INTELLIGENCE SCHEDULED TASKS ===
+
+      // Update all deal risk scores
+      updateRiskScores: adminProcedure.mutation(async () => {
+        const result = await salesAutomation.updateAllDealRiskScores();
+        return result;
+      }),
+
+      // Update all contact engagement scores
+      updateEngagementScores: adminProcedure.mutation(async () => {
+        const result = await salesAutomation.updateAllContactEngagement();
+        return result;
+      }),
+
+      // Generate meeting prep briefs for upcoming meetings
+      generateMeetingBriefs: adminProcedure.mutation(async () => {
+        const result = await salesAutomation.generateUpcomingMeetingBriefs();
+        return result;
+      }),
+
+      // Update all pipeline health metrics
+      updatePipelineHealth: adminProcedure.mutation(async () => {
+        const result = await salesAutomation.updateAllPipelineHealth();
+        return result;
+      }),
     }),
   }),
 
