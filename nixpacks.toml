@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["nodejs_20", "corepack"]
+
+[phases.install]
+cmds = ["corepack enable && corepack prepare pnpm@10.4.1 --activate"]
+
+[start]
+cmd = "node dist/index.js"
