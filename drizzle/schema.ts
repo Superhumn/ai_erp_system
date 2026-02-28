@@ -4471,3 +4471,88 @@ export const copackerShippingDocuments = mysqlTable("copacker_shipping_documents
 
 export type CopackerShippingDocument = typeof copackerShippingDocuments.$inferSelect;
 export type InsertCopackerShippingDocument = typeof copackerShippingDocuments.$inferInsert;
+
+// ============================================
+// BUNDLE / KIT MANAGEMENT
+// ============================================
+
+// Bundle/Kit header - a sellable bundle composed of multiple products
+export const bundles = mysqlTable("bundles", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  sku: varchar("sku", { length: 64 }).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  type: mysqlEnum("type", ["bundle", "kit", "variety_pack", "multipak"]).default("bundle").notNull(),
+  unitPrice: decimal("unitPrice", { precision: 15, scale: 2 }).notNull(),
+  costPrice: decimal("costPrice", { precision: 15, scale: 2 }), // Auto-calculated from components
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  status: mysqlEnum("status", ["active", "inactive", "discontinued"]).default("active").notNull(),
+  // Shopify mapping
+  shopifyProductId: varchar("shopifyProductId", { length: 64 }),
+  shopifyVariantId: varchar("shopifyVariantId", { length: 64 }),
+  // Inventory tracking mode
+  trackInventory: boolean("trackInventory").default(true),
+  autoDeductComponents: boolean("autoDeductComponents").default(true), // Auto-deduct component inventory on sale
+  // Calculated availability (min of component availability)
+  availableQuantity: decimal("availableQuantity", { precision: 15, scale: 4 }).default("0"),
+  category: varchar("category", { length: 128 }),
+  imageUrl: text("imageUrl"),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Bundle = typeof bundles.$inferSelect;
+export type InsertBundle = typeof bundles.$inferInsert;
+
+// Bundle components - products that make up a bundle
+export const bundleComponents = mysqlTable("bundleComponents", {
+  id: int("id").autoincrement().primaryKey(),
+  bundleId: int("bundleId").notNull(),
+  productId: int("productId").notNull(), // The component product
+  quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(), // How many of this product per bundle
+  unit: varchar("unit", { length: 32 }).default("EA").notNull(),
+  sortOrder: int("sortOrder").default(0),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type BundleComponent = typeof bundleComponents.$inferSelect;
+export type InsertBundleComponent = typeof bundleComponents.$inferInsert;
+
+// Bundle inventory deduction log - tracks when component inventory was deducted for bundle sales
+export const bundleDeductionLogs = mysqlTable("bundleDeductionLogs", {
+  id: int("id").autoincrement().primaryKey(),
+  bundleId: int("bundleId").notNull(),
+  salesOrderId: int("salesOrderId"),
+  salesOrderLineId: int("salesOrderLineId"),
+  shopifyOrderId: varchar("shopifyOrderId", { length: 64 }),
+  bundleQuantity: decimal("bundleQuantity", { precision: 15, scale: 4 }).notNull(), // How many bundles sold
+  status: mysqlEnum("status", ["pending", "deducted", "reversed", "failed"]).default("pending").notNull(),
+  errorMessage: text("errorMessage"),
+  deductedAt: timestamp("deductedAt"),
+  reversedAt: timestamp("reversedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type BundleDeductionLog = typeof bundleDeductionLogs.$inferSelect;
+export type InsertBundleDeductionLog = typeof bundleDeductionLogs.$inferInsert;
+
+// Bundle deduction line items - individual component deductions within a bundle sale
+export const bundleDeductionItems = mysqlTable("bundleDeductionItems", {
+  id: int("id").autoincrement().primaryKey(),
+  deductionLogId: int("deductionLogId").notNull(),
+  productId: int("productId").notNull(),
+  warehouseId: int("warehouseId"),
+  quantityDeducted: decimal("quantityDeducted", { precision: 15, scale: 4 }).notNull(),
+  unit: varchar("unit", { length: 32 }).default("EA").notNull(),
+  previousQuantity: decimal("previousQuantity", { precision: 15, scale: 4 }), // Snapshot before deduction
+  newQuantity: decimal("newQuantity", { precision: 15, scale: 4 }), // Snapshot after deduction
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type BundleDeductionItem = typeof bundleDeductionItems.$inferSelect;
+export type InsertBundleDeductionItem = typeof bundleDeductionItems.$inferInsert;

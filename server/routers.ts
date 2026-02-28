@@ -8215,7 +8215,7 @@ Ask if they received the original request and if they can provide a quote.`;
                 shippingAddress: JSON.stringify(shopifyOrder.shipping_address),
               });
               
-              // Create order lines
+              // Create order lines and auto-deduct bundle component inventory
               for (const item of shopifyOrder.line_items || []) {
                 const product = await db.getProductByShopifySku(store.id, item.variant_id?.toString());
                 if (product) {
@@ -8229,10 +8229,29 @@ Ask if they received the original request and if they can provide a quote.`;
                     totalPrice: (parseFloat(item.price || '0') * (item.quantity || 0)).toString(),
                   });
                 }
+
+                // Check if this line item is a bundle product and auto-deduct components
+                if (item.product_id) {
+                  const bundle = await db.getBundleByShopifyProductId(item.product_id.toString());
+                  if (bundle && bundle.autoDeductComponents) {
+                    try {
+                      await db.deductBundleComponentInventory(
+                        bundle.id,
+                        item.quantity || 1,
+                        {
+                          salesOrderId: orderId,
+                          shopifyOrderId: shopifyOrder.id.toString(),
+                        }
+                      );
+                    } catch (bundleError) {
+                      console.error(`[Shopify Webhook] Bundle deduction failed for bundle ${bundle.id}:`, bundleError);
+                    }
+                  }
+                }
               }
             }
           }
-          
+
           await db.updateWebhookEvent(eventId, { status: 'processed', processedAt: new Date() });
           return { success: true };
         } catch (error) {
@@ -13660,6 +13679,266 @@ Ask if they received the original request and if they can provide a quote.`;
         });
 
         return { taskId: taskResult.id };
+      }),
+  }),
+
+  // ============================================
+  // BUNDLE / KIT MANAGEMENT
+  // ============================================
+  bundles: router({
+    list: protectedProcedure
+      .input(z.object({
+        status: z.string().optional(),
+        type: z.string().optional(),
+        companyId: z.number().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const bundleList = await db.getBundles(input);
+        // Enrich with component counts
+        const enriched = await Promise.all(bundleList.map(async (b) => {
+          const components = await db.getBundleComponents(b.id);
+          return { ...b, componentCount: components.length };
+        }));
+        return enriched;
+      }),
+
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const bundle = await db.getBundleById(input.id);
+        if (!bundle) return null;
+        const components = await db.getBundleComponents(input.id);
+        const availability = await db.calculateBundleAvailability(input.id);
+        const deductionLogs = await db.getBundleDeductionLogs({ bundleId: input.id });
+        return { ...bundle, components, availability, deductionLogs };
+      }),
+
+    create: opsProcedure
+      .input(z.object({
+        sku: z.string().min(1),
+        name: z.string().min(1),
+        description: z.string().optional(),
+        type: z.enum(['bundle', 'kit', 'variety_pack', 'multipak']).optional(),
+        unitPrice: z.string(),
+        costPrice: z.string().optional(),
+        currency: z.string().optional(),
+        category: z.string().optional(),
+        shopifyProductId: z.string().optional(),
+        shopifyVariantId: z.string().optional(),
+        trackInventory: z.boolean().optional(),
+        autoDeductComponents: z.boolean().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createBundle({
+          ...input,
+          createdBy: ctx.user.id,
+          status: 'active',
+        });
+        await createAuditLog(ctx.user.id, 'create', 'bundle', result.id, input.name);
+        return result;
+      }),
+
+    update: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        description: z.string().optional(),
+        type: z.enum(['bundle', 'kit', 'variety_pack', 'multipak']).optional(),
+        unitPrice: z.string().optional(),
+        costPrice: z.string().optional(),
+        status: z.enum(['active', 'inactive', 'discontinued']).optional(),
+        category: z.string().optional(),
+        shopifyProductId: z.string().optional(),
+        shopifyVariantId: z.string().optional(),
+        trackInventory: z.boolean().optional(),
+        autoDeductComponents: z.boolean().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateBundle(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'bundle', id);
+        return { success: true };
+      }),
+
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteBundle(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'bundle', input.id);
+        return { success: true };
+      }),
+
+    // Component management
+    addComponent: opsProcedure
+      .input(z.object({
+        bundleId: z.number(),
+        productId: z.number(),
+        quantity: z.string(),
+        unit: z.string().optional(),
+        sortOrder: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createBundleComponent(input);
+        // Recalculate bundle cost and availability
+        await db.calculateBundleCost(input.bundleId);
+        await db.calculateBundleAvailability(input.bundleId);
+        await createAuditLog(ctx.user.id, 'update', 'bundle', input.bundleId, undefined, undefined, { action: 'add_component', productId: input.productId });
+        return result;
+      }),
+
+    updateComponent: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        bundleId: z.number(),
+        quantity: z.string().optional(),
+        unit: z.string().optional(),
+        sortOrder: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, bundleId, ...data } = input;
+        await db.updateBundleComponent(id, data);
+        await db.calculateBundleCost(bundleId);
+        await db.calculateBundleAvailability(bundleId);
+        return { success: true };
+      }),
+
+    deleteComponent: opsProcedure
+      .input(z.object({ id: z.number(), bundleId: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.deleteBundleComponent(input.id);
+        await db.calculateBundleCost(input.bundleId);
+        await db.calculateBundleAvailability(input.bundleId);
+        return { success: true };
+      }),
+
+    // Availability calculation
+    calculateAvailability: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        return db.calculateBundleAvailability(input.id);
+      }),
+
+    // Manual inventory deduction (for manual orders)
+    deductInventory: opsProcedure
+      .input(z.object({
+        bundleId: z.number(),
+        quantity: z.number(),
+        salesOrderId: z.number().optional(),
+        warehouseId: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.deductBundleComponentInventory(
+          input.bundleId,
+          input.quantity,
+          { salesOrderId: input.salesOrderId, warehouseId: input.warehouseId }
+        );
+        await createAuditLog(ctx.user.id, 'update', 'bundle', input.bundleId, undefined, undefined, { action: 'deduct_inventory', quantity: input.quantity });
+        return result;
+      }),
+
+    // Reverse deduction (for cancellations/refunds)
+    reverseDeduction: opsProcedure
+      .input(z.object({ deductionLogId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.reverseBundleDeduction(input.deductionLogId);
+        await createAuditLog(ctx.user.id, 'update', 'bundle', 0, undefined, undefined, { action: 'reverse_deduction', deductionLogId: input.deductionLogId });
+        return result;
+      }),
+
+    // Deduction history
+    deductionLogs: protectedProcedure
+      .input(z.object({
+        bundleId: z.number().optional(),
+        salesOrderId: z.number().optional(),
+        status: z.string().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        return db.getBundleDeductionLogs(input);
+      }),
+
+    // Shopify sync: push bundle availability as inventory level
+    syncToShopify: opsProcedure
+      .input(z.object({ bundleId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const bundle = await db.getBundleById(input.bundleId);
+        if (!bundle) throw new TRPCError({ code: 'NOT_FOUND', message: 'Bundle not found' });
+        if (!bundle.shopifyProductId) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Bundle not linked to Shopify product' });
+
+        // Calculate current availability
+        const { availableQuantity } = await db.calculateBundleAvailability(input.bundleId);
+
+        // Find the Shopify store
+        const stores = await db.getShopifyStores();
+        const activeStore = stores.find(s => s.isEnabled && s.accessToken);
+        if (!activeStore) throw new TRPCError({ code: 'BAD_REQUEST', message: 'No active Shopify store configured' });
+
+        // Get location mapping
+        const locationMappings = await db.getShopifyLocationMappings(activeStore.id);
+        if (locationMappings.length === 0) throw new TRPCError({ code: 'BAD_REQUEST', message: 'No Shopify location mappings configured' });
+
+        // Update inventory level on Shopify for each mapped location
+        const results = [];
+        for (const mapping of locationMappings) {
+          try {
+            const inventoryItemResponse = await fetch(
+              `https://${activeStore.storeDomain}/admin/api/2024-01/products/${bundle.shopifyProductId}.json`,
+              {
+                headers: {
+                  'X-Shopify-Access-Token': activeStore.accessToken!,
+                  'Content-Type': 'application/json',
+                },
+              }
+            );
+
+            if (inventoryItemResponse.ok) {
+              const productData = await inventoryItemResponse.json();
+              const variant = bundle.shopifyVariantId
+                ? productData.product?.variants?.find((v: any) => v.id.toString() === bundle.shopifyVariantId)
+                : productData.product?.variants?.[0];
+
+              if (variant?.inventory_item_id) {
+                const setResponse = await fetch(
+                  `https://${activeStore.storeDomain}/admin/api/2024-01/inventory_levels/set.json`,
+                  {
+                    method: 'POST',
+                    headers: {
+                      'X-Shopify-Access-Token': activeStore.accessToken!,
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                      location_id: mapping.shopifyLocationId,
+                      inventory_item_id: variant.inventory_item_id,
+                      available: availableQuantity,
+                    }),
+                  }
+                );
+                results.push({
+                  locationId: mapping.shopifyLocationId,
+                  success: setResponse.ok,
+                  quantity: availableQuantity,
+                });
+              }
+            }
+          } catch (error) {
+            results.push({
+              locationId: mapping.shopifyLocationId,
+              success: false,
+              error: error instanceof Error ? error.message : 'Unknown error',
+            });
+          }
+        }
+
+        await createAuditLog(ctx.user.id, 'update', 'bundle', input.bundleId, undefined, undefined, {
+          action: 'sync_to_shopify',
+          availableQuantity,
+          results,
+        });
+
+        return { success: true, availableQuantity, syncResults: results };
       }),
   }),
 });

@@ -93,7 +93,10 @@ import {
   InsertFirefliesMeeting, InsertFirefliesActionItem, InsertFirefliesContactMapping,
   // Copacker portal
   copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
-  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument
+  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
+  // Bundle/Kit management
+  bundles, bundleComponents, bundleDeductionLogs, bundleDeductionItems,
+  InsertBundle, InsertBundleComponent, InsertBundleDeductionLog, InsertBundleDeductionItem
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8334,4 +8337,318 @@ export async function getProductByName(name: string) {
   if (!db) return null;
   const results = await db.select().from(products).where(sql`LOWER(${products.name}) = LOWER(${name})`).limit(1);
   return results[0] || null;
+}
+
+// ============================================
+// BUNDLE / KIT MANAGEMENT
+// ============================================
+
+export async function getBundles(filters?: { status?: string; type?: string; companyId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(bundles.status, filters.status as any));
+  if (filters?.type) conditions.push(eq(bundles.type, filters.type as any));
+  if (filters?.companyId) conditions.push(eq(bundles.companyId, filters.companyId));
+  return db.select().from(bundles)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(bundles.updatedAt));
+}
+
+export async function getBundleById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const results = await db.select().from(bundles).where(eq(bundles.id, id)).limit(1);
+  return results[0];
+}
+
+export async function getBundleBySku(sku: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const results = await db.select().from(bundles).where(eq(bundles.sku, sku)).limit(1);
+  return results[0];
+}
+
+export async function getBundleByShopifyProductId(shopifyProductId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const results = await db.select().from(bundles).where(eq(bundles.shopifyProductId, shopifyProductId)).limit(1);
+  return results[0];
+}
+
+export async function createBundle(data: Omit<InsertBundle, 'id' | 'createdAt' | 'updatedAt'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(bundles).values(data);
+  return { id: result.insertId };
+}
+
+export async function updateBundle(id: number, data: Partial<InsertBundle>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(bundles).set(data).where(eq(bundles.id, id));
+}
+
+export async function deleteBundle(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  // Delete components first
+  await db.delete(bundleComponents).where(eq(bundleComponents.bundleId, id));
+  await db.delete(bundles).where(eq(bundles.id, id));
+}
+
+// Bundle Components
+
+export async function getBundleComponents(bundleId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    component: bundleComponents,
+    product: products,
+  })
+    .from(bundleComponents)
+    .leftJoin(products, eq(bundleComponents.productId, products.id))
+    .where(eq(bundleComponents.bundleId, bundleId))
+    .orderBy(bundleComponents.sortOrder);
+}
+
+export async function createBundleComponent(data: Omit<InsertBundleComponent, 'id' | 'createdAt' | 'updatedAt'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(bundleComponents).values(data);
+  return { id: result.insertId };
+}
+
+export async function updateBundleComponent(id: number, data: Partial<InsertBundleComponent>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(bundleComponents).set(data).where(eq(bundleComponents.id, id));
+}
+
+export async function deleteBundleComponent(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(bundleComponents).where(eq(bundleComponents.id, id));
+}
+
+// Calculate bundle available quantity (minimum of component availability / required quantity)
+export async function calculateBundleAvailability(bundleId: number) {
+  const db = await getDb();
+  if (!db) return { availableQuantity: 0, components: [] };
+
+  const components = await getBundleComponents(bundleId);
+  if (components.length === 0) return { availableQuantity: 0, components: [] };
+
+  const componentAvailability = [];
+  let minBundlesAvailable = Infinity;
+
+  for (const comp of components) {
+    const productId = comp.component.productId;
+    const requiredQty = parseFloat(comp.component.quantity);
+
+    // Get total inventory for this product across all warehouses
+    const inventoryRows = await db.select().from(inventory).where(eq(inventory.productId, productId));
+    const totalAvailable = inventoryRows.reduce((sum, inv) => {
+      const qty = parseFloat(inv.quantity);
+      const reserved = parseFloat(inv.reservedQuantity || '0');
+      return sum + Math.max(0, qty - reserved);
+    }, 0);
+
+    const bundlesFromThisComponent = requiredQty > 0 ? Math.floor(totalAvailable / requiredQty) : 0;
+    minBundlesAvailable = Math.min(minBundlesAvailable, bundlesFromThisComponent);
+
+    componentAvailability.push({
+      productId,
+      productName: comp.product?.name || 'Unknown',
+      productSku: comp.product?.sku || '',
+      requiredPerBundle: requiredQty,
+      totalAvailable,
+      bundlesPossible: bundlesFromThisComponent,
+    });
+  }
+
+  const availableQuantity = minBundlesAvailable === Infinity ? 0 : minBundlesAvailable;
+
+  // Update the bundle's available quantity
+  await db.update(bundles).set({ availableQuantity: availableQuantity.toString() }).where(eq(bundles.id, bundleId));
+
+  return { availableQuantity, components: componentAvailability };
+}
+
+// Calculate bundle cost from component costs
+export async function calculateBundleCost(bundleId: number) {
+  const db = await getDb();
+  if (!db) return { costPrice: '0' };
+
+  const components = await getBundleComponents(bundleId);
+  let totalCost = 0;
+
+  for (const comp of components) {
+    const qty = parseFloat(comp.component.quantity);
+    const unitCost = parseFloat(comp.product?.costPrice || comp.product?.unitPrice || '0');
+    totalCost += qty * unitCost;
+  }
+
+  const costStr = totalCost.toFixed(2);
+  await db.update(bundles).set({ costPrice: costStr }).where(eq(bundles.id, bundleId));
+
+  return { costPrice: costStr };
+}
+
+// Deduct component inventory when a bundle is sold
+export async function deductBundleComponentInventory(
+  bundleId: number,
+  quantity: number,
+  options?: {
+    salesOrderId?: number;
+    salesOrderLineId?: number;
+    shopifyOrderId?: string;
+    warehouseId?: number;
+  }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Create deduction log
+  const [logResult] = await db.insert(bundleDeductionLogs).values({
+    bundleId,
+    bundleQuantity: quantity.toString(),
+    salesOrderId: options?.salesOrderId,
+    salesOrderLineId: options?.salesOrderLineId,
+    shopifyOrderId: options?.shopifyOrderId,
+    status: 'pending',
+  });
+  const deductionLogId = logResult.insertId;
+
+  try {
+    const components = await getBundleComponents(bundleId);
+
+    for (const comp of components) {
+      const productId = comp.component.productId;
+      const deductQty = parseFloat(comp.component.quantity) * quantity;
+
+      // Find inventory to deduct from (prefer specified warehouse, otherwise use any)
+      let inventoryRows;
+      if (options?.warehouseId) {
+        inventoryRows = await db.select().from(inventory)
+          .where(and(eq(inventory.productId, productId), eq(inventory.warehouseId, options.warehouseId)));
+      } else {
+        inventoryRows = await db.select().from(inventory)
+          .where(eq(inventory.productId, productId))
+          .orderBy(desc(inventory.quantity)); // Deduct from highest-stock location first
+      }
+
+      let remainingToDeduct = deductQty;
+      for (const inv of inventoryRows) {
+        if (remainingToDeduct <= 0) break;
+
+        const currentQty = parseFloat(inv.quantity);
+        const toDeduct = Math.min(remainingToDeduct, currentQty);
+        const newQty = currentQty - toDeduct;
+
+        await db.update(inventory)
+          .set({ quantity: newQty.toFixed(4) })
+          .where(eq(inventory.id, inv.id));
+
+        // Log each deduction item
+        await db.insert(bundleDeductionItems).values({
+          deductionLogId,
+          productId,
+          warehouseId: inv.warehouseId,
+          quantityDeducted: toDeduct.toFixed(4),
+          previousQuantity: currentQty.toFixed(4),
+          newQuantity: newQty.toFixed(4),
+        });
+
+        remainingToDeduct -= toDeduct;
+      }
+
+      if (remainingToDeduct > 0) {
+        // Not enough inventory — still deducted what was available but flag it
+        await db.update(bundleDeductionLogs).set({
+          status: 'deducted',
+          errorMessage: `Insufficient inventory for product ${comp.product?.sku || productId}: needed ${deductQty}, short by ${remainingToDeduct.toFixed(4)}`,
+          deductedAt: new Date(),
+        }).where(eq(bundleDeductionLogs.id, deductionLogId));
+        return { success: true, warning: true, deductionLogId, message: `Partial deduction: insufficient stock for some components` };
+      }
+    }
+
+    // Mark as fully deducted
+    await db.update(bundleDeductionLogs).set({
+      status: 'deducted',
+      deductedAt: new Date(),
+    }).where(eq(bundleDeductionLogs.id, deductionLogId));
+
+    // Recalculate bundle availability
+    await calculateBundleAvailability(bundleId);
+
+    return { success: true, warning: false, deductionLogId };
+  } catch (error) {
+    await db.update(bundleDeductionLogs).set({
+      status: 'failed',
+      errorMessage: error instanceof Error ? error.message : 'Unknown error',
+    }).where(eq(bundleDeductionLogs.id, deductionLogId));
+    throw error;
+  }
+}
+
+// Reverse a bundle deduction (e.g., order cancelled or refunded)
+export async function reverseBundleDeduction(deductionLogId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const logResults = await db.select().from(bundleDeductionLogs).where(eq(bundleDeductionLogs.id, deductionLogId)).limit(1);
+  const log = logResults[0];
+  if (!log || log.status !== 'deducted') throw new Error("Deduction not found or not in deducted state");
+
+  // Get all deduction items and reverse them
+  const items = await db.select().from(bundleDeductionItems).where(eq(bundleDeductionItems.deductionLogId, deductionLogId));
+
+  for (const item of items) {
+    const qty = parseFloat(item.quantityDeducted);
+    if (item.warehouseId) {
+      const invRows = await db.select().from(inventory)
+        .where(and(eq(inventory.productId, item.productId), eq(inventory.warehouseId, item.warehouseId)));
+      if (invRows[0]) {
+        const newQty = parseFloat(invRows[0].quantity) + qty;
+        await db.update(inventory).set({ quantity: newQty.toFixed(4) }).where(eq(inventory.id, invRows[0].id));
+      }
+    }
+  }
+
+  await db.update(bundleDeductionLogs).set({
+    status: 'reversed',
+    reversedAt: new Date(),
+  }).where(eq(bundleDeductionLogs.id, deductionLogId));
+
+  // Recalculate bundle availability
+  await calculateBundleAvailability(log.bundleId);
+
+  return { success: true };
+}
+
+// Get deduction history for a bundle
+export async function getBundleDeductionLogs(filters?: { bundleId?: number; salesOrderId?: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.bundleId) conditions.push(eq(bundleDeductionLogs.bundleId, filters.bundleId));
+  if (filters?.salesOrderId) conditions.push(eq(bundleDeductionLogs.salesOrderId, filters.salesOrderId));
+  if (filters?.status) conditions.push(eq(bundleDeductionLogs.status, filters.status as any));
+  return db.select().from(bundleDeductionLogs)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(bundleDeductionLogs.createdAt));
+}
+
+export async function getBundleDeductionItems(deductionLogId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    item: bundleDeductionItems,
+    product: products,
+  })
+    .from(bundleDeductionItems)
+    .leftJoin(products, eq(bundleDeductionItems.productId, products.id))
+    .where(eq(bundleDeductionItems.deductionLogId, deductionLogId));
 }
