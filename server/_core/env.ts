@@ -5,10 +5,11 @@ export const ENV = {
   oAuthServerUrl: process.env.OAUTH_SERVER_URL ?? "",
   ownerOpenId: process.env.OWNER_OPEN_ID ?? "",
   isProduction: process.env.NODE_ENV === "production",
-  // LLM Configuration (supports OpenAI, Kimi/Moonshot, or any OpenAI-compatible API)
+  // LLM Configuration (supports Anthropic/Claude, OpenAI, or any OpenAI-compatible API)
+  llmProvider: process.env.LLM_PROVIDER ?? "",
   llmApiUrl: process.env.LLM_API_URL ?? process.env.OPENAI_API_BASE_URL ?? "",
   llmApiKey: process.env.LLM_API_KEY ?? process.env.OPENAI_API_KEY ?? "",
-  llmModel: process.env.LLM_MODEL ?? "gpt-4o",
+  llmModel: process.env.LLM_MODEL ?? "claude-sonnet-4-20250514",
   // SendGrid email configuration
   sendgridApiKey: process.env.SENDGRID_API_KEY ?? "",
   sendgridFromEmail: process.env.SENDGRID_FROM_EMAIL ?? "",  // MAIL_FROM - e.g., quotes@yourdomain.com
