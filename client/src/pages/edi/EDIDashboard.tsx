@@ -95,10 +95,10 @@ export default function EDIDashboard() {
               Trading Partners
             </Button>
           </Link>
-          <Link href="/edi/transactions">
+          <Link href="/edi/connect">
             <Button>
               <Plus className="h-4 w-4 mr-2" />
-              Process EDI Document
+              Connect a Retailer
             </Button>
           </Link>
         </div>

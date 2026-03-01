@@ -69,6 +69,7 @@ import {
   Heart,
   Mic,
   BookOpen,
+  Plus,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -129,6 +130,7 @@ const menuGroups = [
     label: "EDI & Retail",
     items: [
       { icon: ArrowRightLeft, label: "EDI Hub", path: "/edi" },
+      { icon: Plus, label: "Connect Retailer", path: "/edi/connect" },
       { icon: Building2, label: "Trading Partners", path: "/edi/partners" },
       { icon: FileText, label: "Transactions", path: "/edi/transactions" },
     ],

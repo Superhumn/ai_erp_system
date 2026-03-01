@@ -67,6 +67,7 @@ import SupplierPortal from "./pages/SupplierPortal";
 import EDIDashboard from "./pages/edi/EDIDashboard";
 import TradingPartners from "./pages/edi/TradingPartners";
 import EDITransactions from "./pages/edi/EDITransactions";
+import RetailerOnboarding from "./pages/edi/RetailerOnboarding";
 
 // Freight
 import FreightDashboard from "./pages/freight/FreightDashboard";
@@ -194,6 +195,7 @@ function Router() {
 
         {/* EDI */}
         <Route path="/edi" component={EDIDashboard} />
+        <Route path="/edi/connect" component={RetailerOnboarding} />
         <Route path="/edi/partners" component={TradingPartners} />
         <Route path="/edi/transactions" component={EDITransactions} />
 
