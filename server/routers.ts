@@ -13662,6 +13662,571 @@ Ask if they received the original request and if they can provide a quote.`;
         return { taskId: taskResult.id };
       }),
   }),
+
+  // ============================================
+  // CAP TABLE MANAGEMENT
+  // ============================================
+  capTable: router({
+    shareholders: router({
+      list: protectedProcedure.query(() => db.getCapTableShareholders()),
+      get: protectedProcedure.input(z.object({ id: z.number() })).query(({ input }) => db.getCapTableShareholderById(input.id)),
+      create: protectedProcedure.input(z.object({
+        name: z.string().min(1),
+        email: z.string().optional(),
+        type: z.enum(["founder", "employee", "investor", "advisor", "company", "other"]),
+        entityName: z.string().optional(),
+        notes: z.string().optional(),
+        crmContactId: z.number().optional(),
+      })).mutation(async ({ input, ctx }) => {
+        const id = await db.createCapTableShareholder(input);
+        await createAuditLog(ctx.user.id, 'create', 'cap_table_shareholder', id, input.name);
+        return { id };
+      }),
+      update: protectedProcedure.input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        email: z.string().optional(),
+        type: z.enum(["founder", "employee", "investor", "advisor", "company", "other"]).optional(),
+        entityName: z.string().optional(),
+        notes: z.string().optional(),
+      })).mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateCapTableShareholder(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'cap_table_shareholder', id);
+        return { success: true };
+      }),
+      delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
+        await db.deleteCapTableShareholder(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'cap_table_shareholder', input.id);
+        return { success: true };
+      }),
+    }),
+    shareClasses: router({
+      list: protectedProcedure.query(() => db.getCapTableShareClasses()),
+      create: protectedProcedure.input(z.object({
+        name: z.string().min(1),
+        type: z.enum(["common", "preferred", "options", "warrants", "convertible_note", "safe"]),
+        authorizedShares: z.string().optional(),
+        pricePerShare: z.string().optional(),
+        liquidationPreference: z.string().optional(),
+        participatingPreferred: z.boolean().optional(),
+        antiDilutionProtection: z.enum(["none", "broad_weighted_average", "narrow_weighted_average", "full_ratchet"]).optional(),
+        votingRights: z.boolean().optional(),
+        dividendRate: z.string().optional(),
+        notes: z.string().optional(),
+      })).mutation(async ({ input, ctx }) => {
+        const id = await db.createCapTableShareClass(input);
+        await createAuditLog(ctx.user.id, 'create', 'cap_table_share_class', id, input.name);
+        return { id };
+      }),
+      update: protectedProcedure.input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        authorizedShares: z.string().optional(),
+        pricePerShare: z.string().optional(),
+        liquidationPreference: z.string().optional(),
+        notes: z.string().optional(),
+      })).mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateCapTableShareClass(id, data);
+        return { success: true };
+      }),
+      delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
+        await db.deleteCapTableShareClass(input.id);
+        return { success: true };
+      }),
+    }),
+    holdings: router({
+      list: protectedProcedure.query(() => db.getCapTableHoldings()),
+      byShareholder: protectedProcedure.input(z.object({ shareholderId: z.number() })).query(({ input }) => db.getCapTableHoldingsByShareholder(input.shareholderId)),
+      create: protectedProcedure.input(z.object({
+        shareholderId: z.number(),
+        shareClassId: z.number(),
+        shares: z.string(),
+        purchasePrice: z.string().optional(),
+        vestingStartDate: z.date().optional(),
+        vestingEndDate: z.date().optional(),
+        cliffMonths: z.number().optional(),
+        vestingMonths: z.number().optional(),
+        vestedShares: z.string().optional(),
+        grantDate: z.date().optional(),
+        expirationDate: z.date().optional(),
+        boardApprovalDate: z.date().optional(),
+        notes: z.string().optional(),
+      })).mutation(async ({ input, ctx }) => {
+        const id = await db.createCapTableHolding(input);
+        await createAuditLog(ctx.user.id, 'create', 'cap_table_holding', id);
+        return { id };
+      }),
+      update: protectedProcedure.input(z.object({
+        id: z.number(),
+        shares: z.string().optional(),
+        vestedShares: z.string().optional(),
+        exercisedShares: z.string().optional(),
+        notes: z.string().optional(),
+      })).mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateCapTableHolding(id, data);
+        return { success: true };
+      }),
+      delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
+        await db.deleteCapTableHolding(input.id);
+        return { success: true };
+      }),
+    }),
+    transactions: router({
+      list: protectedProcedure.query(() => db.getCapTableTransactions()),
+      create: protectedProcedure.input(z.object({
+        type: z.enum(["issuance", "transfer", "exercise", "conversion", "cancellation", "repurchase"]),
+        fromShareholderId: z.number().optional(),
+        toShareholderId: z.number().optional(),
+        shareClassId: z.number(),
+        shares: z.string(),
+        pricePerShare: z.string().optional(),
+        totalAmount: z.string().optional(),
+        transactionDate: z.date(),
+        notes: z.string().optional(),
+      })).mutation(async ({ input, ctx }) => {
+        const id = await db.createCapTableTransaction(input);
+        await createAuditLog(ctx.user.id, 'create', 'cap_table_transaction', id);
+        return { id };
+      }),
+    }),
+  }),
+
+  // ============================================
+  // SAFE NOTES
+  // ============================================
+  safeNotes: router({
+    list: protectedProcedure.query(() => db.getSafeNotes()),
+    get: protectedProcedure.input(z.object({ id: z.number() })).query(({ input }) => db.getSafeNoteById(input.id)),
+    create: protectedProcedure.input(z.object({
+      investorName: z.string().min(1),
+      investorEmail: z.string().optional(),
+      investorId: z.number(),
+      type: z.enum(["pre_money", "post_money", "mfn"]),
+      investmentAmount: z.string(),
+      valuationCap: z.string().optional(),
+      discountRate: z.string().optional(),
+      proRataRights: z.boolean().optional(),
+      mfnProvision: z.boolean().optional(),
+      issueDate: z.date().optional(),
+      fundingRoundId: z.number().optional(),
+      notes: z.string().optional(),
+    })).mutation(async ({ input, ctx }) => {
+      const id = await db.createSafeNote({ ...input, status: "draft" });
+      await createAuditLog(ctx.user.id, 'create', 'safe_note', id, `SAFE - ${input.investorName}`);
+      return { id };
+    }),
+    update: protectedProcedure.input(z.object({
+      id: z.number(),
+      type: z.enum(["pre_money", "post_money", "mfn"]).optional(),
+      investmentAmount: z.string().optional(),
+      valuationCap: z.string().optional(),
+      discountRate: z.string().optional(),
+      proRataRights: z.boolean().optional(),
+      mfnProvision: z.boolean().optional(),
+      status: z.enum(["draft", "sent", "signed", "converted", "cancelled"]).optional(),
+      issueDate: z.date().optional(),
+      signedDate: z.date().optional(),
+      conversionDate: z.date().optional(),
+      conversionShareClassId: z.number().optional(),
+      conversionShares: z.string().optional(),
+      conversionPricePerShare: z.string().optional(),
+      documentUrl: z.string().optional(),
+      notes: z.string().optional(),
+    })).mutation(async ({ input, ctx }) => {
+      const { id, ...data } = input;
+      await db.updateSafeNote(id, data);
+      await createAuditLog(ctx.user.id, 'update', 'safe_note', id);
+      return { success: true };
+    }),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
+      await db.deleteSafeNote(input.id);
+      await createAuditLog(ctx.user.id, 'delete', 'safe_note', input.id);
+      return { success: true };
+    }),
+  }),
+
+  // ============================================
+  // BANK CONNECTIONS
+  // ============================================
+  banking: router({
+    connections: router({
+      list: protectedProcedure.query(() => db.getBankConnections()),
+      create: financeProcedure.input(z.object({
+        institutionName: z.string().min(1),
+        institutionId: z.string().optional(),
+        status: z.enum(["active", "needs_reauth", "disconnected", "error"]).optional(),
+      })).mutation(async ({ input, ctx }) => {
+        const id = await db.createBankConnection({ ...input, connectedBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'bank_connection', id, input.institutionName);
+        return { id };
+      }),
+      update: financeProcedure.input(z.object({
+        id: z.number(),
+        status: z.enum(["active", "needs_reauth", "disconnected", "error"]).optional(),
+        lastSyncAt: z.date().optional(),
+      })).mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateBankConnection(id, data);
+        return { success: true };
+      }),
+      delete: financeProcedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
+        await db.deleteBankConnection(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'bank_connection', input.id);
+        return { success: true };
+      }),
+    }),
+    accounts: router({
+      list: protectedProcedure.input(z.object({ connectionId: z.number().optional() }).optional()).query(({ input }) => db.getBankAccounts(input?.connectionId)),
+      create: financeProcedure.input(z.object({
+        connectionId: z.number(),
+        name: z.string().min(1),
+        officialName: z.string().optional(),
+        type: z.enum(["checking", "savings", "credit_card", "loan", "investment", "other"]),
+        subtype: z.string().optional(),
+        mask: z.string().optional(),
+        currentBalance: z.string().optional(),
+        availableBalance: z.string().optional(),
+        currency: z.string().optional(),
+      })).mutation(async ({ input, ctx }) => {
+        const id = await db.createBankAccount(input);
+        return { id };
+      }),
+      update: financeProcedure.input(z.object({
+        id: z.number(),
+        currentBalance: z.string().optional(),
+        availableBalance: z.string().optional(),
+        lastSyncAt: z.date().optional(),
+      })).mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        await db.updateBankAccount(id, data);
+        return { success: true };
+      }),
+    }),
+    transactions: router({
+      list: protectedProcedure.input(z.object({
+        bankAccountId: z.number().optional(),
+        limit: z.number().optional(),
+      }).optional()).query(({ input }) => db.getBankTransactions(input?.bankAccountId, input?.limit)),
+      create: financeProcedure.input(z.object({
+        bankAccountId: z.number(),
+        name: z.string(),
+        merchantName: z.string().optional(),
+        amount: z.string(),
+        date: z.date(),
+        category: z.string().optional(),
+        pending: z.boolean().optional(),
+        type: z.enum(["debit", "credit"]),
+      })).mutation(async ({ input }) => {
+        const id = await db.createBankTransaction(input);
+        return { id };
+      }),
+    }),
+  }),
+
+  // ============================================
+  // ANALYTICS CONNECTIONS
+  // ============================================
+  analytics: router({
+    connections: router({
+      list: protectedProcedure.query(() => db.getAnalyticsConnections()),
+      create: protectedProcedure.input(z.object({
+        provider: z.enum(["google_analytics", "mixpanel", "amplitude", "posthog", "segment", "custom"]),
+        name: z.string().min(1),
+        apiKey: z.string().optional(),
+        projectId: z.string().optional(),
+        propertyId: z.string().optional(),
+        config: z.string().optional(),
+      })).mutation(async ({ input, ctx }) => {
+        const id = await db.createAnalyticsConnection({ ...input, connectedBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'analytics_connection', id, input.name);
+        return { id };
+      }),
+      update: protectedProcedure.input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        apiKey: z.string().optional(),
+        projectId: z.string().optional(),
+        propertyId: z.string().optional(),
+        status: z.enum(["active", "disconnected", "error"]).optional(),
+        config: z.string().optional(),
+      })).mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        await db.updateAnalyticsConnection(id, data);
+        return { success: true };
+      }),
+      delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
+        await db.deleteAnalyticsConnection(input.id);
+        return { success: true };
+      }),
+    }),
+    metrics: router({
+      list: protectedProcedure.input(z.object({
+        connectionId: z.number().optional(),
+        metricType: z.string().optional(),
+        period: z.string().optional(),
+        limit: z.number().optional(),
+      }).optional()).query(({ input }) => db.getAnalyticsMetrics(input ?? undefined)),
+      create: protectedProcedure.input(z.object({
+        connectionId: z.number().optional(),
+        metricName: z.string(),
+        metricType: z.enum(["revenue", "users", "sessions", "conversion", "retention", "custom"]),
+        value: z.string(),
+        previousValue: z.string().optional(),
+        period: z.enum(["daily", "weekly", "monthly", "quarterly", "yearly"]),
+        periodDate: z.date(),
+        metadata: z.string().optional(),
+      })).mutation(async ({ input }) => {
+        const id = await db.createAnalyticsMetric(input);
+        return { id };
+      }),
+    }),
+  }),
+
+  // ============================================
+  // STARTUP ONE-PAGER
+  // ============================================
+  onePager: router({
+    list: protectedProcedure.query(() => db.getStartupOnePagers()),
+    get: protectedProcedure.input(z.object({ id: z.number() })).query(({ input }) => db.getStartupOnePagerById(input.id)),
+    getBySlug: publicProcedure.input(z.object({ slug: z.string() })).query(async ({ input }) => {
+      const pager = await db.getStartupOnePagerBySlug(input.slug);
+      if (pager) {
+        await db.incrementOnePagerViewCount(pager.id);
+      }
+      return pager;
+    }),
+    create: protectedProcedure.input(z.object({
+      title: z.string().min(1),
+      slug: z.string().min(1),
+      companyName: z.string().min(1),
+      tagline: z.string().optional(),
+      problem: z.string().optional(),
+      solution: z.string().optional(),
+      traction: z.string().optional(),
+      businessModel: z.string().optional(),
+      market: z.string().optional(),
+      team: z.string().optional(),
+      askAmount: z.string().optional(),
+      askType: z.enum(["pre_seed", "seed", "series_a", "series_b", "bridge", "other"]).optional(),
+      useOfFunds: z.string().optional(),
+      contactEmail: z.string().optional(),
+      contactName: z.string().optional(),
+      websiteUrl: z.string().optional(),
+      showLiveMetrics: z.boolean().optional(),
+      showFinancials: z.boolean().optional(),
+      isPublished: z.boolean().optional(),
+      password: z.string().optional(),
+    })).mutation(async ({ input, ctx }) => {
+      const id = await db.createStartupOnePager({ ...input, createdBy: ctx.user.id });
+      await createAuditLog(ctx.user.id, 'create', 'one_pager', id, input.title);
+      return { id };
+    }),
+    update: protectedProcedure.input(z.object({
+      id: z.number(),
+      title: z.string().optional(),
+      slug: z.string().optional(),
+      companyName: z.string().optional(),
+      tagline: z.string().optional(),
+      problem: z.string().optional(),
+      solution: z.string().optional(),
+      traction: z.string().optional(),
+      businessModel: z.string().optional(),
+      market: z.string().optional(),
+      team: z.string().optional(),
+      askAmount: z.string().optional(),
+      askType: z.enum(["pre_seed", "seed", "series_a", "series_b", "bridge", "other"]).optional(),
+      useOfFunds: z.string().optional(),
+      contactEmail: z.string().optional(),
+      contactName: z.string().optional(),
+      websiteUrl: z.string().optional(),
+      showLiveMetrics: z.boolean().optional(),
+      showFinancials: z.boolean().optional(),
+      isPublished: z.boolean().optional(),
+      password: z.string().optional(),
+    })).mutation(async ({ input, ctx }) => {
+      const { id, ...data } = input;
+      await db.updateStartupOnePager(id, data);
+      await createAuditLog(ctx.user.id, 'update', 'one_pager', id);
+      return { success: true };
+    }),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
+      await db.deleteStartupOnePager(input.id);
+      await createAuditLog(ctx.user.id, 'delete', 'one_pager', input.id);
+      return { success: true };
+    }),
+  }),
+
+  // ============================================
+  // INVESTOR UPDATES
+  // ============================================
+  investorUpdates: router({
+    list: protectedProcedure.query(() => db.getInvestorUpdates()),
+    get: protectedProcedure.input(z.object({ id: z.number() })).query(({ input }) => db.getInvestorUpdateById(input.id)),
+    create: protectedProcedure.input(z.object({
+      title: z.string().min(1),
+      period: z.enum(["weekly", "monthly", "quarterly", "annual", "adhoc"]),
+      periodLabel: z.string().optional(),
+      highlights: z.string().optional(),
+      challenges: z.string().optional(),
+      asks: z.string().optional(),
+      metrics: z.string().optional(),
+      bodyHtml: z.string().optional(),
+    })).mutation(async ({ input, ctx }) => {
+      const id = await db.createInvestorUpdate({ ...input, createdBy: ctx.user.id });
+      await createAuditLog(ctx.user.id, 'create', 'investor_update', id, input.title);
+      return { id };
+    }),
+    update: protectedProcedure.input(z.object({
+      id: z.number(),
+      title: z.string().optional(),
+      period: z.enum(["weekly", "monthly", "quarterly", "annual", "adhoc"]).optional(),
+      periodLabel: z.string().optional(),
+      status: z.enum(["draft", "scheduled", "sent"]).optional(),
+      highlights: z.string().optional(),
+      challenges: z.string().optional(),
+      asks: z.string().optional(),
+      metrics: z.string().optional(),
+      bodyHtml: z.string().optional(),
+      scheduledAt: z.date().optional(),
+    })).mutation(async ({ input, ctx }) => {
+      const { id, ...data } = input;
+      await db.updateInvestorUpdate(id, data);
+      return { success: true };
+    }),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
+      await db.deleteInvestorUpdate(input.id);
+      return { success: true };
+    }),
+    recipients: router({
+      list: protectedProcedure.input(z.object({ updateId: z.number() })).query(({ input }) => db.getInvestorUpdateRecipients(input.updateId)),
+      add: protectedProcedure.input(z.object({
+        updateId: z.number(),
+        recipients: z.array(z.object({
+          email: z.string(),
+          name: z.string().optional(),
+          crmContactId: z.number().optional(),
+        })),
+      })).mutation(async ({ input }) => {
+        await db.bulkCreateInvestorUpdateRecipients(
+          input.recipients.map(r => ({ ...r, updateId: input.updateId }))
+        );
+        return { success: true };
+      }),
+    }),
+    send: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
+      const update = await db.getInvestorUpdateById(input.id);
+      if (!update) throw new TRPCError({ code: 'NOT_FOUND', message: 'Update not found' });
+      const recipients = await db.getInvestorUpdateRecipients(input.id);
+      if (recipients.length === 0) throw new TRPCError({ code: 'BAD_REQUEST', message: 'No recipients added' });
+
+      for (const recipient of recipients) {
+        if (isEmailConfigured()) {
+          try {
+            await sendEmail({
+              to: recipient.email,
+              subject: update.title,
+              html: update.bodyHtml || `<h1>${update.title}</h1><p>${update.highlights || ''}</p>`,
+            });
+            await db.updateInvestorUpdateRecipient(recipient.id, { status: 'sent', sentAt: new Date() });
+          } catch {
+            await db.updateInvestorUpdateRecipient(recipient.id, { status: 'bounced' });
+          }
+        }
+      }
+      await db.updateInvestorUpdate(input.id, { status: 'sent', sentAt: new Date(), recipientCount: recipients.length });
+      await createAuditLog(ctx.user.id, 'update', 'investor_update', input.id, `Sent to ${recipients.length} recipients`);
+      return { success: true, recipientCount: recipients.length };
+    }),
+  }),
+
+  // ============================================
+  // CALENDAR & SCHEDULING
+  // ============================================
+  calendar: router({
+    events: router({
+      list: protectedProcedure.input(z.object({
+        from: z.date().optional(),
+        to: z.date().optional(),
+        type: z.string().optional(),
+      }).optional()).query(({ input, ctx }) => db.getCalendarEvents({ ...input, createdBy: undefined })),
+      get: protectedProcedure.input(z.object({ id: z.number() })).query(({ input }) => db.getCalendarEventById(input.id)),
+      create: protectedProcedure.input(z.object({
+        title: z.string().min(1),
+        description: z.string().optional(),
+        startTime: z.date(),
+        endTime: z.date(),
+        allDay: z.boolean().optional(),
+        location: z.string().optional(),
+        meetingUrl: z.string().optional(),
+        type: z.enum(["meeting", "call", "investor_meeting", "board_meeting", "deadline", "milestone", "reminder", "other"]),
+        status: z.enum(["scheduled", "confirmed", "cancelled", "completed"]).optional(),
+        recurrence: z.enum(["none", "daily", "weekly", "biweekly", "monthly", "quarterly"]).optional(),
+        color: z.string().optional(),
+        crmContactId: z.number().optional(),
+        relatedEntityType: z.string().optional(),
+        relatedEntityId: z.number().optional(),
+      })).mutation(async ({ input, ctx }) => {
+        const id = await db.createCalendarEvent({ ...input, createdBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'calendar_event', id, input.title);
+        return { id };
+      }),
+      update: protectedProcedure.input(z.object({
+        id: z.number(),
+        title: z.string().optional(),
+        description: z.string().optional(),
+        startTime: z.date().optional(),
+        endTime: z.date().optional(),
+        allDay: z.boolean().optional(),
+        location: z.string().optional(),
+        meetingUrl: z.string().optional(),
+        type: z.enum(["meeting", "call", "investor_meeting", "board_meeting", "deadline", "milestone", "reminder", "other"]).optional(),
+        status: z.enum(["scheduled", "confirmed", "cancelled", "completed"]).optional(),
+        color: z.string().optional(),
+      })).mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateCalendarEvent(id, data);
+        return { success: true };
+      }),
+      delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
+        await db.deleteCalendarEvent(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'calendar_event', input.id);
+        return { success: true };
+      }),
+    }),
+    attendees: router({
+      list: protectedProcedure.input(z.object({ eventId: z.number() })).query(({ input }) => db.getCalendarEventAttendees(input.eventId)),
+      add: protectedProcedure.input(z.object({
+        eventId: z.number(),
+        email: z.string(),
+        name: z.string().optional(),
+        userId: z.number().optional(),
+        crmContactId: z.number().optional(),
+      })).mutation(async ({ input }) => {
+        const id = await db.createCalendarEventAttendee(input);
+        return { id };
+      }),
+      removeAll: protectedProcedure.input(z.object({ eventId: z.number() })).mutation(async ({ input }) => {
+        await db.deleteCalendarEventAttendees(input.eventId);
+        return { success: true };
+      }),
+    }),
+  }),
+
+  // ============================================
+  // CASH FLOW & FINANCIAL METRICS
+  // ============================================
+  financialMetrics: router({
+    cashFlow: protectedProcedure.input(z.object({
+      fromDate: z.date().optional(),
+      toDate: z.date().optional(),
+    }).optional()).query(({ input }) => db.getCashFlowData(input?.fromDate, input?.toDate)),
+    revenue: protectedProcedure.input(z.object({
+      months: z.number().optional(),
+    }).optional()).query(({ input }) => db.getRevenueMetrics(input?.months)),
+  }),
 });
 
 // Helper function to calculate next generation date for recurring invoices

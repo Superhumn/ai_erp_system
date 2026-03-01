@@ -4471,3 +4471,331 @@ export const copackerShippingDocuments = mysqlTable("copacker_shipping_documents
 
 export type CopackerShippingDocument = typeof copackerShippingDocuments.$inferSelect;
 export type InsertCopackerShippingDocument = typeof copackerShippingDocuments.$inferInsert;
+
+// ============================================
+// CAP TABLE MANAGEMENT
+// ============================================
+
+export const capTableShareholders = mysqlTable("cap_table_shareholders", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  email: varchar("email", { length: 320 }),
+  type: mysqlEnum("type", ["founder", "employee", "investor", "advisor", "company", "other"]).default("investor").notNull(),
+  entityName: varchar("entityName", { length: 255 }),
+  notes: text("notes"),
+  crmContactId: int("crmContactId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CapTableShareholder = typeof capTableShareholders.$inferSelect;
+export type InsertCapTableShareholder = typeof capTableShareholders.$inferInsert;
+
+export const capTableShareClasses = mysqlTable("cap_table_share_classes", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 128 }).notNull(),
+  type: mysqlEnum("type", ["common", "preferred", "options", "warrants", "convertible_note", "safe"]).default("common").notNull(),
+  authorizedShares: decimal("authorizedShares", { precision: 15, scale: 0 }),
+  pricePerShare: decimal("pricePerShare", { precision: 15, scale: 6 }),
+  liquidationPreference: decimal("liquidationPreference", { precision: 5, scale: 2 }),
+  participatingPreferred: boolean("participatingPreferred").default(false),
+  antiDilutionProtection: mysqlEnum("antiDilutionProtection", ["none", "broad_weighted_average", "narrow_weighted_average", "full_ratchet"]).default("none"),
+  votingRights: boolean("votingRights").default(true),
+  dividendRate: decimal("dividendRate", { precision: 5, scale: 2 }),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CapTableShareClass = typeof capTableShareClasses.$inferSelect;
+export type InsertCapTableShareClass = typeof capTableShareClasses.$inferInsert;
+
+export const capTableHoldings = mysqlTable("cap_table_holdings", {
+  id: int("id").autoincrement().primaryKey(),
+  shareholderId: int("shareholderId").notNull(),
+  shareClassId: int("shareClassId").notNull(),
+  shares: decimal("shares", { precision: 15, scale: 0 }).notNull(),
+  purchasePrice: decimal("purchasePrice", { precision: 15, scale: 6 }),
+  vestingStartDate: timestamp("vestingStartDate"),
+  vestingEndDate: timestamp("vestingEndDate"),
+  cliffMonths: int("cliffMonths"),
+  vestingMonths: int("vestingMonths"),
+  vestedShares: decimal("vestedShares", { precision: 15, scale: 0 }),
+  exercisedShares: decimal("exercisedShares", { precision: 15, scale: 0 }).default("0"),
+  grantDate: timestamp("grantDate"),
+  expirationDate: timestamp("expirationDate"),
+  boardApprovalDate: timestamp("boardApprovalDate"),
+  fundingRoundId: int("fundingRoundId"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CapTableHolding = typeof capTableHoldings.$inferSelect;
+export type InsertCapTableHolding = typeof capTableHoldings.$inferInsert;
+
+export const capTableTransactions = mysqlTable("cap_table_transactions", {
+  id: int("id").autoincrement().primaryKey(),
+  type: mysqlEnum("type", ["issuance", "transfer", "exercise", "conversion", "cancellation", "repurchase"]).notNull(),
+  fromShareholderId: int("fromShareholderId"),
+  toShareholderId: int("toShareholderId"),
+  shareClassId: int("shareClassId").notNull(),
+  shares: decimal("shares", { precision: 15, scale: 0 }).notNull(),
+  pricePerShare: decimal("pricePerShare", { precision: 15, scale: 6 }),
+  totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }),
+  transactionDate: timestamp("transactionDate").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CapTableTransaction = typeof capTableTransactions.$inferSelect;
+export type InsertCapTableTransaction = typeof capTableTransactions.$inferInsert;
+
+// ============================================
+// SAFE NOTES
+// ============================================
+
+export const safeNotes = mysqlTable("safe_notes", {
+  id: int("id").autoincrement().primaryKey(),
+  investorId: int("investorId").notNull(),
+  investorName: varchar("investorName", { length: 255 }).notNull(),
+  investorEmail: varchar("investorEmail", { length: 320 }),
+  type: mysqlEnum("type", ["pre_money", "post_money", "mfn"]).default("post_money").notNull(),
+  investmentAmount: decimal("investmentAmount", { precision: 15, scale: 2 }).notNull(),
+  valuationCap: decimal("valuationCap", { precision: 15, scale: 2 }),
+  discountRate: decimal("discountRate", { precision: 5, scale: 2 }),
+  proRataRights: boolean("proRataRights").default(false),
+  mfnProvision: boolean("mfnProvision").default(false),
+  status: mysqlEnum("status", ["draft", "sent", "signed", "converted", "cancelled"]).default("draft").notNull(),
+  issueDate: timestamp("issueDate"),
+  signedDate: timestamp("signedDate"),
+  conversionDate: timestamp("conversionDate"),
+  conversionShareClassId: int("conversionShareClassId"),
+  conversionShares: decimal("conversionShares", { precision: 15, scale: 0 }),
+  conversionPricePerShare: decimal("conversionPricePerShare", { precision: 15, scale: 6 }),
+  fundingRoundId: int("fundingRoundId"),
+  documentUrl: text("documentUrl"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SafeNote = typeof safeNotes.$inferSelect;
+export type InsertSafeNote = typeof safeNotes.$inferInsert;
+
+// ============================================
+// BANK CONNECTIONS (Plaid-style)
+// ============================================
+
+export const bankConnections = mysqlTable("bank_connections", {
+  id: int("id").autoincrement().primaryKey(),
+  institutionName: varchar("institutionName", { length: 255 }).notNull(),
+  institutionId: varchar("institutionId", { length: 128 }),
+  accessToken: text("accessToken"),
+  itemId: varchar("itemId", { length: 255 }),
+  status: mysqlEnum("status", ["active", "needs_reauth", "disconnected", "error"]).default("active").notNull(),
+  lastSyncAt: timestamp("lastSyncAt"),
+  connectedBy: int("connectedBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type BankConnection = typeof bankConnections.$inferSelect;
+export type InsertBankConnection = typeof bankConnections.$inferInsert;
+
+export const bankAccounts = mysqlTable("bank_accounts", {
+  id: int("id").autoincrement().primaryKey(),
+  connectionId: int("connectionId").notNull(),
+  accountId: varchar("accountId", { length: 255 }),
+  name: varchar("name", { length: 255 }).notNull(),
+  officialName: varchar("officialName", { length: 255 }),
+  type: mysqlEnum("type", ["checking", "savings", "credit_card", "loan", "investment", "other"]).default("checking").notNull(),
+  subtype: varchar("subtype", { length: 64 }),
+  mask: varchar("mask", { length: 8 }),
+  currentBalance: decimal("currentBalance", { precision: 15, scale: 2 }),
+  availableBalance: decimal("availableBalance", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  lastSyncAt: timestamp("lastSyncAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type BankAccount = typeof bankAccounts.$inferSelect;
+export type InsertBankAccount = typeof bankAccounts.$inferInsert;
+
+export const bankTransactions = mysqlTable("bank_transactions", {
+  id: int("id").autoincrement().primaryKey(),
+  bankAccountId: int("bankAccountId").notNull(),
+  transactionId: varchar("transactionId", { length: 255 }),
+  name: varchar("name", { length: 255 }).notNull(),
+  merchantName: varchar("merchantName", { length: 255 }),
+  amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
+  date: timestamp("date").notNull(),
+  category: varchar("category", { length: 128 }),
+  pending: boolean("pending").default(false),
+  type: mysqlEnum("type", ["debit", "credit"]).default("debit").notNull(),
+  reconciled: boolean("reconciled").default(false),
+  reconciledTransactionId: int("reconciledTransactionId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type BankTransaction = typeof bankTransactions.$inferSelect;
+export type InsertBankTransaction = typeof bankTransactions.$inferInsert;
+
+// ============================================
+// ANALYTICS CONNECTIONS
+// ============================================
+
+export const analyticsConnections = mysqlTable("analytics_connections", {
+  id: int("id").autoincrement().primaryKey(),
+  provider: mysqlEnum("provider", ["google_analytics", "mixpanel", "amplitude", "posthog", "segment", "custom"]).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  apiKey: text("apiKey"),
+  projectId: varchar("projectId", { length: 255 }),
+  propertyId: varchar("propertyId", { length: 255 }),
+  status: mysqlEnum("status", ["active", "disconnected", "error"]).default("active").notNull(),
+  config: text("config"),
+  lastSyncAt: timestamp("lastSyncAt"),
+  connectedBy: int("connectedBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type AnalyticsConnection = typeof analyticsConnections.$inferSelect;
+export type InsertAnalyticsConnection = typeof analyticsConnections.$inferInsert;
+
+export const analyticsMetrics = mysqlTable("analytics_metrics", {
+  id: int("id").autoincrement().primaryKey(),
+  connectionId: int("connectionId"),
+  metricName: varchar("metricName", { length: 128 }).notNull(),
+  metricType: mysqlEnum("metricType", ["revenue", "users", "sessions", "conversion", "retention", "custom"]).notNull(),
+  value: decimal("value", { precision: 15, scale: 4 }).notNull(),
+  previousValue: decimal("previousValue", { precision: 15, scale: 4 }),
+  period: mysqlEnum("period", ["daily", "weekly", "monthly", "quarterly", "yearly"]).default("monthly").notNull(),
+  periodDate: timestamp("periodDate").notNull(),
+  metadata: text("metadata"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type AnalyticsMetric = typeof analyticsMetrics.$inferSelect;
+export type InsertAnalyticsMetric = typeof analyticsMetrics.$inferInsert;
+
+// ============================================
+// STARTUP ONE-PAGER
+// ============================================
+
+export const startupOnePagers = mysqlTable("startup_one_pagers", {
+  id: int("id").autoincrement().primaryKey(),
+  title: varchar("title", { length: 255 }).notNull(),
+  slug: varchar("slug", { length: 128 }).notNull().unique(),
+  companyName: varchar("companyName", { length: 255 }).notNull(),
+  tagline: varchar("tagline", { length: 500 }),
+  logoUrl: text("logoUrl"),
+  problem: text("problem"),
+  solution: text("solution"),
+  traction: text("traction"),
+  businessModel: text("businessModel"),
+  market: text("market"),
+  team: text("team"),
+  askAmount: decimal("askAmount", { precision: 15, scale: 2 }),
+  askType: mysqlEnum("askType", ["pre_seed", "seed", "series_a", "series_b", "bridge", "other"]).default("seed"),
+  useOfFunds: text("useOfFunds"),
+  contactEmail: varchar("contactEmail", { length: 320 }),
+  contactName: varchar("contactName", { length: 255 }),
+  websiteUrl: varchar("websiteUrl", { length: 500 }),
+  showLiveMetrics: boolean("showLiveMetrics").default(true),
+  showFinancials: boolean("showFinancials").default(false),
+  isPublished: boolean("isPublished").default(false),
+  password: varchar("password", { length: 255 }),
+  viewCount: int("viewCount").default(0),
+  createdBy: int("createdBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type StartupOnePager = typeof startupOnePagers.$inferSelect;
+export type InsertStartupOnePager = typeof startupOnePagers.$inferInsert;
+
+// ============================================
+// INVESTOR UPDATES
+// ============================================
+
+export const investorUpdates = mysqlTable("investor_updates", {
+  id: int("id").autoincrement().primaryKey(),
+  title: varchar("title", { length: 255 }).notNull(),
+  period: mysqlEnum("period", ["weekly", "monthly", "quarterly", "annual", "adhoc"]).default("monthly").notNull(),
+  periodLabel: varchar("periodLabel", { length: 64 }),
+  status: mysqlEnum("status", ["draft", "scheduled", "sent"]).default("draft").notNull(),
+  highlights: text("highlights"),
+  challenges: text("challenges"),
+  asks: text("asks"),
+  metrics: text("metrics"),
+  bodyHtml: text("bodyHtml"),
+  sentAt: timestamp("sentAt"),
+  scheduledAt: timestamp("scheduledAt"),
+  recipientCount: int("recipientCount").default(0),
+  openCount: int("openCount").default(0),
+  createdBy: int("createdBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InvestorUpdate = typeof investorUpdates.$inferSelect;
+export type InsertInvestorUpdate = typeof investorUpdates.$inferInsert;
+
+export const investorUpdateRecipients = mysqlTable("investor_update_recipients", {
+  id: int("id").autoincrement().primaryKey(),
+  updateId: int("updateId").notNull(),
+  email: varchar("email", { length: 320 }).notNull(),
+  name: varchar("name", { length: 255 }),
+  crmContactId: int("crmContactId"),
+  status: mysqlEnum("status", ["pending", "sent", "delivered", "opened", "bounced"]).default("pending").notNull(),
+  sentAt: timestamp("sentAt"),
+  openedAt: timestamp("openedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type InvestorUpdateRecipient = typeof investorUpdateRecipients.$inferSelect;
+export type InsertInvestorUpdateRecipient = typeof investorUpdateRecipients.$inferInsert;
+
+// ============================================
+// CALENDAR & SCHEDULING
+// ============================================
+
+export const calendarEvents = mysqlTable("calendar_events", {
+  id: int("id").autoincrement().primaryKey(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  startTime: timestamp("startTime").notNull(),
+  endTime: timestamp("endTime").notNull(),
+  allDay: boolean("allDay").default(false),
+  location: varchar("location", { length: 500 }),
+  meetingUrl: text("meetingUrl"),
+  type: mysqlEnum("type", ["meeting", "call", "investor_meeting", "board_meeting", "deadline", "milestone", "reminder", "other"]).default("meeting").notNull(),
+  status: mysqlEnum("status", ["scheduled", "confirmed", "cancelled", "completed"]).default("scheduled").notNull(),
+  recurrence: mysqlEnum("recurrence", ["none", "daily", "weekly", "biweekly", "monthly", "quarterly"]).default("none"),
+  color: varchar("color", { length: 7 }),
+  relatedEntityType: varchar("relatedEntityType", { length: 64 }),
+  relatedEntityId: int("relatedEntityId"),
+  crmContactId: int("crmContactId"),
+  createdBy: int("createdBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CalendarEvent = typeof calendarEvents.$inferSelect;
+export type InsertCalendarEvent = typeof calendarEvents.$inferInsert;
+
+export const calendarEventAttendees = mysqlTable("calendar_event_attendees", {
+  id: int("id").autoincrement().primaryKey(),
+  eventId: int("eventId").notNull(),
+  email: varchar("email", { length: 320 }).notNull(),
+  name: varchar("name", { length: 255 }),
+  rsvpStatus: mysqlEnum("rsvpStatus", ["pending", "accepted", "declined", "tentative"]).default("pending").notNull(),
+  userId: int("userId"),
+  crmContactId: int("crmContactId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CalendarEventAttendee = typeof calendarEventAttendees.$inferSelect;
+export type InsertCalendarEventAttendee = typeof calendarEventAttendees.$inferInsert;

@@ -69,6 +69,14 @@ import {
   Heart,
   Mic,
   BookOpen,
+  PieChart,
+  Shield,
+  Landmark,
+  BarChart3,
+  Calendar,
+  Flame,
+  LineChart,
+  SendHorizontal,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -102,6 +110,18 @@ const menuGroups = [
       { icon: Target, label: "Campaigns", path: "/crm/campaigns" },
       { icon: DollarSign, label: "Accounts", path: "/finance/accounts" },
       { icon: TrendingUp, label: "Transactions", path: "/finance/transactions" },
+      { icon: Flame, label: "Cash Flow", path: "/finance/cash-flow" },
+      { icon: LineChart, label: "Growth Metrics", path: "/finance/growth" },
+    ],
+  },
+  {
+    label: "Fundraising",
+    items: [
+      { icon: PieChart, label: "Cap Table", path: "/finance/cap-table" },
+      { icon: Shield, label: "SAFE Notes", path: "/finance/safe-notes" },
+      { icon: FileText, label: "One-Pager", path: "/finance/one-pager" },
+      { icon: SendHorizontal, label: "Investor Updates", path: "/finance/investor-updates" },
+      { icon: Landmark, label: "Bank Connections", path: "/finance/banking" },
     ],
   },
   {
@@ -135,6 +155,7 @@ const menuGroups = [
   {
     label: "Projects & Data",
     items: [
+      { icon: Calendar, label: "Calendar", path: "/calendar" },
       { icon: FolderKanban, label: "Projects", path: "/projects" },
       { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
       { icon: BookOpen, label: "SOPs", path: "/sops" },
@@ -145,6 +166,7 @@ const menuGroups = [
     items: [
       { icon: Users, label: "Team", path: "/settings/team" },
       { icon: Plug, label: "Integrations", path: "/settings/integrations" },
+      { icon: BarChart3, label: "Analytics", path: "/settings/analytics" },
       { icon: Mic, label: "Fireflies", path: "/settings/fireflies" },
       { icon: FileSpreadsheet, label: "Import Data", path: "/import" },
       { icon: Settings, label: "Settings", path: "/settings" },

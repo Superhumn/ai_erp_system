@@ -93,7 +93,26 @@ import {
   InsertFirefliesMeeting, InsertFirefliesActionItem, InsertFirefliesContactMapping,
   // Copacker portal
   copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
-  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument
+  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
+  // Cap table
+  capTableShareholders, capTableShareClasses, capTableHoldings, capTableTransactions,
+  InsertCapTableShareholder, InsertCapTableShareClass, InsertCapTableHolding, InsertCapTableTransaction,
+  // SAFE notes
+  safeNotes, InsertSafeNote,
+  // Bank connections
+  bankConnections, bankAccounts, bankTransactions,
+  InsertBankConnection, InsertBankAccount, InsertBankTransaction,
+  // Analytics
+  analyticsConnections, analyticsMetrics,
+  InsertAnalyticsConnection, InsertAnalyticsMetric,
+  // Startup one-pager
+  startupOnePagers, InsertStartupOnePager,
+  // Investor updates
+  investorUpdates, investorUpdateRecipients,
+  InsertInvestorUpdate, InsertInvestorUpdateRecipient,
+  // Calendar
+  calendarEvents, calendarEventAttendees,
+  InsertCalendarEvent, InsertCalendarEventAttendee
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8334,4 +8353,477 @@ export async function getProductByName(name: string) {
   if (!db) return null;
   const results = await db.select().from(products).where(sql`LOWER(${products.name}) = LOWER(${name})`).limit(1);
   return results[0] || null;
+}
+
+// ============================================
+// CAP TABLE MANAGEMENT
+// ============================================
+
+export async function getCapTableShareholders() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(capTableShareholders).orderBy(capTableShareholders.name);
+}
+
+export async function getCapTableShareholderById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(capTableShareholders).where(eq(capTableShareholders.id, id)).limit(1);
+  return results[0] || null;
+}
+
+export async function createCapTableShareholder(data: InsertCapTableShareholder) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(capTableShareholders).values(data);
+  return result[0].insertId;
+}
+
+export async function updateCapTableShareholder(id: number, data: Partial<InsertCapTableShareholder>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(capTableShareholders).set(data).where(eq(capTableShareholders.id, id));
+}
+
+export async function deleteCapTableShareholder(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(capTableShareholders).where(eq(capTableShareholders.id, id));
+}
+
+export async function getCapTableShareClasses() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(capTableShareClasses).orderBy(capTableShareClasses.name);
+}
+
+export async function createCapTableShareClass(data: InsertCapTableShareClass) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(capTableShareClasses).values(data);
+  return result[0].insertId;
+}
+
+export async function updateCapTableShareClass(id: number, data: Partial<InsertCapTableShareClass>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(capTableShareClasses).set(data).where(eq(capTableShareClasses.id, id));
+}
+
+export async function deleteCapTableShareClass(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(capTableShareClasses).where(eq(capTableShareClasses.id, id));
+}
+
+export async function getCapTableHoldings() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(capTableHoldings).orderBy(desc(capTableHoldings.createdAt));
+}
+
+export async function getCapTableHoldingsByShareholder(shareholderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(capTableHoldings).where(eq(capTableHoldings.shareholderId, shareholderId));
+}
+
+export async function createCapTableHolding(data: InsertCapTableHolding) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(capTableHoldings).values(data);
+  return result[0].insertId;
+}
+
+export async function updateCapTableHolding(id: number, data: Partial<InsertCapTableHolding>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(capTableHoldings).set(data).where(eq(capTableHoldings.id, id));
+}
+
+export async function deleteCapTableHolding(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(capTableHoldings).where(eq(capTableHoldings.id, id));
+}
+
+export async function getCapTableTransactions() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(capTableTransactions).orderBy(desc(capTableTransactions.transactionDate));
+}
+
+export async function createCapTableTransaction(data: InsertCapTableTransaction) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(capTableTransactions).values(data);
+  return result[0].insertId;
+}
+
+// ============================================
+// SAFE NOTES
+// ============================================
+
+export async function getSafeNotes() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(safeNotes).orderBy(desc(safeNotes.createdAt));
+}
+
+export async function getSafeNoteById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(safeNotes).where(eq(safeNotes.id, id)).limit(1);
+  return results[0] || null;
+}
+
+export async function createSafeNote(data: InsertSafeNote) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(safeNotes).values(data);
+  return result[0].insertId;
+}
+
+export async function updateSafeNote(id: number, data: Partial<InsertSafeNote>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(safeNotes).set(data).where(eq(safeNotes.id, id));
+}
+
+export async function deleteSafeNote(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(safeNotes).where(eq(safeNotes.id, id));
+}
+
+// ============================================
+// BANK CONNECTIONS
+// ============================================
+
+export async function getBankConnections() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(bankConnections).orderBy(desc(bankConnections.createdAt));
+}
+
+export async function createBankConnection(data: InsertBankConnection) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(bankConnections).values(data);
+  return result[0].insertId;
+}
+
+export async function updateBankConnection(id: number, data: Partial<InsertBankConnection>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(bankConnections).set(data).where(eq(bankConnections.id, id));
+}
+
+export async function deleteBankConnection(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(bankConnections).where(eq(bankConnections.id, id));
+}
+
+export async function getBankAccounts(connectionId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (connectionId) {
+    return db.select().from(bankAccounts).where(eq(bankAccounts.connectionId, connectionId)).orderBy(bankAccounts.name);
+  }
+  return db.select().from(bankAccounts).orderBy(bankAccounts.name);
+}
+
+export async function createBankAccount(data: InsertBankAccount) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(bankAccounts).values(data);
+  return result[0].insertId;
+}
+
+export async function updateBankAccount(id: number, data: Partial<InsertBankAccount>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(bankAccounts).set(data).where(eq(bankAccounts.id, id));
+}
+
+export async function getBankTransactions(bankAccountId?: number, limit?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (bankAccountId) conditions.push(eq(bankTransactions.bankAccountId, bankAccountId));
+  const query = conditions.length > 0
+    ? db.select().from(bankTransactions).where(and(...conditions)).orderBy(desc(bankTransactions.date))
+    : db.select().from(bankTransactions).orderBy(desc(bankTransactions.date));
+  if (limit) return query.limit(limit);
+  return query;
+}
+
+export async function createBankTransaction(data: InsertBankTransaction) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(bankTransactions).values(data);
+  return result[0].insertId;
+}
+
+// ============================================
+// ANALYTICS CONNECTIONS
+// ============================================
+
+export async function getAnalyticsConnections() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(analyticsConnections).orderBy(desc(analyticsConnections.createdAt));
+}
+
+export async function createAnalyticsConnection(data: InsertAnalyticsConnection) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(analyticsConnections).values(data);
+  return result[0].insertId;
+}
+
+export async function updateAnalyticsConnection(id: number, data: Partial<InsertAnalyticsConnection>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(analyticsConnections).set(data).where(eq(analyticsConnections.id, id));
+}
+
+export async function deleteAnalyticsConnection(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(analyticsConnections).where(eq(analyticsConnections.id, id));
+}
+
+export async function getAnalyticsMetrics(opts?: { connectionId?: number; metricType?: string; period?: string; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (opts?.connectionId) conditions.push(eq(analyticsMetrics.connectionId, opts.connectionId));
+  if (opts?.metricType) conditions.push(eq(analyticsMetrics.metricType, opts.metricType as any));
+  if (opts?.period) conditions.push(eq(analyticsMetrics.period, opts.period as any));
+  const query = conditions.length > 0
+    ? db.select().from(analyticsMetrics).where(and(...conditions)).orderBy(desc(analyticsMetrics.periodDate))
+    : db.select().from(analyticsMetrics).orderBy(desc(analyticsMetrics.periodDate));
+  if (opts?.limit) return query.limit(opts.limit);
+  return query;
+}
+
+export async function createAnalyticsMetric(data: InsertAnalyticsMetric) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(analyticsMetrics).values(data);
+  return result[0].insertId;
+}
+
+export async function bulkCreateAnalyticsMetrics(data: InsertAnalyticsMetric[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (data.length === 0) return;
+  await db.insert(analyticsMetrics).values(data);
+}
+
+// ============================================
+// STARTUP ONE-PAGER
+// ============================================
+
+export async function getStartupOnePagers() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(startupOnePagers).orderBy(desc(startupOnePagers.updatedAt));
+}
+
+export async function getStartupOnePagerById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(startupOnePagers).where(eq(startupOnePagers.id, id)).limit(1);
+  return results[0] || null;
+}
+
+export async function getStartupOnePagerBySlug(slug: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(startupOnePagers).where(eq(startupOnePagers.slug, slug)).limit(1);
+  return results[0] || null;
+}
+
+export async function createStartupOnePager(data: InsertStartupOnePager) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(startupOnePagers).values(data);
+  return result[0].insertId;
+}
+
+export async function updateStartupOnePager(id: number, data: Partial<InsertStartupOnePager>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(startupOnePagers).set(data).where(eq(startupOnePagers.id, id));
+}
+
+export async function deleteStartupOnePager(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(startupOnePagers).where(eq(startupOnePagers.id, id));
+}
+
+export async function incrementOnePagerViewCount(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(startupOnePagers).set({ viewCount: sql`${startupOnePagers.viewCount} + 1` }).where(eq(startupOnePagers.id, id));
+}
+
+// ============================================
+// INVESTOR UPDATES
+// ============================================
+
+export async function getInvestorUpdates() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(investorUpdates).orderBy(desc(investorUpdates.createdAt));
+}
+
+export async function getInvestorUpdateById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(investorUpdates).where(eq(investorUpdates.id, id)).limit(1);
+  return results[0] || null;
+}
+
+export async function createInvestorUpdate(data: InsertInvestorUpdate) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(investorUpdates).values(data);
+  return result[0].insertId;
+}
+
+export async function updateInvestorUpdate(id: number, data: Partial<InsertInvestorUpdate>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(investorUpdates).set(data).where(eq(investorUpdates.id, id));
+}
+
+export async function deleteInvestorUpdate(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(investorUpdates).where(eq(investorUpdates.id, id));
+}
+
+export async function getInvestorUpdateRecipients(updateId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(investorUpdateRecipients).where(eq(investorUpdateRecipients.updateId, updateId));
+}
+
+export async function createInvestorUpdateRecipient(data: InsertInvestorUpdateRecipient) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(investorUpdateRecipients).values(data);
+  return result[0].insertId;
+}
+
+export async function bulkCreateInvestorUpdateRecipients(data: InsertInvestorUpdateRecipient[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (data.length === 0) return;
+  await db.insert(investorUpdateRecipients).values(data);
+}
+
+export async function updateInvestorUpdateRecipient(id: number, data: Partial<InsertInvestorUpdateRecipient>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(investorUpdateRecipients).set(data).where(eq(investorUpdateRecipients.id, id));
+}
+
+// ============================================
+// CALENDAR & SCHEDULING
+// ============================================
+
+export async function getCalendarEvents(opts?: { from?: Date; to?: Date; type?: string; createdBy?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (opts?.from) conditions.push(gte(calendarEvents.startTime, opts.from));
+  if (opts?.to) conditions.push(lte(calendarEvents.startTime, opts.to));
+  if (opts?.type) conditions.push(eq(calendarEvents.type, opts.type as any));
+  if (opts?.createdBy) conditions.push(eq(calendarEvents.createdBy, opts.createdBy));
+  const query = conditions.length > 0
+    ? db.select().from(calendarEvents).where(and(...conditions)).orderBy(calendarEvents.startTime)
+    : db.select().from(calendarEvents).orderBy(calendarEvents.startTime);
+  return query;
+}
+
+export async function getCalendarEventById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const results = await db.select().from(calendarEvents).where(eq(calendarEvents.id, id)).limit(1);
+  return results[0] || null;
+}
+
+export async function createCalendarEvent(data: InsertCalendarEvent) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(calendarEvents).values(data);
+  return result[0].insertId;
+}
+
+export async function updateCalendarEvent(id: number, data: Partial<InsertCalendarEvent>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(calendarEvents).set(data).where(eq(calendarEvents.id, id));
+}
+
+export async function deleteCalendarEvent(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(calendarEvents).where(eq(calendarEvents.id, id));
+}
+
+export async function getCalendarEventAttendees(eventId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(calendarEventAttendees).where(eq(calendarEventAttendees.eventId, eventId));
+}
+
+export async function createCalendarEventAttendee(data: InsertCalendarEventAttendee) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(calendarEventAttendees).values(data);
+  return result[0].insertId;
+}
+
+export async function deleteCalendarEventAttendees(eventId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(calendarEventAttendees).where(eq(calendarEventAttendees.eventId, eventId));
+}
+
+// ============================================
+// CASH FLOW & FINANCIAL METRICS
+// ============================================
+
+export async function getCashFlowData(fromDate?: Date, toDate?: Date) {
+  const db = await getDb();
+  if (!db) return { inflows: [], outflows: [], bankBalances: [] };
+
+  const conditions: any[] = [];
+  if (fromDate) conditions.push(gte(payments.paymentDate, fromDate));
+  if (toDate) conditions.push(lte(payments.paymentDate, toDate));
+
+  const paymentData = conditions.length > 0
+    ? await db.select().from(payments).where(and(...conditions)).orderBy(payments.paymentDate)
+    : await db.select().from(payments).orderBy(payments.paymentDate);
+
+  const balances = await db.select().from(bankAccounts).orderBy(bankAccounts.name);
+
+  return { payments: paymentData, bankBalances: balances };
+}
+
+export async function getRevenueMetrics(months: number = 12) {
+  const db = await getDb();
+  if (!db) return [];
+  const fromDate = new Date();
+  fromDate.setMonth(fromDate.getMonth() - months);
+  return db.select().from(invoices)
+    .where(and(gte(invoices.createdAt, fromDate), eq(invoices.status, "paid")))
+    .orderBy(invoices.createdAt);
 }

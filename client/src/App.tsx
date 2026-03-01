@@ -107,6 +107,18 @@ import DataRooms from "./pages/DataRooms";
 import DataRoomDetail from "./pages/DataRoomDetail";
 import DataRoomPublic from "./pages/DataRoomPublic";
 
+// Startup & Fundraising
+import CapTable from "./pages/finance/CapTable";
+import SafeNotes from "./pages/finance/SafeNotes";
+import BankConnections from "./pages/finance/BankConnections";
+import OnePager from "./pages/finance/OnePager";
+import OnePagerPublic from "./pages/OnePagerPublic";
+import InvestorUpdates from "./pages/finance/InvestorUpdates";
+import CashFlowDashboard from "./pages/finance/CashFlowDashboard";
+import GrowthMetrics from "./pages/finance/GrowthMetrics";
+import Analytics from "./pages/settings/Analytics";
+import CalendarPage from "./pages/Calendar";
+
 // AI Agent
 import ApprovalQueue from "./pages/ai/ApprovalQueue";
 
@@ -134,6 +146,7 @@ function Router() {
         <Route path="/notifications" component={Notifications} />
         <Route path="/settings" component={Settings} />
         <Route path="/settings/integrations" component={Integrations} />
+        <Route path="/settings/analytics" component={Analytics} />
         <Route path="/settings/notifications" component={NotificationSettings} />
         <Route path="/settings/emails" component={TransactionalEmails} />
         <Route path="/settings/fireflies" component={Fireflies} />
@@ -143,6 +156,13 @@ function Router() {
         <Route path="/finance/invoices" component={Invoices} />
         <Route path="/finance/payments" component={Payments} />
         <Route path="/finance/transactions" component={Transactions} />
+        <Route path="/finance/cash-flow" component={CashFlowDashboard} />
+        <Route path="/finance/growth" component={GrowthMetrics} />
+        <Route path="/finance/cap-table" component={CapTable} />
+        <Route path="/finance/safe-notes" component={SafeNotes} />
+        <Route path="/finance/one-pager" component={OnePager} />
+        <Route path="/finance/investor-updates" component={InvestorUpdates} />
+        <Route path="/finance/banking" component={BankConnections} />
 
         {/* Sales */}
         <Route path="/sales/orders/:id" component={OrderDetail} />
@@ -220,6 +240,9 @@ function Router() {
         {/* SOPs */}
         <Route path="/sops" component={SOPs} />
 
+        {/* Calendar */}
+        <Route path="/calendar" component={CalendarPage} />
+
         {/* Data Room */}
         <Route path="/datarooms" component={DataRooms} />
         <Route path="/dataroom/:id" component={DataRoomDetail} />
@@ -242,6 +265,8 @@ function App() {
             <Switch>
               {/* Public Data Room Access (outside dashboard) */}
               <Route path="/share/:code" component={DataRoomPublic} />
+              {/* Public Startup One-Pager */}
+              <Route path="/pitch/:slug" component={OnePagerPublic} />
               {/* Supplier Portal (public) */}
               <Route path="/supplier-portal/:token" component={SupplierPortal} />
               {/* All other routes go through dashboard */}
