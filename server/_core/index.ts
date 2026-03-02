@@ -294,6 +294,11 @@ async function startServer() {
     }
   });
 
+  // Health check endpoint for Railway and other deployment platforms
+  app.get("/api/health", (_req, res) => {
+    res.status(200).json({ ok: true });
+  });
+
   // tRPC API
   app.use("/api/trpc", createExpressMiddleware({ router: appRouter, createContext }));
   
