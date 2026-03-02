@@ -4325,7 +4325,16 @@ export const cogsPeriodSummary = mysqlTable("cogsPeriodSummary", {
   endingInventoryValue: decimal("endingInventoryValue", { precision: 15, scale: 2 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (table) => ({
+  // Unique constraint to prevent duplicate summaries for the same period
+  uniquePeriodSummary: uniqueIndex("idx_cogs_period_unique").on(
+    table.companyId,
+    table.productId,
+    table.periodType,
+    table.periodStart,
+    table.periodEnd
+  ),
+}));
 
 export type CogsPeriodSummary = typeof cogsPeriodSummary.$inferSelect;
 export type InsertCogsPeriodSummary = typeof cogsPeriodSummary.$inferInsert;

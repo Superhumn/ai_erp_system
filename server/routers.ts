@@ -12392,8 +12392,8 @@ Ask if they received the original request and if they can provide a quote.`;
           warehouseId: z.number().optional(),
           purchaseOrderId: z.number().optional(),
           lotId: z.number().optional(),
-          quantity: z.number(),
-          unitCost: z.number(),
+          quantity: z.number().gt(0),
+          unitCost: z.number().min(0),
           referenceType: z.string().optional(),
           referenceId: z.number().optional(),
           layerDate: z.date().optional(),
@@ -12432,8 +12432,8 @@ Ask if they received the original request and if they can provide a quote.`;
           warehouseId: z.number().optional(),
           orderId: z.number().optional(),
           salesOrderLineId: z.number().optional(),
-          quantitySold: z.number(),
-          unitRevenue: z.number().optional(),
+          quantitySold: z.number().gt(0),
+          unitRevenue: z.number().min(0).optional(),
         }))
         .mutation(async ({ input, ctx }) => {
           const result = await recordCogs({ ...input, calculatedBy: ctx.user.id });
@@ -12515,7 +12515,6 @@ Ask if they received the original request and if they can provide a quote.`;
         targetMinOrderAmount: z.coerce.number().optional(),
         targetAnnualVolume: z.coerce.number().optional(),
         assignedTo: z.number().optional(),
-        notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;

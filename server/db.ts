@@ -8187,6 +8187,42 @@ export async function getCogsSummary(filters?: {
   return query.orderBy(desc(cogsPeriodSummary.periodStart));
 }
 
+/**
+ * Get an existing COGS period summary record by period parameters.
+ * Note: undefined companyId/productId represents NULL in the database (company-wide or product-wide aggregation)
+ */
+export async function getCogsPeriodSummary(params: {
+  companyId?: number;
+  productId?: number;
+  periodType: "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
+  periodStart: Date;
+  periodEnd: Date;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const conditions = [
+    eq(cogsPeriodSummary.periodType, params.periodType),
+    eq(cogsPeriodSummary.periodStart, params.periodStart),
+    eq(cogsPeriodSummary.periodEnd, params.periodEnd),
+  ];
+  
+  if (params.companyId !== undefined) {
+    conditions.push(eq(cogsPeriodSummary.companyId, params.companyId));
+  } else {
+    conditions.push(isNull(cogsPeriodSummary.companyId));
+  }
+  
+  if (params.productId !== undefined) {
+    conditions.push(eq(cogsPeriodSummary.productId, params.productId));
+  } else {
+    conditions.push(isNull(cogsPeriodSummary.productId));
+  }
+  
+  const results = await db.select().from(cogsPeriodSummary).where(and(...conditions));
+  return results[0] || null;
+}
+
 export async function createCogsPeriodSummaryRecord(data: InsertCogsPeriodSummary) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -8198,6 +8234,7 @@ export async function updateCogsPeriodSummaryRecord(id: number, data: Partial<In
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(cogsPeriodSummary).set(data as any).where(eq(cogsPeriodSummary.id, id));
+  return { id };
 }
 
 // Aggregated COGS dashboard stats

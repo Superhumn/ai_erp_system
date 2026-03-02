@@ -71,10 +71,11 @@ export async function analyzeNegotiationOpportunity(params: {
   // Get product details if provided
   let productDetails: any[] = [];
   if (params.productIds?.length) {
-    for (const pid of params.productIds) {
-      const product = await db.getProductById(pid);
-      if (product) productDetails.push(product);
-    }
+    const productPromises = params.productIds.map((pid) =>
+      db.getProductById(pid)
+    );
+    const products = await Promise.all(productPromises);
+    productDetails = products.filter((product) => product);
   }
 
   // Get recent POs for price trend analysis
@@ -114,6 +115,68 @@ Respond ONLY with valid JSON matching this schema:
         { role: "system", content: "You are a procurement and negotiation expert. Analyze vendor data and provide strategic negotiation recommendations. Always respond with valid JSON only." },
         { role: "user", content: analysisPrompt },
       ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "NegotiationAnalysis",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              leveragePoints: {
+                type: "array",
+                items: { type: "string" },
+                default: [],
+              },
+              marketBenchmark: {
+                type: ["object", "null"],
+                nullable: true,
+                properties: {
+                  low: { type: "number" },
+                  average: { type: "number" },
+                  high: { type: "number" },
+                },
+                required: ["low", "average", "high"],
+                additionalProperties: false,
+              },
+              vendorDependency: {
+                type: "string",
+                enum: ["low", "medium", "high"],
+              },
+              recommendedStrategy: {
+                type: "string",
+              },
+              targetPriceReduction: {
+                type: "number",
+              },
+              confidenceScore: {
+                type: "number",
+              },
+              risks: {
+                type: "array",
+                items: { type: "string" },
+                default: [],
+              },
+              alternativeVendors: {
+                type: "array",
+                items: { type: "string" },
+                default: [],
+              },
+            },
+            required: [
+              "leveragePoints",
+              "marketBenchmark",
+              "vendorDependency",
+              "recommendedStrategy",
+              "targetPriceReduction",
+              "confidenceScore",
+              "risks",
+              "alternativeVendors",
+            ],
+          },
+        },
+      },
     });
 
     const text = typeof aiResult.content === "string" ? aiResult.content : "";
@@ -129,6 +192,76 @@ Respond ONLY with valid JSON matching this schema:
       // If validation fails, log and fall through to rule-based analysis
       console.warn(`LLM analysis response failed validation for vendorId ${params.vendorId}, productIds: ${params.productIds?.join(',') || 'none'}:`, validated.error.format());
     }
+
+    if (!parsed || typeof parsed !== "object") {
+      throw new Error("LLM response was not an object");
+    }
+
+    const leveragePoints: string[] = Array.isArray(parsed.leveragePoints)
+      ? parsed.leveragePoints.map((p: any) => String(p))
+      : [];
+
+    const risks: string[] = Array.isArray(parsed.risks)
+      ? parsed.risks.map((r: any) => String(r))
+      : [];
+
+    const alternativeVendors: string[] = Array.isArray(parsed.alternativeVendors)
+      ? parsed.alternativeVendors.map((v: any) => String(v))
+      : [];
+
+    const vendorDependencyRaw = String(parsed.vendorDependency || "medium").toLowerCase();
+    const vendorDependency: "low" | "medium" | "high" =
+      vendorDependencyRaw === "low" || vendorDependencyRaw === "high"
+        ? (vendorDependencyRaw as "low" | "medium" | "high")
+        : "medium";
+
+    const recommendedStrategy =
+      typeof parsed.recommendedStrategy === "string"
+        ? parsed.recommendedStrategy
+        : "";
+
+    const clampNumber = (value: any, min: number, max: number, fallback: number) => {
+      const num = typeof value === "number" ? value : Number(value);
+      if (!Number.isFinite(num)) return fallback;
+      return Math.min(Math.max(num, min), max);
+    };
+
+    const targetPriceReduction = clampNumber(
+      parsed.targetPriceReduction,
+      0,
+      50,
+      0
+    );
+
+    const confidenceScore = clampNumber(
+      parsed.confidenceScore,
+      0,
+      100,
+      0
+    );
+
+    let marketBenchmark: { low: number; average: number; high: number } | null = null;
+    if (parsed.marketBenchmark && typeof parsed.marketBenchmark === "object") {
+      const mb = parsed.marketBenchmark as any;
+      const maxBenchmark = 1_000_000;
+      const low = clampNumber(mb.low, 0, maxBenchmark, 0);
+      const average = clampNumber(mb.average, 0, maxBenchmark, 0);
+      const high = clampNumber(mb.high, 0, maxBenchmark, 0);
+      marketBenchmark = { low, average, high };
+    }
+
+    const result: NegotiationAnalysis = {
+      leveragePoints,
+      marketBenchmark,
+      vendorDependency,
+      recommendedStrategy,
+      targetPriceReduction,
+      confidenceScore,
+      risks,
+      alternativeVendors,
+    };
+
+    return result;
   } catch (e) {
     // Fall back to rule-based analysis
     console.warn(`LLM analysis failed for vendorId ${params.vendorId}:`, e);
@@ -195,8 +328,8 @@ Context:
 - Negotiation Type: ${negotiation.type}
 - Current Unit Price: $${negotiation.currentUnitPrice || "N/A"}
 - Target Unit Price: $${negotiation.targetUnitPrice || "N/A"}
-- Current Payment Terms: ${negotiation.currentPaymentTerms || "N/A"} days
-- Target Payment Terms: ${negotiation.targetPaymentTerms || "N/A"} days
+- Current Payment Terms: ${negotiation.currentPaymentTerms != null ? `${negotiation.currentPaymentTerms} days` : "N/A"}
+- Target Payment Terms: ${negotiation.targetPaymentTerms != null ? `${negotiation.targetPaymentTerms} days` : "N/A"}
 - Message Type: ${params.messageType}
 - Round: ${params.roundNumber}
 
@@ -220,7 +353,8 @@ Respond ONLY with valid JSON:
       ],
     });
 
-    const text = typeof aiResult.content === "string" ? aiResult.content : "";
+    const content = aiResult.choices[0]?.message?.content;
+    const text = typeof content === "string" ? content : "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
