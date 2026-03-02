@@ -500,6 +500,7 @@ function DashboardLayoutContent({
         <header className="flex h-14 items-center justify-between border-b border-border/50 bg-background/80 px-4 backdrop-blur-xl sticky top-0 z-40">
           <div className="flex items-center gap-3">
             {isMobile && <SidebarTrigger className="h-9 w-9 rounded-lg" />}
+            {/* Desktop search bar */}
             <button
               onClick={() => setAiCommandOpen(true)}
               className="relative hidden sm:flex items-center gap-2.5 w-72 h-9 px-3.5 bg-muted/40 hover:bg-muted/70 rounded-xl border border-border/50 text-sm text-muted-foreground transition-all duration-150"
@@ -510,13 +511,23 @@ function DashboardLayoutContent({
                 <span className="text-xs">⌘</span>K
               </kbd>
             </button>
+            {/* Mobile search button */}
+            {isMobile && (
+              <button
+                onClick={() => setAiCommandOpen(true)}
+                className="flex sm:hidden items-center justify-center h-9 w-9 rounded-lg bg-muted/40 hover:bg-muted/70 border border-border/50 text-muted-foreground transition-colors"
+                aria-label="Search or ask AI"
+              >
+                <Search className="h-4 w-4" />
+              </button>
+            )}
           </div>
           <div className="flex items-center gap-1.5">
             <NotificationCenter />
           </div>
         </header>
         <AICommandBar open={aiCommandOpen} onOpenChange={setAiCommandOpen} />
-        <main className="flex-1 overflow-auto p-4 md:p-6 lg:p-8">{children}</main>
+        <main className="flex-1 overflow-auto p-4 pb-20 md:p-6 md:pb-6 lg:p-8 lg:pb-8">{children}</main>
       </SidebarInset>
 
       {/* Floating AI Assistant - available throughout the app */}

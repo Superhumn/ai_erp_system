@@ -46,6 +46,64 @@ async function startServer() {
 
   const app = express();
   const server = createServer(app);
+
+  // =====================================  // SECURITY HEADERS
+  // ============================================
+  app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("X-XSS-Protection", "1; mode=block");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    if (process.env.NODE_ENV === "production") {
+      res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    }
+    next();
+  });
+
+  // ============================================
+  // RATE LIMITING
+  // ============================================
+  const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
+  const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+  const RATE_LIMIT_MAX = 200; // requests per window
+
+  app.use("/api/", (req, res, next) => {
+    const ip = req.ip || req.socket.remoteAddress || "unknown";
+    const now = Date.now();
+    const entry = rateLimitMap.get(ip);
+
+    if (!entry || now > entry.resetTime) {
+      rateLimitMap.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
+      return next();
+    }
+
+    entry.count++;
+    if (entry.count > RATE_LIMIT_MAX) {
+      res.setHeader("Retry-After", String(Math.ceil((entry.resetTime - now) / 1000)));
+      return res.status(429).json({ error: "Too many requests. Please try again later." });
+    }
+
+    next();
+  });
+
+  // Periodically clean up stale rate limit entries
+  setInterval(() => {
+    const now = Date.now();
+    for (const [ip, entry] of rateLimitMap) {
+      if (now > entry.resetTime) rateLimitMap.delete(ip);
+    }
+  }, RATE_LIMIT_WINDOW_MS);
+
+  // ============================================
+  // HEALTH CHECK
+  // ============================================
+  app.get("/health", (_req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString(), uptime: process.uptime() });
+  });
+
+  // Configure body parser with larger size limit for file uploads
+=======
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 

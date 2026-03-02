@@ -352,6 +352,8 @@ const quickActions = [
   { icon: Package, label: "Add new material", query: "Create a new raw material", context: ["procurement", "inventory"], taskType: "create_material" as TaskType },
   { icon: Box, label: "Add new product", query: "Create a new product", context: ["products", "manufacturing"], taskType: "create_product" as TaskType },
   { icon: Users, label: "Add new customer", query: "Create a new customer", context: ["sales", "customer"], taskType: "create_customer" as TaskType },
+  // Vendor suggestion
+  { icon: Building, label: "Suggest vendor", query: "Suggest the best vendor for this material based on order history", context: ["procurement", "vendor", "material"], taskType: "generate_po" as TaskType },
   // Email and approval actions
   { icon: Mail, label: "Reply to vendor email", query: "Draft a reply to this vendor's email", context: ["vendor", "email"], taskType: "reply_email" as TaskType },
   { icon: CheckCircle, label: "Approve pending PO", query: "Review and approve this purchase order", context: ["po", "approval"], taskType: "approve_po" as TaskType },
@@ -519,8 +521,24 @@ function parseIntent(query: string): ParsedIntent {
     };
   }
   
+  // Check for vendor suggestion intent
+  if ((lowerQuery.includes("suggest") || lowerQuery.includes("recommend") || lowerQuery.includes("best") || lowerQuery.includes("who sells") || lowerQuery.includes("where to buy")) &&
+      (lowerQuery.includes("vendor") || lowerQuery.includes("supplier") || materialName)) {
+    return {
+      taskType: "generate_po",
+      taskData: {
+        rawMaterialName: materialName,
+        quantity: parsedQuantity?.value || null,
+        quantityUnit: parsedQuantity?.unit || null,
+        vendorId: null,
+        showVendorSuggestion: true,
+      },
+      description: `Find best vendor${materialName ? ` for ${materialName}` : ''}`
+    };
+  }
+
   // Check for BOM creation intent
-  if ((lowerQuery.includes("create") || lowerQuery.includes("add") || lowerQuery.includes("new")) && 
+  if ((lowerQuery.includes("create") || lowerQuery.includes("add") || lowerQuery.includes("new")) &&
       (lowerQuery.includes("bom") || lowerQuery.includes("bill of material") || lowerQuery.includes("recipe"))) {
     return {
       taskType: "create_bom",

@@ -132,7 +132,7 @@ export default function Settings() {
                 <Badge variant="secondary">Not Connected</Badge>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span>Stripe</span>
+                <span>Airtable</span>
                 <Badge variant="secondary">Not Connected</Badge>
               </div>
             </div>

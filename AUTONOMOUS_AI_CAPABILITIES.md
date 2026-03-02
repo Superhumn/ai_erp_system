@@ -238,7 +238,7 @@ The system is now fully autonomous with AI agents running end-to-end operations.
 1. **Add Custom Workflows**: Create new workflow definitions for specific business processes
 2. **Configure Thresholds**: Adjust approval thresholds based on your business needs
 3. **Define Exception Rules**: Add custom exception handling strategies
-4. **Set Up Notifications**: Configure email/Slack notifications for critical events
+4. **Set Up Notifications**: Configure email notifications for critical events
 5. **Monitor Performance**: Review metrics and optimize workflow configurations
 
 ## Security & Compliance
