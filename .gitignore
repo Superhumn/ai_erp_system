@@ -1,3 +1,6 @@
+# Manus.ai runtime files
+.manus/db/
+
 # Dependencies
 **/node_modules
 .pnpm-store/

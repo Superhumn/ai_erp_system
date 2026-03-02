@@ -7,7 +7,7 @@ import { defineConfig } from "vite";
 
 const plugins = [react(), tailwindcss(), jsxLocPlugin()];
 
-export default defineConfig({
+return {
   plugins,
   resolve: {
     alias: {
@@ -34,4 +34,5 @@ export default defineConfig({
       deny: ["**/.*"],
     },
   },
+};
 });
