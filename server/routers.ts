@@ -10,6 +10,9 @@ import { processEmailReply, analyzeEmail, generateEmailReply } from "./emailRepl
 import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
+import { detectMaterialShortages, detectAnomalies, runShortageCheckAndNotify, runAnomalyCheckAndNotify } from "./materialShortageService";
+import { linkParsedEmailToEntities } from "./emailDocumentLinker";
+import { generateVendorEmail, sendVendorEmail, sendBulkEmail, checkAndSendPoFollowups } from "./vendorEmailAutomation";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import * as db from "./db";
@@ -13888,6 +13891,112 @@ Ask if they received the original request and if they can provide a quote.`;
       const headers = ['ID', 'Invoice Number', 'Customer ID', 'Status', 'Total', 'Due Date', 'Paid Date', 'Created'];
       const rows = items.map((i: any) => [i.id, i.invoiceNumber || '', i.customerId || '', i.status, i.totalAmount || '', i.dueDate || '', i.paidDate || '', i.createdAt?.toISOString() || '']);
       return { headers, rows };
+    }),
+  }),
+
+  // ============================================
+  // MATERIAL SHORTAGE & ANOMALY DETECTION
+  // ============================================
+  alerts: router({
+    // Get material shortage alerts (inventory vs BOM requirements)
+    materialShortages: protectedProcedure.query(async () => {
+      return detectMaterialShortages();
+    }),
+
+    // Get anomaly detection alerts (cost spikes, overdue POs, yield variance)
+    anomalies: protectedProcedure.query(async () => {
+      return detectAnomalies();
+    }),
+
+    // Run shortage check and send notifications
+    runShortageCheck: adminProcedure.mutation(async ({ ctx }) => {
+      const result = await runShortageCheckAndNotify();
+      await createAuditLog(ctx.user.id, 'create', 'alert', 0, `Shortage check: ${result.shortageCount} shortages found`);
+      return result;
+    }),
+
+    // Run anomaly check and send notifications
+    runAnomalyCheck: adminProcedure.mutation(async ({ ctx }) => {
+      const result = await runAnomalyCheckAndNotify();
+      await createAuditLog(ctx.user.id, 'create', 'alert', 0, `Anomaly check: ${result.alertCount} anomalies found`);
+      return result;
+    }),
+  }),
+
+  // ============================================
+  // EMAIL-TO-DOCUMENT LINKING
+  // ============================================
+  emailDocumentLinking: router({
+    // Link parsed email to existing POs/shipments
+    linkEmail: protectedProcedure
+      .input(z.object({
+        category: z.string().optional(),
+        vendorName: z.string().optional(),
+        vendorEmail: z.string().optional(),
+        documentNumber: z.string().optional(),
+        trackingNumber: z.string().optional(),
+        totalAmount: z.number().optional(),
+        fromEmail: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return linkParsedEmailToEntities(input);
+      }),
+  }),
+
+  // ============================================
+  // VENDOR EMAIL AUTOMATION
+  // ============================================
+  vendorEmails: router({
+    // Generate a preview of an AI-crafted vendor email
+    generatePreview: protectedProcedure
+      .input(z.object({
+        vendorId: z.number(),
+        emailType: z.enum(['po_followup', 'quote_request', 'payment_reminder', 'general', 'order_confirmation', 'shipment_inquiry']),
+        purchaseOrderId: z.number().optional(),
+        subject: z.string().optional(),
+        customMessage: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return generateVendorEmail(input);
+      }),
+
+    // Send an AI-crafted email to a vendor
+    send: protectedProcedure
+      .input(z.object({
+        vendorId: z.number(),
+        emailType: z.enum(['po_followup', 'quote_request', 'payment_reminder', 'general', 'order_confirmation', 'shipment_inquiry']),
+        purchaseOrderId: z.number().optional(),
+        subject: z.string().optional(),
+        customMessage: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await sendVendorEmail({ ...input, triggeredBy: ctx.user.id });
+        if (result.success) {
+          await createAuditLog(ctx.user.id, 'create', 'vendor_email', input.vendorId, `AI email sent to vendor (${input.emailType})`);
+        }
+        return result;
+      }),
+
+    // Send bulk email to multiple vendors or customers
+    sendBulk: protectedProcedure
+      .input(z.object({
+        recipientType: z.enum(['vendor', 'customer']),
+        recipientIds: z.array(z.number()),
+        subject: z.string().min(1),
+        body: z.string().min(1),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await sendBulkEmail({ ...input, triggeredBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'bulk_email', 0,
+          `Bulk email to ${input.recipientIds.length} ${input.recipientType}s: ${result.emailsSent} sent, ${result.emailsFailed} failed`);
+        return result;
+      }),
+
+    // Run automatic PO follow-up emails
+    runPoFollowups: adminProcedure.mutation(async ({ ctx }) => {
+      const result = await checkAndSendPoFollowups(ctx.user.id);
+      await createAuditLog(ctx.user.id, 'create', 'vendor_email', 0, `Auto follow-ups: ${result.followUpsSent} sent`);
+      return result;
     }),
   }),
 });
