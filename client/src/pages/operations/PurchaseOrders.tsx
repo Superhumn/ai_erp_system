@@ -55,6 +55,27 @@ export default function PurchaseOrders() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [isTextPOOpen, setIsTextPOOpen] = useState(false);
+  const [textInput, setTextInput] = useState("");
+  const [activeAction, setActiveAction] = useState<'draft' | 'email' | null>(null);
+  const [poPreview, setPoPreview] = useState<{
+    vendorId: number;
+    vendorName: string;
+    rawMaterialId: number | null;
+    items: Array<{
+      description: string;
+      quantity: string;
+      unitPrice: string;
+      totalAmount: string;
+      rawMaterialId: number | null;
+    }>;
+    shippingAddress: string;
+    notes: string;
+    subtotal: string;
+    totalAmount: string;
+    suggested: boolean;
+    isPriceEstimated?: boolean;
+  } | null>(null);
   const [formData, setFormData] = useState({
     vendorId: 0,
     expectedDeliveryDate: "",
@@ -66,6 +87,7 @@ export default function PurchaseOrders() {
   const { data: vendors } = trpc.vendors.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
   const utils = trpc.useUtils();
+  
   const createPO = trpc.purchaseOrders.create.useMutation({
     onSuccess: () => {
       toast.success("Purchase order created successfully");
@@ -251,9 +273,9 @@ export default function PurchaseOrders() {
           <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
             <form onSubmit={handleSubmit}>
               <DialogHeader>
-                <DialogTitle>Create Purchase Order</DialogTitle>
+                <DialogTitle>Create PO from Text</DialogTitle>
                 <DialogDescription>
-                  Create a new purchase order for a vendor.
+                  Describe what you want to order in plain text, and we'll create a PO for you.
                 </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
@@ -458,7 +480,6 @@ export default function PurchaseOrders() {
             <div className="text-center py-12 text-muted-foreground">
               <ClipboardList className="h-12 w-12 mx-auto mb-4 opacity-20" />
               <p>No purchase orders found</p>
-              <p className="text-sm">Create your first PO to get started.</p>
             </div>
           ) : (
             <Table>
@@ -478,14 +499,10 @@ export default function PurchaseOrders() {
                     <TableCell className="font-mono">{po.poNumber}</TableCell>
                     <TableCell className="font-medium">Vendor #{po.vendorId || "-"}</TableCell>
                     <TableCell>
-                      {po.orderDate
-                        ? format(new Date(po.orderDate), "MMM d, yyyy")
-                        : "-"}
+                      {po.orderDate ? format(new Date(po.orderDate), "MMM d, yyyy") : "-"}
                     </TableCell>
                     <TableCell>
-                      {po.expectedDate
-                        ? format(new Date(po.expectedDate), "MMM d, yyyy")
-                        : "-"}
+                      {po.expectedDate ? format(new Date(po.expectedDate), "MMM d, yyyy") : "-"}
                     </TableCell>
                     <TableCell className="text-right font-mono">
                       {formatCurrency(po.totalAmount)}

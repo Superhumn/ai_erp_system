@@ -12,6 +12,10 @@ interface InvoiceLineItem {
   taxRate?: string | null;
   taxAmount?: string | null;
   totalAmount: string;
+  hsCode?: string | null;
+  countryOfOrigin?: string | null;
+  weight?: string | null;
+  volume?: string | null;
 }
 
 interface InvoiceData {
@@ -32,6 +36,19 @@ interface InvoiceData {
   notes?: string | null;
   terms?: string | null;
   currency?: string;
+  // B2B and International Freight fields
+  paymentTerms?: string | null;
+  paymentMethod?: string | null;
+  purchaseOrderNumber?: string | null;
+  incoterms?: string | null;
+  portOfLoading?: string | null;
+  portOfDischarge?: string | null;
+  exportLicenseNumber?: string | null;
+  importLicenseNumber?: string | null;
+  shippingInstructions?: string | null;
+  freightAmount?: string | null;
+  insuranceAmount?: string | null;
+  customsDuties?: string | null;
 }
 
 interface CompanyInfo {
@@ -56,6 +73,41 @@ function formatDate(date: Date | string | null | undefined): string {
   if (!date) return 'N/A';
   const d = typeof date === 'string' ? new Date(date) : date;
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+function formatPaymentTerms(terms: string | null | undefined): string {
+  if (!terms) return '';
+  const termsMap: Record<string, string> = {
+    'due_on_receipt': 'Due on Receipt',
+    'net_15': 'Net 15 Days',
+    'net_30': 'Net 30 Days',
+    'net_45': 'Net 45 Days',
+    'net_60': 'Net 60 Days',
+    'net_90': 'Net 90 Days',
+    'eom': 'End of Month',
+    'cod': 'Cash on Delivery',
+    'cia': 'Cash in Advance',
+    'custom': 'Custom Terms',
+  };
+  return termsMap[terms] || terms;
+}
+
+function formatPaymentMethod(method: string | null | undefined): string {
+  if (!method) return '';
+  const methodMap: Record<string, string> = {
+    'bank_transfer': 'Bank Transfer',
+    'wire': 'Wire Transfer',
+    'ach': 'ACH',
+    'check': 'Check',
+    'credit_card': 'Credit Card',
+    'letter_of_credit': 'Letter of Credit',
+    'cash_in_advance': 'Cash in Advance',
+    'documentary_collection': 'Documentary Collection',
+    'open_account': 'Open Account',
+    'consignment': 'Consignment',
+    'other': 'Other',
+  };
+  return methodMap[method] || method;
 }
 
 /**
@@ -237,8 +289,30 @@ export function generateInvoiceHtml(invoice: InvoiceData, company: CompanyInfo):
     <div class="invoice-dates">
       <p><strong>Issue Date:</strong> ${formatDate(invoice.issueDate)}</p>
       <p><strong>Due Date:</strong> ${formatDate(invoice.dueDate)}</p>
+      ${invoice.paymentTerms ? `<p><strong>Payment Terms:</strong> ${formatPaymentTerms(invoice.paymentTerms)}</p>` : ''}
+      ${invoice.purchaseOrderNumber ? `<p><strong>PO Number:</strong> ${invoice.purchaseOrderNumber}</p>` : ''}
     </div>
   </div>
+
+  ${invoice.incoterms || invoice.portOfLoading || invoice.portOfDischarge ? `
+  <div class="shipping-info" style="background: #f9fafb; padding: 20px; border-radius: 8px; margin-bottom: 30px;">
+    <h3 style="font-size: 14px; color: #6b7280; margin: 0 0 12px 0; text-transform: uppercase;">Shipping Information</h3>
+    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; font-size: 14px;">
+      ${invoice.incoterms ? `<div><strong>Incoterms:</strong> ${invoice.incoterms}</div>` : ''}
+      ${invoice.portOfLoading ? `<div><strong>Port of Loading:</strong> ${invoice.portOfLoading}</div>` : ''}
+      ${invoice.portOfDischarge ? `<div><strong>Port of Discharge:</strong> ${invoice.portOfDischarge}</div>` : ''}
+      ${invoice.exportLicenseNumber ? `<div><strong>Export License:</strong> ${invoice.exportLicenseNumber}</div>` : ''}
+      ${invoice.importLicenseNumber ? `<div><strong>Import License:</strong> ${invoice.importLicenseNumber}</div>` : ''}
+      ${invoice.paymentMethod ? `<div><strong>Payment Method:</strong> ${formatPaymentMethod(invoice.paymentMethod)}</div>` : ''}
+    </div>
+    ${invoice.shippingInstructions ? `
+      <div style="margin-top: 12px;">
+        <strong>Shipping Instructions:</strong>
+        <p style="margin: 4px 0 0 0; white-space: pre-wrap;">${invoice.shippingInstructions}</p>
+      </div>
+    ` : ''}
+  </div>
+  ` : ''}
 
   <table>
     <thead>
@@ -260,6 +334,24 @@ export function generateInvoiceHtml(invoice: InvoiceData, company: CompanyInfo):
         <span>Subtotal</span>
         <span>${formatCurrency(invoice.subtotal, invoice.currency)}</span>
       </div>
+      ${invoice.freightAmount && parseFloat(invoice.freightAmount) > 0 ? `
+      <div class="totals-row">
+        <span>Freight</span>
+        <span>${formatCurrency(invoice.freightAmount, invoice.currency)}</span>
+      </div>
+      ` : ''}
+      ${invoice.insuranceAmount && parseFloat(invoice.insuranceAmount) > 0 ? `
+      <div class="totals-row">
+        <span>Insurance</span>
+        <span>${formatCurrency(invoice.insuranceAmount, invoice.currency)}</span>
+      </div>
+      ` : ''}
+      ${invoice.customsDuties && parseFloat(invoice.customsDuties) > 0 ? `
+      <div class="totals-row">
+        <span>Customs Duties</span>
+        <span>${formatCurrency(invoice.customsDuties, invoice.currency)}</span>
+      </div>
+      ` : ''}
       ${invoice.taxAmount && parseFloat(invoice.taxAmount) > 0 ? `
       <div class="totals-row">
         <span>Tax</span>

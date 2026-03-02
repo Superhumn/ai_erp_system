@@ -67,6 +67,11 @@ import {
   Target,
   MessageSquare,
   Heart,
+  Mic,
+  BookOpen,
+  Calculator,
+  Handshake,
+  ClipboardCheck,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -121,6 +126,8 @@ const menuGroups = [
       { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: FileSpreadsheet, label: "Document Import", path: "/operations/document-import" },
+      { icon: Calculator, label: "Inventory Costing", path: "/operations/inventory-costing" },
+      { icon: Handshake, label: "Vendor Negotiations", path: "/operations/vendor-negotiations" },
     ],
   },
   {
@@ -134,7 +141,9 @@ const menuGroups = [
     label: "Projects & Data",
     items: [
       { icon: FolderKanban, label: "Projects", path: "/projects" },
+      { icon: ClipboardCheck, label: "Investment Grants", path: "/projects/investment-grants" },
       { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
+      { icon: BookOpen, label: "SOPs", path: "/sops" },
     ],
   },
   {
@@ -142,6 +151,7 @@ const menuGroups = [
     items: [
       { icon: Users, label: "Team", path: "/settings/team" },
       { icon: Plug, label: "Integrations", path: "/settings/integrations" },
+      { icon: Mic, label: "Fireflies", path: "/settings/fireflies" },
       { icon: FileSpreadsheet, label: "Import Data", path: "/import" },
       { icon: Settings, label: "Settings", path: "/settings" },
     ],
@@ -183,25 +193,27 @@ export default function DashboardLayout({
 
   if (!user) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
-        <div className="flex flex-col items-center gap-8 p-8 max-w-md w-full">
-          <div className="flex flex-col items-center gap-4">
-            <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center">
-              <Building2 className="h-8 w-8 text-primary" />
+      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-background via-background to-accent/30">
+        <div className="flex flex-col items-center gap-10 p-8 max-w-md w-full animate-fade-in">
+          <div className="flex flex-col items-center gap-5">
+            <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center shadow-lg shadow-primary/20">
+              <Building2 className="h-7 w-7 text-primary-foreground" />
             </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-center">
-              AI-Native ERP System
-            </h1>
-            <p className="text-sm text-muted-foreground text-center max-w-sm">
-              Unified enterprise resource planning with AI-powered insights. Sign in to access your dashboard.
-            </p>
+            <div className="flex flex-col items-center gap-2">
+              <h1 className="text-2xl font-semibold tracking-tight text-center">
+                AI-Native ERP System
+              </h1>
+              <p className="text-sm text-muted-foreground text-center max-w-sm leading-relaxed">
+                Unified enterprise resource planning with AI-powered insights. Sign in to access your dashboard.
+              </p>
+            </div>
           </div>
           <Button
             onClick={() => {
               window.location.href = getLoginUrl();
             }}
             size="lg"
-            className="w-full shadow-lg hover:shadow-xl transition-all"
+            className="w-full shadow-md hover:shadow-lg transition-all duration-200"
           >
             Sign in to continue
           </Button>
@@ -218,6 +230,10 @@ export default function DashboardLayout({
         } as CSSProperties
       }
     >
+      {/* Aurora and noise backgrounds */}
+      <div className="noise-bg" />
+      <div className="aurora" />
+      
       <DashboardLayoutContent setSidebarWidth={setSidebarWidth}>
         {children}
       </DashboardLayoutContent>
@@ -354,17 +370,18 @@ function DashboardLayoutContent({
 
   return (
     <>
-      <div className="relative" ref={sidebarRef}>
+      {/* z-10 positions sidebar and content above aurora (z-0) and noise (z-0) backgrounds */}
+      <div className="relative z-10" ref={sidebarRef}>
         <Sidebar
           collapsible="icon"
-          className="border-r border-border/40"
+          className="border-r border-border/50 glass-panel"
           disableTransition={isResizing}
         >
-          <SidebarHeader className="h-16 justify-center border-b border-border/40">
+          <SidebarHeader className="h-14 justify-center border-b border-border/50">
             <div className="flex items-center gap-3 px-2 transition-all w-full">
               <button
                 onClick={toggleSidebar}
-                className="h-8 w-8 flex items-center justify-center hover:bg-accent rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring shrink-0"
+                className="h-8 w-8 flex items-center justify-center hover:bg-accent rounded-lg transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring shrink-0"
                 aria-label="Toggle navigation"
               >
                 <PanelLeft className="h-4 w-4 text-muted-foreground" />
@@ -379,35 +396,35 @@ function DashboardLayoutContent({
             </div>
           </SidebarHeader>
 
-          <SidebarContent className="overflow-y-auto px-2 py-2">
-            <nav className="flex flex-col gap-1">
+          <SidebarContent className="overflow-y-auto px-2 py-3">
+            <nav className="flex flex-col gap-0.5">
               {menuGroups.map((group) => (
-                <div key={group.label} className="mb-1">
+                <div key={group.label} className="mb-1.5">
                   {!isCollapsed && (
                     <button
                       onClick={() => toggleGroup(group.label)}
-                      className="w-full flex items-center justify-between px-2 py-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
+                      className="w-full flex items-center justify-between px-2.5 py-1.5 text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-[0.08em] hover:text-muted-foreground transition-colors duration-150"
                     >
                       <span>{group.label}</span>
                       <ChevronDown className={`h-3 w-3 transition-transform duration-200 ${openGroups.includes(group.label) ? "" : "-rotate-90"}`} />
                     </button>
                   )}
                   {(isCollapsed || openGroups.includes(group.label)) && (
-                    <div className="flex flex-col gap-0.5">
+                    <div className="flex flex-col gap-px">
                       {group.items.map(item => {
                         const isActive = location === item.path;
                         return (
                           <button
                             key={item.path}
                             onClick={() => setLocation(item.path)}
-                            className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors ${
+                            className={`flex items-center gap-2.5 px-2.5 py-[7px] rounded-lg text-[13px] transition-all duration-150 ${
                               isActive
-                                ? "bg-primary/10 text-primary font-medium"
-                                : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                                ? "bg-primary/10 text-primary font-medium shadow-sm shadow-primary/5"
+                                : "text-sidebar-foreground/70 hover:bg-accent hover:text-foreground"
                             } ${isCollapsed ? "justify-center" : ""}`}
                             title={isCollapsed ? item.label : undefined}
                           >
-                            <item.icon className={`h-4 w-4 shrink-0 ${isActive ? "text-primary" : ""}`} />
+                            <item.icon className={`h-[15px] w-[15px] shrink-0 ${isActive ? "text-primary" : ""}`} />
                             {!isCollapsed && <span className="truncate">{item.label}</span>}
                           </button>
                         );
@@ -419,12 +436,12 @@ function DashboardLayoutContent({
             </nav>
           </SidebarContent>
 
-          <SidebarFooter className="p-3 border-t border-border/40">
+          <SidebarFooter className="p-3 border-t border-border/50">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button className="flex items-center gap-3 rounded-lg px-1 py-1 hover:bg-accent/50 transition-colors w-full text-left group-data-[collapsible=icon]:justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                  <Avatar className="h-9 w-9 border shrink-0">
-                    <AvatarFallback className="text-xs font-medium bg-primary/10 text-primary">
+                <button className="flex items-center gap-3 rounded-xl px-2 py-2 hover:bg-accent/60 transition-all duration-150 w-full text-left group-data-[collapsible=icon]:justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <Avatar className="h-8 w-8 shrink-0">
+                    <AvatarFallback className="text-xs font-medium bg-gradient-to-br from-primary to-primary/80 text-primary-foreground">
                       {user?.name?.charAt(0).toUpperCase() || "U"}
                     </AvatarFallback>
                   </Avatar>
@@ -443,20 +460,20 @@ function DashboardLayoutContent({
                   </div>
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <div className="px-2 py-1.5">
+              <DropdownMenuContent align="end" className="w-56 rounded-xl">
+                <div className="px-3 py-2">
                   <p className="text-sm font-medium">{user?.name}</p>
                   <p className="text-xs text-muted-foreground">{user?.email}</p>
                 </div>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setLocation("/settings")} className="cursor-pointer">
+                <DropdownMenuItem onClick={() => setLocation("/settings")} className="cursor-pointer rounded-lg mx-1">
                   <Settings className="mr-2 h-4 w-4" />
                   <span>Settings</span>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={logout}
-                  className="cursor-pointer text-destructive focus:text-destructive"
+                  className="cursor-pointer text-destructive focus:text-destructive rounded-lg mx-1"
                 >
                   <LogOut className="mr-2 h-4 w-4" />
                   <span>Sign out</span>
@@ -480,26 +497,37 @@ function DashboardLayoutContent({
         <AutonomousAgentBar />
 
         {/* Top header bar */}
-        <header className="flex h-14 items-center justify-between border-b border-border/40 bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-40">
+        <header className="flex h-14 items-center justify-between border-b border-border/50 bg-background/80 px-4 backdrop-blur-xl sticky top-0 z-40">
           <div className="flex items-center gap-3">
             {isMobile && <SidebarTrigger className="h-9 w-9 rounded-lg" />}
+            {/* Desktop search bar */}
             <button
               onClick={() => setAiCommandOpen(true)}
-              className="relative hidden sm:flex items-center gap-2 w-64 h-9 px-3 bg-muted/50 hover:bg-muted rounded-md border border-border/40 text-sm text-muted-foreground transition-colors"
+              className="relative hidden sm:flex items-center gap-2.5 w-72 h-9 px-3.5 bg-muted/40 hover:bg-muted/70 rounded-xl border border-border/50 text-sm text-muted-foreground transition-all duration-150"
             >
-              <Search className="h-4 w-4" />
-              <span className="flex-1 text-left">Search or ask AI...</span>
-              <kbd className="pointer-events-none hidden h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium opacity-100 sm:flex">
+              <Search className="h-3.5 w-3.5" />
+              <span className="flex-1 text-left text-[13px]">Search or ask AI...</span>
+              <kbd className="pointer-events-none hidden h-5 select-none items-center gap-1 rounded-md border border-border/50 bg-background px-1.5 font-mono text-[10px] font-medium text-muted-foreground/70 sm:flex">
                 <span className="text-xs">⌘</span>K
               </kbd>
             </button>
+            {/* Mobile search button */}
+            {isMobile && (
+              <button
+                onClick={() => setAiCommandOpen(true)}
+                className="flex sm:hidden items-center justify-center h-9 w-9 rounded-lg bg-muted/40 hover:bg-muted/70 border border-border/50 text-muted-foreground transition-colors"
+                aria-label="Search or ask AI"
+              >
+                <Search className="h-4 w-4" />
+              </button>
+            )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <NotificationCenter />
           </div>
         </header>
         <AICommandBar open={aiCommandOpen} onOpenChange={setAiCommandOpen} />
-        <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>
+        <main className="flex-1 overflow-auto p-4 pb-20 md:p-6 md:pb-6 lg:p-8 lg:pb-8">{children}</main>
       </SidebarInset>
 
       {/* Floating AI Assistant - available throughout the app */}

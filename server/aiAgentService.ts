@@ -1321,16 +1321,35 @@ Guidelines:
 
     // Check if there are tool calls
     if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
-      // Add assistant message with tool calls to history
+      // Add assistant message with tool calls to history (must include tool_calls for valid conversation)
       messages.push({
         role: "assistant",
         content: typeof responseMessage.content === "string" ? responseMessage.content : "",
+        tool_calls: responseMessage.tool_calls,
       });
 
       // Process each tool call
       for (const toolCall of responseMessage.tool_calls) {
         const toolName = toolCall.function.name;
-        const toolArgs = JSON.parse(toolCall.function.arguments);
+        let toolArgs: any;
+        try {
+          toolArgs = JSON.parse(toolCall.function.arguments);
+        } catch (parseError: any) {
+          const action: AIAgentAction = {
+            type: toolName,
+            description: `Executing ${toolName}`,
+            status: "failed",
+            error: `Invalid arguments: ${parseError.message}`,
+          };
+          actions.push(action);
+
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: JSON.stringify({ error: `Invalid tool arguments: ${parseError.message}` }),
+          });
+          continue;
+        }
 
         const action: AIAgentAction = {
           type: toolName,
