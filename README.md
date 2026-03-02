@@ -306,11 +306,7 @@ A dedicated portal for vendor/supplier partners (restricted to `vendor`, `admin`
 | **SendGrid** | Transactional email, template management, delivery tracking via webhooks |
 | **Fireflies.ai** | Meeting transcription, action item extraction, automatic task creation |
 | **IMAP Email** | Inbound email scanning from any mailbox |
-| **Stripe** | Payment processing |
-| **Slack** | Notification delivery |
-| **HubSpot** | CRM data sync |
-| **Airtable** | Data sync |
-| **Webhooks** | Custom webhook support for third-party systems |
+| **Airtable** | Import data from Airtable bases |
 
 ### Settings & Team Management
 
@@ -330,7 +326,9 @@ A dedicated portal for vendor/supplier partners (restricted to `vendor`, `admin`
 |---|---|
 | **admin** | Full access to all modules and settings |
 | **finance** | Accounts, invoices, payments, transactions, read-only access to customers/vendors |
+| **procurement** | Purchase orders, vendors, receiving, supplier management |
 | **ops** | Products, inventory, orders, purchase orders, shipments, warehouses, vendors, transfers |
+| **plant** | Work orders, receiving, inventory, transfers (shop-floor access only) |
 | **legal** | Contracts, disputes, documents, read-only access to customers/vendors/employees |
 | **exec** | Dashboard, reports, AI, read-only access across modules |
 | **copacker** | Inventory (read/update at own warehouse), shipments (read + upload documents) |
@@ -806,6 +804,13 @@ The application starts at `http://localhost:3000`.
 | `QUICKBOOKS_CLIENT_SECRET` | No | QuickBooks OAuth client secret |
 | `QUICKBOOKS_REDIRECT_URI` | No | QuickBooks OAuth redirect URI |
 | `QUICKBOOKS_ENVIRONMENT` | No | `sandbox` or `production` |
+| `SHOPIFY_CLIENT_ID` | No | Shopify OAuth app client ID |
+| `SHOPIFY_CLIENT_SECRET` | No | Shopify OAuth app client secret |
+| `SHOPIFY_REDIRECT_URI` | No | Shopify OAuth redirect URI |
+| `BUILT_IN_FORGE_API_URL` | No | AI/LLM provider API URL |
+| `BUILT_IN_FORGE_API_KEY` | No | AI/LLM provider API key |
+| `AIRTABLE_PERSONAL_ACCESS_TOKEN` | No | Airtable PAT for data import |
+| `SENDGRID_WEBHOOK_SECRET` | No | SendGrid webhook signature verification |
 
 ---
 

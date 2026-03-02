@@ -66,6 +66,22 @@ const vendorProcedure = protectedProcedure.use(({ ctx, next }) => {
   return next({ ctx });
 });
 
+// Plant User can only access Work Orders, Receiving, Inventory, and Transfers
+const plantProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!['admin', 'ops', 'plant', 'exec'].includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Plant user access required' });
+  }
+  return next({ ctx });
+});
+
+// Procurement-specific (separate from general finance)
+const procurementProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!['admin', 'ops', 'procurement', 'exec'].includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Procurement access required' });
+  }
+  return next({ ctx });
+});
+
 // Helper to create audit log
 async function createAuditLog(userId: number, action: 'create' | 'update' | 'delete' | 'view' | 'export' | 'approve' | 'reject', entityType: string, entityId: number, entityName?: string, oldValues?: any, newValues?: any) {
   await db.createAuditLog({
@@ -357,78 +373,15 @@ export const appRouter = router({
         return { imported, updated, skipped, total: shopifyCustomers.length };
       }),
     
-    // HubSpot sync
-    syncFromHubspot: adminProcedure
-      .input(z.object({ hubspotAccessToken: z.string() }))
-      .mutation(async ({ input, ctx }) => {
-        const { hubspotAccessToken } = input;
-        
-        // Fetch contacts from HubSpot
-        const response = await fetch('https://api.hubapi.com/crm/v3/objects/contacts?limit=100&properties=email,firstname,lastname,phone,address,city,state,country,zip,company', {
-          headers: {
-            'Authorization': `Bearer ${hubspotAccessToken}`,
-            'Content-Type': 'application/json',
-          },
-        });
-        
-        if (!response.ok) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Failed to fetch HubSpot contacts' });
-        }
-        
-        const data = await response.json();
-        const hubspotContacts = data.results || [];
-        
-        let imported = 0;
-        let updated = 0;
-        let skipped = 0;
-        
-        for (const hc of hubspotContacts) {
-          const props = hc.properties || {};
-          
-          // Check if customer already exists by HubSpot ID
-          const existing = await db.getCustomerByHubspotId(hc.id.toString());
-          
-          const customerData = {
-            name: `${props.firstname || ''} ${props.lastname || ''}`.trim() || props.email || 'Unknown',
-            email: props.email || undefined,
-            phone: props.phone || undefined,
-            address: props.address || undefined,
-            city: props.city || undefined,
-            state: props.state || undefined,
-            country: props.country || undefined,
-            postalCode: props.zip || undefined,
-            type: props.company ? 'business' as const : 'individual' as const,
-            hubspotContactId: hc.id.toString(),
-            syncSource: 'hubspot' as const,
-            lastSyncedAt: new Date(),
-            hubspotData: JSON.stringify(hc),
-          };
-          
-          if (existing) {
-            await db.updateCustomer(existing.id, customerData);
-            updated++;
-          } else {
-            await db.createCustomer(customerData);
-            imported++;
-          }
-        }
-        
-        await createAuditLog(ctx.user.id, 'create', 'hubspot_sync', 0, `Imported ${imported}, Updated ${updated}`);
-        
-        return { imported, updated, skipped, total: hubspotContacts.length };
-      }),
-    
     // Get sync status
     getSyncStatus: protectedProcedure.query(async () => {
       const customers = await db.getCustomers();
       const shopifyCount = customers.filter(c => c.shopifyCustomerId).length;
-      const hubspotCount = customers.filter(c => c.hubspotContactId).length;
-      const manualCount = customers.filter(c => !c.shopifyCustomerId && !c.hubspotContactId).length;
-      
+      const manualCount = customers.filter(c => !c.shopifyCustomerId).length;
+
       return {
         total: customers.length,
         shopify: shopifyCount,
-        hubspot: hubspotCount,
         manual: manualCount,
       };
     }),
@@ -2586,7 +2539,7 @@ export const appRouter = router({
     create: adminProcedure
       .input(z.object({
         companyId: z.number().optional(),
-        type: z.enum(['quickbooks', 'shopify', 'stripe', 'slack', 'email', 'webhook']),
+        type: z.enum(['quickbooks', 'shopify', 'email', 'webhook', 'airtable']),
         name: z.string().min(1),
         config: z.any().optional(),
       }))
@@ -9973,7 +9926,26 @@ Ask if they received the original request and if they can provide a quote.`;
             invitedBy: ctx.user.id,
           });
 
-          // TODO: Send invitation email
+          // Send invitation email
+          try {
+            if (isEmailConfigured()) {
+              const dataRoom = await db.getDataRoomById(input.dataRoomId);
+              const inviteUrl = `${process.env.APP_URL || 'http://localhost:3000'}/share/${inviteCode}`;
+              await sendEmail({
+                to: input.email,
+                subject: `You've been invited to a Data Room${dataRoom ? `: ${dataRoom.name}` : ''}`,
+                html: formatEmailHtml(
+                  `Hello${input.name ? ` ${input.name}` : ''},\n\n` +
+                  `You have been invited to access a secure data room${dataRoom ? ` "${dataRoom.name}"` : ''} with ${input.role} permissions.\n\n` +
+                  `${input.message ? `Message from the sender:\n${input.message}\n\n` : ''}` +
+                  `Click the link below to access the data room:\n${inviteUrl}\n\n` +
+                  `This invitation${input.expiresAt ? ` expires on ${input.expiresAt.toLocaleDateString()}` : ' does not expire'}.`
+                ),
+              });
+            }
+          } catch (emailErr) {
+            console.warn("[DataRoom] Failed to send invitation email:", emailErr);
+          }
 
           return { id, inviteCode };
         }),
@@ -10005,7 +9977,26 @@ Ask if they received the original request and if they can provide a quote.`;
       resend: protectedProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input }) => {
-          // TODO: Resend invitation email
+          const invitation = await db.getInvitationByIdWithDataRoom(input.id);
+          if (!invitation) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Invitation not found' });
+          }
+          try {
+            if (isEmailConfigured()) {
+              const inviteUrl = `${process.env.APP_URL || 'http://localhost:3000'}/share/${invitation.inviteCode}`;
+              await sendEmail({
+                to: invitation.email,
+                subject: `Reminder: You've been invited to a Data Room${invitation.dataRoomName ? `: ${invitation.dataRoomName}` : ''}`,
+                html: formatEmailHtml(
+                  `Hello${invitation.name ? ` ${invitation.name}` : ''},\n\n` +
+                  `This is a reminder that you have been invited to access a secure data room${invitation.dataRoomName ? ` "${invitation.dataRoomName}"` : ''}.\n\n` +
+                  `Click the link below to access the data room:\n${inviteUrl}`
+                ),
+              });
+            }
+          } catch (emailErr) {
+            console.warn("[DataRoom] Failed to resend invitation email:", emailErr);
+          }
           return { success: true };
         }),
     }),
@@ -13661,6 +13652,243 @@ Ask if they received the original request and if they can provide a quote.`;
 
         return { taskId: taskResult.id };
       }),
+  }),
+
+  // ============================================
+  // AIRTABLE IMPORT
+  // ============================================
+  airtable: router({
+    isConfigured: protectedProcedure.query(() => {
+      const { isAirtableConfigured } = require("./_core/airtable");
+      return { configured: isAirtableConfigured() };
+    }),
+
+    listBases: protectedProcedure
+      .input(z.object({ token: z.string().optional() }).optional())
+      .query(async ({ input }) => {
+        const { listBases } = await import("./_core/airtable");
+        return listBases(input?.token);
+      }),
+
+    listTables: protectedProcedure
+      .input(z.object({ baseId: z.string(), token: z.string().optional() }))
+      .query(async ({ input }) => {
+        const { listTables } = await import("./_core/airtable");
+        return listTables(input.baseId, input.token);
+      }),
+
+    previewRecords: protectedProcedure
+      .input(z.object({
+        baseId: z.string(),
+        tableIdOrName: z.string(),
+        maxRecords: z.number().default(10),
+        token: z.string().optional(),
+      }))
+      .query(async ({ input }) => {
+        const { listRecords } = await import("./_core/airtable");
+        const records = await listRecords(
+          input.baseId,
+          input.tableIdOrName,
+          { maxRecords: input.maxRecords },
+          input.token,
+        );
+        return records;
+      }),
+
+    importToProducts: protectedProcedure
+      .input(z.object({
+        baseId: z.string(),
+        tableIdOrName: z.string(),
+        fieldMapping: z.object({
+          name: z.string(),
+          sku: z.string().optional(),
+          description: z.string().optional(),
+          category: z.string().optional(),
+          price: z.string().optional(),
+          unit: z.string().optional(),
+        }),
+        token: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { listRecords } = await import("./_core/airtable");
+        const records = await listRecords(input.baseId, input.tableIdOrName, {}, input.token);
+
+        let imported = 0;
+        let skipped = 0;
+
+        for (const record of records) {
+          const nameVal = record.fields[input.fieldMapping.name];
+          if (!nameVal || typeof nameVal !== "string") {
+            skipped++;
+            continue;
+          }
+
+          const productData: Record<string, any> = { name: nameVal, status: "active" as const };
+
+          if (input.fieldMapping.sku) {
+            const v = record.fields[input.fieldMapping.sku];
+            if (v) productData.sku = String(v);
+          }
+          if (input.fieldMapping.description) {
+            const v = record.fields[input.fieldMapping.description];
+            if (v) productData.description = String(v);
+          }
+          if (input.fieldMapping.category) {
+            const v = record.fields[input.fieldMapping.category];
+            if (v) productData.category = String(v);
+          }
+          if (input.fieldMapping.price) {
+            const v = record.fields[input.fieldMapping.price];
+            if (v) productData.price = String(v);
+          }
+          if (input.fieldMapping.unit) {
+            const v = record.fields[input.fieldMapping.unit];
+            if (v) productData.unit = String(v);
+          }
+
+          await db.createProduct(productData);
+          imported++;
+        }
+
+        await createAuditLog(ctx.user.id, "create", "airtable_import", 0, `Imported ${imported} products from Airtable`);
+        return { imported, skipped, total: records.length };
+      }),
+
+    importToCustomers: protectedProcedure
+      .input(z.object({
+        baseId: z.string(),
+        tableIdOrName: z.string(),
+        fieldMapping: z.object({
+          name: z.string(),
+          email: z.string().optional(),
+          phone: z.string().optional(),
+          address: z.string().optional(),
+          city: z.string().optional(),
+          state: z.string().optional(),
+          country: z.string().optional(),
+        }),
+        token: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { listRecords } = await import("./_core/airtable");
+        const records = await listRecords(input.baseId, input.tableIdOrName, {}, input.token);
+
+        let imported = 0;
+        let skipped = 0;
+
+        for (const record of records) {
+          const nameVal = record.fields[input.fieldMapping.name];
+          if (!nameVal || typeof nameVal !== "string") {
+            skipped++;
+            continue;
+          }
+
+          const customerData: Record<string, any> = { name: nameVal, type: "business" as const };
+
+          for (const [key, field] of Object.entries(input.fieldMapping)) {
+            if (key === "name" || !field) continue;
+            const v = record.fields[field];
+            if (v) customerData[key] = String(v);
+          }
+
+          await db.createCustomer(customerData);
+          imported++;
+        }
+
+        await createAuditLog(ctx.user.id, "create", "airtable_import", 0, `Imported ${imported} customers from Airtable`);
+        return { imported, skipped, total: records.length };
+      }),
+
+    importToVendors: protectedProcedure
+      .input(z.object({
+        baseId: z.string(),
+        tableIdOrName: z.string(),
+        fieldMapping: z.object({
+          name: z.string(),
+          email: z.string().optional(),
+          phone: z.string().optional(),
+          address: z.string().optional(),
+          contactName: z.string().optional(),
+        }),
+        token: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { listRecords } = await import("./_core/airtable");
+        const records = await listRecords(input.baseId, input.tableIdOrName, {}, input.token);
+
+        let imported = 0;
+        let skipped = 0;
+
+        for (const record of records) {
+          const nameVal = record.fields[input.fieldMapping.name];
+          if (!nameVal || typeof nameVal !== "string") {
+            skipped++;
+            continue;
+          }
+
+          const vendorData: Record<string, any> = { name: nameVal };
+
+          for (const [key, field] of Object.entries(input.fieldMapping)) {
+            if (key === "name" || !field) continue;
+            const v = record.fields[field];
+            if (v) vendorData[key] = String(v);
+          }
+
+          await db.createVendor(vendorData);
+          imported++;
+        }
+
+        await createAuditLog(ctx.user.id, "create", "airtable_import", 0, `Imported ${imported} vendors from Airtable`);
+        return { imported, skipped, total: records.length };
+      }),
+  }),
+
+  // ============================================
+  // BULK CSV EXPORT
+  // ============================================
+  csvExport: router({
+    products: protectedProcedure.query(async ({ ctx }) => {
+      const items = await db.getProducts();
+      await createAuditLog(ctx.user.id, 'export', 'products', 0, `Exported ${items.length} products to CSV`);
+      const headers = ['ID', 'Name', 'SKU', 'Category', 'Status', 'Price', 'Unit', 'Created'];
+      const rows = items.map((p: any) => [p.id, p.name, p.sku || '', p.category || '', p.status, p.price || '', p.unit || '', p.createdAt?.toISOString() || '']);
+      return { headers, rows };
+    }),
+    customers: protectedProcedure.query(async ({ ctx }) => {
+      const items = await db.getCustomers();
+      await createAuditLog(ctx.user.id, 'export', 'customers', 0, `Exported ${items.length} customers to CSV`);
+      const headers = ['ID', 'Name', 'Email', 'Phone', 'Type', 'Status', 'City', 'State', 'Country', 'Created'];
+      const rows = items.map((c: any) => [c.id, c.name, c.email || '', c.phone || '', c.type || '', c.status || '', c.city || '', c.state || '', c.country || '', c.createdAt?.toISOString() || '']);
+      return { headers, rows };
+    }),
+    vendors: protectedProcedure.query(async ({ ctx }) => {
+      const items = await db.getVendors();
+      await createAuditLog(ctx.user.id, 'export', 'vendors', 0, `Exported ${items.length} vendors to CSV`);
+      const headers = ['ID', 'Name', 'Email', 'Phone', 'Contact Name', 'Status', 'Created'];
+      const rows = items.map((v: any) => [v.id, v.name, v.email || '', v.phone || '', v.contactName || '', v.status || '', v.createdAt?.toISOString() || '']);
+      return { headers, rows };
+    }),
+    inventory: protectedProcedure.query(async ({ ctx }) => {
+      const items = await db.getInventoryItems();
+      await createAuditLog(ctx.user.id, 'export', 'inventory', 0, `Exported ${items.length} inventory items to CSV`);
+      const headers = ['ID', 'Product ID', 'Warehouse ID', 'Quantity', 'Reserved', 'Reorder Point', 'Lot Number', 'Expiration'];
+      const rows = items.map((i: any) => [i.id, i.productId, i.warehouseId, i.quantity || '', i.reservedQuantity || '', i.reorderPoint || '', i.lotNumber || '', i.expirationDate || '']);
+      return { headers, rows };
+    }),
+    orders: protectedProcedure.query(async ({ ctx }) => {
+      const items = await db.getOrders();
+      await createAuditLog(ctx.user.id, 'export', 'orders', 0, `Exported ${items.length} orders to CSV`);
+      const headers = ['ID', 'Order Number', 'Customer ID', 'Status', 'Total', 'Currency', 'Order Date', 'Created'];
+      const rows = items.map((o: any) => [o.id, o.orderNumber || '', o.customerId || '', o.status, o.totalAmount || '', o.currency || 'USD', o.orderDate || '', o.createdAt?.toISOString() || '']);
+      return { headers, rows };
+    }),
+    invoices: financeProcedure.query(async ({ ctx }) => {
+      const items = await db.getInvoices();
+      await createAuditLog(ctx.user.id, 'export', 'invoices', 0, `Exported ${items.length} invoices to CSV`);
+      const headers = ['ID', 'Invoice Number', 'Customer ID', 'Status', 'Total', 'Due Date', 'Paid Date', 'Created'];
+      const rows = items.map((i: any) => [i.id, i.invoiceNumber || '', i.customerId || '', i.status, i.totalAmount || '', i.dueDate || '', i.paidDate || '', i.createdAt?.toISOString() || '']);
+      return { headers, rows };
+    }),
   }),
 });
 

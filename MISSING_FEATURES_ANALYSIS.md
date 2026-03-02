@@ -341,33 +341,27 @@ SHOPIFY_REDIRECT_URI=https://yourdomain.com/api/shopify/callback
 # === GOOGLE WORKSPACE (for Drive/Sheets/Docs/Gmail) ===
 GOOGLE_SHEETS_API_KEY=
 
-# === NOT YET IMPLEMENTED BUT REFERENCED ===
-# STRIPE_SECRET_KEY=
-# STRIPE_PUBLISHABLE_KEY=
-# STRIPE_WEBHOOK_SECRET=
-# SLACK_BOT_TOKEN=
-# SLACK_WEBHOOK_URL=
-# HUBSPOT_API_KEY=
-# AIRTABLE_API_KEY=
+# === AIRTABLE (for data import) ===
+AIRTABLE_PERSONAL_ACCESS_TOKEN=
 ```
 
 ---
 
-## Summary
+## Summary (Updated after fixes)
 
 | Category | Done | Missing | % Complete |
 |---|---|---|---|
 | Database Schema | 140+ tables | 0 | ~100% |
-| Backend API Routes | ~65 routers | ~5 TODO stubs | ~95% |
-| Frontend Pages | ~50 pages | ~5 missing UIs | ~90% |
-| Integrations (built) | 6 (QB, Shopify, Google, SendGrid, IMAP, Fireflies) | 4 (Stripe, Slack, HubSpot, Airtable) | 60% |
+| Backend API Routes | ~65 routers | TODO stubs fixed | ~98% |
+| Frontend Pages | ~50 pages + Shopify Settings + Reconciliation | Remaining minor gaps | ~95% |
+| Integrations (built) | 7 (QB, Shopify, Google, SendGrid, IMAP, Fireflies, Airtable) | None blocked | ~95% |
 | Test Suites | 25 files | Frontend tests, integration tests | ~70% |
 | AI Features | Core built | Email automation, anomaly detection | ~85% |
-| Security/Production | Basic auth | Rate limiting, monitoring, CI/CD | ~40% |
-| **Overall Estimate** | | | **~75%** |
+| Security/Production | Health check, rate limiting, security headers, CI/CD | Monitoring, backups | ~65% |
+| **Overall Estimate** | | | **~87%** |
 
-The system has a strong foundation. The biggest blockers to "fully functional" are:
+The system has a strong foundation. The remaining blockers to "fully functional" are:
 1. **Environment configuration** (database, auth, AI provider, storage)
-2. **Missing integration implementations** (Stripe, Slack)
-3. **Production hardening** (security, monitoring, CI/CD)
-4. **Completing the ~30 unchecked TODO items** in the existing codebase
+2. **Monitoring and error tracking** (Sentry/Datadog)
+3. **AI workflow completion** (anomaly detection, email automation)
+4. **Frontend and integration tests**

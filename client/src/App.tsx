@@ -61,6 +61,7 @@ import InventoryHub from "./pages/operations/InventoryHub";
 import OperationsHub from "./pages/operations/OperationsHub";
 import InventoryManagementHub from "./pages/operations/InventoryManagementHub";
 import DocumentImport from "./pages/operations/DocumentImport";
+import ReconciliationReport from "./pages/operations/ReconciliationReport";
 import SupplierPortal from "./pages/SupplierPortal";
 
 // Freight
@@ -85,6 +86,7 @@ import Integrations from "./pages/settings/Integrations";
 import NotificationSettings from "./pages/settings/Notifications";
 import TransactionalEmails from "./pages/settings/TransactionalEmails";
 import Fireflies from "./pages/settings/Fireflies";
+import ShopifySettings from "./pages/settings/ShopifySettings";
 
 // Projects
 import Projects from "./pages/projects/Projects";
@@ -137,6 +139,7 @@ function Router() {
         <Route path="/settings/notifications" component={NotificationSettings} />
         <Route path="/settings/emails" component={TransactionalEmails} />
         <Route path="/settings/fireflies" component={Fireflies} />
+        <Route path="/settings/shopify" component={ShopifySettings} />
 
         {/* Finance */}
         <Route path="/finance/accounts" component={Accounts} />
@@ -186,6 +189,7 @@ function Router() {
         <Route path="/operations/inventory-hub" component={InventoryHub} />
         <Route path="/operations/inventory-management" component={InventoryManagementHub} />
         <Route path="/operations/document-import" component={DocumentImport} />
+        <Route path="/operations/reconciliation" component={ReconciliationReport} />
 
         {/* Freight */}
         <Route path="/freight" component={FreightDashboard} />
