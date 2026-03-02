@@ -1,19 +1,11 @@
 import { jsxLocPlugin } from "@builder.io/vite-plugin-jsx-loc";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
-import fs from "node:fs";
 import path from "path";
 import { defineConfig } from "vite";
-import { vitePluginManusRuntime } from "vite-plugin-manus-runtime";
 
 
-export default defineConfig(({ command }) => {
-const plugins = [
-  react(),
-  tailwindcss(),
-  // Development-only plugins: JSX source locations and Manus runtime overlay
-  ...(command === "serve" ? [jsxLocPlugin(), vitePluginManusRuntime()] : []),
-];
+const plugins = [react(), tailwindcss(), jsxLocPlugin()];
 
 return {
   plugins,
@@ -34,11 +26,6 @@ return {
   server: {
     host: true,
     allowedHosts: [
-      ".manuspre.computer",
-      ".manus.computer",
-      ".manus-asia.computer",
-      ".manuscomputer.ai",
-      ".manusvm.computer",
       "localhost",
       "127.0.0.1",
     ],
