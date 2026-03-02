@@ -70,6 +70,9 @@ import {
   Mic,
   BookOpen,
   Plus,
+  Calculator,
+  Handshake,
+  ClipboardCheck,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -124,6 +127,8 @@ const menuGroups = [
       { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: FileSpreadsheet, label: "Document Import", path: "/operations/document-import" },
+      { icon: Calculator, label: "Inventory Costing", path: "/operations/inventory-costing" },
+      { icon: Handshake, label: "Vendor Negotiations", path: "/operations/vendor-negotiations" },
     ],
   },
   {
@@ -146,6 +151,7 @@ const menuGroups = [
     label: "Projects & Data",
     items: [
       { icon: FolderKanban, label: "Projects", path: "/projects" },
+      { icon: ClipboardCheck, label: "Investment Grants", path: "/projects/investment-grants" },
       { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
       { icon: BookOpen, label: "SOPs", path: "/sops" },
     ],

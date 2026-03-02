@@ -1191,12 +1191,11 @@ const workOrderGenerationProcessor: WorkflowProcessor = {
             .values({
               workOrderNumber: woNumber,
               productId: plan.productId,
-              productionPlanId: plan.id,
               bomId: plan.bomId,
               quantity: plan.plannedQuantity,
-              status: "planned",
-              plannedStartDate: plan.plannedStartDate || new Date(),
-              plannedEndDate: plan.plannedEndDate,
+              status: "scheduled",
+              scheduledStartDate: plan.plannedStartDate || new Date(),
+              scheduledEndDate: plan.plannedEndDate,
               notes: `Auto-generated from production plan ${plan.planNumber}`,
             })
             .$returningId();

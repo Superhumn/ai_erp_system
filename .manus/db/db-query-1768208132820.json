@@ -1,9 +1,0 @@
-{
-  "query": "ALTER TABLE rawMaterials \nADD COLUMN IF NOT EXISTS receivingStatus ENUM('none', 'ordered', 'in_transit', 'received', 'inspected') DEFAULT 'none',\nADD COLUMN IF NOT EXISTS lastPoId INT,\nADD COLUMN IF NOT EXISTS quantityOnOrder DECIMAL(15,4) DEFAULT 0,\nADD COLUMN IF NOT EXISTS quantityInTransit DECIMAL(15,4) DEFAULT 0,\nADD COLUMN IF NOT EXISTS quantityReceived DECIMAL(15,4) DEFAULT 0,\nADD COLUMN IF NOT EXISTS expectedDeliveryDate TIMESTAMP NULL,\nADD COLUMN IF NOT EXISTS lastReceivedDate TIMESTAMP NULL,\nADD COLUMN IF NOT EXISTS lastReceivedQty DECIMAL(15,4)",
-  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3WiXecng1chg6se.408a3c215e81 --database 3o4cnYLmRMvo8cxB6kVVJ3 --execute ALTER TABLE rawMaterials \nADD COLUMN IF NOT EXISTS receivingStatus ENUM('none', 'ordered', 'in_transit', 'received', 'inspected') DEFAULT 'none',\nADD COLUMN IF NOT EXISTS lastPoId INT,\nADD COLUMN IF NOT EXISTS quantityOnOrder DECIMAL(15,4) DEFAULT 0,\nADD COLUMN IF NOT EXISTS quantityInTransit DECIMAL(15,4) DEFAULT 0,\nADD COLUMN IF NOT EXISTS quantityReceived DECIMAL(15,4) DEFAULT 0,\nADD COLUMN IF NOT EXISTS expectedDeliveryDate TIMESTAMP NULL,\nADD COLUMN IF NOT EXISTS lastReceivedDate TIMESTAMP NULL,\nADD COLUMN IF NOT EXISTS lastReceivedQty DECIMAL(15,4)",
-  "rows": [],
-  "messages": [],
-  "stdout": "",
-  "stderr": "",
-  "execution_time_ms": 2403
-}
