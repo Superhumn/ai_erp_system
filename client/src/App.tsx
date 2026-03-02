@@ -101,6 +101,12 @@ import Team from "./pages/settings/Team";
 import CopackerPortal from "./pages/portal/CopackerPortal";
 import VendorPortal from "./pages/portal/VendorPortal";
 
+// Auth
+import { Login } from "./pages/Login";
+
+// SOPs
+import SOPs from "./pages/SOPs";
+
 // Data Room
 import DataRooms from "./pages/DataRooms";
 import DataRoomDetail from "./pages/DataRoomDetail";
@@ -241,6 +247,7 @@ function App() {
           <TooltipProvider>
             <Toaster />
             <Switch>
+              {/* Public Login */}
               {/* Public routes (outside dashboard) */}
               <Route path="/login" component={Login} />
               {/* Public Data Room Access (outside dashboard) */}
