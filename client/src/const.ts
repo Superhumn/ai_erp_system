@@ -1,6 +1,6 @@
-export { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+export const APP_URL = import.meta.env.VITE_APP_URL || window.location.origin;
+export const LOGIN_PATH = "/login";
 
-// Generate login URL - now points to local login page
-export const getLoginUrl = () => {
-  return "/login";
-};
+export function getLoginUrl(): string {
+  return LOGIN_PATH;
+}

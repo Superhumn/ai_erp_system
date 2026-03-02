@@ -1,4 +1,3 @@
-import { COOKIE_NAME } from "@shared/const";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -11,6 +10,8 @@ import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
+import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
+import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import * as db from "./db";
 import { storagePut } from "./storage";
@@ -19,7 +20,7 @@ import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage,
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo } from "./_core/quickbooks";
-import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
+import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -463,7 +464,7 @@ export const appRouter = router({
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const result = await db.createVendor({ ...input, companyId: ctx.user.companyId || 1 });
+        const result = await db.createVendor(input);
         await createAuditLog(ctx.user.id, 'create', 'vendor', result.id, input.name);
         return result;
       }),
@@ -620,20 +621,6 @@ export const appRouter = router({
         currency: z.string().optional(),
         notes: z.string().optional(),
         terms: z.string().optional(),
-        // B2B and International Freight fields
-        paymentTerms: z.enum(['due_on_receipt', 'net_15', 'net_30', 'net_45', 'net_60', 'net_90', 'eom', 'cod', 'cia', 'custom']).optional(),
-        paymentMethod: z.enum(['bank_transfer', 'wire', 'ach', 'check', 'credit_card', 'letter_of_credit', 'cash_in_advance', 'documentary_collection', 'open_account', 'consignment', 'other']).optional(),
-        purchaseOrderNumber: z.string().optional(),
-        incoterms: z.string().optional(),
-        freightRfqId: z.number().optional(),
-        portOfLoading: z.string().optional(),
-        portOfDischarge: z.string().optional(),
-        exportLicenseNumber: z.string().optional(),
-        importLicenseNumber: z.string().optional(),
-        shippingInstructions: z.string().optional(),
-        freightAmount: z.string().optional(),
-        insuranceAmount: z.string().optional(),
-        customsDuties: z.string().optional(),
         items: z.array(z.object({
           productId: z.number().optional(),
           description: z.string(),
@@ -642,11 +629,6 @@ export const appRouter = router({
           taxRate: z.string().optional(),
           taxAmount: z.string().optional(),
           totalAmount: z.string(),
-          // International freight fields for items
-          hsCode: z.string().optional(),
-          countryOfOrigin: z.string().optional(),
-          weight: z.string().optional(),
-          volume: z.string().optional(),
         })).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
@@ -684,161 +666,6 @@ export const appRouter = router({
         await db.updateInvoice(input.id, { status: 'sent', approvedBy: ctx.user.id, approvedAt: new Date() });
         await createAuditLog(ctx.user.id, 'approve', 'invoice', input.id);
         return { success: true };
-      }),
-    createFromText: financeProcedure
-      .input(z.object({ text: z.string().min(1) }))
-      .mutation(async ({ input, ctx }) => {
-        const { parseInvoiceText, findOrCreateCustomer } = await import('./_core/invoiceTextParser');
-        
-        // Parse the text using AI
-        const parsed = await parseInvoiceText(input.text);
-        
-        // Find or create customer
-        const customerId = await findOrCreateCustomer(parsed.customerName, db);
-        
-        // Calculate dates
-        const issueDate = new Date();
-        const dueDate = new Date();
-        if (parsed.dueInDays) {
-          dueDate.setDate(dueDate.getDate() + parsed.dueInDays);
-        } else {
-          dueDate.setDate(dueDate.getDate() + 30); // Default to 30 days
-        }
-        
-        // Create draft invoice
-        const invoiceNumber = generateNumber('INV');
-        const invoice = await db.createInvoice({
-          customerId,
-          invoiceNumber,
-          type: 'invoice',
-          status: 'draft',
-          issueDate,
-          dueDate,
-          subtotal: parsed.amount.toFixed(2),
-          taxAmount: '0.00',
-          discountAmount: '0.00',
-          totalAmount: parsed.amount.toFixed(2),
-          currency: 'USD',
-          notes: parsed.paymentTerms ? `Payment Terms: ${parsed.paymentTerms}` : undefined,
-          createdBy: ctx.user.id,
-        });
-        
-        // Create invoice line item
-        const description = parsed.quantity && parsed.unit 
-          ? `${parsed.quantity} ${parsed.unit} ${parsed.description}`
-          : parsed.description;
-        
-        // Calculate unit price: if quantity is provided, divide total by quantity
-        const quantity = parsed.quantity ?? 1;
-        const unitPrice = parsed.amount / quantity;
-        
-        await db.createInvoiceItem({
-          invoiceId: invoice.id,
-          description,
-          quantity: quantity.toString(),
-          unitPrice: unitPrice.toFixed(2),
-          taxRate: '0',
-          taxAmount: '0.00',
-          totalAmount: parsed.amount.toFixed(2),
-        });
-        
-        await createAuditLog(ctx.user.id, 'create', 'invoice', invoice.id, invoiceNumber, null, { source: 'text', originalText: input.text });
-        
-        return { 
-          invoiceId: invoice.id,
-          invoiceNumber,
-          parsed,
-        };
-      }),
-    approveAndEmail: financeProcedure
-      .input(z.object({ 
-        invoiceId: z.number(),
-        message: z.string().optional(),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        const invoice = await db.getInvoiceWithItems(input.invoiceId);
-        if (!invoice) throw new TRPCError({ code: 'NOT_FOUND', message: 'Invoice not found' });
-        
-        const customer = invoice.customer;
-        if (!customer?.email) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Customer has no email address' });
-        }
-        
-        // Generate PDF
-        const { generateInvoicePdf, getDefaultCompanyInfo } = await import('./_core/invoicePdf');
-        const company = getDefaultCompanyInfo();
-        
-        const pdfBuffer = await generateInvoicePdf({
-          invoiceNumber: invoice.invoiceNumber,
-          issueDate: invoice.issueDate,
-          dueDate: invoice.dueDate,
-          customer: {
-            name: customer.name,
-            email: customer.email,
-            address: customer.address,
-            phone: customer.phone,
-          },
-          items: (invoice.items || []).map((item: any) => ({
-            description: item.description,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            taxRate: item.taxRate,
-            taxAmount: item.taxAmount,
-            totalAmount: item.totalAmount,
-          })),
-          subtotal: invoice.subtotal,
-          taxAmount: invoice.taxAmount,
-          discountAmount: invoice.discountAmount,
-          totalAmount: invoice.totalAmount,
-          notes: invoice.notes,
-          terms: invoice.terms,
-          currency: invoice.currency || 'USD',
-        }, company);
-        
-        // Send email with PDF attachment
-        const { sendEmail } = await import('./_core/email');
-        const emailContent = `
-          <h2>Invoice ${invoice.invoiceNumber}</h2>
-          <p>Dear ${customer.name},</p>
-          ${input.message ? `<p>${input.message}</p>` : '<p>Thank you for your business. Please find your invoice attached.</p>'}
-          <p><strong>Invoice Number:</strong> ${invoice.invoiceNumber}</p>
-          <p><strong>Amount Due:</strong> $${Number(invoice.totalAmount).toFixed(2)}</p>
-          <p><strong>Due Date:</strong> ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : 'N/A'}</p>
-          ${invoice.notes ? `<p><strong>Notes:</strong> ${invoice.notes}</p>` : ''}
-          <p>Please see the attached PDF for full details.</p>
-          <p>Thank you for your business!</p>
-        `;
-        
-        try {
-          await sendEmail({
-            to: customer.email,
-            subject: `Invoice ${invoice.invoiceNumber}`,
-            html: emailContent,
-            attachments: [{
-              content: pdfBuffer.toString('base64'),
-              filename: `invoice-${invoice.invoiceNumber}.pdf`,
-              type: 'application/pdf',
-              disposition: 'attachment',
-            }],
-          });
-          
-          // Update invoice status to sent and mark as approved
-          await db.updateInvoice(input.invoiceId, { 
-            status: 'sent',
-            approvedBy: ctx.user.id,
-            approvedAt: new Date(),
-          });
-          await createAuditLog(ctx.user.id, 'approve', 'invoice', input.invoiceId, invoice.invoiceNumber);
-        } catch (error) {
-          // Ensure we don't mark the invoice as sent/approved if the email fails
-          throw new TRPCError({
-            code: 'INTERNAL_SERVER_ERROR',
-            message: 'Failed to send invoice email. The invoice was not marked as sent.',
-            cause: error,
-          });
-        }
-        
-        return { success: true, invoiceNumber: invoice.invoiceNumber };
       }),
     sendEmail: financeProcedure
       .input(z.object({
@@ -1035,102 +862,6 @@ export const appRouter = router({
         await db.updatePayment(id, data);
         await createAuditLog(ctx.user.id, 'update', 'payment', id);
         return { success: true };
-      }),
-    createFromText: financeProcedure
-      .input(z.object({ text: z.string().min(1) }))
-      .mutation(async ({ input, ctx }) => {
-        const { parseEntityText, findOrCreateEntity } = await import('./_core/universalTextParser');
-        
-        try {
-          // Parse the text using AI
-          const parsed = await parseEntityText(input.text, 'payment');
-          
-          // Find customer/vendor (try both)
-          let customerId: number | undefined;
-          let vendorId: number | undefined;
-          
-          try {
-            customerId = await findOrCreateEntity(parsed.payerName, 'customer', db);
-          } catch (err) {
-            // Try as vendor if customer fails
-            try {
-              vendorId = await findOrCreateEntity(parsed.payerName, 'vendor', db);
-            } catch (vendorErr) {
-              // Both lookups failed - this is a critical issue
-              console.error('Failed to find/create payer entity:', { customerError: err, vendorError: vendorErr });
-              throw new TRPCError({
-                code: 'BAD_REQUEST',
-                message: `Unable to identify payer "${parsed.payerName}". Please create the customer or vendor first.`
-              });
-            }
-          }
-          
-          // Log warning if payment has no associated entity (shouldn't happen after above check)
-          if (!customerId && !vendorId) {
-            console.error('CRITICAL: Payment created with no associated entity');
-            await createAuditLog(ctx.user.id, 'error', 'payment', 0, 'Payment without entity', null, {
-              payerName: parsed.payerName,
-              amount: parsed.amount
-            });
-            throw new TRPCError({
-              code: 'INTERNAL_SERVER_ERROR',
-              message: 'Failed to associate payment with customer or vendor'
-            });
-          }
-          
-          // Find invoice if mentioned
-          let invoiceId: number | undefined;
-          if (parsed.invoiceNumber) {
-            const invoice = await db.getInvoiceByNumber(parsed.invoiceNumber);
-            if (invoice) {
-              invoiceId = invoice.id;
-            }
-          }
-          
-          // Create payment record
-          const payment = await db.createPayment({
-            invoiceId,
-            customerId,
-            vendorId,
-            amount: parsed.amount.toFixed(2),
-            paymentDate: parsed.paymentDate ? new Date(parsed.paymentDate) : new Date(),
-            paymentMethod: parsed.paymentMethod || 'bank_transfer',
-            referenceNumber: parsed.referenceNumber || undefined,
-            currency: parsed.currency || 'USD',
-            notes: parsed.notes || undefined,
-            status: 'completed',
-          });
-          
-          // Update invoice if linked
-          if (invoiceId) {
-            const invoice = await db.getInvoiceById(invoiceId);
-            if (invoice) {
-              const currentPaid = parseFloat(invoice.paidAmount || '0');
-              const newPaid = currentPaid + parsed.amount;
-              const total = parseFloat(invoice.totalAmount);
-              const newStatus = newPaid >= total ? 'paid' : 'partial';
-              
-              await db.updateInvoice(invoiceId, {
-                paidAmount: newPaid.toFixed(2),
-                status: newStatus,
-              });
-            }
-          }
-          
-          await createAuditLog(ctx.user.id, 'create', 'payment', payment.id, parsed.referenceNumber, null, { source: 'text', originalText: input.text });
-          
-          return {
-            paymentId: payment.id,
-            amount: parsed.amount,
-            parsed,
-          };
-        } catch (error) {
-          console.error('[Payment createFromText] Error:', error);
-          throw new TRPCError({
-            code: 'INTERNAL_SERVER_ERROR',
-            message: error instanceof Error ? error.message : 'Failed to record payment from text'
-          });
-        }
       }),
   }),
 
@@ -1381,70 +1112,6 @@ export const appRouter = router({
     // Get inbound shipments from POs
     getInboundShipments: opsProcedure
       .query(() => db.getInboundShipmentsFromPOs()),
-    transferFromText: opsProcedure
-      .input(z.object({ text: z.string().min(1) }))
-      .mutation(async ({ input, ctx }) => {
-        const { parseEntityText, findOrCreateEntity } = await import('./_core/universalTextParser');
-        
-        try {
-          // Parse the text using AI
-          const parsed = await parseEntityText(input.text, 'inventory_transfer');
-          
-          // Find warehouses
-          const fromWarehouse = await db.getWarehouseByName(parsed.fromLocation);
-          const toWarehouse = await db.getWarehouseByName(parsed.toLocation);
-          
-          if (!fromWarehouse || !toWarehouse) {
-            throw new Error(`Warehouse not found: ${!fromWarehouse ? parsed.fromLocation : parsed.toLocation}`);
-          }
-          
-          // Create inventory transfer
-          const transferNumber = generateNumber('TRF');
-          const transfer = await db.createInventoryTransfer({
-            transferNumber,
-            fromWarehouseId: fromWarehouse.id,
-            toWarehouseId: toWarehouse.id,
-            transferDate: parsed.transferDate ? new Date(parsed.transferDate) : new Date(),
-            status: 'pending',
-            reason: parsed.reason || undefined,
-            notes: parsed.notes || undefined,
-            createdBy: ctx.user.id,
-          });
-          
-          // Create transfer items
-          for (const item of parsed.items || []) {
-            // Find material/product
-            let productId: number | undefined;
-            try {
-              productId = await findOrCreateEntity(item.materialName, 'material', db);
-            } catch (err) {
-              console.warn('Failed to find/create material:', err);
-            }
-            
-            await db.createInventoryTransferItem({
-              transferId: transfer.id,
-              productId,
-              productName: item.materialName,
-              quantity: item.quantity.toString(),
-              unit: item.unit || 'units',
-            });
-          }
-          
-          await createAuditLog(ctx.user.id, 'create', 'inventoryTransfer', transfer.id, transferNumber, null, { source: 'text', originalText: input.text });
-          
-          return {
-            transferId: transfer.id,
-            transferNumber,
-            parsed,
-          };
-        } catch (error) {
-          console.error('[InventoryTransfer createFromText] Error:', error);
-          throw new TRPCError({
-            code: 'INTERNAL_SERVER_ERROR',
-            message: error instanceof Error ? error.message : 'Failed to create inventory transfer from text'
-          });
-        }
-      }),
   }),
 
   // ============================================
@@ -1756,6 +1423,61 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'approve', 'purchaseOrder', input.id);
         return { success: true };
       }),
+    parseText: opsProcedure
+      .input(z.object({ text: z.string().min(1).max(1000) }))
+      .mutation(async ({ input }) => {
+        const parsed = await parseTextToPO(input.text);
+        const preview = await createPOPreview(parsed);
+        return { parsed, preview };
+      }),
+    // Create PO from text and send email
+    createFromText: opsProcedure
+      .input(z.object({
+        text: z.string().min(1),
+        preview: z.object({
+          vendorId: z.number(),
+          vendorName: z.string(),
+          rawMaterialId: z.number().nullable(),
+          items: z.array(z.object({
+            description: z.string(),
+            quantity: z.string(),
+            unitPrice: z.string(),
+            totalAmount: z.string(),
+            rawMaterialId: z.number().nullable(),
+          })),
+          shippingAddress: z.string(),
+          notes: z.string(),
+          subtotal: z.string(),
+          totalAmount: z.string(),
+          suggested: z.boolean(),
+          isPriceEstimated: z.boolean().optional(),
+        }),
+        sendEmail: z.boolean().default(false),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const po = await createPOFromPreview(input.preview, ctx.user.id);
+        
+        await createAuditLog(ctx.user.id, 'create', 'purchaseOrder', po.id, po.poNumber);
+        
+        if (input.sendEmail) {
+          const emailResult = await emailService.sendPOEmail(po.id, {
+            triggeredBy: ctx.user.id,
+          });
+          
+          if (!emailResult.success) {
+            console.error(`Failed to send PO email for PO ${po.id}:`, emailResult.error);
+          }
+          
+          return { 
+            success: true, 
+            po, 
+            emailSent: emailResult.success,
+            emailError: emailResult.error || undefined,
+          };
+        }
+        
+        return { success: true, po, emailSent: false };
+      }),
     sendToSupplier: opsProcedure
       .input(z.object({
         poId: z.number(),
@@ -1850,96 +1572,6 @@ export const appRouter = router({
         
         return { success: true, shipmentId, rfqId, portalToken };
       }),
-    createFromText: opsProcedure
-      .input(z.object({ text: z.string().min(1) }))
-      .mutation(async ({ input, ctx }) => {
-        const { parseEntityText, findOrCreateEntity } = await import('./_core/universalTextParser');
-        
-        try {
-          // Parse the text using AI
-          const parsed = await parseEntityText(input.text, 'purchase_order');
-          
-          // Find or create vendor
-          const vendorId = await findOrCreateEntity(parsed.vendorName, 'vendor', db);
-          
-          // Calculate dates
-          const orderDate = new Date();
-          const expectedDate = parsed.deliveryDate ? new Date(parsed.deliveryDate) : undefined;
-          
-          // Calculate totals
-          let subtotal = 0;
-          const items = [];
-          
-          for (const item of parsed.items || []) {
-            const quantity = Number(item.quantity) || 1;
-            const unitPrice = item.unitPrice ? Number(item.unitPrice) : 0;
-            const total = quantity * unitPrice;
-            subtotal += total;
-            
-            // Find or create material
-            let productId: number | undefined;
-            try {
-              productId = await findOrCreateEntity(item.materialName, 'material', db);
-            } catch (err) {
-              // Log material linking failure to audit trail
-              console.warn('Failed to link material:', err);
-              await createAuditLog(ctx.user.id, 'warning', 'purchaseOrder', 0, 'Material linking failed', null, {
-                materialName: item.materialName,
-                error: err instanceof Error ? err.message : 'Unknown error'
-              });
-            }
-            
-            items.push({
-              productId,
-              description: `${item.quantity} ${item.unit || 'units'} ${item.materialName}`,
-              quantity: quantity.toString(),
-              unitPrice: unitPrice.toFixed(2),
-              totalAmount: total.toFixed(2),
-            });
-          }
-          
-          const totalAmount = parsed.totalAmount || subtotal;
-          
-          // Create draft PO
-          const poNumber = generateNumber('PO');
-          const po = await db.createPurchaseOrder({
-            vendorId,
-            poNumber,
-            orderDate,
-            expectedDate,
-            status: 'draft',
-            subtotal: subtotal.toFixed(2),
-            taxAmount: '0.00',
-            shippingAmount: '0.00',
-            totalAmount: totalAmount.toFixed(2),
-            currency: 'USD',
-            notes: parsed.notes || undefined,
-            createdBy: ctx.user.id,
-          });
-          
-          // Create PO line items
-          for (const item of items) {
-            await db.createPurchaseOrderItem({
-              purchaseOrderId: po.id,
-              ...item,
-            });
-          }
-          
-          await createAuditLog(ctx.user.id, 'create', 'purchaseOrder', po.id, poNumber, null, { source: 'text', originalText: input.text });
-          
-          return {
-            poId: po.id,
-            poNumber,
-            parsed,
-          };
-        } catch (error) {
-          console.error('[PO createFromText] Error:', error);
-          throw new TRPCError({
-            code: 'INTERNAL_SERVER_ERROR',
-            message: error instanceof Error ? error.message : 'Failed to create purchase order from text'
-          });
-        }
-      }),
   }),
 
   // ============================================
@@ -2006,46 +1638,6 @@ export const appRouter = router({
         }
         
         return { success: true };
-      }),
-    createFromText: opsProcedure
-      .input(z.object({ text: z.string().min(1) }))
-      .mutation(async ({ input, ctx }) => {
-        const { parseEntityText } = await import('./_core/universalTextParser');
-        
-        try {
-          // Parse the text using AI
-          const parsed = await parseEntityText(input.text, 'shipment');
-          
-          // Create shipment
-          const shipmentNumber = generateNumber('SHIP');
-          const shipment = await db.createShipment({
-            shipmentNumber,
-            type: 'inbound', // Default to inbound
-            carrier: parsed.carrier,
-            trackingNumber: parsed.trackingNumber,
-            status: parsed.status || 'pending',
-            fromAddress: parsed.origin || undefined,
-            toAddress: parsed.destination || undefined,
-            estimatedDelivery: parsed.estimatedDelivery ? new Date(parsed.estimatedDelivery) : undefined,
-            weight: parsed.weight ? parsed.weight.toString() : undefined,
-            notes: parsed.notes || undefined,
-          });
-          
-          await createAuditLog(ctx.user.id, 'create', 'shipment', shipment.id, shipmentNumber, null, { source: 'text', originalText: input.text });
-          
-          return {
-            shipmentId: shipment.id,
-            shipmentNumber,
-            trackingNumber: parsed.trackingNumber,
-            parsed,
-          };
-        } catch (error) {
-          console.error('[Shipment createFromText] Error:', error);
-          throw new TRPCError({
-            code: 'INTERNAL_SERVER_ERROR',
-            message: error instanceof Error ? error.message : 'Failed to create shipment from text'
-          });
-        }
       }),
   }),
 
@@ -2516,6 +2108,129 @@ export const appRouter = router({
     tasks: protectedProcedure
       .input(z.object({ projectId: z.number() }))
       .query(({ input }) => db.getProjectTasks(input.projectId)),
+  }),
+
+  // ============================================
+  // SAUDI INVESTMENT GRANT CHECKLISTS
+  // ============================================
+  investmentGrants: router({
+    list: protectedProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        status: z.string().optional(),
+      }).optional())
+      .query(({ input }) => db.getInvestmentGrantChecklists(input)),
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getInvestmentGrantChecklistWithItems(input.id)),
+    create: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        companyId: z.number().optional(),
+        description: z.string().optional(),
+        totalCapex: z.string().optional(),
+        grantPercentage: z.string().optional(),
+        estimatedGrant: z.string().optional(),
+        currency: z.string().optional(),
+        startDate: z.date().optional(),
+        targetCompletionDate: z.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createInvestmentGrantChecklist({ ...input, createdBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'investmentGrantChecklist', result.id, input.name);
+
+        // Auto-populate default checklist items
+        const defaultItems = [
+          { category: "entity_entry_setup" as const, taskName: "MISA foreign investment license", sortOrder: 1, startMonth: 1, durationMonths: 2 },
+          { category: "entity_entry_setup" as const, taskName: "Saudi entity incorporation + CR", sortOrder: 2, startMonth: 2, durationMonths: 2 },
+          { category: "entity_entry_setup" as const, taskName: "Bank account + ZATCA registration", sortOrder: 3, startMonth: 3, durationMonths: 1 },
+          { category: "project_definition" as const, taskName: "Factory scope & product mix defined", sortOrder: 4, startMonth: 2, durationMonths: 2 },
+          { category: "project_definition" as const, taskName: "Process flow & capacity design", sortOrder: 5, startMonth: 3, durationMonths: 2 },
+          { category: "capex_financials" as const, taskName: "Detailed capex budget (eligible vs non-eligible)", sortOrder: 6, startMonth: 4, durationMonths: 2 },
+          { category: "capex_financials" as const, taskName: "5-year financial model", sortOrder: 7, startMonth: 4, durationMonths: 2 },
+          { category: "land_infrastructure" as const, taskName: "Industrial land selection (MODON)", sortOrder: 8, startMonth: 3, durationMonths: 3 },
+          { category: "land_infrastructure" as const, taskName: "Utilities & cold-chain planning", sortOrder: 9, startMonth: 5, durationMonths: 2 },
+          { category: "jobs_localization" as const, taskName: "Headcount & Saudization plan", sortOrder: 10, startMonth: 4, durationMonths: 2 },
+          { category: "jobs_localization" as const, taskName: "Training & skills program", sortOrder: 11, startMonth: 5, durationMonths: 3 },
+          { category: "incentive_application" as const, taskName: "Grant eligibility confirmation", sortOrder: 12, startMonth: 6, durationMonths: 1 },
+          { category: "incentive_application" as const, taskName: "35% grant application submission", sortOrder: 13, startMonth: 7, durationMonths: 1 },
+          { category: "incentive_application" as const, taskName: "Grant review & approval", sortOrder: 14, startMonth: 8, durationMonths: 3 },
+          { category: "construction_equipment" as const, taskName: "Factory construction", sortOrder: 15, startMonth: 10, durationMonths: 12 },
+          { category: "construction_equipment" as const, taskName: "Equipment procurement & install", sortOrder: 16, startMonth: 14, durationMonths: 6 },
+          { category: "grant_disbursement" as const, taskName: "Milestone 1 drawdown", sortOrder: 17, startMonth: 16, durationMonths: 1 },
+          { category: "grant_disbursement" as const, taskName: "Milestone 2 drawdown", sortOrder: 18, startMonth: 20, durationMonths: 1 },
+          { category: "grant_disbursement" as const, taskName: "Final drawdown (production start)", sortOrder: 19, startMonth: 22, durationMonths: 2 },
+        ];
+
+        for (const item of defaultItems) {
+          await db.createInvestmentGrantItem({ ...item, checklistId: result.id });
+        }
+
+        return result;
+      }),
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        description: z.string().optional(),
+        status: z.enum(["not_started", "in_progress", "completed", "on_hold"]).optional(),
+        totalCapex: z.string().optional(),
+        grantPercentage: z.string().optional(),
+        estimatedGrant: z.string().optional(),
+        currency: z.string().optional(),
+        startDate: z.date().optional(),
+        targetCompletionDate: z.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateInvestmentGrantChecklist(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'investmentGrantChecklist', id);
+        return { success: true };
+      }),
+    addItem: protectedProcedure
+      .input(z.object({
+        checklistId: z.number(),
+        category: z.enum([
+          "entity_entry_setup", "project_definition", "capex_financials",
+          "land_infrastructure", "jobs_localization", "incentive_application",
+          "construction_equipment", "grant_disbursement",
+        ]),
+        taskName: z.string().min(1),
+        description: z.string().optional(),
+        assigneeId: z.number().optional(),
+        startMonth: z.number().optional(),
+        durationMonths: z.number().optional(),
+        sortOrder: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createInvestmentGrantItem(input);
+        await createAuditLog(ctx.user.id, 'create', 'investmentGrantItem', result.id, input.taskName);
+        return result;
+      }),
+    updateItem: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        taskName: z.string().optional(),
+        description: z.string().optional(),
+        status: z.enum(["not_started", "in_progress", "completed", "blocked"]).optional(),
+        assigneeId: z.number().optional(),
+        startMonth: z.number().optional(),
+        durationMonths: z.number().optional(),
+        completedDate: z.date().optional(),
+        notes: z.string().optional(),
+        sortOrder: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateInvestmentGrantItem(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'investmentGrantItem', id);
+        return { success: true };
+      }),
+    items: protectedProcedure
+      .input(z.object({ checklistId: z.number() }))
+      .query(({ input }) => db.getInvestmentGrantItems(input.checklistId)),
   }),
 
   // ============================================
@@ -5978,284 +5693,9 @@ Provide a brief status summary, any missing documents, and next steps.`;
         });
 
         await createAuditLog(ctx.user.id, 'create', 'document', result.id, input.name);
-
+        
         return { id: result.id, url };
       }),
-
-    // --- Biweekly Inventory Updates ---
-
-    // Get biweekly inventory update submissions
-    getInventoryUpdates: copackerProcedure.query(async ({ ctx }) => {
-      const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId! : undefined;
-      return db.getCopackerInventoryUpdates(warehouseId ?? undefined);
-    }),
-
-    // Get a single inventory update with its line items
-    getInventoryUpdateDetail: copackerProcedure
-      .input(z.object({ id: z.number() }))
-      .query(async ({ input, ctx }) => {
-        const update = await db.getCopackerInventoryUpdateById(input.id);
-        if (!update) throw new TRPCError({ code: 'NOT_FOUND', message: 'Inventory update not found' });
-
-        if (ctx.user.role === 'copacker' && ctx.user.linkedWarehouseId && update.warehouseId !== ctx.user.linkedWarehouseId) {
-          throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-        }
-
-        const items = await db.getCopackerInventoryUpdateItems(input.id);
-        return { update, items };
-      }),
-
-    // Create a new biweekly inventory update (draft)
-    createInventoryUpdate: copackerProcedure
-      .input(z.object({
-        periodStart: z.string(),
-        periodEnd: z.string(),
-        notes: z.string().optional(),
-        items: z.array(z.object({
-          productId: z.number(),
-          previousQuantity: z.string().optional(),
-          newQuantity: z.string(),
-          quantityReceived: z.string().optional(),
-          quantityShipped: z.string().optional(),
-          quantityDamaged: z.string().optional(),
-          notes: z.string().optional(),
-        })),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
-          throw new TRPCError({ code: 'FORBIDDEN', message: 'No warehouse assigned' });
-        }
-
-        const warehouseId = ctx.user.linkedWarehouseId!;
-        const { items, ...updateData } = input;
-
-        const result = await db.createCopackerInventoryUpdate({
-          warehouseId,
-          submittedBy: ctx.user.id,
-          periodStart: new Date(input.periodStart),
-          periodEnd: new Date(input.periodEnd),
-          status: 'draft',
-          notes: updateData.notes,
-        });
-
-        for (const item of items) {
-          await db.createCopackerInventoryUpdateItem({
-            updateId: result.id,
-            productId: item.productId,
-            previousQuantity: item.previousQuantity,
-            newQuantity: item.newQuantity,
-            quantityReceived: item.quantityReceived || "0",
-            quantityShipped: item.quantityShipped || "0",
-            quantityDamaged: item.quantityDamaged || "0",
-            notes: item.notes,
-          });
-        }
-
-        await createAuditLog(ctx.user.id, 'create', 'copacker_inventory_update', result.id);
-        return { id: result.id };
-      }),
-
-    // Submit a draft inventory update
-    submitInventoryUpdate: copackerProcedure
-      .input(z.object({ id: z.number() }))
-      .mutation(async ({ input, ctx }) => {
-        const update = await db.getCopackerInventoryUpdateById(input.id);
-        if (!update) throw new TRPCError({ code: 'NOT_FOUND' });
-        if (ctx.user.role === 'copacker' && ctx.user.linkedWarehouseId && update.warehouseId !== ctx.user.linkedWarehouseId) {
-          throw new TRPCError({ code: 'FORBIDDEN' });
-        }
-
-        await db.updateCopackerInventoryUpdate(input.id, { status: 'submitted' });
-
-        // Apply inventory quantities to actual inventory table
-        const items = await db.getCopackerInventoryUpdateItems(input.id);
-        for (const row of items) {
-          const invItems = await db.getInventoryByWarehouse(update.warehouseId);
-          const match = invItems.find(i => i.inventory.productId === row.item.productId);
-          if (match) {
-            await db.updateInventoryQuantityById(
-              match.inventory.id,
-              parseFloat(row.item.newQuantity),
-              ctx.user.id,
-              `Biweekly update #${input.id}`
-            );
-          }
-        }
-
-        await createAuditLog(ctx.user.id, 'update', 'copacker_inventory_update', input.id, undefined, undefined, { status: 'submitted' });
-        return { success: true };
-      }),
-
-    // --- Copacker Invoices ---
-
-    getInvoices: copackerProcedure.query(async ({ ctx }) => {
-      const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId! : undefined;
-      return db.getCopackerInvoices(warehouseId ?? undefined);
-    }),
-
-    getInvoiceDetail: copackerProcedure
-      .input(z.object({ id: z.number() }))
-      .query(async ({ input, ctx }) => {
-        const invoice = await db.getCopackerInvoiceById(input.id);
-        if (!invoice) throw new TRPCError({ code: 'NOT_FOUND' });
-        if (ctx.user.role === 'copacker' && ctx.user.linkedWarehouseId && invoice.warehouseId !== ctx.user.linkedWarehouseId) {
-          throw new TRPCError({ code: 'FORBIDDEN' });
-        }
-        const items = await db.getCopackerInvoiceItems(input.id);
-        return { invoice, items };
-      }),
-
-    createInvoice: copackerProcedure
-      .input(z.object({
-        invoiceNumber: z.string().min(1),
-        invoiceDate: z.string(),
-        dueDate: z.string().optional(),
-        description: z.string().optional(),
-        notes: z.string().optional(),
-        items: z.array(z.object({
-          description: z.string(),
-          quantity: z.string(),
-          unitPrice: z.string(),
-          totalAmount: z.string(),
-        })),
-        // Optional file upload
-        fileName: z.string().optional(),
-        fileData: z.string().optional(),
-        mimeType: z.string().optional(),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
-          throw new TRPCError({ code: 'FORBIDDEN', message: 'No warehouse assigned' });
-        }
-
-        const warehouseId = ctx.user.linkedWarehouseId!;
-        const { items, fileName, fileData, mimeType, ...invoiceData } = input;
-
-        // Calculate totals
-        const subtotal = items.reduce((sum, i) => sum + parseFloat(i.totalAmount), 0);
-        const totalAmount = subtotal;
-
-        let fileUrl: string | undefined;
-        let fileKey: string | undefined;
-
-        if (fileData && fileName && mimeType) {
-          const buffer = Buffer.from(fileData, 'base64');
-          fileKey = `copacker-invoices/${warehouseId}/${nanoid()}-${fileName}`;
-          const uploaded = await storagePut(fileKey, buffer, mimeType);
-          fileUrl = uploaded.url;
-        }
-
-        const result = await db.createCopackerInvoice({
-          warehouseId,
-          submittedBy: ctx.user.id,
-          invoiceNumber: invoiceData.invoiceNumber,
-          invoiceDate: new Date(invoiceData.invoiceDate),
-          dueDate: invoiceData.dueDate ? new Date(invoiceData.dueDate) : undefined,
-          description: invoiceData.description,
-          subtotal: subtotal.toFixed(2),
-          taxAmount: "0",
-          totalAmount: totalAmount.toFixed(2),
-          status: 'submitted',
-          fileUrl,
-          fileKey,
-          fileName,
-          mimeType,
-          notes: invoiceData.notes,
-        });
-
-        for (const item of items) {
-          await db.createCopackerInvoiceItem({
-            invoiceId: result.id,
-            description: item.description,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            totalAmount: item.totalAmount,
-          });
-        }
-
-        await createAuditLog(ctx.user.id, 'create', 'copacker_invoice', result.id, invoiceData.invoiceNumber);
-        return { id: result.id };
-      }),
-
-    // --- Copacker Shipping Documents ---
-
-    getShippingDocuments: copackerProcedure.query(async ({ ctx }) => {
-      const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId! : undefined;
-      return db.getCopackerShippingDocuments(warehouseId ?? undefined);
-    }),
-
-    uploadShippingDocument: copackerProcedure
-      .input(z.object({
-        shipmentId: z.number().optional(),
-        documentType: z.enum([
-          'bill_of_lading', 'packing_list', 'commercial_invoice', 'proof_of_delivery',
-          'weight_certificate', 'inspection_report', 'customs_declaration', 'other'
-        ]),
-        name: z.string(),
-        description: z.string().optional(),
-        fileData: z.string(),
-        mimeType: z.string(),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
-          throw new TRPCError({ code: 'FORBIDDEN', message: 'No warehouse assigned' });
-        }
-
-        const warehouseId = ctx.user.linkedWarehouseId!;
-        const buffer = Buffer.from(input.fileData, 'base64');
-        const fileKey = `copacker-shipping/${warehouseId}/${nanoid()}-${input.name}`;
-        const { url } = await storagePut(fileKey, buffer, input.mimeType);
-
-        const result = await db.createCopackerShippingDocument({
-          warehouseId,
-          shipmentId: input.shipmentId,
-          uploadedBy: ctx.user.id,
-          documentType: input.documentType,
-          name: input.name,
-          description: input.description,
-          fileUrl: url,
-          fileKey,
-          fileSize: buffer.length,
-          mimeType: input.mimeType,
-          status: 'uploaded',
-        });
-
-        await createAuditLog(ctx.user.id, 'create', 'copacker_shipping_document', result.id, input.name);
-        return { id: result.id, url };
-      }),
-
-    // Get current biweekly period info
-    getCurrentPeriod: copackerProcedure.query(async () => {
-      const now = new Date();
-      const year = now.getFullYear();
-      const month = now.getMonth();
-      const day = now.getDate();
-
-      // Biweekly periods: 1st-15th and 16th-end of month
-      let periodStart: Date;
-      let periodEnd: Date;
-
-      if (day <= 15) {
-        periodStart = new Date(year, month, 1);
-        periodEnd = new Date(year, month, 15, 23, 59, 59);
-      } else {
-        periodStart = new Date(year, month, 16);
-        periodEnd = new Date(year, month + 1, 0, 23, 59, 59); // last day of month
-      }
-
-      const daysLeft = Math.ceil((periodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-      const isDue = daysLeft <= 3;
-
-      return {
-        periodStart: periodStart.toISOString(),
-        periodEnd: periodEnd.toISOString(),
-        daysLeft,
-        isDue,
-        periodLabel: day <= 15
-          ? `${periodStart.toLocaleDateString('en-US', { month: 'short' })} 1-15, ${year}`
-          : `${periodStart.toLocaleDateString('en-US', { month: 'short' })} 16-${periodEnd.getDate()}, ${year}`,
-      };
-    }),
   }),
 
   // Vendor Portal - restricted views for vendors
@@ -6863,54 +6303,6 @@ Provide a brief status summary, any missing documents, and next steps.`;
         }, opsUsers.map(u => u.id));
         
         return { success: true };
-      }),
-    createFromText: opsProcedure
-      .input(z.object({ text: z.string().min(1) }))
-      .mutation(async ({ input, ctx }) => {
-        const { parseEntityText, findOrCreateEntity } = await import('./_core/universalTextParser');
-        
-        try {
-          // Parse the text using AI
-          const parsed = await parseEntityText(input.text, 'work_order');
-          
-          // Find or create product
-          let productId: number | undefined;
-          try {
-            productId = await findOrCreateEntity(parsed.productName, 'product', db);
-          } catch (err) {
-            console.warn('Failed to find/create product:', err);
-          }
-          
-          // Create work order
-          const workOrderNumber = generateNumber('WO');
-          const workOrder = await db.createWorkOrder({
-            workOrderNumber,
-            productId,
-            productName: parsed.productName,
-            quantity: parsed.quantity.toString(),
-            unit: parsed.unit || 'units',
-            status: 'draft',
-            priority: parsed.priority || 'medium',
-            dueDate: parsed.dueDate ? new Date(parsed.dueDate) : undefined,
-            batchSize: parsed.batchSize ? parsed.batchSize.toString() : undefined,
-            notes: parsed.notes || undefined,
-            createdBy: ctx.user.id,
-          });
-          
-          await createAuditLog(ctx.user.id, 'create', 'workOrder', workOrder.id, workOrderNumber, null, { source: 'text', originalText: input.text });
-          
-          return {
-            workOrderId: workOrder.id,
-            workOrderNumber,
-            parsed,
-          };
-        } catch (error) {
-          console.error('[WorkOrder createFromText] Error:', error);
-          throw new TRPCError({
-            code: 'INTERNAL_SERVER_ERROR',
-            message: error instanceof Error ? error.message : 'Failed to create work order from text'
-          });
-        }
       }),
   }),
 
@@ -13115,552 +12507,237 @@ Ask if they received the original request and if they can provide a quote.`;
   }),
 
   // ============================================
-  // FIREFLIES.AI INTEGRATION
+  // INVENTORY COSTING & COGS
   // ============================================
-  fireflies: router({
-    // Validate API key and get Fireflies user info
-    validateKey: protectedProcedure
-      .input(z.object({ apiKey: z.string().min(1) }))
-      .mutation(async ({ input }) => {
-        return validateFirefliesApiKey(input.apiKey);
-      }),
-
-    // Save Fireflies API key as integration config
-    configure: adminProcedure
-      .input(z.object({
-        apiKey: z.string().min(1),
-        autoSyncEnabled: z.boolean().optional(),
-        autoCreateContacts: z.boolean().optional(),
-        autoCreateTasks: z.boolean().optional(),
-        autoCreateProjects: z.boolean().optional(),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        // Validate the key first
-        const validation = await validateFirefliesApiKey(input.apiKey);
-        if (!validation.valid) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: `Invalid Fireflies API key: ${validation.error}` });
-        }
-
-        // Check if config already exists
-        const existing = await db.getIntegrationConfigs();
-        const firefliesConfig = existing.find((c: any) => c.type === 'fireflies');
-
-        const config = {
-          autoSyncEnabled: input.autoSyncEnabled ?? true,
-          autoCreateContacts: input.autoCreateContacts ?? true,
-          autoCreateTasks: input.autoCreateTasks ?? true,
-          autoCreateProjects: input.autoCreateProjects ?? false,
-          firefliesEmail: validation.user?.email,
-          firefliesUserName: validation.user?.name,
-        };
-
-        if (firefliesConfig) {
-          await db.updateIntegrationConfig(firefliesConfig.id, {
-            config,
-            credentials: { apiKey: input.apiKey } as any,
-            isActive: true,
-          });
-          await createAuditLog(ctx.user.id, 'update', 'integration', firefliesConfig.id, 'Fireflies');
-          return { id: firefliesConfig.id, updated: true };
-        } else {
-          const result = await db.createIntegrationConfig({
-            type: 'fireflies',
-            name: 'Fireflies.ai',
-            config: config as any,
-            credentials: { apiKey: input.apiKey } as any,
-            isActive: true,
-          });
-          await createAuditLog(ctx.user.id, 'create', 'integration', result.id, 'Fireflies');
-          return { id: result.id, updated: false };
-        }
-      }),
-
-    // Get Fireflies configuration status
-    getConfig: protectedProcedure.query(async () => {
-      const existing = await db.getIntegrationConfigs();
-      const firefliesConfig = existing.find((c: any) => c.type === 'fireflies');
-      if (!firefliesConfig) {
-        return { configured: false };
-      }
-      return {
-        configured: true,
-        isActive: firefliesConfig.isActive,
-        config: firefliesConfig.config,
-        lastSyncAt: firefliesConfig.lastSyncAt,
-      };
-    }),
-
-    // Disconnect Fireflies
-    disconnect: adminProcedure.mutation(async ({ ctx }) => {
-      const existing = await db.getIntegrationConfigs();
-      const firefliesConfig = existing.find((c: any) => c.type === 'fireflies');
-      if (firefliesConfig) {
-        await db.updateIntegrationConfig(firefliesConfig.id, { isActive: false });
-        await createAuditLog(ctx.user.id, 'update', 'integration', firefliesConfig.id, 'Fireflies disconnected');
-      }
-      return { success: true };
-    }),
-
-    // Sync meetings from Fireflies
-    syncMeetings: protectedProcedure
-      .input(z.object({ limit: z.number().optional() }).optional())
-      .mutation(async ({ input, ctx }) => {
-        // Get API key from config
-        const existing = await db.getIntegrationConfigs();
-        const firefliesConfig = existing.find((c: any) => c.type === 'fireflies' && c.isActive);
-        if (!firefliesConfig || !firefliesConfig.credentials) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fireflies is not configured. Please add your API key first.' });
-        }
-
-        const apiKey = (firefliesConfig.credentials as any).apiKey;
-        if (!apiKey) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fireflies API key not found in configuration.' });
-        }
-
-        const transcripts = await listTranscripts(apiKey, input?.limit || 50);
-        let synced = 0;
-        let skipped = 0;
-
-        for (const transcript of transcripts) {
-          // Check if already synced
-          const existingMeeting = await db.getFirefliesMeetingByFirefliesId(transcript.id);
-          if (existingMeeting) {
-            skipped++;
-            continue;
-          }
-
-          const participants = extractParticipants(transcript);
-          const actionItems = transcript.summary?.action_items
-            ? parseActionItems(transcript.summary.action_items)
-            : [];
-
-          await db.createFirefliesMeeting({
-            firefliesId: transcript.id,
-            title: transcript.title || 'Untitled Meeting',
-            date: transcript.date ? new Date(transcript.date) : undefined,
-            duration: transcript.duration || undefined,
-            organizerEmail: transcript.organizer_email || undefined,
-            participants: JSON.stringify(participants),
-            summary: transcript.summary?.overview || undefined,
-            shortSummary: transcript.summary?.shorthand_bullet?.join('\n') || undefined,
-            keywords: transcript.summary?.keywords ? JSON.stringify(transcript.summary.keywords) : undefined,
-            actionItems: JSON.stringify(actionItems),
-            transcriptUrl: transcript.transcript_url || undefined,
-            meetingSource: undefined,
-            calendarEventId: transcript.calendar_id || undefined,
-            recordingUrl: transcript.audio_url || undefined,
-            processingStatus: 'pending',
-          });
-
-          synced++;
-        }
-
-        // Update last sync time
-        await db.updateIntegrationConfig(firefliesConfig.id, {
-          lastSyncAt: new Date(),
-        });
-
-        await createAuditLog(ctx.user.id, 'create', 'fireflies_sync', 0, `Synced ${synced} meetings`);
-
-        return { synced, skipped, total: transcripts.length };
-      }),
-
-    // List synced meetings
-    meetings: router({
-      list: protectedProcedure
+  inventoryCosting: router({
+    // Costing config per product
+    configs: router({
+      list: opsProcedure
         .input(z.object({
-          processingStatus: z.string().optional(),
-          limit: z.number().optional(),
-          offset: z.number().optional(),
+          companyId: z.number().optional(),
+          productId: z.number().optional(),
         }).optional())
-        .query(({ input }) => db.getFirefliesMeetings(input)),
-
-      get: protectedProcedure
-        .input(z.object({ id: z.number() }))
-        .query(async ({ input }) => {
-          const meeting = await db.getFirefliesMeetingById(input.id);
-          if (!meeting) throw new TRPCError({ code: 'NOT_FOUND', message: 'Meeting not found' });
-          const actionItems = await db.getFirefliesActionItems(input.id);
-          const contactMappings = await db.getFirefliesContactMappings(input.id);
-          return { ...meeting, actionItemRecords: actionItems, contactMappingRecords: contactMappings };
+        .query(({ input }) => db.getInventoryCostingConfigs(input)),
+      getByProduct: opsProcedure
+        .input(z.object({ productId: z.number() }))
+        .query(({ input }) => db.getInventoryCostingConfigByProduct(input.productId)),
+      create: opsProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number(),
+          costingMethod: z.enum(["fifo", "lifo", "weighted_average"]),
+          isActive: z.boolean().optional(),
+          effectiveDate: z.date().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createInventoryCostingConfig({
+            ...input,
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'inventoryCostingConfig', result.id);
+          return result;
         }),
-
-      getStats: protectedProcedure.query(() => db.getFirefliesMeetingStats()),
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          costingMethod: z.enum(["fifo", "lifo", "weighted_average"]).optional(),
+          isActive: z.boolean().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateInventoryCostingConfig(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'inventoryCostingConfig', id);
+          return { success: true };
+        }),
     }),
 
-    // Process a meeting: extract contacts, create tasks, optionally create project
-    processMeeting: protectedProcedure
+    // Cost layers
+    layers: router({
+      list: opsProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number().optional(),
+          warehouseId: z.number().optional(),
+          status: z.string().optional(),
+        }).optional())
+        .query(({ input }) => db.getInventoryCostLayers(input)),
+      create: opsProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number(),
+          warehouseId: z.number().optional(),
+          purchaseOrderId: z.number().optional(),
+          lotId: z.number().optional(),
+          quantity: z.number().gt(0),
+          unitCost: z.number().min(0),
+          referenceType: z.string().optional(),
+          referenceId: z.number().optional(),
+          layerDate: z.date().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await addCostLayer({ ...input, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'inventoryCostLayer', result.id);
+          return result;
+        }),
+      getWeightedAverage: opsProcedure
+        .input(z.object({ productId: z.number() }))
+        .query(({ input }) => db.getWeightedAverageCost(input.productId)),
+    }),
+
+    // Valuation
+    valuation: opsProcedure
+      .input(z.object({ productId: z.number() }))
+      .query(({ input }) => getInventoryValuation(input.productId)),
+
+    // COGS
+    cogs: router({
+      list: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number().optional(),
+          orderId: z.number().optional(),
+          startDate: z.date().optional(),
+          endDate: z.date().optional(),
+        }).optional())
+        .query(({ input }) => db.getCogsRecords(input)),
+      record: opsProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number(),
+          warehouseId: z.number().optional(),
+          orderId: z.number().optional(),
+          salesOrderLineId: z.number().optional(),
+          quantitySold: z.number().gt(0),
+          unitRevenue: z.number().min(0).optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await recordCogs({ ...input, calculatedBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'cogsRecord', result.cogsRecordId);
+          return result;
+        }),
+      summary: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number().optional(),
+          periodType: z.string().optional(),
+          startDate: z.date().optional(),
+          endDate: z.date().optional(),
+        }).optional())
+        .query(({ input }) => db.getCogsSummary(input)),
+      generateSummary: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number().optional(),
+          periodType: z.enum(["daily", "weekly", "monthly", "quarterly", "yearly"]),
+          periodStart: z.date(),
+          periodEnd: z.date(),
+        }))
+        .mutation(({ input }) => generateCogsPeriodSummary(input)),
+      dashboard: financeProcedure
+        .input(z.object({ companyId: z.number().optional() }).optional())
+        .query(({ input }) => db.getCogsDashboardStats(input?.companyId)),
+    }),
+  }),
+
+  // ============================================
+  // AUTOMATED VENDOR NEGOTIATIONS
+  // ============================================
+  vendorNegotiations: router({
+    list: opsProcedure
       .input(z.object({
-        meetingId: z.number(),
-        createContacts: z.boolean().optional(),
-        createTasks: z.boolean().optional(),
-        createProject: z.boolean().optional(),
-        projectName: z.string().optional(),
-        assignTasksTo: z.number().optional(),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        const meeting = await db.getFirefliesMeetingById(input.meetingId);
-        if (!meeting) {
-          throw new TRPCError({ code: 'NOT_FOUND', message: 'Meeting not found' });
-        }
-
-        let contactsCreated = 0;
-        let tasksCreated = 0;
-        let projectId: number | undefined;
-
-        // --- Create CRM Contacts from participants ---
-        if (input.createContacts !== false) {
-          const participants = meeting.participants ? JSON.parse(meeting.participants as string) : [];
-
-          for (const participant of participants) {
-            if (!participant.email) continue;
-
-            // Check if contact already exists
-            const existingContact = await db.getCrmContactByEmail(participant.email);
-
-            if (existingContact) {
-              // Map existing contact
-              await db.createFirefliesContactMapping({
-                meetingId: meeting.id,
-                participantEmail: participant.email,
-                participantName: participant.name,
-                crmContactId: existingContact.id,
-                isNewContact: false,
-                wasAutoCreated: false,
-              });
-
-              // Log the meeting as an interaction for this contact
-              await db.createCrmInteraction({
-                contactId: existingContact.id,
-                channel: 'meeting',
-                interactionType: 'meeting_completed',
-                subject: meeting.title,
-                summary: meeting.shortSummary || meeting.summary || undefined,
-                meetingStartTime: meeting.date || undefined,
-                meetingEndTime: meeting.date && meeting.duration
-                  ? new Date(new Date(meeting.date).getTime() + meeting.duration * 1000)
-                  : undefined,
-                meetingLink: meeting.transcriptUrl || undefined,
-                performedBy: ctx.user.id,
-              });
-            } else {
-              // Create new CRM contact
-              const nameParts = (participant.name || '').split(' ');
-              const firstName = nameParts[0] || participant.email.split('@')[0];
-              const lastName = nameParts.slice(1).join(' ') || undefined;
-
-              const contactId = await db.createCrmContact({
-                firstName,
-                lastName,
-                fullName: participant.name || firstName,
-                email: participant.email,
-                contactType: 'lead',
-                source: 'fireflies',
-                notes: `Auto-created from Fireflies meeting: ${meeting.title}`,
-                capturedBy: ctx.user.id,
-              });
-
-              await db.createFirefliesContactMapping({
-                meetingId: meeting.id,
-                participantEmail: participant.email,
-                participantName: participant.name,
-                crmContactId: contactId,
-                isNewContact: true,
-                wasAutoCreated: true,
-              });
-
-              // Log the meeting as an interaction
-              await db.createCrmInteraction({
-                contactId: contactId,
-                channel: 'meeting',
-                interactionType: 'meeting_completed',
-                subject: meeting.title,
-                summary: meeting.shortSummary || meeting.summary || undefined,
-                meetingStartTime: meeting.date || undefined,
-                meetingLink: meeting.transcriptUrl || undefined,
-                performedBy: ctx.user.id,
-              });
-
-              contactsCreated++;
-            }
-          }
-        }
-
-        // --- Create Project (if requested) ---
-        if (input.createProject) {
-          const projectNumber = generateNumber('PRJ');
-          const projectResult = await db.createProject({
-            projectNumber,
-            name: input.projectName || `Meeting Follow-up: ${meeting.title}`,
-            description: `Auto-generated from Fireflies meeting: ${meeting.title}\n\nSummary:\n${meeting.summary || 'No summary available'}`,
-            type: 'internal',
-            status: 'planning',
-            priority: 'medium',
-            ownerId: ctx.user.id,
-            createdBy: ctx.user.id,
-            startDate: new Date(),
-          });
-          projectId = projectResult.id;
-          await createAuditLog(ctx.user.id, 'create', 'project', projectId, input.projectName || meeting.title);
-        }
-
-        // --- Create Tasks from Action Items ---
-        if (input.createTasks !== false) {
-          const actionItems = meeting.actionItems ? JSON.parse(meeting.actionItems as string) : [];
-
-          for (const item of actionItems) {
-            // If we have a project, create as project task
-            if (projectId) {
-              const taskResult = await db.createProjectTask({
-                projectId,
-                name: item.text?.substring(0, 255) || 'Untitled action item',
-                description: `From Fireflies meeting: ${meeting.title}\n\nAction: ${item.text}${item.assignee ? `\nAssignee: ${item.assignee}` : ''}`,
-                assigneeId: input.assignTasksTo || ctx.user.id,
-                status: 'todo',
-                priority: 'medium',
-                dueDate: item.dueDate ? new Date(item.dueDate) : undefined,
-                createdBy: ctx.user.id,
-              });
-
-              await db.createFirefliesActionItem({
-                meetingId: meeting.id,
-                firefliesMeetingId: meeting.firefliesId,
-                text: item.text || '',
-                assignee: item.assignee || undefined,
-                assigneeEmail: item.assigneeEmail || undefined,
-                dueDate: item.dueDate ? new Date(item.dueDate) : undefined,
-                projectTaskId: taskResult.id,
-                status: 'converted_to_task',
-                convertedAt: new Date(),
-                convertedBy: ctx.user.id,
-              });
-
-              tasksCreated++;
-            } else {
-              // Store action item without a project link
-              await db.createFirefliesActionItem({
-                meetingId: meeting.id,
-                firefliesMeetingId: meeting.firefliesId,
-                text: item.text || '',
-                assignee: item.assignee || undefined,
-                assigneeEmail: item.assigneeEmail || undefined,
-                dueDate: item.dueDate ? new Date(item.dueDate) : undefined,
-                status: 'pending',
-              });
-
-              tasksCreated++;
-            }
-          }
-        }
-
-        // Update meeting processing status
-        let newStatus: 'contacts_created' | 'tasks_created' | 'project_created' | 'fully_processed' = 'fully_processed';
-        if (contactsCreated > 0 && tasksCreated === 0 && !projectId) newStatus = 'contacts_created';
-        else if (tasksCreated > 0 && contactsCreated === 0 && !projectId) newStatus = 'tasks_created';
-        else if (projectId && contactsCreated === 0) newStatus = 'project_created';
-
-        await db.updateFirefliesMeeting(meeting.id, {
-          processingStatus: newStatus,
-          processedAt: new Date(),
-          processedBy: ctx.user.id,
-          autoCreatedProjectId: projectId,
-          autoCreatedTaskCount: tasksCreated,
-          autoCreatedContactCount: contactsCreated,
-        });
-
-        await createAuditLog(ctx.user.id, 'create', 'fireflies_process', meeting.id,
-          `Processed meeting: ${meeting.title} (${contactsCreated} contacts, ${tasksCreated} tasks${projectId ? ', 1 project' : ''})`);
-
-        return {
-          contactsCreated,
-          tasksCreated,
-          projectId,
-          processingStatus: newStatus,
-        };
-      }),
-
-    // Batch process all pending meetings
-    processAllPending: protectedProcedure
-      .input(z.object({
-        createContacts: z.boolean().optional(),
-        createTasks: z.boolean().optional(),
-        createProjects: z.boolean().optional(),
-        assignTasksTo: z.number().optional(),
+        companyId: z.number().optional(),
+        vendorId: z.number().optional(),
+        status: z.string().optional(),
+        type: z.string().optional(),
+        assignedTo: z.number().optional(),
       }).optional())
-      .mutation(async ({ input, ctx }) => {
-        const pendingMeetings = await db.getFirefliesMeetings({ processingStatus: 'pending' });
-        const results = { processed: 0, contactsCreated: 0, tasksCreated: 0, projectsCreated: 0 };
-
-        // Get config for defaults
-        const existing = await db.getIntegrationConfigs();
-        const firefliesConfig = existing.find((c: any) => c.type === 'fireflies');
-        const config = firefliesConfig?.config as any || {};
-
-        for (const meeting of pendingMeetings) {
-          const shouldCreateContacts = input?.createContacts ?? config.autoCreateContacts ?? true;
-          const shouldCreateTasks = input?.createTasks ?? config.autoCreateTasks ?? true;
-          const shouldCreateProject = input?.createProjects ?? config.autoCreateProjects ?? false;
-
-          const participants = meeting.participants ? JSON.parse(meeting.participants as string) : [];
-          const actionItems = meeting.actionItems ? JSON.parse(meeting.actionItems as string) : [];
-
-          let contactsCreated = 0;
-          let tasksCreated = 0;
-          let projectId: number | undefined;
-
-          // Create contacts
-          if (shouldCreateContacts) {
-            for (const participant of participants) {
-              if (!participant.email) continue;
-              const existingContact = await db.getCrmContactByEmail(participant.email);
-              if (!existingContact) {
-                const nameParts = (participant.name || '').split(' ');
-                const firstName = nameParts[0] || participant.email.split('@')[0];
-                const lastName = nameParts.slice(1).join(' ') || undefined;
-
-                const contactId = await db.createCrmContact({
-                  firstName,
-                  lastName,
-                  fullName: participant.name || firstName,
-                  email: participant.email,
-                  contactType: 'lead',
-                  source: 'fireflies',
-                  notes: `Auto-created from Fireflies meeting: ${meeting.title}`,
-                  capturedBy: ctx.user.id,
-                });
-
-                await db.createFirefliesContactMapping({
-                  meetingId: meeting.id,
-                  participantEmail: participant.email,
-                  participantName: participant.name,
-                  crmContactId: contactId,
-                  isNewContact: true,
-                  wasAutoCreated: true,
-                });
-
-                contactsCreated++;
-              } else {
-                await db.createFirefliesContactMapping({
-                  meetingId: meeting.id,
-                  participantEmail: participant.email,
-                  participantName: participant.name,
-                  crmContactId: existingContact.id,
-                  isNewContact: false,
-                  wasAutoCreated: false,
-                });
-              }
-            }
-          }
-
-          // Create project
-          if (shouldCreateProject) {
-            const projectNumber = generateNumber('PRJ');
-            const projectResult = await db.createProject({
-              projectNumber,
-              name: `Meeting Follow-up: ${meeting.title}`,
-              description: `Auto-generated from Fireflies meeting: ${meeting.title}\n\nSummary:\n${meeting.summary || 'No summary available'}`,
-              type: 'internal',
-              status: 'planning',
-              priority: 'medium',
-              ownerId: ctx.user.id,
-              createdBy: ctx.user.id,
-              startDate: new Date(),
-            });
-            projectId = projectResult.id;
-            results.projectsCreated++;
-          }
-
-          // Create tasks
-          if (shouldCreateTasks && actionItems.length > 0) {
-            for (const item of actionItems) {
-              if (projectId) {
-                const taskResult = await db.createProjectTask({
-                  projectId,
-                  name: item.text?.substring(0, 255) || 'Untitled action item',
-                  description: `From Fireflies meeting: ${meeting.title}\n\nAction: ${item.text}`,
-                  assigneeId: input?.assignTasksTo || ctx.user.id,
-                  status: 'todo',
-                  priority: 'medium',
-                  createdBy: ctx.user.id,
-                });
-
-                await db.createFirefliesActionItem({
-                  meetingId: meeting.id,
-                  firefliesMeetingId: meeting.firefliesId,
-                  text: item.text || '',
-                  assignee: item.assignee || undefined,
-                  projectTaskId: taskResult.id,
-                  status: 'converted_to_task',
-                  convertedAt: new Date(),
-                  convertedBy: ctx.user.id,
-                });
-              } else {
-                await db.createFirefliesActionItem({
-                  meetingId: meeting.id,
-                  firefliesMeetingId: meeting.firefliesId,
-                  text: item.text || '',
-                  assignee: item.assignee || undefined,
-                  status: 'pending',
-                });
-              }
-              tasksCreated++;
-            }
-          }
-
-          // Update meeting
-          await db.updateFirefliesMeeting(meeting.id, {
-            processingStatus: 'fully_processed',
-            processedAt: new Date(),
-            processedBy: ctx.user.id,
-            autoCreatedProjectId: projectId,
-            autoCreatedTaskCount: tasksCreated,
-            autoCreatedContactCount: contactsCreated,
-          });
-
-          results.processed++;
-          results.contactsCreated += contactsCreated;
-          results.tasksCreated += tasksCreated;
-        }
-
-        return results;
+      .query(({ input }) => db.getVendorNegotiations(input)),
+    get: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const negotiation = await db.getVendorNegotiationById(input.id);
+        const rounds = negotiation ? await db.getNegotiationRounds(input.id) : [];
+        return { negotiation, rounds };
       }),
-
-    // Convert a single action item to a project task
-    convertActionItem: protectedProcedure
+    create: opsProcedure
       .input(z.object({
-        actionItemId: z.number(),
-        projectId: z.number(),
-        assigneeId: z.number().optional(),
-        priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
-        dueDate: z.date().optional(),
+        companyId: z.number().optional(),
+        vendorId: z.number(),
+        title: z.string(),
+        type: z.enum(["price_reduction", "volume_discount", "payment_terms", "lead_time", "contract_renewal", "new_contract"]),
+        productIds: z.array(z.number()).optional(),
+        rawMaterialIds: z.array(z.number()).optional(),
+        currentUnitPrice: z.number().optional(),
+        currentPaymentTerms: z.number().optional(),
+        currentLeadTimeDays: z.number().optional(),
+        currentMinOrderAmount: z.number().optional(),
+        currentAnnualVolume: z.number().optional(),
+        autoAnalyze: z.boolean().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const item = await db.getFirefliesActionItemById(input.actionItemId);
-        if (!item) throw new TRPCError({ code: 'NOT_FOUND', message: 'Action item not found' });
-        if (item.status === 'converted_to_task') {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Action item already converted to a task' });
-        }
-
-        const taskResult = await db.createProjectTask({
-          projectId: input.projectId,
-          name: item.text.substring(0, 255),
-          description: `Converted from Fireflies action item\n\n${item.text}`,
-          assigneeId: input.assigneeId || ctx.user.id,
-          status: 'todo',
-          priority: input.priority || 'medium',
-          dueDate: input.dueDate || item.dueDate || undefined,
-          createdBy: ctx.user.id,
-        });
-
-        await db.updateFirefliesActionItem(item.id, {
-          projectTaskId: taskResult.id,
-          status: 'converted_to_task',
-          convertedAt: new Date(),
-          convertedBy: ctx.user.id,
-        });
-
-        return { taskId: taskResult.id };
+        const result = await initiateNegotiation({ ...input, initiatedBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'vendorNegotiation', result.id);
+        return result;
       }),
+    update: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        status: z.enum(["draft", "analyzing", "ready", "in_progress", "counter_offered", "accepted", "rejected", "expired"]).optional(),
+        priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
+        targetUnitPrice: z.coerce.number().optional(),
+        targetPaymentTerms: z.number().optional(),
+        targetLeadTimeDays: z.number().optional(),
+        targetMinOrderAmount: z.coerce.number().optional(),
+        targetAnnualVolume: z.coerce.number().optional(),
+        assignedTo: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateVendorNegotiation(id, data as any);
+        await createAuditLog(ctx.user.id, 'update', 'vendorNegotiation', id);
+        return { success: true };
+      }),
+    analyze: opsProcedure
+      .input(z.object({
+        vendorId: z.number(),
+        productIds: z.array(z.number()).optional(),
+        negotiationType: z.string(),
+      }))
+      .mutation(({ input }) => analyzeNegotiationOpportunity(input)),
+    addRound: opsProcedure
+      .input(z.object({
+        negotiationId: z.number(),
+        direction: z.enum(["outbound", "inbound"]),
+        messageType: z.enum(["initial_offer", "counter_offer", "acceptance", "rejection", "info_request", "final_offer"]),
+        proposedUnitPrice: z.number().optional(),
+        proposedPaymentTerms: z.number().optional(),
+        proposedLeadTimeDays: z.number().optional(),
+        proposedMinOrderAmount: z.number().optional(),
+        proposedVolume: z.number().optional(),
+        messageContent: z.string().optional(),
+        generateAiDraft: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await addNegotiationRound({ ...input, sentBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'negotiationRound', result.id);
+        return result;
+      }),
+    generateDraft: opsProcedure
+      .input(z.object({
+        negotiationId: z.number(),
+        roundNumber: z.number(),
+        messageType: z.enum(["initial_offer", "counter_offer", "final_offer", "acceptance", "rejection"]),
+      }))
+      .mutation(({ input }) => generateNegotiationDraft(input)),
+    rounds: opsProcedure
+      .input(z.object({ negotiationId: z.number() }))
+      .query(({ input }) => db.getNegotiationRounds(input.negotiationId)),
+    stats: opsProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(({ input }) => db.getVendorNegotiationStats(input?.companyId)),
   }),
 });
 
