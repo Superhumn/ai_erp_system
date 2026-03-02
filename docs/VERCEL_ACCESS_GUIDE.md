@@ -83,6 +83,28 @@ After logging in, verify everything works:
 
 ## Troubleshooting Common Issues
 
+### Issue: I see code/source files instead of the app
+
+**Symptom:** When visiting the Vercel URL, you see raw code, source files, or file listings instead of the application
+
+**Solution:**
+1. The repository now includes `vercel.json` configuration file
+2. Redeploy your application:
+   ```bash
+   vercel --prod
+   ```
+3. If still seeing code, check:
+   - Build logs show "Build successful"
+   - `dist` directory was created
+   - Environment variables are set (`DATABASE_URL`, `JWT_SECRET`)
+
+**Why this happens:**
+- Vercel needs explicit configuration for full-stack Node.js apps
+- Without `vercel.json`, it may serve source files directly
+- Build process might not run correctly
+
+**Detailed fix guide:** [docs/FIX_VERCEL_CODE_DISPLAY.md](./FIX_VERCEL_CODE_DISPLAY.md)
+
 ### Issue: "Cannot connect to database"
 
 **Symptom:** Error message about database connection

@@ -885,6 +885,11 @@ Detailed setup documentation for each integration:
 
 ## Deployment
 
+### 🚨 Common Issue: Seeing Code Instead of App?
+If your Vercel deployment shows raw code or source files instead of the application:
+- **Quick Fix:** A `vercel.json` file has been added. Just run `vercel --prod` to redeploy.
+- **Details:** See [VERCEL_CODE_FIX.md](./VERCEL_CODE_FIX.md)
+
 ### Quick Start Options
 
 **Want to deploy in 5 minutes?**

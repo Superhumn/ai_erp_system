@@ -4,6 +4,27 @@ Common questions and answers about accessing your AI ERP System after deployment
 
 ## General Access Questions
 
+### Q0: I see code/source files instead of the app - how do I fix this?
+
+**Answer:** This happens when Vercel doesn't have proper configuration for the full-stack app.
+
+**Quick Fix:**
+1. Ensure `vercel.json` exists in your repository (it should be there now)
+2. Redeploy: `vercel --prod`
+3. The app should now display correctly
+
+**Why it happens:**
+- Without `vercel.json`, Vercel may serve source files instead of built application
+- The build process might not run correctly
+- Routing configuration is missing
+
+**Detailed solution:** See [docs/FIX_VERCEL_CODE_DISPLAY.md](./docs/FIX_VERCEL_CODE_DISPLAY.md)
+
+**Verification:**
+- ✅ Should see login page, not code files
+- ✅ Browser should load bundled JS/CSS, not source files
+- ✅ Check Vercel build logs for "Build successful"
+
 ### Q1: Where is my deployed application?
 
 **Answer:** Your application URL depends on the platform:
