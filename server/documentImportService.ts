@@ -523,7 +523,7 @@ If document type is unknown, return all as null.`;
                     currency: { type: "string" },
                     notes: { type: "string" }
                   },
-                  required: ["poNumber", "vendorName", "orderDate", "lineItems", "totalAmount"],
+                  required: ["poNumber", "vendorName", "orderDate", "lineItems", "subtotal", "totalAmount"],
                   additionalProperties: false
                 },
                 vendorInvoice: {
@@ -559,7 +559,7 @@ If document type is unknown, return all as null.`;
                     paymentTerms: { type: "string" },
                     notes: { type: "string" }
                   },
-                  required: ["invoiceNumber", "vendorName", "invoiceDate", "lineItems", "totalAmount"],
+                  required: ["invoiceNumber", "vendorName", "invoiceDate", "lineItems", "subtotal", "totalAmount"],
                   additionalProperties: false
                 },
                 freightInvoice: {
@@ -990,14 +990,15 @@ export async function importVendorInvoice(
     }
 
     // 5. Create a purchase order from the invoice (as a received order)
+    const calculatedSubtotal = invoice.subtotal || matchedItems.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
     const poResult = await db.createPurchaseOrder({
       poNumber: invoice.relatedPoNumber || `INV-${invoice.invoiceNumber}`,
       vendorId: vendor!.id,
       status: markAsReceived ? "received" : "confirmed",
       orderDate: new Date(invoice.invoiceDate),
       expectedDate: invoice.dueDate ? new Date(invoice.dueDate) : undefined,
-      subtotal: invoice.subtotal.toString(),
-      totalAmount: invoice.totalAmount.toString(),
+      subtotal: calculatedSubtotal.toString(),
+      totalAmount: (invoice.totalAmount || calculatedSubtotal).toString(),
       notes: `Imported from vendor invoice ${invoice.invoiceNumber}. ${invoice.paymentTerms ? `Payment terms: ${invoice.paymentTerms}. ` : ''}${invoice.notes || ''}`,
       createdBy: userId
     });

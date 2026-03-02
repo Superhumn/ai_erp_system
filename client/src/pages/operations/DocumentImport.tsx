@@ -230,14 +230,21 @@ export default function DocumentImport() {
           setUploadType("po");
           setShowPreview(true);
         } else if (result.documentType === "vendor_invoice" && result.vendorInvoice) {
+          // Normalize vendor invoice data with defaults for fields the LLM may omit
+          const vendorInvoice = {
+            ...result.vendorInvoice,
+            subtotal: result.vendorInvoice.subtotal ?? result.vendorInvoice.lineItems?.reduce((sum: number, item: any) => sum + (item.totalPrice || 0), 0) ?? 0,
+            totalAmount: result.vendorInvoice.totalAmount ?? 0,
+            confidence: result.vendorInvoice.confidence ?? (result as any).confidence ?? 0,
+          };
           // Match line items to materials for vendor invoices
           try {
             const matchedItems = await matchMaterialsMutation.mutateAsync({
-              lineItems: result.vendorInvoice.lineItems,
+              lineItems: vendorInvoice.lineItems,
             });
 
             setParsedVendorInvoice({
-              ...result.vendorInvoice,
+              ...vendorInvoice,
               lineItems: matchedItems.map((item: any) => ({
                 ...item,
                 matchedMaterialId: item.rawMaterialId,
@@ -247,8 +254,8 @@ export default function DocumentImport() {
           } catch (matchError) {
             console.error("[DocumentImport] Material matching error:", matchError);
             setParsedVendorInvoice({
-              ...result.vendorInvoice,
-              lineItems: result.vendorInvoice.lineItems.map((item: any) => ({
+              ...vendorInvoice,
+              lineItems: vendorInvoice.lineItems.map((item: any) => ({
                 ...item,
                 matchedMaterialId: undefined,
                 matchedMaterialName: undefined,
@@ -883,7 +890,13 @@ export default function DocumentImport() {
                                   setUploadType('po');
                                   setShowPreview(true);
                                 } else if (result.data.documentType === 'vendor_invoice' && result.data.vendorInvoice) {
-                                  setParsedVendorInvoice(result.data.vendorInvoice);
+                                  const vi = result.data.vendorInvoice;
+                                  setParsedVendorInvoice({
+                                    ...vi,
+                                    subtotal: vi.subtotal ?? vi.lineItems?.reduce((sum: number, item: any) => sum + (item.totalPrice || 0), 0) ?? 0,
+                                    totalAmount: vi.totalAmount ?? 0,
+                                    confidence: vi.confidence ?? (result.data as any).confidence ?? 0,
+                                  });
                                   setUploadType('vendor_invoice');
                                   setShowPreview(true);
                                 } else if (result.data.documentType === 'freight_invoice' && result.data.freightInvoice) {
