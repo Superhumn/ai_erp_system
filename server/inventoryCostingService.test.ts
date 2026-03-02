@@ -21,6 +21,7 @@ import {
   calculateLifoCogs,
   calculateWeightedAverageCogs,
   recordCogs,
+  generateCogsPeriodSummary,
 } from './inventoryCostingService';
 
 describe('Inventory Costing Service', () => {
@@ -414,6 +415,150 @@ describe('Inventory Costing Service', () => {
       // Should handle rounding gracefully
       expect(result.totalCogs).toBeGreaterThan(0);
       expect(result.layerBreakdown).toHaveLength(2);
+    });
+  });
+
+  describe('generateCogsPeriodSummary', () => {
+    const periodStart = new Date('2026-01-01');
+    const periodEnd = new Date('2026-01-31');
+    const mockRecords = [
+      {
+        id: 1,
+        productId: 100,
+        companyId: 1,
+        quantitySold: '10',
+        totalCogs: '100.00',
+        totalRevenue: '200.00',
+      },
+      {
+        id: 2,
+        productId: 100,
+        companyId: 1,
+        quantitySold: '5',
+        totalCogs: '50.00',
+        totalRevenue: '100.00',
+      },
+    ];
+
+    it('should create a new record when no existing summary exists', async () => {
+      vi.mocked(db.getCogsRecords).mockResolvedValue(mockRecords as any);
+      vi.mocked(db.getCogsPeriodSummaries).mockResolvedValue([]);
+      vi.mocked(db.createCogsPeriodSummaryRecord).mockResolvedValue({ id: 1 } as any);
+
+      const result = await generateCogsPeriodSummary({
+        companyId: 1,
+        productId: 100,
+        periodType: 'monthly',
+        periodStart,
+        periodEnd,
+      });
+
+      expect(db.createCogsPeriodSummaryRecord).toHaveBeenCalledOnce();
+      expect(db.updateCogsPeriodSummaryRecord).not.toHaveBeenCalled();
+      expect(result).toEqual({ id: 1 });
+    });
+
+    it('should update existing record instead of creating duplicate (upsert behavior)', async () => {
+      const existingRecord = {
+        id: 5,
+        companyId: 1,
+        productId: 100,
+        periodType: 'monthly',
+        periodStart,
+        periodEnd,
+        totalQuantitySold: '8',
+        totalCogs: '80.00',
+        totalRevenue: '160.00',
+      };
+      vi.mocked(db.getCogsRecords).mockResolvedValue(mockRecords as any);
+      vi.mocked(db.getCogsPeriodSummaries).mockResolvedValue([existingRecord] as any);
+      vi.mocked(db.updateCogsPeriodSummaryRecord).mockResolvedValue(undefined as any);
+
+      const result = await generateCogsPeriodSummary({
+        companyId: 1,
+        productId: 100,
+        periodType: 'monthly',
+        periodStart,
+        periodEnd,
+      });
+
+      expect(db.updateCogsPeriodSummaryRecord).toHaveBeenCalledOnce();
+      expect(db.updateCogsPeriodSummaryRecord).toHaveBeenCalledWith(5, expect.objectContaining({
+        totalQuantitySold: '15',
+        totalCogs: '150.00',
+        totalRevenue: '300.00',
+      }));
+      expect(db.createCogsPeriodSummaryRecord).not.toHaveBeenCalled();
+      expect(result).toEqual({ id: 5 });
+    });
+
+    it('should correctly aggregate totalQuantitySold, totalCogs, and totalRevenue', async () => {
+      vi.mocked(db.getCogsRecords).mockResolvedValue(mockRecords as any);
+      vi.mocked(db.getCogsPeriodSummaries).mockResolvedValue([]);
+      vi.mocked(db.createCogsPeriodSummaryRecord).mockResolvedValue({ id: 2 } as any);
+
+      await generateCogsPeriodSummary({
+        companyId: 1,
+        productId: 100,
+        periodType: 'monthly',
+        periodStart,
+        periodEnd,
+      });
+
+      expect(db.createCogsPeriodSummaryRecord).toHaveBeenCalledWith(expect.objectContaining({
+        totalQuantitySold: '15',   // 10 + 5
+        totalCogs: '150.00',       // 100 + 50
+        totalRevenue: '300.00',    // 200 + 100
+        grossMargin: '150.00',     // 300 - 150
+        averageUnitCogs: '10.0000', // 150 / 15
+      }));
+    });
+
+    it('should correctly compute grossMarginPercent', async () => {
+      vi.mocked(db.getCogsRecords).mockResolvedValue(mockRecords as any);
+      vi.mocked(db.getCogsPeriodSummaries).mockResolvedValue([]);
+      vi.mocked(db.createCogsPeriodSummaryRecord).mockResolvedValue({ id: 3 } as any);
+
+      await generateCogsPeriodSummary({
+        companyId: 1,
+        productId: 100,
+        periodType: 'monthly',
+        periodStart,
+        periodEnd,
+      });
+
+      // grossMarginPercent = (300-150)/300*100 = 50%
+      expect(db.createCogsPeriodSummaryRecord).toHaveBeenCalledWith(expect.objectContaining({
+        grossMarginPercent: '50.0000',
+      }));
+    });
+
+    it('should handle zero revenue without divide-by-zero error', async () => {
+      const zeroRevenueRecords = [
+        {
+          id: 1,
+          productId: 100,
+          companyId: 1,
+          quantitySold: '10',
+          totalCogs: '100.00',
+          totalRevenue: '0',
+        },
+      ];
+      vi.mocked(db.getCogsRecords).mockResolvedValue(zeroRevenueRecords as any);
+      vi.mocked(db.getCogsPeriodSummaries).mockResolvedValue([]);
+      vi.mocked(db.createCogsPeriodSummaryRecord).mockResolvedValue({ id: 4 } as any);
+
+      await expect(generateCogsPeriodSummary({
+        companyId: 1,
+        productId: 100,
+        periodType: 'monthly',
+        periodStart,
+        periodEnd,
+      })).resolves.not.toThrow();
+
+      expect(db.createCogsPeriodSummaryRecord).toHaveBeenCalledWith(expect.objectContaining({
+        grossMarginPercent: '0.0000',
+      }));
     });
   });
 });
