@@ -195,6 +195,50 @@ async function startServer() {
     }
   };
 
+  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), (req, res) => 
+    handleShopifyWebhook(req, res, 'orders')
+  );
+
+  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), (req, res) =>
+    handleShopifyWebhook(req, res, 'inventory')
+  );
+
+  // ============================================
+  // EDI WEBHOOK ENDPOINT
+  // ============================================
+
+  app.post('/webhooks/edi/inbound', express.raw({ type: ['application/edi-x12', 'text/plain', 'application/octet-stream'] }), async (req, res) => {
+    try {
+      const { handleEdiWebhook } = await import('../ediTransportService');
+      const rawContent = req.body.toString();
+
+      if (!rawContent || rawContent.trim().length === 0) {
+        return res.status(400).json({ error: 'Empty EDI content' });
+      }
+
+      const senderIsaId = req.headers['x-edi-sender-id'] as string | undefined;
+      const headers: Record<string, string> = {};
+      for (const [key, value] of Object.entries(req.headers)) {
+        if (typeof value === 'string') headers[key] = value;
+      }
+
+      const result = await handleEdiWebhook(rawContent, senderIsaId, headers);
+
+      if (result.success) {
+        console.log(`[EDI Webhook] Processed inbound document, transaction ID: ${result.transactionId}`);
+        res.status(200).json(result);
+      } else {
+        console.warn(`[EDI Webhook] Processing failed: ${result.message}`);
+        res.status(422).json(result);
+      }
+    } catch (error) {
+      console.error('[EDI Webhook] Error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Google OAuth callback for Drive/Sheets integration
+  app.get('/api/google/callback', async (req, res) => {
   app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), handleShopifyWebhook);
   app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), handleShopifyWebhook);
   
@@ -315,6 +359,13 @@ async function startServer() {
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
     startEmailQueueWorker();
+
+    // Start EDI polling scheduler (check every 5 minutes)
+    import('../ediTransportService').then(({ startEdiPolling }) => {
+      startEdiPolling(5 * 60 * 1000);
+    }).catch(err => {
+      console.warn('[EDI Polling] Could not start polling scheduler:', err.message);
+    });
     console.log("[Startup] Starting autonomous supply chain orchestrator...");
     startOrchestrator().catch(err => {
       console.error("[Startup] Failed to start orchestrator:", err);
