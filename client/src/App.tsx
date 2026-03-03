@@ -61,6 +61,7 @@ import InventoryHub from "./pages/operations/InventoryHub";
 import OperationsHub from "./pages/operations/OperationsHub";
 import InventoryManagementHub from "./pages/operations/InventoryManagementHub";
 import DocumentImport from "./pages/operations/DocumentImport";
+import ReconciliationReport from "./pages/operations/ReconciliationReport";
 import InventoryCosting from "./pages/operations/InventoryCosting";
 import VendorNegotiations from "./pages/operations/VendorNegotiations";
 import SupplierPortal from "./pages/SupplierPortal";
@@ -92,6 +93,8 @@ import Documents from "./pages/legal/Documents";
 import Integrations from "./pages/settings/Integrations";
 import NotificationSettings from "./pages/settings/Notifications";
 import TransactionalEmails from "./pages/settings/TransactionalEmails";
+import Fireflies from "./pages/settings/Fireflies";
+import ShopifySettings from "./pages/settings/ShopifySettings";
 
 // Projects
 import Projects from "./pages/projects/Projects";
@@ -106,6 +109,12 @@ import Team from "./pages/settings/Team";
 // Portals
 import CopackerPortal from "./pages/portal/CopackerPortal";
 import VendorPortal from "./pages/portal/VendorPortal";
+
+// Auth
+import { Login } from "./pages/Login";
+
+// SOPs
+import SOPs from "./pages/SOPs";
 
 // Data Room
 import DataRooms from "./pages/DataRooms";
@@ -144,6 +153,8 @@ function Router() {
         <Route path="/settings/integrations" component={Integrations} />
         <Route path="/settings/notifications" component={NotificationSettings} />
         <Route path="/settings/emails" component={TransactionalEmails} />
+        <Route path="/settings/fireflies" component={Fireflies} />
+        <Route path="/settings/shopify" component={ShopifySettings} />
 
         {/* Finance */}
         <Route path="/finance/accounts" component={Accounts} />
@@ -193,6 +204,7 @@ function Router() {
         <Route path="/operations/inventory-hub" component={InventoryHub} />
         <Route path="/operations/inventory-management" component={InventoryManagementHub} />
         <Route path="/operations/document-import" component={DocumentImport} />
+        <Route path="/operations/reconciliation" component={ReconciliationReport} />
         <Route path="/operations/inventory-costing" component={InventoryCosting} />
         <Route path="/operations/vendor-negotiations" component={VendorNegotiations} />
 
@@ -253,6 +265,7 @@ function App() {
           <TooltipProvider>
             <Toaster />
             <Switch>
+              {/* Public Login */}
               {/* Public routes (outside dashboard) */}
               <Route path="/login" component={Login} />
               {/* Public Data Room Access (outside dashboard) */}

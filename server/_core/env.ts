@@ -33,6 +33,8 @@ export const ENV = {
   shopifyClientId: process.env.SHOPIFY_CLIENT_ID ?? "",
   shopifyClientSecret: process.env.SHOPIFY_CLIENT_SECRET ?? "",
   shopifyRedirectUri: process.env.SHOPIFY_REDIRECT_URI ?? "",
+  // Airtable integration
+  airtablePersonalAccessToken: process.env.AIRTABLE_PERSONAL_ACCESS_TOKEN ?? "",
 };
 
 /**

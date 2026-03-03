@@ -2465,6 +2465,212 @@ export const dataRoomInvitations = mysqlTable("data_room_invitations", {
 export type DataRoomInvitation = typeof dataRoomInvitations.$inferSelect;
 export type InsertDataRoomInvitation = typeof dataRoomInvitations.$inferInsert;
 
+// Document Page Views - detailed page-level tracking
+export const documentPageViews = mysqlTable("document_page_views", {
+  id: int("id").autoincrement().primaryKey(),
+  documentId: int("documentId").notNull(),
+  visitorId: int("visitorId").notNull(),
+  viewSessionId: int("viewSessionId"), // Links to documentViews for session grouping
+  linkId: int("linkId"),
+
+  // Page details
+  pageNumber: int("pageNumber").notNull(),
+  pageLabel: varchar("pageLabel", { length: 100 }), // For named pages (e.g., "Executive Summary")
+
+  // Time tracking (in milliseconds for precision)
+  enterTime: timestamp("enterTime").defaultNow().notNull(),
+  exitTime: timestamp("exitTime"),
+  durationMs: int("durationMs").default(0), // Time spent on this page in milliseconds
+
+  // Engagement signals
+  scrollDepth: int("scrollDepth"), // 0-100 percentage of page scrolled
+  mouseMovements: int("mouseMovements").default(0), // Number of mouse movements (engagement indicator)
+  clicks: int("clicks").default(0), // Number of clicks on the page
+  zoomLevel: int("zoomLevel").default(100), // Document zoom percentage
+
+  // Context
+  deviceType: varchar("deviceType", { length: 32 }), // desktop, mobile, tablet
+  screenWidth: int("screenWidth"),
+  screenHeight: int("screenHeight"),
+  viewportWidth: int("viewportWidth"),
+  viewportHeight: int("viewportHeight"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DocumentPageView = typeof documentPageViews.$inferSelect;
+export type InsertDocumentPageView = typeof documentPageViews.$inferInsert;
+
+// Data Room Google Drive Sync Configuration
+export const dataRoomDriveSyncConfig = mysqlTable("data_room_drive_sync_config", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull().unique(),
+
+  // Google Drive folder configuration
+  googleDriveFolderId: varchar("googleDriveFolderId", { length: 255 }).notNull(),
+  googleDriveFolderName: varchar("googleDriveFolderName", { length: 255 }),
+  googleDriveFolderUrl: varchar("googleDriveFolderUrl", { length: 512 }),
+
+  // Sync settings
+  syncEnabled: boolean("syncEnabled").default(true).notNull(),
+  syncFrequencyMinutes: int("syncFrequencyMinutes").default(60), // Auto-sync interval
+  syncMode: mysqlEnum("syncMode", ["one_way_import", "one_way_export", "bidirectional"]).default("one_way_import").notNull(),
+  syncSubfolders: boolean("syncSubfolders").default(true).notNull(), // Include subfolders
+
+  // File filters
+  includeFileTypes: text("includeFileTypes"), // JSON array of extensions to include (null = all)
+  excludeFileTypes: text("excludeFileTypes"), // JSON array of extensions to exclude
+  maxFileSizeMb: int("maxFileSizeMb").default(100), // Max file size to sync
+
+  // Mapping
+  folderMapping: text("folderMapping"), // JSON mapping of Drive folder IDs to data room folder IDs
+
+  // Sync status
+  lastSyncAt: timestamp("lastSyncAt"),
+  lastSyncStatus: mysqlEnum("lastSyncStatus", ["success", "partial", "failed", "in_progress"]),
+  lastSyncError: text("lastSyncError"),
+  lastSyncFilesAdded: int("lastSyncFilesAdded").default(0),
+  lastSyncFilesUpdated: int("lastSyncFilesUpdated").default(0),
+  lastSyncFilesRemoved: int("lastSyncFilesRemoved").default(0),
+
+  // OAuth user for sync (which user's credentials to use)
+  syncUserId: int("syncUserId"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoomDriveSyncConfig = typeof dataRoomDriveSyncConfig.$inferSelect;
+export type InsertDataRoomDriveSyncConfig = typeof dataRoomDriveSyncConfig.$inferInsert;
+
+// Data Room Drive Sync Logs - history of sync operations
+export const dataRoomDriveSyncLogs = mysqlTable("data_room_drive_sync_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  syncConfigId: int("syncConfigId").notNull(),
+
+  // Sync details
+  syncType: mysqlEnum("syncType", ["manual", "scheduled", "webhook"]).notNull(),
+  status: mysqlEnum("status", ["started", "in_progress", "completed", "failed", "cancelled"]).default("started").notNull(),
+
+  // Results
+  filesScanned: int("filesScanned").default(0),
+  filesAdded: int("filesAdded").default(0),
+  filesUpdated: int("filesUpdated").default(0),
+  filesRemoved: int("filesRemoved").default(0),
+  filesSkipped: int("filesSkipped").default(0),
+  foldersCreated: int("foldersCreated").default(0),
+
+  // Errors
+  errors: text("errors"), // JSON array of error messages
+  warnings: text("warnings"), // JSON array of warnings
+
+  // Timing
+  startedAt: timestamp("startedAt").defaultNow().notNull(),
+  completedAt: timestamp("completedAt"),
+  durationMs: int("durationMs"),
+
+  // Triggered by
+  triggeredBy: int("triggeredBy"), // User ID if manual
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DataRoomDriveSyncLog = typeof dataRoomDriveSyncLogs.$inferSelect;
+export type InsertDataRoomDriveSyncLog = typeof dataRoomDriveSyncLogs.$inferInsert;
+
+// Data Room Email Access Settings - manage who can access by email
+export const dataRoomEmailAccessRules = mysqlTable("data_room_email_access_rules", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+
+  // Rule type
+  ruleType: mysqlEnum("ruleType", ["allow_email", "allow_domain", "block_email", "block_domain"]).notNull(),
+
+  // Pattern to match
+  emailPattern: varchar("emailPattern", { length: 320 }).notNull(), // Email or domain pattern
+
+  // Permissions when matched
+  allowDownload: boolean("allowDownload").default(true),
+  allowPrint: boolean("allowPrint").default(true),
+  maxViews: int("maxViews"), // null = unlimited
+  expiresAt: timestamp("expiresAt"),
+
+  // Auto-actions
+  requireNdaSignature: boolean("requireNdaSignature").default(true),
+  autoApprove: boolean("autoApprove").default(false), // Auto-approve matching visitors
+
+  // Notifications
+  notifyOnAccess: boolean("notifyOnAccess").default(true),
+  notifyEmail: varchar("notifyEmail", { length: 320 }), // Where to send notifications
+
+  isActive: boolean("isActive").default(true).notNull(),
+  priority: int("priority").default(0), // Higher priority rules evaluated first
+
+  createdBy: int("createdBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoomEmailAccessRule = typeof dataRoomEmailAccessRules.$inferSelect;
+export type InsertDataRoomEmailAccessRule = typeof dataRoomEmailAccessRules.$inferInsert;
+
+// Data Room Visitor Sessions - detailed session tracking
+export const dataRoomVisitorSessions = mysqlTable("data_room_visitor_sessions", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  visitorId: int("visitorId").notNull(),
+  linkId: int("linkId"),
+
+  // Session timing
+  sessionStartAt: timestamp("sessionStartAt").defaultNow().notNull(),
+  sessionEndAt: timestamp("sessionEndAt"),
+  totalDurationMs: int("totalDurationMs").default(0),
+  activeDurationMs: int("activeDurationMs").default(0), // Time with active engagement
+  idleDurationMs: int("idleDurationMs").default(0), // Time idle
+
+  // Session activity
+  documentsViewed: int("documentsViewed").default(0),
+  pagesViewed: int("pagesViewed").default(0),
+  totalScrollDistance: int("totalScrollDistance").default(0), // Pixels scrolled
+  totalClicks: int("totalClicks").default(0),
+
+  // Downloads/prints during session
+  downloadsCount: int("downloadsCount").default(0),
+  printsCount: int("printsCount").default(0),
+
+  // Device/browser info
+  deviceType: varchar("deviceType", { length: 32 }),
+  browser: varchar("browser", { length: 64 }),
+  browserVersion: varchar("browserVersion", { length: 32 }),
+  os: varchar("os", { length: 64 }),
+  osVersion: varchar("osVersion", { length: 32 }),
+  screenResolution: varchar("screenResolution", { length: 20 }),
+
+  // Location (from IP)
+  ipAddress: varchar("ipAddress", { length: 45 }),
+  country: varchar("country", { length: 64 }),
+  region: varchar("region", { length: 64 }),
+  city: varchar("city", { length: 64 }),
+  timezone: varchar("timezone", { length: 64 }),
+
+  // Referrer
+  referrer: varchar("referrer", { length: 512 }),
+  utmSource: varchar("utmSource", { length: 128 }),
+  utmMedium: varchar("utmMedium", { length: 128 }),
+  utmCampaign: varchar("utmCampaign", { length: 128 }),
+
+  // Session metadata
+  sessionToken: varchar("sessionToken", { length: 128 }).unique(), // For tracking across page loads
+  isActive: boolean("isActive").default(true).notNull(),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoomVisitorSession = typeof dataRoomVisitorSessions.$inferSelect;
+export type InsertDataRoomVisitorSession = typeof dataRoomVisitorSessions.$inferInsert;
+
 // ============================================
 // EMAIL IMAP CREDENTIALS
 // ============================================

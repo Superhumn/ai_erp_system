@@ -9,6 +9,9 @@ import { processEmailReply, analyzeEmail, generateEmailReply } from "./emailRepl
 import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
+import { detectMaterialShortages, detectAnomalies, runShortageCheckAndNotify, runAnomalyCheckAndNotify } from "./materialShortageService";
+import { linkParsedEmailToEntities } from "./emailDocumentLinker";
+import { generateVendorEmail, sendVendorEmail, sendBulkEmail, checkAndSendPoFollowups } from "./vendorEmailAutomation";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
@@ -66,6 +69,22 @@ const copackerProcedure = protectedProcedure.use(({ ctx, next }) => {
 const vendorProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (!['admin', 'ops', 'vendor'].includes(ctx.user.role)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Vendor access required' });
+  }
+  return next({ ctx });
+});
+
+// Plant User can only access Work Orders, Receiving, Inventory, and Transfers
+const plantProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!['admin', 'ops', 'plant', 'exec'].includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Plant user access required' });
+  }
+  return next({ ctx });
+});
+
+// Procurement-specific (separate from general finance)
+const procurementProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!['admin', 'ops', 'procurement', 'exec'].includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Procurement access required' });
   }
   return next({ ctx });
 });
@@ -361,78 +380,15 @@ export const appRouter = router({
         return { imported, updated, skipped, total: shopifyCustomers.length };
       }),
     
-    // HubSpot sync
-    syncFromHubspot: adminProcedure
-      .input(z.object({ hubspotAccessToken: z.string() }))
-      .mutation(async ({ input, ctx }) => {
-        const { hubspotAccessToken } = input;
-        
-        // Fetch contacts from HubSpot
-        const response = await fetch('https://api.hubapi.com/crm/v3/objects/contacts?limit=100&properties=email,firstname,lastname,phone,address,city,state,country,zip,company', {
-          headers: {
-            'Authorization': `Bearer ${hubspotAccessToken}`,
-            'Content-Type': 'application/json',
-          },
-        });
-        
-        if (!response.ok) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Failed to fetch HubSpot contacts' });
-        }
-        
-        const data = await response.json();
-        const hubspotContacts = data.results || [];
-        
-        let imported = 0;
-        let updated = 0;
-        let skipped = 0;
-        
-        for (const hc of hubspotContacts) {
-          const props = hc.properties || {};
-          
-          // Check if customer already exists by HubSpot ID
-          const existing = await db.getCustomerByHubspotId(hc.id.toString());
-          
-          const customerData = {
-            name: `${props.firstname || ''} ${props.lastname || ''}`.trim() || props.email || 'Unknown',
-            email: props.email || undefined,
-            phone: props.phone || undefined,
-            address: props.address || undefined,
-            city: props.city || undefined,
-            state: props.state || undefined,
-            country: props.country || undefined,
-            postalCode: props.zip || undefined,
-            type: props.company ? 'business' as const : 'individual' as const,
-            hubspotContactId: hc.id.toString(),
-            syncSource: 'hubspot' as const,
-            lastSyncedAt: new Date(),
-            hubspotData: JSON.stringify(hc),
-          };
-          
-          if (existing) {
-            await db.updateCustomer(existing.id, customerData);
-            updated++;
-          } else {
-            await db.createCustomer(customerData);
-            imported++;
-          }
-        }
-        
-        await createAuditLog(ctx.user.id, 'create', 'hubspot_sync', 0, `Imported ${imported}, Updated ${updated}`);
-        
-        return { imported, updated, skipped, total: hubspotContacts.length };
-      }),
-    
     // Get sync status
     getSyncStatus: protectedProcedure.query(async () => {
       const customers = await db.getCustomers();
       const shopifyCount = customers.filter(c => c.shopifyCustomerId).length;
-      const hubspotCount = customers.filter(c => c.hubspotContactId).length;
-      const manualCount = customers.filter(c => !c.shopifyCustomerId && !c.hubspotContactId).length;
-      
+      const manualCount = customers.filter(c => !c.shopifyCustomerId).length;
+
       return {
         total: customers.length,
         shopify: shopifyCount,
-        hubspot: hubspotCount,
         manual: manualCount,
       };
     }),
@@ -2304,7 +2260,7 @@ export const appRouter = router({
     create: adminProcedure
       .input(z.object({
         companyId: z.number().optional(),
-        type: z.enum(['quickbooks', 'shopify', 'stripe', 'slack', 'email', 'webhook']),
+        type: z.enum(['quickbooks', 'shopify', 'email', 'webhook', 'airtable']),
         name: z.string().min(1),
         config: z.any().optional(),
       }))
@@ -9368,7 +9324,26 @@ Ask if they received the original request and if they can provide a quote.`;
             invitedBy: ctx.user.id,
           });
 
-          // TODO: Send invitation email
+          // Send invitation email
+          try {
+            if (isEmailConfigured()) {
+              const dataRoom = await db.getDataRoomById(input.dataRoomId);
+              const inviteUrl = `${process.env.APP_URL || 'http://localhost:3000'}/share/${inviteCode}`;
+              await sendEmail({
+                to: input.email,
+                subject: `You've been invited to a Data Room${dataRoom ? `: ${dataRoom.name}` : ''}`,
+                html: formatEmailHtml(
+                  `Hello${input.name ? ` ${input.name}` : ''},\n\n` +
+                  `You have been invited to access a secure data room${dataRoom ? ` "${dataRoom.name}"` : ''} with ${input.role} permissions.\n\n` +
+                  `${input.message ? `Message from the sender:\n${input.message}\n\n` : ''}` +
+                  `Click the link below to access the data room:\n${inviteUrl}\n\n` +
+                  `This invitation${input.expiresAt ? ` expires on ${input.expiresAt.toLocaleDateString()}` : ' does not expire'}.`
+                ),
+              });
+            }
+          } catch (emailErr) {
+            console.warn("[DataRoom] Failed to send invitation email:", emailErr);
+          }
 
           return { id, inviteCode };
         }),
@@ -9400,7 +9375,26 @@ Ask if they received the original request and if they can provide a quote.`;
       resend: protectedProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input }) => {
-          // TODO: Resend invitation email
+          const invitation = await db.getInvitationByIdWithDataRoom(input.id);
+          if (!invitation) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Invitation not found' });
+          }
+          try {
+            if (isEmailConfigured()) {
+              const inviteUrl = `${process.env.APP_URL || 'http://localhost:3000'}/share/${invitation.inviteCode}`;
+              await sendEmail({
+                to: invitation.email,
+                subject: `Reminder: You've been invited to a Data Room${invitation.dataRoomName ? `: ${invitation.dataRoomName}` : ''}`,
+                html: formatEmailHtml(
+                  `Hello${invitation.name ? ` ${invitation.name}` : ''},\n\n` +
+                  `This is a reminder that you have been invited to access a secure data room${invitation.dataRoomName ? ` "${invitation.dataRoomName}"` : ''}.\n\n` +
+                  `Click the link below to access the data room:\n${inviteUrl}`
+                ),
+              });
+            }
+          } catch (emailErr) {
+            console.warn("[DataRoom] Failed to resend invitation email:", emailErr);
+          }
           return { success: true };
         }),
     }),
@@ -10386,7 +10380,13 @@ Ask if they received the original request and if they can provide a quote.`;
       // Get sync configuration for a data room
       getConfig: protectedProcedure
         .input(z.object({ dataRoomId: z.number() }))
-        .query(async ({ input }) => {
+        .query(async ({ input, ctx }) => {
+          // Check authorization
+          const room = await db.getDataRoomById(input.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
           return db.getDriveSyncConfig(input.dataRoomId);
         }),
 
@@ -10406,9 +10406,16 @@ Ask if they received the original request and if they can provide a quote.`;
           maxFileSizeMb: z.number().default(100),
         }))
         .mutation(async ({ input, ctx }) => {
+          // Check authorization
+          const room = await db.getDataRoomById(input.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
           const existingConfig = await db.getDriveSyncConfig(input.dataRoomId);
 
-          const configData = {
+          const configData: Omit<InsertDataRoomDriveSyncConfig, 'id'> = {
             dataRoomId: input.dataRoomId,
             googleDriveFolderId: input.googleDriveFolderId,
             googleDriveFolderName: input.googleDriveFolderName,
@@ -10427,7 +10434,7 @@ Ask if they received the original request and if they can provide a quote.`;
             await db.updateDriveSyncConfig(existingConfig.id, configData);
             return { id: existingConfig.id, updated: true };
           } else {
-            const id = await db.createDriveSyncConfig(configData as any);
+            const id = await db.createDriveSyncConfig(configData);
             return { id, updated: false };
           }
         }),
@@ -10435,7 +10442,13 @@ Ask if they received the original request and if they can provide a quote.`;
       // Delete sync configuration
       deleteConfig: protectedProcedure
         .input(z.object({ dataRoomId: z.number() }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          // Check authorization
+          const room = await db.getDataRoomById(input.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
           await db.deleteDriveSyncConfig(input.dataRoomId);
           return { success: true };
         }),
@@ -10443,7 +10456,13 @@ Ask if they received the original request and if they can provide a quote.`;
       // Get sync logs
       getLogs: protectedProcedure
         .input(z.object({ dataRoomId: z.number(), limit: z.number().default(50) }))
-        .query(async ({ input }) => {
+        .query(async ({ input, ctx }) => {
+          // Check authorization
+          const room = await db.getDataRoomById(input.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
           return db.getDriveSyncLogs(input.dataRoomId, input.limit);
         }),
 
@@ -10451,6 +10470,13 @@ Ask if they received the original request and if they can provide a quote.`;
       syncNow: protectedProcedure
         .input(z.object({ dataRoomId: z.number() }))
         .mutation(async ({ input, ctx }) => {
+          // Check authorization
+          const room = await db.getDataRoomById(input.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
           const config = await db.getDriveSyncConfig(input.dataRoomId);
           if (!config) {
             throw new TRPCError({ code: 'NOT_FOUND', message: 'No sync configuration found for this data room' });
@@ -10466,8 +10492,9 @@ Ask if they received the original request and if they can provide a quote.`;
           });
 
           try {
-            // Get user's Google OAuth token
-            const token = await db.getGoogleOAuthTokenByUserId(ctx.user.id);
+            // Get Google OAuth token for the user configured for sync (or current user as fallback)
+            const syncUserId = config.syncUserId || ctx.user.id;
+            const token = await db.getGoogleOAuthTokenByUserId(syncUserId);
             if (!token) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected. Please connect your Google account first.' });
             }
@@ -10588,12 +10615,28 @@ Ask if they received the original request and if they can provide a quote.`;
       updatePageView: publicProcedure
         .input(z.object({
           id: z.number(),
+          sessionToken: z.string(), // Session token to verify the page view belongs to the current visitor session
           durationMs: z.number(),
           scrollDepth: z.number().optional(),
           mouseMovements: z.number().optional(),
           clicks: z.number().optional(),
         }))
         .mutation(async ({ input }) => {
+          // Verify the page view belongs to this session
+          const pageView = await db.getDocumentPageViewById(input.id);
+          
+          if (!pageView) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Page view not found' });
+          }
+
+          // Verify session token matches (get session for this page view's visitor)
+          const sessions = await db.getVisitorSessions(pageView.visitorId);
+          const validSession = sessions.find(s => s.sessionToken === input.sessionToken);
+          
+          if (!validSession) {
+            throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid session token' });
+          }
+
           await db.updateDocumentPageView(input.id, {
             exitTime: new Date(),
             durationMs: input.durationMs,
@@ -10641,7 +10684,7 @@ Ask if they received the original request and if they can provide a quote.`;
           utmCampaign: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const sessionToken = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+          const sessionToken = `sess_${nanoid()}`;
           const ipAddress = (ctx.req.headers['x-forwarded-for'] as string)?.split(',')[0] || ctx.req.socket.remoteAddress || '';
 
           const id = await db.createVisitorSession({
@@ -10799,9 +10842,14 @@ Ask if they received the original request and if they can provide a quote.`;
 
       // Check if an email has access (for public access flow)
       checkAccess: publicProcedure
-        .input(z.object({ dataRoomId: z.number(), email: z.string() }))
+        .input(z.object({ dataRoomId: z.number(), email: z.string().email() }))
         .query(async ({ input }) => {
-          return db.checkEmailAccess(input.dataRoomId, input.email);
+          const result = await db.checkEmailAccess(input.dataRoomId, input.email);
+          if (!result) {
+            return { allowed: false, permissions: undefined };
+          }
+          const { allowed, permissions } = result as { allowed: boolean; permissions?: unknown };
+          return { allowed, permissions };
         }),
     }),
 
@@ -10865,7 +10913,7 @@ Ask if they received the original request and if they can provide a quote.`;
       exportCsv: protectedProcedure
         .input(z.object({
           dataRoomId: z.number(),
-          type: z.enum(['visitors', 'documents', 'sessions', 'pageViews']),
+          type: z.enum(['visitors', 'documents']), // Only supported types
         }))
         .mutation(async ({ input }) => {
           const report = await db.getDataRoomEngagementReport(input.dataRoomId);
@@ -10891,6 +10939,239 @@ Ask if they received the original request and if they can provide a quote.`;
           }
 
           return { csv, filename };
+        }),
+    }),
+
+    // ============================================
+    // DUE DILIGENCE CHECKLISTS
+    // ============================================
+    dueDiligence: router({
+      // Get checklist summary for a data room
+      getSummary: protectedProcedure
+        .input(z.object({ dataRoomId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getChecklistSummary(input.dataRoomId);
+        }),
+
+      // List all checklists for a data room
+      list: protectedProcedure
+        .input(z.object({ dataRoomId: z.number() }))
+        .query(async ({ input }) => {
+          return db.getDataRoomChecklists(input.dataRoomId);
+        }),
+
+      // Get a checklist with all its items
+      getById: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => {
+          return db.getChecklistWithItems(input.id);
+        }),
+
+      // Create a standard due diligence checklist
+      createStandard: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          checklistType: z.enum(['fundraising', 'ma', 'full', 'series_b']).default('full'),
+          customName: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const checklist = await db.createStandardChecklist(
+            input.dataRoomId,
+            ctx.user.id,
+            input.checklistType,
+            input.customName
+          );
+          return checklist;
+        }),
+
+      // Create from a template
+      createFromTemplate: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          templateId: z.number(),
+          customName: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          return db.createChecklistFromTemplate(
+            input.dataRoomId,
+            input.templateId,
+            ctx.user.id,
+            input.customName
+          );
+        }),
+
+      // Auto-match documents against checklist items
+      autoMatch: protectedProcedure
+        .input(z.object({ checklistId: z.number() }))
+        .mutation(async ({ input }) => {
+          return db.autoMatchChecklistDocuments(input.checklistId);
+        }),
+
+      // Update checklist item status
+      updateItem: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(['missing', 'partial', 'complete', 'not_applicable', 'waived']).optional(),
+          notes: z.string().optional(),
+          internalNotes: z.string().optional(),
+          waiverReason: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, waiverReason, ...data } = input;
+
+          const updateData: any = { ...data };
+
+          // If waiving the item, set the waiver info
+          if (input.status === 'waived' && waiverReason) {
+            updateData.waivedBy = ctx.user.id;
+            updateData.waivedAt = new Date();
+            updateData.waiverReason = waiverReason;
+          }
+
+          await db.updateChecklistItem(id, updateData);
+
+          // Get the item to recalculate parent checklist
+          const item = await db.getChecklistItemById(id);
+          if (item) {
+            await db.recalculateChecklistProgress(item.checklistId);
+          }
+
+          return { success: true };
+        }),
+
+      // Link a document to a checklist item
+      linkDocument: protectedProcedure
+        .input(z.object({
+          itemId: z.number(),
+          documentId: z.number(),
+        }))
+        .mutation(async ({ input }) => {
+          const item = await db.getChecklistItemById(input.itemId);
+          if (!item) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Checklist item not found' });
+          }
+
+          let linkedIds: number[] = [];
+          try {
+            linkedIds = item.linkedDocumentIds ? JSON.parse(item.linkedDocumentIds) : [];
+          } catch (e) {
+            linkedIds = [];
+          }
+
+          if (!linkedIds.includes(input.documentId)) {
+            linkedIds.push(input.documentId);
+          }
+
+          await db.updateChecklistItem(input.itemId, {
+            linkedDocumentIds: JSON.stringify(linkedIds),
+            linkedDocumentCount: linkedIds.length,
+            status: linkedIds.length > 0 ? 'complete' : 'missing',
+          });
+
+          await db.recalculateChecklistProgress(item.checklistId);
+
+          return { success: true };
+        }),
+
+      // Unlink a document from a checklist item
+      unlinkDocument: protectedProcedure
+        .input(z.object({
+          itemId: z.number(),
+          documentId: z.number(),
+        }))
+        .mutation(async ({ input }) => {
+          const item = await db.getChecklistItemById(input.itemId);
+          if (!item) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Checklist item not found' });
+          }
+
+          let linkedIds: number[] = [];
+          try {
+            linkedIds = item.linkedDocumentIds ? JSON.parse(item.linkedDocumentIds) : [];
+          } catch (e) {
+            linkedIds = [];
+          }
+
+          linkedIds = linkedIds.filter(id => id !== input.documentId);
+
+          await db.updateChecklistItem(input.itemId, {
+            linkedDocumentIds: JSON.stringify(linkedIds),
+            linkedDocumentCount: linkedIds.length,
+            status: linkedIds.length > 0 ? 'complete' : 'missing',
+          });
+
+          await db.recalculateChecklistProgress(item.checklistId);
+
+          return { success: true };
+        }),
+
+      // Add a custom item to a checklist
+      addItem: protectedProcedure
+        .input(z.object({
+          checklistId: z.number(),
+          categoryName: z.string(),
+          itemName: z.string(),
+          itemDescription: z.string().optional(),
+          requirement: z.enum(['required', 'recommended', 'optional']).default('required'),
+          matchKeywords: z.array(z.string()).optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const checklist = await db.getDataRoomChecklistById(input.checklistId);
+          if (!checklist) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Checklist not found' });
+          }
+
+          const result = await db.createDataRoomChecklistItem({
+            checklistId: input.checklistId,
+            dataRoomId: checklist.dataRoomId,
+            categoryName: input.categoryName,
+            itemName: input.itemName,
+            itemDescription: input.itemDescription,
+            requirement: input.requirement,
+            matchKeywords: input.matchKeywords ? JSON.stringify(input.matchKeywords) : undefined,
+            status: 'missing',
+          });
+
+          await db.recalculateChecklistProgress(input.checklistId);
+
+          return result;
+        }),
+
+      // Delete a checklist item
+      deleteItem: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          const item = await db.getChecklistItemById(input.id);
+          if (item) {
+            await db.deleteChecklistItem(input.id);
+            await db.recalculateChecklistProgress(item.checklistId);
+          }
+          return { success: true };
+        }),
+
+      // Delete entire checklist
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.deleteDataRoomChecklist(input.id);
+          return { success: true };
+        }),
+
+      // Review an item
+      reviewItem: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          reviewStatus: z.enum(['pending', 'approved', 'needs_attention', 'rejected']),
+          reviewNotes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          await db.updateChecklistItem(input.id, {
+            reviewStatus: input.reviewStatus,
+            reviewNotes: input.reviewNotes,
+            reviewedBy: ctx.user.id,
+            reviewedAt: new Date(),
+          });
+          return { success: true };
         }),
     }),
   }),

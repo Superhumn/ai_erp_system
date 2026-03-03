@@ -306,11 +306,7 @@ A dedicated portal for vendor/supplier partners (restricted to `vendor`, `admin`
 | **SendGrid** | Transactional email, template management, delivery tracking via webhooks |
 | **Fireflies.ai** | Meeting transcription, action item extraction, automatic task creation |
 | **IMAP Email** | Inbound email scanning from any mailbox |
-| **Stripe** | Payment processing |
-| **Slack** | Notification delivery |
-| **HubSpot** | CRM data sync |
-| **Airtable** | Data sync |
-| **Webhooks** | Custom webhook support for third-party systems |
+| **Airtable** | Import data from Airtable bases |
 
 ### Settings & Team Management
 
@@ -330,7 +326,9 @@ A dedicated portal for vendor/supplier partners (restricted to `vendor`, `admin`
 |---|---|
 | **admin** | Full access to all modules and settings |
 | **finance** | Accounts, invoices, payments, transactions, read-only access to customers/vendors |
+| **procurement** | Purchase orders, vendors, receiving, supplier management |
 | **ops** | Products, inventory, orders, purchase orders, shipments, warehouses, vendors, transfers |
+| **plant** | Work orders, receiving, inventory, transfers (shop-floor access only) |
 | **legal** | Contracts, disputes, documents, read-only access to customers/vendors/employees |
 | **exec** | Dashboard, reports, AI, read-only access across modules |
 | **copacker** | Inventory (read/update at own warehouse), shipments (read + upload documents) |
@@ -763,6 +761,8 @@ cp .env.example .env
 
 Edit `.env` with your configuration (see [Environment Variables](#environment-variables) below).
 
+**Important:** The system now uses local email/password authentication by default. No external OAuth provider (like manus.ai) is required. Simply set a strong `JWT_SECRET` and you're ready to go.
+
 ### 3. Database Setup
 
 ```bash
@@ -779,6 +779,52 @@ pnpm run dev
 
 The application starts at `http://localhost:3000`.
 
+### 5. Create Your First User
+
+On first run, navigate to `http://localhost:3000/login` and sign up with an email and password. The first user you create will have admin access.
+
+---
+
+## Authentication
+
+The system uses a standalone, self-hosted authentication system with the following features:
+
+- **Email/Password Authentication:** Users can sign up and log in with email and password
+- **Secure Password Storage:** Passwords are hashed using PBKDF2 with 100,000 iterations
+- **JWT Sessions:** Session tokens are signed with HS256 and stored in secure HTTP-only cookies
+- **Role-Based Access Control:** Users can have roles like admin, finance, ops, legal, vendor, copacker, etc.
+
+### Authentication Endpoints
+
+- **POST `/api/auth/signup`** - Create a new user account
+  ```json
+  {
+    "email": "user@example.com",
+    "password": "secure-password",
+    "name": "John Doe" // optional
+  }
+  ```
+
+- **POST `/api/auth/login`** - Log in with email and password
+  ```json
+  {
+    "email": "user@example.com",
+    "password": "secure-password"
+  }
+  ```
+
+- **POST `/api/auth/change-password`** - Change password (requires authentication)
+  ```json
+  {
+    "currentPassword": "old-password",
+    "newPassword": "new-secure-password"
+  }
+  ```
+
+### External OAuth (Optional)
+
+While the system works completely standalone with email/password authentication, you can optionally configure external OAuth providers by setting the `OAUTH_SERVER_URL` environment variable. This is not required for deployment.
+
 ---
 
 ## Environment Variables
@@ -786,12 +832,12 @@ The application starts at `http://localhost:3000`.
 | Variable | Required | Description |
 |---|---|---|
 | `DATABASE_URL` | Yes | MySQL connection string (e.g., `mysql://user:pass@localhost:3306/ai_erp_system`) |
-| `JWT_SECRET` | Yes | Secure secret key, minimum 32 characters |
+| `JWT_SECRET` | Yes | Secure secret key, minimum 32 characters (used for signing session tokens) |
 | `NODE_ENV` | No | `development` or `production` (default: `development`) |
 | `PORT` | No | Server port (default: `3000`) |
 | `APP_URL` | No | Application URL (default: `http://localhost:3000`) |
 | `VITE_APP_TITLE` | No | Application title shown in the UI |
-| `OAUTH_SERVER_URL` | No | External OAuth server URL |
+| `OAUTH_SERVER_URL` | No | External OAuth server URL (optional, for third-party OAuth providers) |
 | `GOOGLE_CLIENT_ID` | No | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | No | Google OAuth client secret |
 | `GOOGLE_REDIRECT_URI` | No | Google OAuth redirect URI |
@@ -806,6 +852,28 @@ The application starts at `http://localhost:3000`.
 | `QUICKBOOKS_CLIENT_SECRET` | No | QuickBooks OAuth client secret |
 | `QUICKBOOKS_REDIRECT_URI` | No | QuickBooks OAuth redirect URI |
 | `QUICKBOOKS_ENVIRONMENT` | No | `sandbox` or `production` |
+| `SHOPIFY_CLIENT_ID` | No | Shopify OAuth app client ID |
+| `SHOPIFY_CLIENT_SECRET` | No | Shopify OAuth app client secret |
+| `SHOPIFY_REDIRECT_URI` | No | Shopify OAuth redirect URI |
+| `BUILT_IN_FORGE_API_URL` | No | AI/LLM provider API URL |
+| `BUILT_IN_FORGE_API_KEY` | No | AI/LLM provider API key |
+| `AIRTABLE_PERSONAL_ACCESS_TOKEN` | No | Airtable PAT for data import |
+| `SENDGRID_WEBHOOK_SECRET` | No | SendGrid webhook signature verification |
+
+---
+
+## Post-Deployment: How to Access Your App
+
+**Just deployed? Start here:**
+- 🎯 **[HOW TO ACCESS](./HOW_TO_ACCESS.md)** - Visual quick guide with diagrams
+- ⚡ **[Vercel Quick Start](./QUICK_START_VERCEL.md)** - Deploy in 5 minutes
+- ❓ **[Access FAQ](./ACCESS_FAQ.md)** - 29 common questions answered
+
+**Detailed guides:**
+- 📘 [Vercel Access Guide](./docs/VERCEL_ACCESS_GUIDE.md) - Complete troubleshooting
+- 📗 [Standalone Deployment](./docs/STANDALONE_DEPLOYMENT.md) - All platforms
+
+**TL;DR:** Visit `https://[your-project].vercel.app` → Click "Sign up" → First user = Admin
 
 ---
 
@@ -822,12 +890,38 @@ Detailed setup documentation for each integration:
 
 ## Deployment
 
+### 🚨 Common Issue: Seeing Code Instead of App?
+If your Vercel deployment shows raw code or source files instead of the application:
+- **Quick Fix:** A `vercel.json` file has been added. Just run `vercel --prod` to redeploy.
+- **Details:** See [VERCEL_CODE_FIX.md](./VERCEL_CODE_FIX.md)
+
+### Quick Start Options
+
+**Want to deploy in 5 minutes?**
+- **Vercel:** See [QUICK_START_VERCEL.md](./QUICK_START_VERCEL.md) for the fastest path
+- **Railway:** See detailed guide below
+
+**Need help accessing after deployment?**
+- [How to Access Your Vercel Deployment](./docs/VERCEL_ACCESS_GUIDE.md) - Complete guide with troubleshooting
+- Your app will be at `https://[your-project].vercel.app` or `https://[your-app].railway.app`
+- First visit redirects to `/login` - click "Sign up" to create admin account
+
 ### Railway (Recommended)
 
 1. **Build Command:** `pnpm run build`
 2. **Start Command:** `pnpm run start`
 3. Set all required environment variables in the Railway dashboard.
 4. Railway auto-detects configuration from `package.json`.
+5. **Access:** Visit `https://[your-app].railway.app`, click "Sign up", create first user (auto-admin)
+
+### Vercel (Popular Alternative)
+
+1. **Deploy:** Run `vercel` or connect GitHub repo
+2. **Environment Variables:** Set `DATABASE_URL` and `JWT_SECRET` in Vercel dashboard
+3. **Database Migrations:** Run `npm run db:push` locally after setting DATABASE_URL
+4. **Access:** Visit `https://[your-project].vercel.app`, sign up as first user (auto-admin)
+
+**Detailed instructions:** [docs/VERCEL_ACCESS_GUIDE.md](./docs/VERCEL_ACCESS_GUIDE.md)
 
 ### Production Build (Manual)
 

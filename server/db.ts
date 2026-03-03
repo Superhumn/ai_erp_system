@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/mysql2";
 import {
-  InsertUser, users, companies, customers, vendors, products,
+  InsertUser, users, localAuthCredentials, InsertLocalAuthCredential, companies, customers, vendors, products,
   accounts, invoices, invoiceItems, payments, transactions, transactionLines,
   orders, orderItems, inventory, warehouses, productionBatches,
   purchaseOrders, purchaseOrderItems, shipments,
@@ -38,6 +38,8 @@ import {
   inboundEmails, emailAttachments, parsedDocuments, parsedDocumentLineItems, autoReplyRules, sentEmails,
   // Data room
   dataRooms, dataRoomFolders, dataRoomDocuments, dataRoomLinks, dataRoomVisitors, documentViews, dataRoomInvitations,
+  // Data room enhanced tracking
+  documentPageViews, dataRoomDriveSyncConfig, dataRoomDriveSyncLogs, dataRoomEmailAccessRules, dataRoomVisitorSessions,
   // NDA e-signatures
   ndaDocuments, ndaSignatures, ndaSignatureAuditLog,
   // IMAP credentials
@@ -75,6 +77,8 @@ import {
   InsertInboundEmail, InsertEmailAttachment, InsertParsedDocument, InsertParsedDocumentLineItem,
   // Data room types
   InsertDataRoom, InsertDataRoomFolder, InsertDataRoomDocument, InsertDataRoomLink, InsertDataRoomVisitor, InsertDocumentView, InsertDataRoomInvitation,
+  // Data room enhanced tracking types
+  InsertDocumentPageView, InsertDataRoomDriveSyncConfig, InsertDataRoomDriveSyncLog, InsertDataRoomEmailAccessRule, InsertDataRoomVisitorSession,
   // NDA types
   InsertNdaDocument, InsertNdaSignature, InsertNdaSignatureAuditLog,
   InsertImapCredential,
@@ -2142,6 +2146,43 @@ export async function updateTeamMember(id: number, data: Partial<InsertUser>) {
     ...data,
     updatedAt: new Date(),
   }).where(eq(users.id, id));
+}
+
+export async function getUserById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getUsersByRoles(roles: string[]) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(users).where(
+    and(
+      inArray(users.role, roles),
+      eq(users.isActive, true)
+    )
+  );
+}
+
+export async function getInvitationByIdWithDataRoom(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db
+    .select({
+      id: dataRoomInvitations.id,
+      email: dataRoomInvitations.email,
+      name: dataRoomInvitations.name,
+      inviteCode: dataRoomInvitations.inviteCode,
+      dataRoomId: dataRoomInvitations.dataRoomId,
+      dataRoomName: dataRooms.name,
+    })
+    .from(dataRoomInvitations)
+    .leftJoin(dataRooms, eq(dataRoomInvitations.dataRoomId, dataRooms.id))
+    .where(eq(dataRoomInvitations.id, id))
+    .limit(1);
+  return result[0] || null;
 }
 
 export async function deactivateTeamMember(id: number) {
@@ -4777,10 +4818,26 @@ export async function notifyUsersOfEvent(
       inAppCount++;
     }
     
-    // Email notifications would be handled here with SendGrid
     if (shouldEmail) {
       emailCount++;
-      // TODO: Send email notification via SendGrid
+      try {
+        const { sendEmail, isEmailConfigured, formatEmailHtml } = await import("./_core/email");
+        if (isEmailConfigured()) {
+          const user = await getUserById(userId);
+          if (user?.email) {
+            await sendEmail({
+              to: user.email,
+              subject: `[${event.severity || 'info'}] ${event.title}`,
+              html: formatEmailHtml(
+                `${event.title}\n\n${event.message}${event.link ? `\n\nView details: ${event.link}` : ""}`
+              ),
+              text: `${event.title}\n\n${event.message}${event.link ? `\n\nView details: ${event.link}` : ""}`,
+            });
+          }
+        }
+      } catch (emailErr) {
+        console.warn("[Notification] Failed to send email notification:", emailErr);
+      }
     }
   }
   
@@ -6056,6 +6113,516 @@ export async function updateEmailCategory(id: number, data: {
   if (!db) return;
   
   await db.update(inboundEmails).set(data).where(eq(inboundEmails.id, id));
+}
+
+
+// ============================================
+// DATA ROOM - PAGE-LEVEL TRACKING FUNCTIONS
+// ============================================
+
+// Document Page Views
+export async function createDocumentPageView(data: InsertDocumentPageView) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(documentPageViews).values(data);
+  return result[0].insertId;
+}
+
+export async function getDocumentPageViewById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const result = await db.select().from(documentPageViews)
+    .where(eq(documentPageViews.id, id))
+    .limit(1);
+  return result[0] || null;
+}
+
+export async function getDocumentPageViews(documentId: number, visitorId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [eq(documentPageViews.documentId, documentId)];
+  if (visitorId) {
+    conditions.push(eq(documentPageViews.visitorId, visitorId));
+  }
+
+  return db.select().from(documentPageViews)
+    .where(and(...conditions))
+    .orderBy(desc(documentPageViews.enterTime));
+}
+
+export async function getPageViewsByVisitor(visitorId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db.select().from(documentPageViews)
+    .where(eq(documentPageViews.visitorId, visitorId))
+    .orderBy(desc(documentPageViews.enterTime));
+}
+
+export async function updateDocumentPageView(id: number, data: Partial<InsertDocumentPageView>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(documentPageViews).set(data).where(eq(documentPageViews.id, id));
+}
+
+export async function getPageViewAnalytics(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return { pageViews: [], documentStats: [], visitorStats: [] };
+
+  // Get all documents in the data room
+  const docs = await db.select().from(dataRoomDocuments)
+    .where(eq(dataRoomDocuments.dataRoomId, dataRoomId));
+
+  const docIds = docs.map(d => d.id);
+  if (docIds.length === 0) {
+    return { pageViews: [], documentStats: [], visitorStats: [] };
+  }
+
+  // Get page views for those documents
+  const pageViews = await db.select().from(documentPageViews)
+    .where(inArray(documentPageViews.documentId, docIds))
+    .orderBy(desc(documentPageViews.enterTime));
+
+  // Aggregate stats by document
+  const documentStats = docs.map(doc => {
+    const docPageViews = pageViews.filter(pv => pv.documentId === doc.id);
+    const totalDuration = docPageViews.reduce((sum, pv) => sum + (pv.durationMs || 0), 0);
+    const uniqueVisitors = new Set(docPageViews.map(pv => pv.visitorId)).size;
+    const pageStats: Record<number, { views: number; avgDuration: number }> = {};
+
+    docPageViews.forEach(pv => {
+      if (!pageStats[pv.pageNumber]) {
+        pageStats[pv.pageNumber] = { views: 0, avgDuration: 0 };
+      }
+      pageStats[pv.pageNumber].views++;
+      pageStats[pv.pageNumber].avgDuration += pv.durationMs || 0;
+    });
+
+    // Calculate averages
+    Object.keys(pageStats).forEach(page => {
+      const p = parseInt(page);
+      if (pageStats[p].views > 0) {
+        pageStats[p].avgDuration = pageStats[p].avgDuration / pageStats[p].views;
+      }
+    });
+
+    return {
+      documentId: doc.id,
+      documentName: doc.name,
+      totalViews: docPageViews.length,
+      uniqueVisitors,
+      totalDurationMs: totalDuration,
+      avgDurationMs: docPageViews.length > 0 ? totalDuration / docPageViews.length : 0,
+      pageStats,
+    };
+  });
+
+  // Aggregate stats by visitor
+  const visitorIds = [...new Set(pageViews.map(pv => pv.visitorId))];
+  const visitors = visitorIds.length > 0
+    ? await db.select().from(dataRoomVisitors).where(inArray(dataRoomVisitors.id, visitorIds))
+    : [];
+
+  const visitorStats = visitors.map(visitor => {
+    const visitorPageViews = pageViews.filter(pv => pv.visitorId === visitor.id);
+    const totalDuration = visitorPageViews.reduce((sum, pv) => sum + (pv.durationMs || 0), 0);
+    const documentsViewed = new Set(visitorPageViews.map(pv => pv.documentId)).size;
+
+    // Group by document
+    const byDocument: Record<number, { pages: number[]; totalDuration: number }> = {};
+    visitorPageViews.forEach(pv => {
+      if (!byDocument[pv.documentId]) {
+        byDocument[pv.documentId] = { pages: [], totalDuration: 0 };
+      }
+      if (!byDocument[pv.documentId].pages.includes(pv.pageNumber)) {
+        byDocument[pv.documentId].pages.push(pv.pageNumber);
+      }
+      byDocument[pv.documentId].totalDuration += pv.durationMs || 0;
+    });
+
+    return {
+      visitorId: visitor.id,
+      email: visitor.email,
+      name: visitor.name,
+      company: visitor.company,
+      totalPageViews: visitorPageViews.length,
+      documentsViewed,
+      totalDurationMs: totalDuration,
+      byDocument,
+    };
+  });
+
+  return { pageViews, documentStats, visitorStats };
+}
+
+// ============================================
+// DATA ROOM - GOOGLE DRIVE SYNC FUNCTIONS
+// ============================================
+
+export async function createDriveSyncConfig(data: InsertDataRoomDriveSyncConfig) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dataRoomDriveSyncConfig).values(data);
+  return result[0].insertId;
+}
+
+export async function getDriveSyncConfig(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomDriveSyncConfig)
+    .where(eq(dataRoomDriveSyncConfig.dataRoomId, dataRoomId));
+  return result[0] || null;
+}
+
+export async function updateDriveSyncConfig(id: number, data: Partial<InsertDataRoomDriveSyncConfig>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(dataRoomDriveSyncConfig).set(data).where(eq(dataRoomDriveSyncConfig.id, id));
+}
+
+export async function deleteDriveSyncConfig(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(dataRoomDriveSyncConfig).where(eq(dataRoomDriveSyncConfig.dataRoomId, dataRoomId));
+}
+
+export async function createDriveSyncLog(data: InsertDataRoomDriveSyncLog) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dataRoomDriveSyncLogs).values(data);
+  return result[0].insertId;
+}
+
+export async function getDriveSyncLogs(dataRoomId: number, limit: number = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(dataRoomDriveSyncLogs)
+    .where(eq(dataRoomDriveSyncLogs.dataRoomId, dataRoomId))
+    .orderBy(desc(dataRoomDriveSyncLogs.startedAt))
+    .limit(limit);
+}
+
+export async function updateDriveSyncLog(id: number, data: Partial<InsertDataRoomDriveSyncLog>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(dataRoomDriveSyncLogs).set(data).where(eq(dataRoomDriveSyncLogs.id, id));
+}
+
+// ============================================
+// DATA ROOM - EMAIL ACCESS RULES FUNCTIONS
+// ============================================
+
+export async function createEmailAccessRule(data: InsertDataRoomEmailAccessRule) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dataRoomEmailAccessRules).values(data);
+  return result[0].insertId;
+}
+
+export async function getEmailAccessRules(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(dataRoomEmailAccessRules)
+    .where(eq(dataRoomEmailAccessRules.dataRoomId, dataRoomId))
+    .orderBy(desc(dataRoomEmailAccessRules.priority));
+}
+
+export async function updateEmailAccessRule(id: number, data: Partial<InsertDataRoomEmailAccessRule>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(dataRoomEmailAccessRules).set(data).where(eq(dataRoomEmailAccessRules.id, id));
+}
+
+export async function deleteEmailAccessRule(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(dataRoomEmailAccessRules).where(eq(dataRoomEmailAccessRules.id, id));
+}
+
+export async function checkEmailAccess(dataRoomId: number, email: string): Promise<{
+  allowed: boolean;
+  rule: typeof dataRoomEmailAccessRules.$inferSelect | null;
+  permissions: { allowDownload: boolean; allowPrint: boolean; maxViews: number | null; requireNda: boolean };
+}> {
+  const db = await getDb();
+  if (!db) return { allowed: true, rule: null, permissions: { allowDownload: true, allowPrint: true, maxViews: null, requireNda: true } };
+
+  const rules = await db.select().from(dataRoomEmailAccessRules)
+    .where(and(
+      eq(dataRoomEmailAccessRules.dataRoomId, dataRoomId),
+      eq(dataRoomEmailAccessRules.isActive, true),
+      // Filter out expired rules
+      or(
+        isNull(dataRoomEmailAccessRules.expiresAt),
+        gte(dataRoomEmailAccessRules.expiresAt, new Date())
+      )
+    ))
+    .orderBy(desc(dataRoomEmailAccessRules.priority));
+
+  const emailLower = email.toLowerCase();
+  const domain = emailLower.split('@')[1];
+
+  for (const rule of rules) {
+    const pattern = rule.emailPattern.toLowerCase();
+    let matches = false;
+
+    if (rule.ruleType === 'allow_email' || rule.ruleType === 'block_email') {
+      matches = emailLower === pattern;
+    } else if (rule.ruleType === 'allow_domain' || rule.ruleType === 'block_domain') {
+      matches = domain === pattern || pattern === '*';
+    }
+
+    if (matches) {
+      const isBlock = rule.ruleType === 'block_email' || rule.ruleType === 'block_domain';
+      return {
+        allowed: !isBlock,
+        rule,
+        permissions: {
+          allowDownload: rule.allowDownload ?? true,
+          allowPrint: rule.allowPrint ?? true,
+          maxViews: rule.maxViews,
+          requireNda: rule.requireNdaSignature ?? true,
+        }
+      };
+    }
+  }
+
+  // Default: allow with default permissions
+  return { allowed: true, rule: null, permissions: { allowDownload: true, allowPrint: true, maxViews: null, requireNda: true } };
+}
+
+// ============================================
+// DATA ROOM - VISITOR SESSION FUNCTIONS
+// ============================================
+
+export async function createVisitorSession(data: InsertDataRoomVisitorSession) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dataRoomVisitorSessions).values(data);
+  return result[0].insertId;
+}
+
+export async function getVisitorSessions(visitorId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(dataRoomVisitorSessions)
+    .where(eq(dataRoomVisitorSessions.visitorId, visitorId))
+    .orderBy(desc(dataRoomVisitorSessions.sessionStartAt));
+}
+
+export async function getDataRoomSessions(dataRoomId: number, limit: number = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(dataRoomVisitorSessions)
+    .where(eq(dataRoomVisitorSessions.dataRoomId, dataRoomId))
+    .orderBy(desc(dataRoomVisitorSessions.sessionStartAt))
+    .limit(limit);
+}
+
+export async function updateVisitorSession(id: number, data: Partial<InsertDataRoomVisitorSession>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(dataRoomVisitorSessions).set(data).where(eq(dataRoomVisitorSessions.id, id));
+}
+
+export async function getSessionByToken(sessionToken: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomVisitorSessions)
+    .where(eq(dataRoomVisitorSessions.sessionToken, sessionToken));
+  return result[0] || null;
+}
+
+export async function getActiveSession(visitorId: number, dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomVisitorSessions)
+    .where(and(
+      eq(dataRoomVisitorSessions.visitorId, visitorId),
+      eq(dataRoomVisitorSessions.dataRoomId, dataRoomId),
+      eq(dataRoomVisitorSessions.isActive, true)
+    ))
+    .orderBy(desc(dataRoomVisitorSessions.sessionStartAt))
+    .limit(1);
+  return result[0] || null;
+}
+
+// ============================================
+// DATA ROOM - DETAILED ANALYTICS FUNCTIONS
+// ============================================
+
+export async function getDetailedVisitorAnalytics(dataRoomId: number, visitorId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  // Get visitor info
+  const visitor = await db.select().from(dataRoomVisitors)
+    .where(eq(dataRoomVisitors.id, visitorId));
+  if (!visitor[0]) return null;
+
+  // Get all sessions
+  const sessions = await getVisitorSessions(visitorId);
+
+  // Get all page views
+  const pageViews = await getPageViewsByVisitor(visitorId);
+
+  // Get document views
+  const docViews = await db.select().from(documentViews)
+    .where(eq(documentViews.visitorId, visitorId));
+
+  // Get documents info
+  const docIds = [...new Set(pageViews.map(pv => pv.documentId))];
+  const documents = docIds.length > 0
+    ? await db.select().from(dataRoomDocuments).where(inArray(dataRoomDocuments.id, docIds))
+    : [];
+
+  // Build detailed analytics
+  const documentEngagement = documents.map(doc => {
+    const docPageViews = pageViews.filter(pv => pv.documentId === doc.id);
+    const uniquePages = [...new Set(docPageViews.map(pv => pv.pageNumber))];
+    const totalDuration = docPageViews.reduce((sum, pv) => sum + (pv.durationMs || 0), 0);
+
+    // Page-by-page breakdown
+    const pageBreakdown: Record<number, { views: number; totalDuration: number; avgDuration: number; scrollDepth: number }> = {};
+    docPageViews.forEach(pv => {
+      if (!pageBreakdown[pv.pageNumber]) {
+        pageBreakdown[pv.pageNumber] = { views: 0, totalDuration: 0, avgDuration: 0, scrollDepth: 0 };
+      }
+      pageBreakdown[pv.pageNumber].views++;
+      pageBreakdown[pv.pageNumber].totalDuration += pv.durationMs || 0;
+      pageBreakdown[pv.pageNumber].scrollDepth = Math.max(pageBreakdown[pv.pageNumber].scrollDepth, pv.scrollDepth || 0);
+    });
+
+    Object.keys(pageBreakdown).forEach(page => {
+      const p = parseInt(page);
+      pageBreakdown[p].avgDuration = pageBreakdown[p].totalDuration / pageBreakdown[p].views;
+    });
+
+    return {
+      documentId: doc.id,
+      documentName: doc.name,
+      pageCount: doc.pageCount || 1,
+      pagesViewed: uniquePages.length,
+      percentViewed: doc.pageCount ? Math.round((uniquePages.length / doc.pageCount) * 100) : 100,
+      totalViews: docPageViews.length,
+      totalDurationMs: totalDuration,
+      avgPageDurationMs: docPageViews.length > 0 ? totalDuration / docPageViews.length : 0,
+      pageBreakdown,
+    };
+  });
+
+  return {
+    visitor: visitor[0],
+    sessions,
+    documentEngagement,
+    summary: {
+      totalSessions: sessions.length,
+      totalDocuments: documents.length,
+      totalPageViews: pageViews.length,
+      totalTimeMs: sessions.reduce((sum, s) => sum + (s.totalDurationMs || 0), 0),
+      downloads: docViews.filter(dv => dv.downloaded).length,
+      prints: docViews.filter(dv => dv.printed).length,
+    },
+  };
+}
+
+export async function getDataRoomEngagementReport(dataRoomId: number, startDate?: Date, endDate?: Date) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const room = await db.select().from(dataRooms).where(eq(dataRooms.id, dataRoomId));
+  if (!room[0]) return null;
+
+  // Get all visitors
+  const visitors = await db.select().from(dataRoomVisitors)
+    .where(eq(dataRoomVisitors.dataRoomId, dataRoomId));
+
+  // Get all documents
+  const documents = await db.select().from(dataRoomDocuments)
+    .where(eq(dataRoomDocuments.dataRoomId, dataRoomId));
+
+  // Get all sessions with date filter applied in SQL
+  const sessionsConditions = [eq(dataRoomVisitorSessions.dataRoomId, dataRoomId)];
+  if (startDate) {
+    sessionsConditions.push(gte(dataRoomVisitorSessions.sessionStartAt, startDate));
+  }
+  if (endDate) {
+    sessionsConditions.push(lte(dataRoomVisitorSessions.sessionStartAt, endDate));
+  }
+  const filteredSessions = await db.select().from(dataRoomVisitorSessions)
+    .where(and(...sessionsConditions));
+
+  // Get page views for documents with date filter applied in SQL
+  const docIds = documents.map(d => d.id);
+  let filteredPageViews: any[] = [];
+  if (docIds.length > 0) {
+    const pageViewConditions = [inArray(documentPageViews.documentId, docIds)];
+    if (startDate) {
+      pageViewConditions.push(gte(documentPageViews.enterTime, startDate));
+    }
+    if (endDate) {
+      pageViewConditions.push(lte(documentPageViews.enterTime, endDate));
+    }
+    filteredPageViews = await db.select().from(documentPageViews)
+      .where(and(...pageViewConditions));
+  }
+
+  // Build report
+  const visitorEngagement = visitors.map(v => {
+    const vSessions = filteredSessions.filter(s => s.visitorId === v.id);
+    const vPageViews = filteredPageViews.filter(pv => pv.visitorId === v.id);
+
+    return {
+      visitorId: v.id,
+      email: v.email,
+      name: v.name,
+      company: v.company,
+      accessStatus: v.accessStatus,
+      ndaAcceptedAt: v.ndaAcceptedAt,
+      sessionsCount: vSessions.length,
+      totalTimeMs: vSessions.reduce((sum, s) => sum + (s.totalDurationMs || 0), 0),
+      documentsViewed: [...new Set(vPageViews.map(pv => pv.documentId))].length,
+      pagesViewed: vPageViews.length,
+      lastActivity: vSessions.length > 0
+        ? vSessions.reduce((latest, s) => s.sessionStartAt > latest ? s.sessionStartAt : latest, vSessions[0].sessionStartAt)
+        : v.lastViewedAt,
+    };
+  });
+
+  const documentEngagement = documents.map(d => {
+    const dPageViews = filteredPageViews.filter(pv => pv.documentId === d.id);
+    const uniqueVisitors = [...new Set(dPageViews.map(pv => pv.visitorId))];
+
+    return {
+      documentId: d.id,
+      documentName: d.name,
+      pageCount: d.pageCount || 1,
+      views: dPageViews.length,
+      uniqueVisitors: uniqueVisitors.length,
+      totalTimeMs: dPageViews.reduce((sum, pv) => sum + (pv.durationMs || 0), 0),
+      avgTimePerPageMs: dPageViews.length > 0
+        ? dPageViews.reduce((sum, pv) => sum + (pv.durationMs || 0), 0) / dPageViews.length
+        : 0,
+    };
+  });
+
+  return {
+    dataRoom: room[0],
+    period: { startDate, endDate },
+    summary: {
+      totalVisitors: visitors.length,
+      activeVisitors: visitors.filter(v => v.accessStatus === 'active').length,
+      totalSessions: filteredSessions.length,
+      totalDocuments: documents.length,
+      totalPageViews: filteredPageViews.length,
+      totalEngagementTimeMs: filteredSessions.reduce((sum, s) => sum + (s.totalDurationMs || 0), 0),
+      ndaSignedCount: visitors.filter(v => v.ndaAcceptedAt).length,
+    },
+    visitorEngagement: visitorEngagement.sort((a, b) => b.totalTimeMs - a.totalTimeMs),
+    documentEngagement: documentEngagement.sort((a, b) => b.views - a.views),
+  };
 }
 
 
@@ -8031,493 +8598,309 @@ export async function checkAndTriggerLowStockPurchaseOrder(
 
 
 // ============================================
-// INVENTORY COSTING CONFIG
+// DUE DILIGENCE CHECKLIST FUNCTIONS
 // ============================================
 
-export async function getInventoryCostingConfigs(filters?: { companyId?: number; productId?: number }) {
+// Due Diligence Templates
+export async function createDueDiligenceTemplate(data: InsertDueDiligenceTemplate) {
   const db = await getDb();
-  if (!db) return [];
-  const conditions = [];
-  if (filters?.companyId) conditions.push(eq(inventoryCostingConfig.companyId, filters.companyId));
-  if (filters?.productId) conditions.push(eq(inventoryCostingConfig.productId, filters.productId));
-  let query = db.select().from(inventoryCostingConfig);
-  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
-  return query.orderBy(desc(inventoryCostingConfig.updatedAt));
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dueDiligenceTemplates).values(data);
+  return { id: result[0].insertId };
 }
 
-export async function getInventoryCostingConfigByProduct(productId: number) {
+export async function getDueDiligenceTemplates(userId?: number, includePublic: boolean = true) {
+  const db = await getDb();
+  if (!db) return [];
+
+  if (userId && includePublic) {
+    return db.select().from(dueDiligenceTemplates)
+      .where(or(eq(dueDiligenceTemplates.createdBy, userId), eq(dueDiligenceTemplates.isPublic, true)))
+      .orderBy(desc(dueDiligenceTemplates.createdAt));
+  } else if (userId) {
+    return db.select().from(dueDiligenceTemplates)
+      .where(eq(dueDiligenceTemplates.createdBy, userId))
+      .orderBy(desc(dueDiligenceTemplates.createdAt));
+  } else {
+    return db.select().from(dueDiligenceTemplates)
+      .where(eq(dueDiligenceTemplates.isPublic, true))
+      .orderBy(desc(dueDiligenceTemplates.createdAt));
+  }
+}
+
+export async function getDueDiligenceTemplateById(id: number) {
   const db = await getDb();
   if (!db) return null;
-  const result = await db
-    .select()
-    .from(inventoryCostingConfig)
-    .where(
-      and(
-        eq(inventoryCostingConfig.productId, productId),
-        eq(inventoryCostingConfig.isActive, true),
-      ),
-    )
-    .orderBy(desc(inventoryCostingConfig.updatedAt))
-    .limit(1);
+  const result = await db.select().from(dueDiligenceTemplates).where(eq(dueDiligenceTemplates.id, id));
   return result[0] || null;
 }
 
-export async function createInventoryCostingConfig(data: InsertInventoryCostingConfig) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(inventoryCostingConfig).values(data);
-  return { id: result[0].insertId };
-}
-
-export async function updateInventoryCostingConfig(id: number, data: Partial<InsertInventoryCostingConfig>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(inventoryCostingConfig).set(data as any).where(eq(inventoryCostingConfig.id, id));
-}
-
-// ============================================
-// INVENTORY COST LAYERS
-// ============================================
-
-export async function getInventoryCostLayers(filters?: {
-  companyId?: number; productId?: number; warehouseId?: number; status?: string;
-}) {
-  const db = await getDb();
-  if (!db) return [];
-  const conditions = [];
-  if (filters?.companyId) conditions.push(eq(inventoryCostLayers.companyId, filters.companyId));
-  if (filters?.productId) conditions.push(eq(inventoryCostLayers.productId, filters.productId));
-  if (filters?.warehouseId) conditions.push(eq(inventoryCostLayers.warehouseId, filters.warehouseId));
-  if (filters?.status) conditions.push(eq(inventoryCostLayers.status, filters.status as any));
-  let query = db.select().from(inventoryCostLayers);
-  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
-  return query.orderBy(inventoryCostLayers.layerDate);
-}
-
-export async function getActiveCostLayers(productId: number, order: 'asc' | 'desc' = 'asc', warehouseId?: number) {
-  const db = await getDb();
-  if (!db) return [];
-  
-  const conditions = [
-    eq(inventoryCostLayers.productId, productId),
-    eq(inventoryCostLayers.status, 'active')
-  ];
-  
-  if (warehouseId !== undefined) {
-    conditions.push(eq(inventoryCostLayers.warehouseId, warehouseId));
-  }
-  
-  const query = db.select().from(inventoryCostLayers)
-    .where(and(...conditions));
-  if (order === 'desc') {
-    return query.orderBy(desc(inventoryCostLayers.layerDate));
-  }
-  return query.orderBy(inventoryCostLayers.layerDate);
-}
-
-export async function createInventoryCostLayer(data: InsertInventoryCostLayer) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(inventoryCostLayers).values(data);
-  return { id: result[0].insertId };
-}
-
-export async function updateInventoryCostLayer(id: number, data: Partial<InsertInventoryCostLayer>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(inventoryCostLayers).set(data as any).where(eq(inventoryCostLayers.id, id));
-}
-
-export async function getWeightedAverageCost(productId: number, warehouseId?: number) {
+export async function getTemplateWithItems(templateId: number) {
   const db = await getDb();
   if (!db) return null;
-  
-  const conditions = [
-    eq(inventoryCostLayers.productId, productId),
-    eq(inventoryCostLayers.status, 'active')
-  ];
-  
-  if (warehouseId !== undefined) {
-    conditions.push(eq(inventoryCostLayers.warehouseId, warehouseId));
-  }
-  
-  const result = await db.select({
-    totalValue: sql<string>`SUM(CAST(${inventoryCostLayers.remainingQuantity} AS DECIMAL(15,4)) * CAST(${inventoryCostLayers.unitCost} AS DECIMAL(15,4)))`,
-    totalQuantity: sql<string>`SUM(CAST(${inventoryCostLayers.remainingQuantity} AS DECIMAL(15,4)))`,
-  }).from(inventoryCostLayers)
-    .where(and(...conditions));
 
-  if (!result[0] || !result[0].totalQuantity || parseFloat(result[0].totalQuantity) === 0) return null;
-  const totalValue = parseFloat(result[0].totalValue || '0');
-  const totalQuantity = parseFloat(result[0].totalQuantity || '0');
+  const template = await getDueDiligenceTemplateById(templateId);
+  if (!template) return null;
+
+  const categories = await db.select().from(dueDiligenceCategories)
+    .where(eq(dueDiligenceCategories.templateId, templateId))
+    .orderBy(dueDiligenceCategories.sortOrder);
+
+  const items = await db.select().from(dueDiligenceItems)
+    .where(eq(dueDiligenceItems.templateId, templateId))
+    .orderBy(dueDiligenceItems.sortOrder);
+
   return {
-    averageCost: totalValue / totalQuantity,
-    totalValue,
-    totalQuantity,
+    ...template,
+    categories: categories.map(cat => ({
+      ...cat,
+      items: items.filter(item => item.categoryId === cat.id),
+    })),
   };
 }
 
-// ============================================
-// COGS RECORDS
-// ============================================
-
-export async function getCogsRecords(filters?: {
-  companyId?: number; productId?: number; orderId?: number;
-  startDate?: Date; endDate?: Date;
-}) {
-  const db = await getDb();
-  if (!db) return [];
-  const conditions = [];
-  if (filters?.companyId) conditions.push(eq(cogsRecords.companyId, filters.companyId));
-  if (filters?.productId) conditions.push(eq(cogsRecords.productId, filters.productId));
-  if (filters?.orderId) conditions.push(eq(cogsRecords.orderId, filters.orderId));
-  if (filters?.startDate) conditions.push(gte(cogsRecords.periodDate, filters.startDate));
-  if (filters?.endDate) conditions.push(lte(cogsRecords.periodDate, filters.endDate));
-  let query = db.select().from(cogsRecords);
-  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
-  return query.orderBy(desc(cogsRecords.periodDate));
-}
-
-export async function createCogsRecord(data: InsertCogsRecord) {
+export async function createDueDiligenceCategory(data: InsertDueDiligenceCategory) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(cogsRecords).values(data);
+  const result = await db.insert(dueDiligenceCategories).values(data);
   return { id: result[0].insertId };
 }
 
-export async function getCogsSummary(filters?: {
-  companyId?: number; productId?: number; periodType?: string;
-  startDate?: Date; endDate?: Date;
-}) {
-  const db = await getDb();
-  if (!db) return [];
-  const conditions = [];
-  if (filters?.companyId) conditions.push(eq(cogsPeriodSummary.companyId, filters.companyId));
-  if (filters?.productId) conditions.push(eq(cogsPeriodSummary.productId, filters.productId));
-  if (filters?.periodType) conditions.push(eq(cogsPeriodSummary.periodType, filters.periodType as any));
-  if (filters?.startDate) conditions.push(gte(cogsPeriodSummary.periodStart, filters.startDate));
-  if (filters?.endDate) conditions.push(lte(cogsPeriodSummary.periodEnd, filters.endDate));
-  let query = db.select().from(cogsPeriodSummary);
-  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
-  return query.orderBy(desc(cogsPeriodSummary.periodStart));
-}
-
-/**
- * Get an existing COGS period summary record by period parameters.
- * Note: undefined companyId/productId represents NULL in the database (company-wide or product-wide aggregation)
- */
-export async function getCogsPeriodSummary(params: {
-  companyId?: number;
-  productId?: number;
-  periodType: "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
-  periodStart: Date;
-  periodEnd: Date;
-}) {
+export async function createDueDiligenceItem(data: InsertDueDiligenceItem) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
-  const conditions = [
-    eq(cogsPeriodSummary.periodType, params.periodType),
-    eq(cogsPeriodSummary.periodStart, params.periodStart),
-    eq(cogsPeriodSummary.periodEnd, params.periodEnd),
-  ];
-  
-  if (params.companyId !== undefined) {
-    conditions.push(eq(cogsPeriodSummary.companyId, params.companyId));
-  } else {
-    conditions.push(isNull(cogsPeriodSummary.companyId));
-  }
-  
-  if (params.productId !== undefined) {
-    conditions.push(eq(cogsPeriodSummary.productId, params.productId));
-  } else {
-    conditions.push(isNull(cogsPeriodSummary.productId));
-  }
-  
-  const results = await db.select().from(cogsPeriodSummary).where(and(...conditions));
-  return results[0] || null;
-}
-
-export async function createCogsPeriodSummaryRecord(data: InsertCogsPeriodSummary) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(cogsPeriodSummary).values(data);
+  const result = await db.insert(dueDiligenceItems).values(data);
   return { id: result[0].insertId };
 }
 
-export async function updateCogsPeriodSummaryRecord(id: number, data: Partial<InsertCogsPeriodSummary>) {
+// Data Room Checklists
+export async function createDataRoomChecklist(data: InsertDataRoomChecklist) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(cogsPeriodSummary).set(data as any).where(eq(cogsPeriodSummary.id, id));
-  return { id };
+  const result = await db.insert(dataRoomChecklists).values(data);
+  return { id: result[0].insertId };
 }
 
-// Aggregated COGS dashboard stats
-export async function getCogsDashboardStats(companyId?: number) {
-  const db = await getDb();
-  if (!db) return null;
-  const conditions = [];
-  if (companyId) conditions.push(eq(cogsRecords.companyId, companyId));
-
-  const now = new Date();
-  const thirtyDaysAgo = new Date(now);
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  conditions.push(gte(cogsRecords.periodDate, thirtyDaysAgo));
-
-  const result = await db.select({
-    totalCogs: sql<string>`COALESCE(SUM(CAST(${cogsRecords.totalCogs} AS DECIMAL(15,2))), 0)`,
-    totalRevenue: sql<string>`COALESCE(SUM(CAST(${cogsRecords.totalRevenue} AS DECIMAL(15,2))), 0)`,
-    totalQuantitySold: sql<string>`COALESCE(SUM(CAST(${cogsRecords.quantitySold} AS DECIMAL(15,4))), 0)`,
-    recordCount: sql<number>`COUNT(*)`,
-  }).from(cogsRecords)
-    .where(and(...conditions));
-
-  const totalCogs = parseFloat(result[0]?.totalCogs || '0');
-  const totalRevenue = parseFloat(result[0]?.totalRevenue || '0');
-  return {
-    totalCogs,
-    totalRevenue,
-    grossMargin: totalRevenue - totalCogs,
-    grossMarginPercent: totalRevenue > 0 ? ((totalRevenue - totalCogs) / totalRevenue) * 100 : 0,
-    totalQuantitySold: parseFloat(result[0]?.totalQuantitySold || '0'),
-    recordCount: result[0]?.recordCount || 0,
-  };
-}
-
-// ============================================
-// VENDOR NEGOTIATIONS
-// ============================================
-
-export async function getVendorNegotiations(filters?: {
-  companyId?: number; vendorId?: number; status?: string; type?: string; assignedTo?: number;
-}) {
+export async function getDataRoomChecklists(dataRoomId: number) {
   const db = await getDb();
   if (!db) return [];
-  const conditions = [];
-  if (filters?.companyId) conditions.push(eq(vendorNegotiations.companyId, filters.companyId));
-  if (filters?.vendorId) conditions.push(eq(vendorNegotiations.vendorId, filters.vendorId));
-  if (filters?.status) conditions.push(eq(vendorNegotiations.status, filters.status as any));
-  if (filters?.type) conditions.push(eq(vendorNegotiations.type, filters.type as any));
-  if (filters?.assignedTo) conditions.push(eq(vendorNegotiations.assignedTo, filters.assignedTo));
-  let query = db.select().from(vendorNegotiations);
-  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
-  return query.orderBy(desc(vendorNegotiations.updatedAt));
+  return db.select().from(dataRoomChecklists)
+    .where(eq(dataRoomChecklists.dataRoomId, dataRoomId))
+    .orderBy(desc(dataRoomChecklists.createdAt));
 }
 
-export async function getVendorNegotiationById(id: number) {
+export async function getDataRoomChecklistById(id: number) {
   const db = await getDb();
   if (!db) return null;
-  const result = await db.select().from(vendorNegotiations).where(eq(vendorNegotiations.id, id));
+  const result = await db.select().from(dataRoomChecklists).where(eq(dataRoomChecklists.id, id));
   return result[0] || null;
 }
 
-export async function createVendorNegotiation(data: InsertVendorNegotiation) {
+export async function updateDataRoomChecklist(id: number, data: Partial<InsertDataRoomChecklist>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(vendorNegotiations).values(data);
+  await db.update(dataRoomChecklists).set(data).where(eq(dataRoomChecklists.id, id));
+}
+
+export async function deleteDataRoomChecklist(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(dataRoomChecklistItems).where(eq(dataRoomChecklistItems.checklistId, id));
+  await db.delete(dataRoomChecklists).where(eq(dataRoomChecklists.id, id));
+}
+
+// Data Room Checklist Items
+export async function createDataRoomChecklistItem(data: InsertDataRoomChecklistItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dataRoomChecklistItems).values(data);
   return { id: result[0].insertId };
 }
 
-export async function updateVendorNegotiation(id: number, data: Partial<InsertVendorNegotiation>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(vendorNegotiations).set(data as any).where(eq(vendorNegotiations.id, id));
-}
-
-export async function getNegotiationRounds(negotiationId: number) {
+export async function getChecklistItems(checklistId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(negotiationRounds)
-    .where(eq(negotiationRounds.negotiationId, negotiationId))
-    .orderBy(negotiationRounds.roundNumber);
+  return db.select().from(dataRoomChecklistItems)
+    .where(eq(dataRoomChecklistItems.checklistId, checklistId))
+    .orderBy(dataRoomChecklistItems.categoryName, dataRoomChecklistItems.sortOrder);
 }
 
-export async function createNegotiationRound(data: InsertNegotiationRound) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(negotiationRounds).values(data);
-  return { id: result[0].insertId };
-}
-
-export async function getVendorNegotiationStats(companyId?: number) {
+export async function getChecklistItemById(id: number) {
   const db = await getDb();
   if (!db) return null;
-  const conditions: any[] = [];
-  if (companyId) conditions.push(eq(vendorNegotiations.companyId, companyId));
+  const result = await db.select().from(dataRoomChecklistItems).where(eq(dataRoomChecklistItems.id, id));
+  return result[0] || null;
+}
 
-  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+export async function updateChecklistItem(id: number, data: Partial<InsertDataRoomChecklistItem>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(dataRoomChecklistItems).set(data).where(eq(dataRoomChecklistItems.id, id));
+}
 
-  const stats = await db.select({
-    total: sql<number>`COUNT(*)`,
-    active: sql<number>`SUM(CASE WHEN ${vendorNegotiations.status} IN ('in_progress', 'counter_offered', 'analyzing', 'ready') THEN 1 ELSE 0 END)`,
-    completed: sql<number>`SUM(CASE WHEN ${vendorNegotiations.status} = 'accepted' THEN 1 ELSE 0 END)`,
-    rejected: sql<number>`SUM(CASE WHEN ${vendorNegotiations.status} = 'rejected' THEN 1 ELSE 0 END)`,
-    totalEstimatedSavings: sql<string>`COALESCE(SUM(CASE WHEN ${vendorNegotiations.status} = 'accepted' THEN CAST(${vendorNegotiations.estimatedSavings} AS DECIMAL(15,2)) ELSE 0 END), 0)`,
-    totalConfidenceScore: sql<string>`COALESCE(SUM(CASE WHEN ${vendorNegotiations.status} = 'accepted' THEN CAST(${vendorNegotiations.aiConfidenceScore} AS DECIMAL(5,2)) ELSE 0 END), 0)`,
-  })
-    .from(vendorNegotiations)
-    .where(whereClause);
+export async function deleteChecklistItem(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(dataRoomChecklistItems).where(eq(dataRoomChecklistItems.id, id));
+}
 
-  const row = stats[0];
-  if (!row) {
-    return {
-      total: 0,
-      active: 0,
-      completed: 0,
-      rejected: 0,
-      totalEstimatedSavings: 0,
-      avgConfidenceScore: 0,
-    };
+export async function bulkCreateChecklistItems(items: InsertDataRoomChecklistItem[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (items.length === 0) return [];
+  const result = await db.insert(dataRoomChecklistItems).values(items);
+  return result;
+}
+
+// Get checklist with all items and linked documents
+export async function getChecklistWithItems(checklistId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const checklist = await getDataRoomChecklistById(checklistId);
+  if (!checklist) return null;
+
+  const items = await getChecklistItems(checklistId);
+
+  // Group items by category
+  const categories: Record<string, typeof items> = {};
+  items.forEach(item => {
+    if (!categories[item.categoryName]) {
+      categories[item.categoryName] = [];
+    }
+    categories[item.categoryName].push(item);
+  });
+
+  // Get linked documents for each item
+  const documentsMap: Record<number, any[]> = {};
+  for (const item of items) {
+    if (item.linkedDocumentIds) {
+      try {
+        const docIds = JSON.parse(item.linkedDocumentIds) as number[];
+        if (docIds.length > 0) {
+          const docs = await db.select().from(dataRoomDocuments).where(inArray(dataRoomDocuments.id, docIds));
+          documentsMap[item.id] = docs;
+        }
+      } catch (e) {
+        documentsMap[item.id] = [];
+      }
+    }
   }
 
-  const total = Number(row.total) || 0;
-  const active = Number(row.active) || 0;
-  const completed = Number(row.completed) || 0;
-  const rejected = Number(row.rejected) || 0;
-  const totalEstimatedSavings = parseFloat(row.totalEstimatedSavings || "0");
-  const totalConfidenceScore = parseFloat(row.totalConfidenceScore || "0");
-
   return {
-    total,
-    active,
-    completed,
-    rejected,
-    totalEstimatedSavings,
-    avgConfidenceScore: completed > 0 ? totalConfidenceScore / completed : 0,
+    ...checklist,
+    categories: Object.entries(categories).map(([name, catItems]) => ({
+      name,
+      items: catItems.map(item => ({
+        ...item,
+        linkedDocuments: documentsMap[item.id] || [],
+      })),
+    })),
   };
 }
 
-// Get vendor spending history for negotiation leverage
-export async function getVendorSpendingHistory(vendorId: number) {
-  const db = await getDb();
-  if (!db) return null;
-
-  const poData = await db.select({
-    totalSpend: sql<string>`COALESCE(SUM(CAST(${purchaseOrders.totalAmount} AS DECIMAL(15,2))), 0)`,
-    orderCount: sql<number>`COUNT(*)`,
-    avgOrderValue: sql<string>`COALESCE(AVG(CAST(${purchaseOrders.totalAmount} AS DECIMAL(15,2))), 0)`,
-  }).from(purchaseOrders)
-    .where(eq(purchaseOrders.vendorId, vendorId));
-
-  return {
-    totalSpend: parseFloat(poData[0]?.totalSpend || '0'),
-    orderCount: poData[0]?.orderCount || 0,
-    avgOrderValue: parseFloat(poData[0]?.avgOrderValue || '0'),
-  };
+// Normalize a filename for matching: strip extension, split camelCase, replace separators
+function normalizeForMatching(name: string): string {
+  return name
+    .replace(/\.[^.]+$/, '')           // strip file extension
+    .replace(/[-_./\\]+/g, ' ')        // separators to spaces
+    .replace(/([a-z])([A-Z])/g, '$1 $2') // split camelCase
+    .toLowerCase()
+    .trim();
 }
 
-// ============================================
-// ATOMIC ROUND NUMBER GENERATION
-// ============================================
+// Score how well a document matches a checklist item's keywords
+function scoreDocumentMatch(docName: string, docDescription: string | null | undefined, keywords: string[]): number {
+  const normalizedName = normalizeForMatching(docName);
+  const nameTokens = normalizedName.split(/\s+/).filter(t => t.length > 1);
+  const descNorm = docDescription ? normalizeForMatching(docDescription) : '';
 
-export async function getNextRoundNumber(negotiationId: number): Promise<number> {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  
-  // Compute a candidate round number. Concurrency safety is enforced by the unique index on
-  // (negotiationId, roundNumber) combined with retry logic in the caller (addNegotiationRound).
-  const result = await db
-    .select({ maxRound: sql<number>`COALESCE(MAX(${negotiationRounds.roundNumber}), 0) + 1` })
-    .from(negotiationRounds)
-    .where(eq(negotiationRounds.negotiationId, negotiationId));
+  let score = 0;
 
-  const rawMaxRound = result[0]?.maxRound;
-  return rawMaxRound != null && Number.isFinite(Number(rawMaxRound)) ? Number(rawMaxRound) : 1;
-}
+  for (const keyword of keywords) {
+    const kwLower = keyword.toLowerCase();
 
-// ============================================
-// LOCAL AUTHENTICATION
-// ============================================
+    // Exact phrase in normalized name (strongest signal)
+    if (normalizedName.includes(kwLower)) {
+      score += 10;
+      continue;
+    }
 
-export async function createLocalAuthCredential(data: InsertLocalAuthCredential) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(localAuthCredentials).values(data);
-  return { id: result[0].insertId };
-}
+    // Exact phrase in description
+    if (descNorm.includes(kwLower)) {
+      score += 5;
+      continue;
+    }
 
-export async function getLocalAuthCredentialByEmail(email: string) {
-  const db = await getDb();
-  if (!db) return null;
-  const rows = await db.select()
-    .from(localAuthCredentials)
-    .where(eq(localAuthCredentials.email, email))
-    .limit(1);
-  return rows[0] || null;
-}
+    // Token overlap: split keyword into words, check how many appear in doc name tokens
+    const kwTokens = kwLower.split(/\s+/).filter(t => t.length > 1);
+    if (kwTokens.length === 0) continue;
 
-export async function getLocalAuthCredentialByOpenId(openId: string) {
-  const db = await getDb();
-  if (!db) return null;
-  const rows = await db.select()
-    .from(localAuthCredentials)
-    .where(eq(localAuthCredentials.openId, openId))
-    .limit(1);
-  return rows[0] || null;
-}
+    const hits = kwTokens.filter(kt =>
+      nameTokens.some(nt => nt === kt || nt.includes(kt) || kt.includes(nt))
+    ).length;
 
-export async function updateLocalAuthCredential(openId: string, data: Partial<InsertLocalAuthCredential>) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(localAuthCredentials)
-    .set(data)
-    .where(eq(localAuthCredentials.openId, openId));
-}
-
-export async function getUserByEmail(email: string) {
-  const db = await getDb();
-  if (!db) return null;
-  const rows = await db.select()
-    .from(users)
-    .where(eq(users.email, email))
-    .limit(1);
-  return rows[0] || null;
-}
-
-// ============================================
-// INVESTMENT GRANT CHECKLISTS
-// ============================================
-
-export async function getInvestmentGrantChecklists(
-  filters?: { companyId?: number; status?: typeof investmentGrantChecklists.$inferSelect["status"] }
-) {
-  const db = await getDb();
-  if (!db) return [];
-
-  const conditions = [];
-  if (filters?.companyId) conditions.push(eq(investmentGrantChecklists.companyId, filters.companyId));
-  if (filters?.status) conditions.push(eq(investmentGrantChecklists.status, filters.status));
-
-  if (conditions.length > 0) {
-    return db
-      .select()
-      .from(investmentGrantChecklists)
-      .where(and(...conditions))
-      .orderBy(desc(investmentGrantChecklists.createdAt));
+    if (hits === kwTokens.length) {
+      score += 7; // all keyword tokens matched
+    } else if (hits > 0) {
+      score += hits * 2; // partial
+    }
   }
-  return db.select().from(investmentGrantChecklists).orderBy(desc(investmentGrantChecklists.createdAt));
+
+  return score;
 }
 
-export async function getInvestmentGrantChecklistById(id: number) {
+// Auto-match documents against checklist items using keyword scoring
+export async function autoMatchChecklistDocuments(checklistId: number) {
   const db = await getDb();
-  if (!db) return undefined;
-  const result = await db.select().from(investmentGrantChecklists).where(eq(investmentGrantChecklists.id, id)).limit(1);
-  return result[0];
-}
+  if (!db) return { matched: 0, items: [] };
 
-export async function getInvestmentGrantChecklistWithItems(id: number) {
-  const db = await getDb();
-  if (!db) return undefined;
+  const checklist = await getDataRoomChecklistById(checklistId);
+  if (!checklist) return { matched: 0, items: [] };
 
-  const checklist = await getInvestmentGrantChecklistById(id);
-  if (!checklist) return undefined;
+  const items = await getChecklistItems(checklistId);
+  const documents = await getDataRoomDocuments(checklist.dataRoomId);
 
-  const items = await db.select().from(investmentGrantItems)
-    .where(eq(investmentGrantItems.checklistId, id))
-    .orderBy(investmentGrantItems.sortOrder);
+  let matchedCount = 0;
+  const matchedItems: any[] = [];
 
-  return { ...checklist, items };
-}
+  for (const item of items) {
+    // Skip items manually set to waived or n/a
+    if (item.status === 'waived' || item.status === 'not_applicable') continue;
+
+    let keywords: string[] = [];
+    try {
+      keywords = item.matchKeywords ? JSON.parse(item.matchKeywords) : [];
+    } catch (e) {
+      keywords = [];
+    }
+
+    if (keywords.length === 0) continue;
+
+    // Score every document against this item
+    const scored = documents
+      .map(doc => ({ doc, score: scoreDocumentMatch(doc.name, doc.description, keywords) }))
+      .filter(s => s.score >= 5)
+      .sort((a, b) => b.score - a.score);
+
+    if (scored.length > 0) {
+      const linkedDocIds = scored.map(s => s.doc.id);
+
+      await updateChecklistItem(item.id, {
+        status: 'complete',
+        linkedDocumentIds: JSON.stringify(linkedDocIds),
+        linkedDocumentCount: linkedDocIds.length,
+      });
+
+      matchedCount++;
+      matchedItems.push({
+        itemId: item.id,
+        itemName: item.itemName,
+        matchedDocuments: scored.map(s => ({ id: s.doc.id, name: s.doc.name, score: s.score })),
+        status: 'complete',
+      });
+    }
+  }
 
 // ============================================
 // EDI MODULE
@@ -8910,29 +9293,155 @@ export async function createInvestmentGrantChecklist(data: InsertInvestmentGrant
   return { id: result[0].insertId };
 }
 
-export async function updateInvestmentGrantChecklist(id: number, data: Partial<InsertInvestmentGrantChecklist>) {
+// Recalculate checklist progress
+export async function recalculateChecklistProgress(checklistId: number) {
   const db = await getDb();
   if (!db) return;
-  await db.update(investmentGrantChecklists).set(data).where(eq(investmentGrantChecklists.id, id));
+
+  const items = await getChecklistItems(checklistId);
+
+  const total = items.length;
+  const completed = items.filter(i => i.status === 'complete').length;
+  const partial = items.filter(i => i.status === 'partial').length;
+  const missing = items.filter(i => i.status === 'missing').length;
+
+  await updateDataRoomChecklist(checklistId, {
+    totalItems: total,
+    completedItems: completed,
+    partialItems: partial,
+    missingItems: missing,
+  });
 }
 
-export async function createInvestmentGrantItem(data: InsertInvestmentGrantItem) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(investmentGrantItems).values(data);
-  return { id: result[0].insertId };
+// Create a checklist from a template
+export async function createChecklistFromTemplate(
+  dataRoomId: number,
+  templateId: number,
+  userId: number,
+  customName?: string
+) {
+  const template = await getTemplateWithItems(templateId);
+  if (!template) throw new Error("Template not found");
+
+  // Create the checklist
+  const checklist = await createDataRoomChecklist({
+    dataRoomId,
+    templateId,
+    name: customName || template.name,
+    description: template.description,
+    createdBy: userId,
+    totalItems: template.categories.reduce((sum, cat) => sum + cat.items.length, 0),
+    missingItems: template.categories.reduce((sum, cat) => sum + cat.items.length, 0),
+  });
+
+  // Create checklist items from template
+  let sortOrder = 0;
+  for (const category of template.categories) {
+    for (const item of category.items) {
+      await createDataRoomChecklistItem({
+        checklistId: checklist.id,
+        dataRoomId,
+        categoryName: category.name,
+        itemName: item.name,
+        itemDescription: item.description,
+        requirement: item.requirement,
+        matchKeywords: item.matchKeywords,
+        matchFileTypes: item.matchFileTypes,
+        sortOrder: sortOrder++,
+        status: 'missing',
+      });
+    }
+  }
+
+  return checklist;
 }
 
-export async function updateInvestmentGrantItem(id: number, data: Partial<InsertInvestmentGrantItem>) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(investmentGrantItems).set(data).where(eq(investmentGrantItems.id, id));
+// Create a standard due diligence checklist
+export async function createStandardChecklist(
+  dataRoomId: number,
+  userId: number,
+  checklistType: 'fundraising' | 'ma' | 'full' | 'series_b' = 'full',
+  customName?: string
+) {
+  // Select the appropriate category template
+  const categories = checklistType === 'series_b'
+    ? SERIES_B_DD_CATEGORIES
+    : STANDARD_DD_CATEGORIES;
+
+  // Generate name based on template type
+  const templateNames: Record<string, string> = {
+    'series_b': 'Series B Due Diligence Checklist',
+    'fundraising': 'Fundraising Due Diligence Checklist',
+    'ma': 'M&A Due Diligence Checklist',
+    'full': 'Standard Due Diligence Checklist',
+  };
+
+  // Create the checklist
+  const totalItems = Object.values(categories).reduce((sum, cat) => sum + cat.items.length, 0);
+  const checklist = await createDataRoomChecklist({
+    dataRoomId,
+    name: customName || templateNames[checklistType] || 'Due Diligence Checklist',
+    description: `${templateNames[checklistType] || 'Due diligence checklist'} with ${totalItems} items across ${Object.keys(categories).length} categories`,
+    createdBy: userId,
+    totalItems,
+    missingItems: totalItems,
+  });
+
+  // Create checklist items
+  let sortOrder = 0;
+  for (const [key, category] of Object.entries(categories)) {
+    for (const item of category.items) {
+      await createDataRoomChecklistItem({
+        checklistId: checklist.id,
+        dataRoomId,
+        categoryName: category.name,
+        itemName: item.name,
+        itemDescription: undefined,
+        requirement: 'required',
+        matchKeywords: JSON.stringify(item.keywords),
+        sortOrder: sortOrder++,
+        status: 'missing',
+      });
+    }
+  }
+
+  return checklist;
 }
 
-export async function getInvestmentGrantItems(checklistId: number) {
+// Get checklist summary for a data room
+export async function getChecklistSummary(dataRoomId: number) {
   const db = await getDb();
-  if (!db) return [];
-  return db.select().from(investmentGrantItems)
-    .where(eq(investmentGrantItems.checklistId, checklistId))
-    .orderBy(investmentGrantItems.sortOrder);
+  if (!db) return null;
+
+  const checklists = await getDataRoomChecklists(dataRoomId);
+  if (checklists.length === 0) return null;
+
+  // Get the most recent active checklist
+  const activeChecklist = checklists.find(c => c.status === 'active') || checklists[0];
+  const items = await getChecklistItems(activeChecklist.id);
+
+  // Group by category and status
+  const byCategory: Record<string, { total: number; complete: number; partial: number; missing: number }> = {};
+  items.forEach(item => {
+    if (!byCategory[item.categoryName]) {
+      byCategory[item.categoryName] = { total: 0, complete: 0, partial: 0, missing: 0 };
+    }
+    byCategory[item.categoryName].total++;
+    if (item.status === 'complete') byCategory[item.categoryName].complete++;
+    else if (item.status === 'partial') byCategory[item.categoryName].partial++;
+    else if (item.status === 'missing') byCategory[item.categoryName].missing++;
+  });
+
+  return {
+    checklist: activeChecklist,
+    totalItems: items.length,
+    completedItems: items.filter(i => i.status === 'complete').length,
+    partialItems: items.filter(i => i.status === 'partial').length,
+    missingItems: items.filter(i => i.status === 'missing').length,
+    completionPercent: items.length > 0
+      ? Math.round((items.filter(i => i.status === 'complete').length / items.length) * 100)
+      : 0,
+    byCategory,
+    requiredMissing: items.filter(i => i.status === 'missing' && i.requirement === 'required'),
+  };
 }
