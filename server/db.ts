@@ -8901,6 +8901,7 @@ export async function autoMatchChecklistDocuments(checklistId: number) {
       });
     }
   }
+}
 
 // ============================================
 // EDI MODULE
@@ -9286,6 +9287,7 @@ export async function upsertEdiSettings(data: InsertEdiSettings) {
   }
   const result = await db.insert(ediSettings).values(data);
   return { id: result[0].insertId };
+}
 export async function createInvestmentGrantChecklist(data: InsertInvestmentGrantChecklist) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
