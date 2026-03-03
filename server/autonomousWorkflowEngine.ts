@@ -878,10 +878,28 @@ Decide the best resolution action from: accept_variance, reject_and_reorder, esc
       actionLabel: actionUrl ? "View Details" : undefined,
     });
 
-    // TODO: Actually send email if configured
-    // if (sendEmailNotification) {
-    //   await sendEmail({ ... });
-    // }
+    if (sendEmailNotification) {
+      try {
+        const { sendEmail, isEmailConfigured, formatEmailHtml } = await import("./_core/email");
+        if (isEmailConfigured()) {
+          // Look up users with the target roles to send email notifications
+          const { getUsersByRoles } = await import("./db");
+          const users = await getUsersByRoles(targetRoles);
+          for (const user of users) {
+            if (user.email) {
+              await sendEmail({
+                to: user.email,
+                subject: `[${notificationType}] ${title}`,
+                html: formatEmailHtml(`${title}\n\n${message}${actionUrl ? `\n\nView details: ${actionUrl}` : ""}`),
+                text: `${title}\n\n${message}${actionUrl ? `\n\nView details: ${actionUrl}` : ""}`,
+              });
+            }
+          }
+        }
+      } catch (emailError) {
+        console.warn("[Workflow] Failed to send email notification:", emailError);
+      }
+    }
   }
 
   // ============================================

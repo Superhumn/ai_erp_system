@@ -31,7 +31,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Users, Plus, Search, Loader2, RefreshCw, ShoppingBag, Database } from "lucide-react";
+import { Users, Plus, Search, Loader2, RefreshCw, ShoppingBag } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "wouter";
 
@@ -41,11 +41,9 @@ export default function Customers() {
   const [sourceFilter, setSourceFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
   const [isSyncOpen, setIsSyncOpen] = useState(false);
-  const [syncType, setSyncType] = useState<"shopify" | "hubspot">("shopify");
   const [syncCredentials, setSyncCredentials] = useState({
     shopifyAccessToken: "",
     shopifyStoreDomain: "",
-    hubspotAccessToken: "",
   });
   const [formData, setFormData] = useState({
     name: "",
@@ -89,26 +87,14 @@ export default function Customers() {
     },
   });
 
-  const syncHubspot = trpc.customers.syncFromHubspot.useMutation({
-    onSuccess: (result) => {
-      toast.success(`HubSpot sync complete: ${result.imported} imported, ${result.updated} updated`);
-      setIsSyncOpen(false);
-      refetch();
-    },
-    onError: (error) => {
-      toast.error(`HubSpot sync failed: ${error.message}`);
-    },
-  });
-
   const filteredCustomers = customers?.filter((customer) => {
     const matchesSearch =
       customer.name.toLowerCase().includes(search.toLowerCase()) ||
       customer.email?.toLowerCase().includes(search.toLowerCase());
     const matchesStatus = statusFilter === "all" || customer.status === statusFilter;
-    const matchesSource = sourceFilter === "all" || 
+    const matchesSource = sourceFilter === "all" ||
       (sourceFilter === "shopify" && customer.shopifyCustomerId) ||
-      (sourceFilter === "hubspot" && customer.hubspotContactId) ||
-      (sourceFilter === "manual" && !customer.shopifyCustomerId && !customer.hubspotContactId);
+      (sourceFilter === "manual" && !customer.shopifyCustomerId);
     return matchesSearch && matchesStatus && matchesSource;
   });
 
@@ -135,32 +121,19 @@ export default function Customers() {
   };
 
   const handleSync = () => {
-    if (syncType === "shopify") {
-      if (!syncCredentials.shopifyAccessToken || !syncCredentials.shopifyStoreDomain) {
-        toast.error("Please enter Shopify credentials");
-        return;
-      }
-      syncShopify.mutate({
-        shopifyAccessToken: syncCredentials.shopifyAccessToken,
-        shopifyStoreDomain: syncCredentials.shopifyStoreDomain,
-      });
-    } else {
-      if (!syncCredentials.hubspotAccessToken) {
-        toast.error("Please enter HubSpot access token");
-        return;
-      }
-      syncHubspot.mutate({
-        hubspotAccessToken: syncCredentials.hubspotAccessToken,
-      });
+    if (!syncCredentials.shopifyAccessToken || !syncCredentials.shopifyStoreDomain) {
+      toast.error("Please enter Shopify credentials");
+      return;
     }
+    syncShopify.mutate({
+      shopifyAccessToken: syncCredentials.shopifyAccessToken,
+      shopifyStoreDomain: syncCredentials.shopifyStoreDomain,
+    });
   };
 
   const getSourceBadge = (customer: any) => {
     if (customer.shopifyCustomerId) {
       return <Badge variant="outline" className="bg-green-500/10 text-green-600 text-xs">Shopify</Badge>;
-    }
-    if (customer.hubspotContactId) {
-      return <Badge variant="outline" className="bg-orange-500/10 text-orange-600 text-xs">HubSpot</Badge>;
     }
     return <Badge variant="outline" className="bg-gray-500/10 text-gray-600 text-xs">Manual</Badge>;
   };
@@ -189,70 +162,43 @@ export default function Customers() {
               <DialogHeader>
                 <DialogTitle>Sync Customers</DialogTitle>
                 <DialogDescription>
-                  Import customers from Shopify or HubSpot.
+                  Import customers from Shopify.
                 </DialogDescription>
               </DialogHeader>
-              <Tabs value={syncType} onValueChange={(v) => setSyncType(v as any)}>
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="shopify" className="flex items-center gap-2">
-                    <ShoppingBag className="h-4 w-4" />
-                    Shopify
-                  </TabsTrigger>
-                  <TabsTrigger value="hubspot" className="flex items-center gap-2">
-                    <Database className="h-4 w-4" />
-                    HubSpot
-                  </TabsTrigger>
-                </TabsList>
-                <TabsContent value="shopify" className="space-y-4 mt-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="shopifyDomain">Store Domain</Label>
-                    <Input
-                      id="shopifyDomain"
-                      placeholder="your-store.myshopify.com"
-                      value={syncCredentials.shopifyStoreDomain}
-                      onChange={(e) => setSyncCredentials({ ...syncCredentials, shopifyStoreDomain: e.target.value })}
-                    />
-                    <p className="text-xs text-muted-foreground">Your Shopify store URL without https://</p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="shopifyToken">Access Token</Label>
-                    <Input
-                      id="shopifyToken"
-                      type="password"
-                      placeholder="shpat_xxxxxxxxxxxxxxxx"
-                      value={syncCredentials.shopifyAccessToken}
-                      onChange={(e) => setSyncCredentials({ ...syncCredentials, shopifyAccessToken: e.target.value })}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Create a private app in Shopify Admin → Settings → Apps and sales channels
-                    </p>
-                  </div>
-                </TabsContent>
-                <TabsContent value="hubspot" className="space-y-4 mt-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="hubspotToken">Access Token</Label>
-                    <Input
-                      id="hubspotToken"
-                      type="password"
-                      placeholder="pat-na1-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                      value={syncCredentials.hubspotAccessToken}
-                      onChange={(e) => setSyncCredentials({ ...syncCredentials, hubspotAccessToken: e.target.value })}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Create a private app in HubSpot → Settings → Integrations → Private Apps
-                    </p>
-                  </div>
-                </TabsContent>
-              </Tabs>
+              <div className="space-y-4 mt-4">
+                <div className="space-y-2">
+                  <Label htmlFor="shopifyDomain">Store Domain</Label>
+                  <Input
+                    id="shopifyDomain"
+                    placeholder="your-store.myshopify.com"
+                    value={syncCredentials.shopifyStoreDomain}
+                    onChange={(e) => setSyncCredentials({ ...syncCredentials, shopifyStoreDomain: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Your Shopify store URL without https://</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="shopifyToken">Access Token</Label>
+                  <Input
+                    id="shopifyToken"
+                    type="password"
+                    placeholder="shpat_xxxxxxxxxxxxxxxx"
+                    value={syncCredentials.shopifyAccessToken}
+                    onChange={(e) => setSyncCredentials({ ...syncCredentials, shopifyAccessToken: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Create a private app in Shopify Admin &rarr; Settings &rarr; Apps and sales channels
+                  </p>
+                </div>
+              </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsSyncOpen(false)}>
                   Cancel
                 </Button>
-                <Button 
-                  onClick={handleSync} 
-                  disabled={syncShopify.isPending || syncHubspot.isPending}
+                <Button
+                  onClick={handleSync}
+                  disabled={syncShopify.isPending}
                 >
-                  {(syncShopify.isPending || syncHubspot.isPending) && (
+                  {syncShopify.isPending && (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   )}
                   Start Sync
@@ -419,17 +365,6 @@ export default function Customers() {
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                <Database className="h-4 w-4 text-orange-600" />
-                From HubSpot
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-orange-600">{syncStatus.hubspot}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Manual Entry</CardTitle>
             </CardHeader>
             <CardContent>
@@ -470,7 +405,6 @@ export default function Customers() {
               <SelectContent>
                 <SelectItem value="all">All Sources</SelectItem>
                 <SelectItem value="shopify">Shopify</SelectItem>
-                <SelectItem value="hubspot">HubSpot</SelectItem>
                 <SelectItem value="manual">Manual</SelectItem>
               </SelectContent>
             </Select>
@@ -489,7 +423,7 @@ export default function Customers() {
             <div className="text-center py-12 text-muted-foreground">
               <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <p>No customers found</p>
-              <p className="text-sm mt-1">Add customers manually or sync from Shopify/HubSpot</p>
+              <p className="text-sm mt-1">Add customers manually or sync from Shopify</p>
             </div>
           ) : (
             <Table>

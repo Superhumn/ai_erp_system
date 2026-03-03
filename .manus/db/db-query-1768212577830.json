@@ -1,9 +1,0 @@
-{
-  "query": "ALTER TABLE aiAgentTasks MODIFY COLUMN taskType ENUM('generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query') NOT NULL;",
-  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3WiXecng1chg6se.408a3c215e81 --database 3o4cnYLmRMvo8cxB6kVVJ3 --execute ALTER TABLE aiAgentTasks MODIFY COLUMN taskType ENUM('generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query') NOT NULL;",
-  "rows": [],
-  "messages": [],
-  "stdout": "",
-  "stderr": "",
-  "execution_time_ms": 398
-}

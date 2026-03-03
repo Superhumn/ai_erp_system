@@ -12,8 +12,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, ArrowLeft, Trash2, Calculator, Package, History, Save, CheckCircle } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation, useParams } from "wouter";
+import { useCostVisibility } from "@/hooks/useCostVisibility";
 
 export default function BOMDetail() {
+  const { canSeeCosts } = useCostVisibility();
   const [, navigate] = useLocation();
   const params = useParams<{ id: string }>();
   const bomId = parseInt(params.id || "0");
@@ -199,7 +201,7 @@ export default function BOMDetail() {
         <Tabs defaultValue="components">
           <TabsList>
             <TabsTrigger value="components">Components</TabsTrigger>
-            <TabsTrigger value="costs">Cost Analysis</TabsTrigger>
+            {canSeeCosts && <TabsTrigger value="costs">Cost Analysis</TabsTrigger>}
             <TabsTrigger value="details">BOM Details</TabsTrigger>
             <TabsTrigger value="history">Version History</TabsTrigger>
           </TabsList>
@@ -393,9 +395,9 @@ export default function BOMDetail() {
                       <TableHead>SKU</TableHead>
                       <TableHead className="text-right">Qty</TableHead>
                       <TableHead>Unit</TableHead>
-                      <TableHead className="text-right">Unit Cost</TableHead>
+                      {canSeeCosts && <TableHead className="text-right">Unit Cost</TableHead>}
                       <TableHead className="text-right">Wastage</TableHead>
-                      <TableHead className="text-right">Total Cost</TableHead>
+                      {canSeeCosts && <TableHead className="text-right">Total Cost</TableHead>}
                       <TableHead></TableHead>
                     </TableRow>
                   </TableHeader>
@@ -418,13 +420,17 @@ export default function BOMDetail() {
                           <TableCell className="text-muted-foreground">{comp.sku || "-"}</TableCell>
                           <TableCell className="text-right">{comp.quantity}</TableCell>
                           <TableCell>{comp.unit}</TableCell>
-                          <TableCell className="text-right">
-                            ${parseFloat(comp.unitCost?.toString() || "0").toFixed(4)}
-                          </TableCell>
+                          {canSeeCosts && (
+                            <TableCell className="text-right">
+                              ${parseFloat(comp.unitCost?.toString() || "0").toFixed(4)}
+                            </TableCell>
+                          )}
                           <TableCell className="text-right">{comp.wastagePercent || 0}%</TableCell>
-                          <TableCell className="text-right font-medium">
-                            ${parseFloat(comp.totalCost?.toString() || "0").toFixed(2)}
-                          </TableCell>
+                          {canSeeCosts && (
+                            <TableCell className="text-right font-medium">
+                              ${parseFloat(comp.totalCost?.toString() || "0").toFixed(2)}
+                            </TableCell>
+                          )}
                           <TableCell>
                             <Button
                               variant="ghost"
