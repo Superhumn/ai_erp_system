@@ -9,7 +9,6 @@ import {
   downloadFile,
   getSimpleFileType,
   DriveFile,
-  DriveFolder,
 } from './_core/googleDrive';
 import * as db from './db';
 import { storagePut } from './storage';
@@ -35,9 +34,6 @@ interface SyncResult {
   durationMs: number;
   warnings: string[];
 }
-
-// Map of Drive folder IDs to data room folder IDs
-const folderMapping = new Map<string, number>();
 
 /**
  * List folders in Google Drive for the folder picker UI
@@ -71,8 +67,8 @@ export async function syncGoogleDriveFolder(options: SyncOptions): Promise<SyncR
   let filesSkipped = 0;
   let foldersCreated = 0;
 
-  // Clear folder mapping for this sync
-  folderMapping.clear();
+  // Map of Drive folder IDs to data room folder IDs for this sync
+  const folderMapping = new Map<string, number>();
 
   try {
     // Get existing documents and folders in the data room
@@ -271,8 +267,23 @@ async function downloadAndUploadFile(
       return null;
     }
 
-    // Upload to our storage
-    const key = `dataroom/${options.dataRoomId}/drive-sync/${Date.now()}-${file.name}`;
+    // Upload to our storage with sanitized filename
+    // Sanitize filename to prevent path traversal and S3 key issues:
+    // 1. Replace path separators (/ \) with underscores
+    // 2. Keep only safe characters: alphanumeric, spaces, dots, dashes, underscores
+    // 3. Limit length to prevent excessively long keys
+    let sanitizedName = file.name
+      .replace(/[\/\\]/g, '_')     // Replace slashes with underscores
+      .replace(/[^\w\s.-]/g, '')   // Keep only word chars (\w includes a-zA-Z0-9_), spaces, dots, dashes
+      .replace(/\s+/g, '_')        // Replace spaces with underscores for cleaner URLs
+      .substring(0, 200);          // Limit filename length
+    
+    // Provide fallback if sanitization results in empty string
+    if (!sanitizedName || sanitizedName.trim() === '') {
+      sanitizedName = 'unnamed_file';
+    }
+    
+    const key = `dataroom/${options.dataRoomId}/drive-sync/${Date.now()}-${sanitizedName}`;
 
     const result = await storagePut(key, content, file.mimeType);
 

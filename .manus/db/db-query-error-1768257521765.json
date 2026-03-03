@@ -1,8 +1,0 @@
-{
-  "query": "DELETE FROM work_orders;",
-  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3WiXecng1chg6se.408a3c215e81 --database 3o4cnYLmRMvo8cxB6kVVJ3 --execute DELETE FROM work_orders;",
-  "returncode": 1,
-  "logs": [
-    "ERROR 1146 (42S02) at line 1: Table '3o4cnylmrmvo8cxb6kvvj3.work_orders' doesn't exist"
-  ]
-}

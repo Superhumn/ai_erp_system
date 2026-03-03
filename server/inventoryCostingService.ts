@@ -350,9 +350,6 @@ export async function getInventoryValuation(productId: number): Promise<{
   };
 }
 
-/**
- * Generate COGS period summary for reporting
- */
 export async function generateCogsPeriodSummary(params: {
   companyId?: number;
   productId?: number;
@@ -383,26 +380,7 @@ export async function generateCogsPeriodSummary(params: {
   const grossMarginPercent =
     totalRevenue > 0 ? (grossMargin / totalRevenue) * 100 : 0;
 
-  // Check if a summary already exists for this exact period
-  const existing = await db.getCogsPeriodSummaries({
-    companyId: params.companyId,
-    productId: params.productId,
-    periodType: params.periodType,
-    startDate: params.periodStart,
-    endDate: params.periodEnd,
-  });
-
-  // Filter to find exact matches (getCogsPeriodSummaries uses gte/lte which could match overlapping ranges)
-  const exactMatch = existing.find(
-    (record) =>
-      record.periodStart.getTime() === params.periodStart.getTime() &&
-      record.periodEnd.getTime() === params.periodEnd.getTime() &&
-      record.companyId === params.companyId &&
-      record.productId === params.productId &&
-      record.periodType === params.periodType
-  );
-
-  const summaryData = {
+  return db.createCogsPeriodSummaryRecord({
     companyId: params.companyId,
     productId: params.productId,
     periodType: params.periodType,
@@ -414,14 +392,5 @@ export async function generateCogsPeriodSummary(params: {
     averageUnitCogs: totalQuantitySold > 0 ? (totalCogs / totalQuantitySold).toFixed(4) : "0",
     grossMargin: grossMargin.toFixed(2),
     grossMarginPercent: grossMarginPercent.toFixed(4),
-  };
-
-  // Upsert: update if exists, create if not
-  if (exactMatch) {
-    // Update the exact matching record
-    await db.updateCogsPeriodSummaryRecord(exactMatch.id, summaryData);
-    return { id: exactMatch.id };
-  } else {
-    return db.createCogsPeriodSummaryRecord(summaryData);
-  }
+  });
 }

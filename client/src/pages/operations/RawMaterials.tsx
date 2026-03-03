@@ -11,8 +11,10 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { useCostVisibility } from "@/hooks/useCostVisibility";
 
 export default function RawMaterials() {
+  const { canSeeCosts } = useCostVisibility();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState<any>(null);
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
@@ -253,7 +255,7 @@ export default function RawMaterials() {
                   <TableHead>Name</TableHead>
                   <TableHead>Category</TableHead>
                   <TableHead>Unit</TableHead>
-                  <TableHead className="text-right">Unit Cost</TableHead>
+                  {canSeeCosts && <TableHead className="text-right">Unit Cost</TableHead>}
                   <TableHead>Lead Time</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -279,9 +281,11 @@ export default function RawMaterials() {
                       <TableCell className="font-medium">{mat.name}</TableCell>
                       <TableCell>{mat.category || "-"}</TableCell>
                       <TableCell>{mat.unit}</TableCell>
-                      <TableCell className="text-right">
-                        {mat.currency} {parseFloat(mat.unitCost?.toString() || "0").toFixed(4)}
-                      </TableCell>
+                      {canSeeCosts && (
+                        <TableCell className="text-right">
+                          {mat.currency} {parseFloat(mat.unitCost?.toString() || "0").toFixed(4)}
+                        </TableCell>
+                      )}
                       <TableCell>{mat.leadTimeDays || 0} days</TableCell>
                       <TableCell>
                         <Badge

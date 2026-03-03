@@ -320,6 +320,19 @@ export function QuickCreateDialog({
   const utils = trpc.useUtils();
 
   const config = entityConfig[entityType];
+  
+  if (!config) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Error</DialogTitle>
+          </DialogHeader>
+          <p>Invalid entity type: {entityType}</p>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   // Mutations for different entity types
   const createVendor = trpc.vendors.create.useMutation({
