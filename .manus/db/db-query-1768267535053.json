@@ -1,9 +1,0 @@
-{
-  "query": "CREATE TABLE IF NOT EXISTS sent_emails (\n  id INT AUTO_INCREMENT PRIMARY KEY,\n  inboundEmailId INT,\n  relatedEntityType VARCHAR(50),\n  relatedEntityId INT,\n  toEmail VARCHAR(255) NOT NULL,\n  toName VARCHAR(255),\n  fromEmail VARCHAR(255) NOT NULL,\n  fromName VARCHAR(255),\n  subject VARCHAR(500) NOT NULL,\n  bodyHtml TEXT,\n  bodyText TEXT,\n  status ENUM('queued', 'sent', 'delivered', 'failed', 'bounced') DEFAULT 'queued' NOT NULL,\n  sentAt TIMESTAMP NULL,\n  deliveredAt TIMESTAMP NULL,\n  errorMessage TEXT,\n  messageId VARCHAR(255),\n  threadId VARCHAR(255),\n  sentBy INT,\n  aiGenerated BOOLEAN DEFAULT FALSE,\n  aiTaskId INT,\n  metadata JSON,\n  createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,\n  updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL\n);",
-  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3WiXecng1chg6se.408a3c215e81 --database 3o4cnYLmRMvo8cxB6kVVJ3 --execute CREATE TABLE IF NOT EXISTS sent_emails (\n  id INT AUTO_INCREMENT PRIMARY KEY,\n  inboundEmailId INT,\n  relatedEntityType VARCHAR(50),\n  relatedEntityId INT,\n  toEmail VARCHAR(255) NOT NULL,\n  toName VARCHAR(255),\n  fromEmail VARCHAR(255) NOT NULL,\n  fromName VARCHAR(255),\n  subject VARCHAR(500) NOT NULL,\n  bodyHtml TEXT,\n  bodyText TEXT,\n  status ENUM('queued', 'sent', 'delivered', 'failed', 'bounced') DEFAULT 'queued' NOT NULL,\n  sentAt TIMESTAMP NULL,\n  deliveredAt TIMESTAMP NULL,\n  errorMessage TEXT,\n  messageId VARCHAR(255),\n  threadId VARCHAR(255),\n  sentBy INT,\n  aiGenerated BOOLEAN DEFAULT FALSE,\n  aiTaskId INT,\n  metadata JSON,\n  createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,\n  updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL\n);",
-  "rows": [],
-  "messages": [],
-  "stdout": "",
-  "stderr": "",
-  "execution_time_ms": 236
-}

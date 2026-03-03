@@ -95,6 +95,13 @@ export default function Invoices() {
     notes: "",
   });
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
+  
+  // Text-based invoice creation
+  const [isTextInvoiceDialogOpen, setIsTextInvoiceDialogOpen] = useState(false);
+  const [invoiceText, setInvoiceText] = useState("");
+  const [parsedInvoiceData, setParsedInvoiceData] = useState<any>(null);
+  const [draftInvoiceId, setDraftInvoiceId] = useState<number | null>(null);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
   const { data: invoices, isLoading, refetch } = trpc.invoices.list.useQuery();
   const { data: customers } = trpc.customers.list.useQuery();
@@ -188,6 +195,33 @@ export default function Invoices() {
       toast.success("Invoice sent to customer");
       setIsEmailDialogOpen(false);
       setEmailMessage("");
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const createFromText = trpc.invoices.createFromText.useMutation({
+    onSuccess: (data) => {
+      setParsedInvoiceData(data.parsed);
+      setDraftInvoiceId(data.invoiceId);
+      setIsTextInvoiceDialogOpen(false);
+      setIsPreviewOpen(true);
+      toast.success("Invoice draft created - please review and approve");
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const approveAndEmail = trpc.invoices.approveAndEmail.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Invoice ${data.invoiceNumber} approved and emailed to customer`);
+      setIsPreviewOpen(false);
+      setParsedInvoiceData(null);
+      setDraftInvoiceId(null);
+      setInvoiceText("");
       refetch();
     },
     onError: (error) => {
@@ -367,6 +401,22 @@ export default function Invoices() {
     setIsEmailDialogOpen(true);
   };
 
+  const handleCreateFromText = () => {
+    if (!invoiceText.trim()) {
+      toast.error("Please enter invoice details");
+      return;
+    }
+    createFromText.mutate({ text: invoiceText });
+  };
+
+  const handleApproveAndEmail = () => {
+    if (!draftInvoiceId) {
+      toast.error("No draft invoice to approve");
+      return;
+    }
+    approveAndEmail.mutate({ invoiceId: draftInvoiceId });
+  };
+
   const totals = calculateTotals();
 
   return (
@@ -385,6 +435,10 @@ export default function Invoices() {
           <Button variant="outline" onClick={() => setIsRecurringDialogOpen(true)}>
             <RefreshCw className="h-4 w-4 mr-2" />
             Recurring
+          </Button>
+          <Button variant="outline" onClick={() => setIsTextInvoiceDialogOpen(true)}>
+            <FileText className="h-4 w-4 mr-2" />
+            Quick Create
           </Button>
           <Dialog open={isOpen} onOpenChange={setIsOpen}>
             <DialogTrigger asChild>
@@ -946,6 +1000,122 @@ export default function Invoices() {
           )}
         </CardContent>
       </Card>
+
+      {/* Text-based Invoice Creation Dialog */}
+      <Dialog open={isTextInvoiceDialogOpen} onOpenChange={setIsTextInvoiceDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Quick Create Invoice</DialogTitle>
+            <DialogDescription>
+              Create an invoice from simple text. For example: "$8500 invoice for 300lbs beef barbacoa bill to sysco net 30"
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="invoice-text">Invoice Details</Label>
+              <Textarea
+                id="invoice-text"
+                placeholder="e.g., $8500 invoice for 300lbs beef barbacoa bill to sysco net 30"
+                value={invoiceText}
+                onChange={(e) => setInvoiceText(e.target.value)}
+                rows={4}
+                className="resize-none"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setIsTextInvoiceDialogOpen(false);
+                setInvoiceText("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleCreateFromText}
+              disabled={createFromText.isPending || !invoiceText.trim()}
+            >
+              {createFromText.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Create Draft
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Invoice Preview and Approval Dialog */}
+      <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Review Invoice Draft</DialogTitle>
+            <DialogDescription>
+              Review the parsed invoice details and approve to send to customer.
+            </DialogDescription>
+          </DialogHeader>
+          {parsedInvoiceData && draftInvoiceId && (
+            <div className="space-y-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Customer</Label>
+                  <p className="font-medium">{parsedInvoiceData.customerName}</p>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Amount</Label>
+                  <p className="font-medium text-lg">{formatCurrency(parsedInvoiceData.amount.toString())}</p>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-muted-foreground">Description</Label>
+                <p>{parsedInvoiceData.description}</p>
+              </div>
+              {parsedInvoiceData.quantity && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-muted-foreground">Quantity</Label>
+                    <p>{parsedInvoiceData.quantity} {parsedInvoiceData.unit || ""}</p>
+                  </div>
+                </div>
+              )}
+              {parsedInvoiceData.paymentTerms && (
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Payment Terms</Label>
+                  <p>{parsedInvoiceData.paymentTerms}</p>
+                </div>
+              )}
+              <div className="bg-muted p-4 rounded-md space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  This invoice will be sent via email to the customer after approval.
+                  A PDF will be generated and attached to the email.
+                </p>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setIsPreviewOpen(false);
+                setParsedInvoiceData(null);
+                setDraftInvoiceId(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleApproveAndEmail}
+              disabled={approveAndEmail.isPending}
+            >
+              {approveAndEmail.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Approve & Email
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

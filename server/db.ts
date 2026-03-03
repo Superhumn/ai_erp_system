@@ -1,7 +1,6 @@
-import { eq, desc, and, sql, gte, lte, lt, like, or, count, sum, isNull, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
-  InsertUser, users, companies, customers, vendors, products,
+  InsertUser, users, localAuthCredentials, InsertLocalAuthCredential, companies, customers, vendors, products,
   accounts, invoices, invoiceItems, payments, transactions, transactionLines,
   orders, orderItems, inventory, warehouses, productionBatches,
   purchaseOrders, purchaseOrderItems, shipments,
@@ -91,7 +90,18 @@ import {
   crmContacts, crmTags, crmContactTags, whatsappMessages, crmInteractions,
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
-  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient
+  InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
+  // Inventory costing & COGS
+  inventoryCostingConfig, inventoryCostLayers, cogsRecords, cogsPeriodSummary,
+  InsertInventoryCostingConfig, InsertInventoryCostLayer, InsertCogsRecord, InsertCogsPeriodSummary,
+  // Vendor negotiations
+  vendorNegotiations, negotiationRounds,
+  InsertVendorNegotiation, InsertNegotiationRound,
+  // Local authentication
+  localAuthCredentials, InsertLocalAuthCredential,
+  // Investment grant checklists
+  investmentGrantChecklists, investmentGrantItems,
+  InsertInvestmentGrantChecklist, InsertInvestmentGrantItem
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -2125,6 +2135,43 @@ export async function updateTeamMember(id: number, data: Partial<InsertUser>) {
     ...data,
     updatedAt: new Date(),
   }).where(eq(users.id, id));
+}
+
+export async function getUserById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getUsersByRoles(roles: string[]) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(users).where(
+    and(
+      inArray(users.role, roles),
+      eq(users.isActive, true)
+    )
+  );
+}
+
+export async function getInvitationByIdWithDataRoom(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db
+    .select({
+      id: dataRoomInvitations.id,
+      email: dataRoomInvitations.email,
+      name: dataRoomInvitations.name,
+      inviteCode: dataRoomInvitations.inviteCode,
+      dataRoomId: dataRoomInvitations.dataRoomId,
+      dataRoomName: dataRooms.name,
+    })
+    .from(dataRoomInvitations)
+    .leftJoin(dataRooms, eq(dataRoomInvitations.dataRoomId, dataRooms.id))
+    .where(eq(dataRoomInvitations.id, id))
+    .limit(1);
+  return result[0] || null;
 }
 
 export async function deactivateTeamMember(id: number) {
@@ -4760,10 +4807,26 @@ export async function notifyUsersOfEvent(
       inAppCount++;
     }
     
-    // Email notifications would be handled here with SendGrid
     if (shouldEmail) {
       emailCount++;
-      // TODO: Send email notification via SendGrid
+      try {
+        const { sendEmail, isEmailConfigured, formatEmailHtml } = await import("./_core/email");
+        if (isEmailConfigured()) {
+          const user = await getUserById(userId);
+          if (user?.email) {
+            await sendEmail({
+              to: user.email,
+              subject: `[${event.severity || 'info'}] ${event.title}`,
+              html: formatEmailHtml(
+                `${event.title}\n\n${event.message}${event.link ? `\n\nView details: ${event.link}` : ""}`
+              ),
+              text: `${event.title}\n\n${event.message}${event.link ? `\n\nView details: ${event.link}` : ""}`,
+            });
+          }
+        }
+      } catch (emailErr) {
+        console.warn("[Notification] Failed to send email notification:", emailErr);
+      }
     }
   }
   

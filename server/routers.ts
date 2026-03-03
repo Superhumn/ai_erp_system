@@ -1,4 +1,3 @@
-import { COOKIE_NAME } from "@shared/const";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -10,7 +9,12 @@ import { processEmailReply, analyzeEmail, generateEmailReply } from "./emailRepl
 import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
+import { detectMaterialShortages, detectAnomalies, runShortageCheckAndNotify, runAnomalyCheckAndNotify } from "./materialShortageService";
+import { linkParsedEmailToEntities } from "./emailDocumentLinker";
+import { generateVendorEmail, sendVendorEmail, sendBulkEmail, checkAndSendPoFollowups } from "./vendorEmailAutomation";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
+import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
+import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import * as db from "./db";
 import { storagePut } from "./storage";
@@ -19,6 +23,7 @@ import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage,
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo } from "./_core/quickbooks";
+import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -61,6 +66,22 @@ const copackerProcedure = protectedProcedure.use(({ ctx, next }) => {
 const vendorProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (!['admin', 'ops', 'vendor'].includes(ctx.user.role)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Vendor access required' });
+  }
+  return next({ ctx });
+});
+
+// Plant User can only access Work Orders, Receiving, Inventory, and Transfers
+const plantProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!['admin', 'ops', 'plant', 'exec'].includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Plant user access required' });
+  }
+  return next({ ctx });
+});
+
+// Procurement-specific (separate from general finance)
+const procurementProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!['admin', 'ops', 'procurement', 'exec'].includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Procurement access required' });
   }
   return next({ ctx });
 });
@@ -356,78 +377,15 @@ export const appRouter = router({
         return { imported, updated, skipped, total: shopifyCustomers.length };
       }),
     
-    // HubSpot sync
-    syncFromHubspot: adminProcedure
-      .input(z.object({ hubspotAccessToken: z.string() }))
-      .mutation(async ({ input, ctx }) => {
-        const { hubspotAccessToken } = input;
-        
-        // Fetch contacts from HubSpot
-        const response = await fetch('https://api.hubapi.com/crm/v3/objects/contacts?limit=100&properties=email,firstname,lastname,phone,address,city,state,country,zip,company', {
-          headers: {
-            'Authorization': `Bearer ${hubspotAccessToken}`,
-            'Content-Type': 'application/json',
-          },
-        });
-        
-        if (!response.ok) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Failed to fetch HubSpot contacts' });
-        }
-        
-        const data = await response.json();
-        const hubspotContacts = data.results || [];
-        
-        let imported = 0;
-        let updated = 0;
-        let skipped = 0;
-        
-        for (const hc of hubspotContacts) {
-          const props = hc.properties || {};
-          
-          // Check if customer already exists by HubSpot ID
-          const existing = await db.getCustomerByHubspotId(hc.id.toString());
-          
-          const customerData = {
-            name: `${props.firstname || ''} ${props.lastname || ''}`.trim() || props.email || 'Unknown',
-            email: props.email || undefined,
-            phone: props.phone || undefined,
-            address: props.address || undefined,
-            city: props.city || undefined,
-            state: props.state || undefined,
-            country: props.country || undefined,
-            postalCode: props.zip || undefined,
-            type: props.company ? 'business' as const : 'individual' as const,
-            hubspotContactId: hc.id.toString(),
-            syncSource: 'hubspot' as const,
-            lastSyncedAt: new Date(),
-            hubspotData: JSON.stringify(hc),
-          };
-          
-          if (existing) {
-            await db.updateCustomer(existing.id, customerData);
-            updated++;
-          } else {
-            await db.createCustomer(customerData);
-            imported++;
-          }
-        }
-        
-        await createAuditLog(ctx.user.id, 'create', 'hubspot_sync', 0, `Imported ${imported}, Updated ${updated}`);
-        
-        return { imported, updated, skipped, total: hubspotContacts.length };
-      }),
-    
     // Get sync status
     getSyncStatus: protectedProcedure.query(async () => {
       const customers = await db.getCustomers();
       const shopifyCount = customers.filter(c => c.shopifyCustomerId).length;
-      const hubspotCount = customers.filter(c => c.hubspotContactId).length;
-      const manualCount = customers.filter(c => !c.shopifyCustomerId && !c.hubspotContactId).length;
-      
+      const manualCount = customers.filter(c => !c.shopifyCustomerId).length;
+
       return {
         total: customers.length,
         shopify: shopifyCount,
-        hubspot: hubspotCount,
         manual: manualCount,
       };
     }),
@@ -1421,6 +1379,61 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'approve', 'purchaseOrder', input.id);
         return { success: true };
       }),
+    parseText: opsProcedure
+      .input(z.object({ text: z.string().min(1).max(1000) }))
+      .mutation(async ({ input }) => {
+        const parsed = await parseTextToPO(input.text);
+        const preview = await createPOPreview(parsed);
+        return { parsed, preview };
+      }),
+    // Create PO from text and send email
+    createFromText: opsProcedure
+      .input(z.object({
+        text: z.string().min(1),
+        preview: z.object({
+          vendorId: z.number(),
+          vendorName: z.string(),
+          rawMaterialId: z.number().nullable(),
+          items: z.array(z.object({
+            description: z.string(),
+            quantity: z.string(),
+            unitPrice: z.string(),
+            totalAmount: z.string(),
+            rawMaterialId: z.number().nullable(),
+          })),
+          shippingAddress: z.string(),
+          notes: z.string(),
+          subtotal: z.string(),
+          totalAmount: z.string(),
+          suggested: z.boolean(),
+          isPriceEstimated: z.boolean().optional(),
+        }),
+        sendEmail: z.boolean().default(false),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const po = await createPOFromPreview(input.preview, ctx.user.id);
+        
+        await createAuditLog(ctx.user.id, 'create', 'purchaseOrder', po.id, po.poNumber);
+        
+        if (input.sendEmail) {
+          const emailResult = await emailService.sendPOEmail(po.id, {
+            triggeredBy: ctx.user.id,
+          });
+          
+          if (!emailResult.success) {
+            console.error(`Failed to send PO email for PO ${po.id}:`, emailResult.error);
+          }
+          
+          return { 
+            success: true, 
+            po, 
+            emailSent: emailResult.success,
+            emailError: emailResult.error || undefined,
+          };
+        }
+        
+        return { success: true, po, emailSent: false };
+      }),
     sendToSupplier: opsProcedure
       .input(z.object({
         poId: z.number(),
@@ -2054,6 +2067,129 @@ export const appRouter = router({
   }),
 
   // ============================================
+  // SAUDI INVESTMENT GRANT CHECKLISTS
+  // ============================================
+  investmentGrants: router({
+    list: protectedProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        status: z.string().optional(),
+      }).optional())
+      .query(({ input }) => db.getInvestmentGrantChecklists(input)),
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getInvestmentGrantChecklistWithItems(input.id)),
+    create: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        companyId: z.number().optional(),
+        description: z.string().optional(),
+        totalCapex: z.string().optional(),
+        grantPercentage: z.string().optional(),
+        estimatedGrant: z.string().optional(),
+        currency: z.string().optional(),
+        startDate: z.date().optional(),
+        targetCompletionDate: z.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createInvestmentGrantChecklist({ ...input, createdBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'investmentGrantChecklist', result.id, input.name);
+
+        // Auto-populate default checklist items
+        const defaultItems = [
+          { category: "entity_entry_setup" as const, taskName: "MISA foreign investment license", sortOrder: 1, startMonth: 1, durationMonths: 2 },
+          { category: "entity_entry_setup" as const, taskName: "Saudi entity incorporation + CR", sortOrder: 2, startMonth: 2, durationMonths: 2 },
+          { category: "entity_entry_setup" as const, taskName: "Bank account + ZATCA registration", sortOrder: 3, startMonth: 3, durationMonths: 1 },
+          { category: "project_definition" as const, taskName: "Factory scope & product mix defined", sortOrder: 4, startMonth: 2, durationMonths: 2 },
+          { category: "project_definition" as const, taskName: "Process flow & capacity design", sortOrder: 5, startMonth: 3, durationMonths: 2 },
+          { category: "capex_financials" as const, taskName: "Detailed capex budget (eligible vs non-eligible)", sortOrder: 6, startMonth: 4, durationMonths: 2 },
+          { category: "capex_financials" as const, taskName: "5-year financial model", sortOrder: 7, startMonth: 4, durationMonths: 2 },
+          { category: "land_infrastructure" as const, taskName: "Industrial land selection (MODON)", sortOrder: 8, startMonth: 3, durationMonths: 3 },
+          { category: "land_infrastructure" as const, taskName: "Utilities & cold-chain planning", sortOrder: 9, startMonth: 5, durationMonths: 2 },
+          { category: "jobs_localization" as const, taskName: "Headcount & Saudization plan", sortOrder: 10, startMonth: 4, durationMonths: 2 },
+          { category: "jobs_localization" as const, taskName: "Training & skills program", sortOrder: 11, startMonth: 5, durationMonths: 3 },
+          { category: "incentive_application" as const, taskName: "Grant eligibility confirmation", sortOrder: 12, startMonth: 6, durationMonths: 1 },
+          { category: "incentive_application" as const, taskName: "35% grant application submission", sortOrder: 13, startMonth: 7, durationMonths: 1 },
+          { category: "incentive_application" as const, taskName: "Grant review & approval", sortOrder: 14, startMonth: 8, durationMonths: 3 },
+          { category: "construction_equipment" as const, taskName: "Factory construction", sortOrder: 15, startMonth: 10, durationMonths: 12 },
+          { category: "construction_equipment" as const, taskName: "Equipment procurement & install", sortOrder: 16, startMonth: 14, durationMonths: 6 },
+          { category: "grant_disbursement" as const, taskName: "Milestone 1 drawdown", sortOrder: 17, startMonth: 16, durationMonths: 1 },
+          { category: "grant_disbursement" as const, taskName: "Milestone 2 drawdown", sortOrder: 18, startMonth: 20, durationMonths: 1 },
+          { category: "grant_disbursement" as const, taskName: "Final drawdown (production start)", sortOrder: 19, startMonth: 22, durationMonths: 2 },
+        ];
+
+        for (const item of defaultItems) {
+          await db.createInvestmentGrantItem({ ...item, checklistId: result.id });
+        }
+
+        return result;
+      }),
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        description: z.string().optional(),
+        status: z.enum(["not_started", "in_progress", "completed", "on_hold"]).optional(),
+        totalCapex: z.string().optional(),
+        grantPercentage: z.string().optional(),
+        estimatedGrant: z.string().optional(),
+        currency: z.string().optional(),
+        startDate: z.date().optional(),
+        targetCompletionDate: z.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateInvestmentGrantChecklist(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'investmentGrantChecklist', id);
+        return { success: true };
+      }),
+    addItem: protectedProcedure
+      .input(z.object({
+        checklistId: z.number(),
+        category: z.enum([
+          "entity_entry_setup", "project_definition", "capex_financials",
+          "land_infrastructure", "jobs_localization", "incentive_application",
+          "construction_equipment", "grant_disbursement",
+        ]),
+        taskName: z.string().min(1),
+        description: z.string().optional(),
+        assigneeId: z.number().optional(),
+        startMonth: z.number().optional(),
+        durationMonths: z.number().optional(),
+        sortOrder: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createInvestmentGrantItem(input);
+        await createAuditLog(ctx.user.id, 'create', 'investmentGrantItem', result.id, input.taskName);
+        return result;
+      }),
+    updateItem: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        taskName: z.string().optional(),
+        description: z.string().optional(),
+        status: z.enum(["not_started", "in_progress", "completed", "blocked"]).optional(),
+        assigneeId: z.number().optional(),
+        startMonth: z.number().optional(),
+        durationMonths: z.number().optional(),
+        completedDate: z.date().optional(),
+        notes: z.string().optional(),
+        sortOrder: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateInvestmentGrantItem(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'investmentGrantItem', id);
+        return { success: true };
+      }),
+    items: protectedProcedure
+      .input(z.object({ checklistId: z.number() }))
+      .query(({ input }) => db.getInvestmentGrantItems(input.checklistId)),
+  }),
+
+  // ============================================
   // DASHBOARD & METRICS
   // ============================================
   dashboard: router({
@@ -2121,7 +2257,7 @@ export const appRouter = router({
     create: adminProcedure
       .input(z.object({
         companyId: z.number().optional(),
-        type: z.enum(['quickbooks', 'shopify', 'stripe', 'slack', 'email', 'webhook']),
+        type: z.enum(['quickbooks', 'shopify', 'email', 'webhook', 'airtable']),
         name: z.string().min(1),
         config: z.any().optional(),
       }))
@@ -9185,7 +9321,26 @@ Ask if they received the original request and if they can provide a quote.`;
             invitedBy: ctx.user.id,
           });
 
-          // TODO: Send invitation email
+          // Send invitation email
+          try {
+            if (isEmailConfigured()) {
+              const dataRoom = await db.getDataRoomById(input.dataRoomId);
+              const inviteUrl = `${process.env.APP_URL || 'http://localhost:3000'}/share/${inviteCode}`;
+              await sendEmail({
+                to: input.email,
+                subject: `You've been invited to a Data Room${dataRoom ? `: ${dataRoom.name}` : ''}`,
+                html: formatEmailHtml(
+                  `Hello${input.name ? ` ${input.name}` : ''},\n\n` +
+                  `You have been invited to access a secure data room${dataRoom ? ` "${dataRoom.name}"` : ''} with ${input.role} permissions.\n\n` +
+                  `${input.message ? `Message from the sender:\n${input.message}\n\n` : ''}` +
+                  `Click the link below to access the data room:\n${inviteUrl}\n\n` +
+                  `This invitation${input.expiresAt ? ` expires on ${input.expiresAt.toLocaleDateString()}` : ' does not expire'}.`
+                ),
+              });
+            }
+          } catch (emailErr) {
+            console.warn("[DataRoom] Failed to send invitation email:", emailErr);
+          }
 
           return { id, inviteCode };
         }),
@@ -9217,7 +9372,26 @@ Ask if they received the original request and if they can provide a quote.`;
       resend: protectedProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input }) => {
-          // TODO: Resend invitation email
+          const invitation = await db.getInvitationByIdWithDataRoom(input.id);
+          if (!invitation) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Invitation not found' });
+          }
+          try {
+            if (isEmailConfigured()) {
+              const inviteUrl = `${process.env.APP_URL || 'http://localhost:3000'}/share/${invitation.inviteCode}`;
+              await sendEmail({
+                to: invitation.email,
+                subject: `Reminder: You've been invited to a Data Room${invitation.dataRoomName ? `: ${invitation.dataRoomName}` : ''}`,
+                html: formatEmailHtml(
+                  `Hello${invitation.name ? ` ${invitation.name}` : ''},\n\n` +
+                  `This is a reminder that you have been invited to access a secure data room${invitation.dataRoomName ? ` "${invitation.dataRoomName}"` : ''}.\n\n` +
+                  `Click the link below to access the data room:\n${inviteUrl}`
+                ),
+              });
+            }
+          } catch (emailErr) {
+            console.warn("[DataRoom] Failed to resend invitation email:", emailErr);
+          }
           return { success: true };
         }),
     }),
@@ -12610,6 +12784,583 @@ Ask if they received the original request and if they can provide a quote.`;
           await createAuditLog(ctx.user.id, 'update', 'crm_campaign', id);
           return { success: true };
         }),
+    }),
+  }),
+
+  // ============================================
+  // INVENTORY COSTING & COGS
+  // ============================================
+  inventoryCosting: router({
+    // Costing config per product
+    configs: router({
+      list: opsProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getInventoryCostingConfigs(input)),
+      getByProduct: opsProcedure
+        .input(z.object({ productId: z.number() }))
+        .query(({ input }) => db.getInventoryCostingConfigByProduct(input.productId)),
+      create: opsProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number(),
+          costingMethod: z.enum(["fifo", "lifo", "weighted_average"]),
+          isActive: z.boolean().optional(),
+          effectiveDate: z.date().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createInventoryCostingConfig({
+            ...input,
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'inventoryCostingConfig', result.id);
+          return result;
+        }),
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          costingMethod: z.enum(["fifo", "lifo", "weighted_average"]).optional(),
+          isActive: z.boolean().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateInventoryCostingConfig(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'inventoryCostingConfig', id);
+          return { success: true };
+        }),
+    }),
+
+    // Cost layers
+    layers: router({
+      list: opsProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number().optional(),
+          warehouseId: z.number().optional(),
+          status: z.string().optional(),
+        }).optional())
+        .query(({ input }) => db.getInventoryCostLayers(input)),
+      create: opsProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number(),
+          warehouseId: z.number().optional(),
+          purchaseOrderId: z.number().optional(),
+          lotId: z.number().optional(),
+          quantity: z.number().gt(0),
+          unitCost: z.number().min(0),
+          referenceType: z.string().optional(),
+          referenceId: z.number().optional(),
+          layerDate: z.date().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await addCostLayer({ ...input, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'inventoryCostLayer', result.id);
+          return result;
+        }),
+      getWeightedAverage: opsProcedure
+        .input(z.object({ productId: z.number() }))
+        .query(({ input }) => db.getWeightedAverageCost(input.productId)),
+    }),
+
+    // Valuation
+    valuation: opsProcedure
+      .input(z.object({ productId: z.number() }))
+      .query(({ input }) => getInventoryValuation(input.productId)),
+
+    // COGS
+    cogs: router({
+      list: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number().optional(),
+          orderId: z.number().optional(),
+          startDate: z.date().optional(),
+          endDate: z.date().optional(),
+        }).optional())
+        .query(({ input }) => db.getCogsRecords(input)),
+      record: opsProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number(),
+          warehouseId: z.number().optional(),
+          orderId: z.number().optional(),
+          salesOrderLineId: z.number().optional(),
+          quantitySold: z.number().gt(0),
+          unitRevenue: z.number().min(0).optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await recordCogs({ ...input, calculatedBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'cogsRecord', result.cogsRecordId);
+          return result;
+        }),
+      summary: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number().optional(),
+          periodType: z.string().optional(),
+          startDate: z.date().optional(),
+          endDate: z.date().optional(),
+        }).optional())
+        .query(({ input }) => db.getCogsSummary(input)),
+      generateSummary: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          productId: z.number().optional(),
+          periodType: z.enum(["daily", "weekly", "monthly", "quarterly", "yearly"]),
+          periodStart: z.date(),
+          periodEnd: z.date(),
+        }))
+        .mutation(({ input }) => generateCogsPeriodSummary(input)),
+      dashboard: financeProcedure
+        .input(z.object({ companyId: z.number().optional() }).optional())
+        .query(({ input }) => db.getCogsDashboardStats(input?.companyId)),
+    }),
+  }),
+
+  // ============================================
+  // AUTOMATED VENDOR NEGOTIATIONS
+  // ============================================
+  vendorNegotiations: router({
+    list: opsProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        vendorId: z.number().optional(),
+        status: z.string().optional(),
+        type: z.string().optional(),
+        assignedTo: z.number().optional(),
+      }).optional())
+      .query(({ input }) => db.getVendorNegotiations(input)),
+    get: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const negotiation = await db.getVendorNegotiationById(input.id);
+        const rounds = negotiation ? await db.getNegotiationRounds(input.id) : [];
+        return { negotiation, rounds };
+      }),
+    create: opsProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        vendorId: z.number(),
+        title: z.string(),
+        type: z.enum(["price_reduction", "volume_discount", "payment_terms", "lead_time", "contract_renewal", "new_contract"]),
+        productIds: z.array(z.number()).optional(),
+        rawMaterialIds: z.array(z.number()).optional(),
+        currentUnitPrice: z.number().optional(),
+        currentPaymentTerms: z.number().optional(),
+        currentLeadTimeDays: z.number().optional(),
+        currentMinOrderAmount: z.number().optional(),
+        currentAnnualVolume: z.number().optional(),
+        autoAnalyze: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await initiateNegotiation({ ...input, initiatedBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'vendorNegotiation', result.id);
+        return result;
+      }),
+    update: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        status: z.enum(["draft", "analyzing", "ready", "in_progress", "counter_offered", "accepted", "rejected", "expired"]).optional(),
+        priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
+        targetUnitPrice: z.coerce.number().optional(),
+        targetPaymentTerms: z.number().optional(),
+        targetLeadTimeDays: z.number().optional(),
+        targetMinOrderAmount: z.coerce.number().optional(),
+        targetAnnualVolume: z.coerce.number().optional(),
+        assignedTo: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateVendorNegotiation(id, data as any);
+        await createAuditLog(ctx.user.id, 'update', 'vendorNegotiation', id);
+        return { success: true };
+      }),
+    analyze: opsProcedure
+      .input(z.object({
+        vendorId: z.number(),
+        productIds: z.array(z.number()).optional(),
+        negotiationType: z.string(),
+      }))
+      .mutation(({ input }) => analyzeNegotiationOpportunity(input)),
+    addRound: opsProcedure
+      .input(z.object({
+        negotiationId: z.number(),
+        direction: z.enum(["outbound", "inbound"]),
+        messageType: z.enum(["initial_offer", "counter_offer", "acceptance", "rejection", "info_request", "final_offer"]),
+        proposedUnitPrice: z.number().optional(),
+        proposedPaymentTerms: z.number().optional(),
+        proposedLeadTimeDays: z.number().optional(),
+        proposedMinOrderAmount: z.number().optional(),
+        proposedVolume: z.number().optional(),
+        messageContent: z.string().optional(),
+        generateAiDraft: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await addNegotiationRound({ ...input, sentBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'negotiationRound', result.id);
+        return result;
+      }),
+    generateDraft: opsProcedure
+      .input(z.object({
+        negotiationId: z.number(),
+        roundNumber: z.number(),
+        messageType: z.enum(["initial_offer", "counter_offer", "final_offer", "acceptance", "rejection"]),
+      }))
+      .mutation(({ input }) => generateNegotiationDraft(input)),
+    rounds: opsProcedure
+      .input(z.object({ negotiationId: z.number() }))
+      .query(({ input }) => db.getNegotiationRounds(input.negotiationId)),
+    stats: opsProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(({ input }) => db.getVendorNegotiationStats(input?.companyId)),
+  }),
+
+  // ============================================
+  // AIRTABLE IMPORT
+  // ============================================
+  airtable: router({
+    isConfigured: protectedProcedure.query(() => {
+      const { isAirtableConfigured } = require("./_core/airtable");
+      return { configured: isAirtableConfigured() };
+    }),
+
+    listBases: protectedProcedure
+      .input(z.object({ token: z.string().optional() }).optional())
+      .query(async ({ input }) => {
+        const { listBases } = await import("./_core/airtable");
+        return listBases(input?.token);
+      }),
+
+    listTables: protectedProcedure
+      .input(z.object({ baseId: z.string(), token: z.string().optional() }))
+      .query(async ({ input }) => {
+        const { listTables } = await import("./_core/airtable");
+        return listTables(input.baseId, input.token);
+      }),
+
+    previewRecords: protectedProcedure
+      .input(z.object({
+        baseId: z.string(),
+        tableIdOrName: z.string(),
+        maxRecords: z.number().default(10),
+        token: z.string().optional(),
+      }))
+      .query(async ({ input }) => {
+        const { listRecords } = await import("./_core/airtable");
+        const records = await listRecords(
+          input.baseId,
+          input.tableIdOrName,
+          { maxRecords: input.maxRecords },
+          input.token,
+        );
+        return records;
+      }),
+
+    importToProducts: protectedProcedure
+      .input(z.object({
+        baseId: z.string(),
+        tableIdOrName: z.string(),
+        fieldMapping: z.object({
+          name: z.string(),
+          sku: z.string().optional(),
+          description: z.string().optional(),
+          category: z.string().optional(),
+          price: z.string().optional(),
+          unit: z.string().optional(),
+        }),
+        token: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { listRecords } = await import("./_core/airtable");
+        const records = await listRecords(input.baseId, input.tableIdOrName, {}, input.token);
+
+        let imported = 0;
+        let skipped = 0;
+
+        for (const record of records) {
+          const nameVal = record.fields[input.fieldMapping.name];
+          if (!nameVal || typeof nameVal !== "string") {
+            skipped++;
+            continue;
+          }
+
+          const productData: Record<string, any> = { name: nameVal, status: "active" as const };
+
+          if (input.fieldMapping.sku) {
+            const v = record.fields[input.fieldMapping.sku];
+            if (v) productData.sku = String(v);
+          }
+          if (input.fieldMapping.description) {
+            const v = record.fields[input.fieldMapping.description];
+            if (v) productData.description = String(v);
+          }
+          if (input.fieldMapping.category) {
+            const v = record.fields[input.fieldMapping.category];
+            if (v) productData.category = String(v);
+          }
+          if (input.fieldMapping.price) {
+            const v = record.fields[input.fieldMapping.price];
+            if (v) productData.price = String(v);
+          }
+          if (input.fieldMapping.unit) {
+            const v = record.fields[input.fieldMapping.unit];
+            if (v) productData.unit = String(v);
+          }
+
+          await db.createProduct(productData);
+          imported++;
+        }
+
+        await createAuditLog(ctx.user.id, "create", "airtable_import", 0, `Imported ${imported} products from Airtable`);
+        return { imported, skipped, total: records.length };
+      }),
+
+    importToCustomers: protectedProcedure
+      .input(z.object({
+        baseId: z.string(),
+        tableIdOrName: z.string(),
+        fieldMapping: z.object({
+          name: z.string(),
+          email: z.string().optional(),
+          phone: z.string().optional(),
+          address: z.string().optional(),
+          city: z.string().optional(),
+          state: z.string().optional(),
+          country: z.string().optional(),
+        }),
+        token: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { listRecords } = await import("./_core/airtable");
+        const records = await listRecords(input.baseId, input.tableIdOrName, {}, input.token);
+
+        let imported = 0;
+        let skipped = 0;
+
+        for (const record of records) {
+          const nameVal = record.fields[input.fieldMapping.name];
+          if (!nameVal || typeof nameVal !== "string") {
+            skipped++;
+            continue;
+          }
+
+          const customerData: Record<string, any> = { name: nameVal, type: "business" as const };
+
+          for (const [key, field] of Object.entries(input.fieldMapping)) {
+            if (key === "name" || !field) continue;
+            const v = record.fields[field];
+            if (v) customerData[key] = String(v);
+          }
+
+          await db.createCustomer(customerData);
+          imported++;
+        }
+
+        await createAuditLog(ctx.user.id, "create", "airtable_import", 0, `Imported ${imported} customers from Airtable`);
+        return { imported, skipped, total: records.length };
+      }),
+
+    importToVendors: protectedProcedure
+      .input(z.object({
+        baseId: z.string(),
+        tableIdOrName: z.string(),
+        fieldMapping: z.object({
+          name: z.string(),
+          email: z.string().optional(),
+          phone: z.string().optional(),
+          address: z.string().optional(),
+          contactName: z.string().optional(),
+        }),
+        token: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { listRecords } = await import("./_core/airtable");
+        const records = await listRecords(input.baseId, input.tableIdOrName, {}, input.token);
+
+        let imported = 0;
+        let skipped = 0;
+
+        for (const record of records) {
+          const nameVal = record.fields[input.fieldMapping.name];
+          if (!nameVal || typeof nameVal !== "string") {
+            skipped++;
+            continue;
+          }
+
+          const vendorData: Record<string, any> = { name: nameVal };
+
+          for (const [key, field] of Object.entries(input.fieldMapping)) {
+            if (key === "name" || !field) continue;
+            const v = record.fields[field];
+            if (v) vendorData[key] = String(v);
+          }
+
+          await db.createVendor(vendorData);
+          imported++;
+        }
+
+        await createAuditLog(ctx.user.id, "create", "airtable_import", 0, `Imported ${imported} vendors from Airtable`);
+        return { imported, skipped, total: records.length };
+      }),
+  }),
+
+  // ============================================
+  // BULK CSV EXPORT
+  // ============================================
+  csvExport: router({
+    products: protectedProcedure.query(async ({ ctx }) => {
+      const items = await db.getProducts();
+      await createAuditLog(ctx.user.id, 'export', 'products', 0, `Exported ${items.length} products to CSV`);
+      const headers = ['ID', 'Name', 'SKU', 'Category', 'Status', 'Price', 'Unit', 'Created'];
+      const rows = items.map((p: any) => [p.id, p.name, p.sku || '', p.category || '', p.status, p.price || '', p.unit || '', p.createdAt?.toISOString() || '']);
+      return { headers, rows };
+    }),
+    customers: protectedProcedure.query(async ({ ctx }) => {
+      const items = await db.getCustomers();
+      await createAuditLog(ctx.user.id, 'export', 'customers', 0, `Exported ${items.length} customers to CSV`);
+      const headers = ['ID', 'Name', 'Email', 'Phone', 'Type', 'Status', 'City', 'State', 'Country', 'Created'];
+      const rows = items.map((c: any) => [c.id, c.name, c.email || '', c.phone || '', c.type || '', c.status || '', c.city || '', c.state || '', c.country || '', c.createdAt?.toISOString() || '']);
+      return { headers, rows };
+    }),
+    vendors: protectedProcedure.query(async ({ ctx }) => {
+      const items = await db.getVendors();
+      await createAuditLog(ctx.user.id, 'export', 'vendors', 0, `Exported ${items.length} vendors to CSV`);
+      const headers = ['ID', 'Name', 'Email', 'Phone', 'Contact Name', 'Status', 'Created'];
+      const rows = items.map((v: any) => [v.id, v.name, v.email || '', v.phone || '', v.contactName || '', v.status || '', v.createdAt?.toISOString() || '']);
+      return { headers, rows };
+    }),
+    inventory: protectedProcedure.query(async ({ ctx }) => {
+      const items = await db.getInventoryItems();
+      await createAuditLog(ctx.user.id, 'export', 'inventory', 0, `Exported ${items.length} inventory items to CSV`);
+      const headers = ['ID', 'Product ID', 'Warehouse ID', 'Quantity', 'Reserved', 'Reorder Point', 'Lot Number', 'Expiration'];
+      const rows = items.map((i: any) => [i.id, i.productId, i.warehouseId, i.quantity || '', i.reservedQuantity || '', i.reorderPoint || '', i.lotNumber || '', i.expirationDate || '']);
+      return { headers, rows };
+    }),
+    orders: protectedProcedure.query(async ({ ctx }) => {
+      const items = await db.getOrders();
+      await createAuditLog(ctx.user.id, 'export', 'orders', 0, `Exported ${items.length} orders to CSV`);
+      const headers = ['ID', 'Order Number', 'Customer ID', 'Status', 'Total', 'Currency', 'Order Date', 'Created'];
+      const rows = items.map((o: any) => [o.id, o.orderNumber || '', o.customerId || '', o.status, o.totalAmount || '', o.currency || 'USD', o.orderDate || '', o.createdAt?.toISOString() || '']);
+      return { headers, rows };
+    }),
+    invoices: financeProcedure.query(async ({ ctx }) => {
+      const items = await db.getInvoices();
+      await createAuditLog(ctx.user.id, 'export', 'invoices', 0, `Exported ${items.length} invoices to CSV`);
+      const headers = ['ID', 'Invoice Number', 'Customer ID', 'Status', 'Total', 'Due Date', 'Paid Date', 'Created'];
+      const rows = items.map((i: any) => [i.id, i.invoiceNumber || '', i.customerId || '', i.status, i.totalAmount || '', i.dueDate || '', i.paidDate || '', i.createdAt?.toISOString() || '']);
+      return { headers, rows };
+    }),
+  }),
+
+  // ============================================
+  // MATERIAL SHORTAGE & ANOMALY DETECTION
+  // ============================================
+  alerts: router({
+    // Get material shortage alerts (inventory vs BOM requirements)
+    materialShortages: protectedProcedure.query(async () => {
+      return detectMaterialShortages();
+    }),
+
+    // Get anomaly detection alerts (cost spikes, overdue POs, yield variance)
+    anomalies: protectedProcedure.query(async () => {
+      return detectAnomalies();
+    }),
+
+    // Run shortage check and send notifications
+    runShortageCheck: adminProcedure.mutation(async ({ ctx }) => {
+      const result = await runShortageCheckAndNotify();
+      await createAuditLog(ctx.user.id, 'create', 'alert', 0, `Shortage check: ${result.shortageCount} shortages found`);
+      return result;
+    }),
+
+    // Run anomaly check and send notifications
+    runAnomalyCheck: adminProcedure.mutation(async ({ ctx }) => {
+      const result = await runAnomalyCheckAndNotify();
+      await createAuditLog(ctx.user.id, 'create', 'alert', 0, `Anomaly check: ${result.alertCount} anomalies found`);
+      return result;
+    }),
+  }),
+
+  // ============================================
+  // EMAIL-TO-DOCUMENT LINKING
+  // ============================================
+  emailDocumentLinking: router({
+    // Link parsed email to existing POs/shipments
+    linkEmail: protectedProcedure
+      .input(z.object({
+        category: z.string().optional(),
+        vendorName: z.string().optional(),
+        vendorEmail: z.string().optional(),
+        documentNumber: z.string().optional(),
+        trackingNumber: z.string().optional(),
+        totalAmount: z.number().optional(),
+        fromEmail: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return linkParsedEmailToEntities(input);
+      }),
+  }),
+
+  // ============================================
+  // VENDOR EMAIL AUTOMATION
+  // ============================================
+  vendorEmails: router({
+    // Generate a preview of an AI-crafted vendor email
+    generatePreview: protectedProcedure
+      .input(z.object({
+        vendorId: z.number(),
+        emailType: z.enum(['po_followup', 'quote_request', 'payment_reminder', 'general', 'order_confirmation', 'shipment_inquiry']),
+        purchaseOrderId: z.number().optional(),
+        subject: z.string().optional(),
+        customMessage: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return generateVendorEmail(input);
+      }),
+
+    // Send an AI-crafted email to a vendor
+    send: protectedProcedure
+      .input(z.object({
+        vendorId: z.number(),
+        emailType: z.enum(['po_followup', 'quote_request', 'payment_reminder', 'general', 'order_confirmation', 'shipment_inquiry']),
+        purchaseOrderId: z.number().optional(),
+        subject: z.string().optional(),
+        customMessage: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await sendVendorEmail({ ...input, triggeredBy: ctx.user.id });
+        if (result.success) {
+          await createAuditLog(ctx.user.id, 'create', 'vendor_email', input.vendorId, `AI email sent to vendor (${input.emailType})`);
+        }
+        return result;
+      }),
+
+    // Send bulk email to multiple vendors or customers
+    sendBulk: protectedProcedure
+      .input(z.object({
+        recipientType: z.enum(['vendor', 'customer']),
+        recipientIds: z.array(z.number()),
+        subject: z.string().min(1),
+        body: z.string().min(1),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await sendBulkEmail({ ...input, triggeredBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'bulk_email', 0,
+          `Bulk email to ${input.recipientIds.length} ${input.recipientType}s: ${result.emailsSent} sent, ${result.emailsFailed} failed`);
+        return result;
+      }),
+
+    // Run automatic PO follow-up emails
+    runPoFollowups: adminProcedure.mutation(async ({ ctx }) => {
+      const result = await checkAndSendPoFollowups(ctx.user.id);
+      await createAuditLog(ctx.user.id, 'create', 'vendor_email', 0, `Auto follow-ups: ${result.followUpsSent} sent`);
+      return result;
     }),
   }),
 });
