@@ -124,9 +124,6 @@ import AutonomousApprovals from "./pages/autonomous/Approvals";
 import AutonomousExceptions from "./pages/autonomous/Exceptions";
 import AutonomousSettings from "./pages/autonomous/Settings";
 
-// Auth
-import { Login } from "./pages/Login";
-
 function Router() {
   return (
     <DashboardLayout>
