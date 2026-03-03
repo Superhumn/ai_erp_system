@@ -7,7 +7,7 @@ import {
   departments, employees, compensationHistory, employeePayments,
   contracts, contractKeyDates, disputes, documents,
   projects, projectMilestones, projectTasks,
-  auditLogs, notifications, integrationConfigs, aiConversations, aiMessages,
+  auditLogs, notifications, integrationConfigs aiConversations, aiMessages,
   googleOAuthTokens, InsertGoogleOAuthToken,
   quickbooksOAuthTokens, InsertQuickBooksOAuthToken,
   freightCarriers, freightRfqs, freightQuotes, freightEmails,
@@ -101,7 +101,7 @@ import {
   ediTradingPartners, ediDocumentMaps, ediTransactions, ediTransactionItems, ediProductCrosswalks, ediShipToLocations, ediComplianceScorecards,
   ediControlNumbers, ediSettings,
   InsertEdiTradingPartner, InsertEdiDocumentMap, InsertEdiTransaction, InsertEdiTransactionItem, InsertEdiProductCrosswalk, InsertEdiShipToLocation, InsertEdiComplianceScorecard,
-  InsertEdiControlNumber, InsertEdiSettings
+  InsertEdiControlNumber, InsertEdiSettings,
   // Inventory costing & COGS
   inventoryCostingConfig, inventoryCostLayers, cogsRecords, cogsPeriodSummary,
   InsertInventoryCostingConfig, InsertInventoryCostLayer, InsertCogsRecord, InsertCogsPeriodSummary,
