@@ -112,7 +112,7 @@ import {
   localAuthCredentials, InsertLocalAuthCredential,
   // Investment grant checklists
   investmentGrantChecklists, investmentGrantItems,
-  InsertInvestmentGrantChecklist, InsertInvestmentGrantItem
+  InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
