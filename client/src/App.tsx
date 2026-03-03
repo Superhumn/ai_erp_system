@@ -66,6 +66,12 @@ import InventoryCosting from "./pages/operations/InventoryCosting";
 import VendorNegotiations from "./pages/operations/VendorNegotiations";
 import SupplierPortal from "./pages/SupplierPortal";
 
+// EDI
+import EDIDashboard from "./pages/edi/EDIDashboard";
+import TradingPartners from "./pages/edi/TradingPartners";
+import EDITransactions from "./pages/edi/EDITransactions";
+import RetailerOnboarding from "./pages/edi/RetailerOnboarding";
+
 // Freight
 import FreightDashboard from "./pages/freight/FreightDashboard";
 import Carriers from "./pages/freight/Carriers";
@@ -123,9 +129,6 @@ import AutonomousDashboard from "./pages/autonomous/Dashboard";
 import AutonomousApprovals from "./pages/autonomous/Approvals";
 import AutonomousExceptions from "./pages/autonomous/Exceptions";
 import AutonomousSettings from "./pages/autonomous/Settings";
-
-// Auth
-import { Login } from "./pages/Login";
 
 function Router() {
   return (
@@ -201,6 +204,12 @@ function Router() {
         <Route path="/operations/reconciliation" component={ReconciliationReport} />
         <Route path="/operations/inventory-costing" component={InventoryCosting} />
         <Route path="/operations/vendor-negotiations" component={VendorNegotiations} />
+
+        {/* EDI */}
+        <Route path="/edi" component={EDIDashboard} />
+        <Route path="/edi/connect" component={RetailerOnboarding} />
+        <Route path="/edi/partners" component={TradingPartners} />
+        <Route path="/edi/transactions" component={EDITransactions} />
 
         {/* Freight */}
         <Route path="/freight" component={FreightDashboard} />

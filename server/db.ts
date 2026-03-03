@@ -1,3 +1,4 @@
+import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, max, min } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users, localAuthCredentials, InsertLocalAuthCredential, companies, customers, vendors, products,
@@ -91,6 +92,17 @@ import {
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
   InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
+  // Fireflies integration
+  firefliesMeetings, firefliesActionItems, firefliesContactMappings,
+  InsertFirefliesMeeting, InsertFirefliesActionItem, InsertFirefliesContactMapping,
+  // Copacker portal
+  copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
+  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
+  // EDI module
+  ediTradingPartners, ediDocumentMaps, ediTransactions, ediTransactionItems, ediProductCrosswalks, ediShipToLocations, ediComplianceScorecards,
+  ediControlNumbers, ediSettings,
+  InsertEdiTradingPartner, InsertEdiDocumentMap, InsertEdiTransaction, InsertEdiTransactionItem, InsertEdiProductCrosswalk, InsertEdiShipToLocation, InsertEdiComplianceScorecard,
+  InsertEdiControlNumber, InsertEdiSettings,
   // Inventory costing & COGS
   inventoryCostingConfig, inventoryCostLayers, cogsRecords, cogsPeriodSummary,
   InsertInventoryCostingConfig, InsertInventoryCostLayer, InsertCogsRecord, InsertCogsPeriodSummary,
@@ -101,7 +113,7 @@ import {
   localAuthCredentials, InsertLocalAuthCredential,
   // Investment grant checklists
   investmentGrantChecklists, investmentGrantItems,
-  InsertInvestmentGrantChecklist, InsertInvestmentGrantItem
+  InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -8890,11 +8902,398 @@ export async function autoMatchChecklistDocuments(checklistId: number) {
       });
     }
   }
+}
 
-  // Update checklist progress
-  await recalculateChecklistProgress(checklistId);
+// ============================================
+// EDI MODULE
+// ============================================
 
-  return { matched: matchedCount, items: matchedItems };
+// --- EDI Trading Partners ---
+
+export async function getEdiTradingPartners(filters?: { status?: string; partnerType?: string; companyId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(ediTradingPartners.status, filters.status as any));
+  if (filters?.partnerType) conditions.push(eq(ediTradingPartners.partnerType, filters.partnerType as any));
+  if (filters?.companyId) conditions.push(eq(ediTradingPartners.companyId, filters.companyId));
+
+  if (conditions.length > 0) {
+    return db.select().from(ediTradingPartners).where(and(...conditions)).orderBy(desc(ediTradingPartners.updatedAt));
+  }
+  return db.select().from(ediTradingPartners).orderBy(desc(ediTradingPartners.updatedAt));
+}
+
+export async function getEdiTradingPartnerById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(ediTradingPartners).where(eq(ediTradingPartners.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getEdiTradingPartnerByIsaId(isaId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(ediTradingPartners).where(eq(ediTradingPartners.isaId, isaId)).limit(1);
+  return result[0];
+}
+
+export async function createEdiTradingPartner(data: InsertEdiTradingPartner) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediTradingPartners).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEdiTradingPartner(id: number, data: Partial<InsertEdiTradingPartner>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediTradingPartners).set(data).where(eq(ediTradingPartners.id, id));
+}
+
+export async function deleteEdiTradingPartner(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(ediTradingPartners).where(eq(ediTradingPartners.id, id));
+}
+
+// --- EDI Document Maps ---
+
+export async function getEdiDocumentMaps(tradingPartnerId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  if (tradingPartnerId) {
+    return db.select().from(ediDocumentMaps).where(eq(ediDocumentMaps.tradingPartnerId, tradingPartnerId)).orderBy(desc(ediDocumentMaps.updatedAt));
+  }
+  return db.select().from(ediDocumentMaps).orderBy(desc(ediDocumentMaps.updatedAt));
+}
+
+export async function getEdiDocumentMapById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(ediDocumentMaps).where(eq(ediDocumentMaps.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getEdiDocumentMapForPartner(tradingPartnerId: number, transactionSetCode: string, direction: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(ediDocumentMaps).where(
+    and(
+      eq(ediDocumentMaps.tradingPartnerId, tradingPartnerId),
+      eq(ediDocumentMaps.transactionSetCode, transactionSetCode),
+      eq(ediDocumentMaps.direction, direction as any),
+      eq(ediDocumentMaps.isActive, true)
+    )
+  ).limit(1);
+  return result[0];
+}
+
+export async function createEdiDocumentMap(data: InsertEdiDocumentMap) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediDocumentMaps).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEdiDocumentMap(id: number, data: Partial<InsertEdiDocumentMap>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediDocumentMaps).set(data).where(eq(ediDocumentMaps.id, id));
+}
+
+// --- EDI Transactions ---
+
+export async function getEdiTransactions(filters?: { tradingPartnerId?: number; transactionSetCode?: string; direction?: string; status?: string; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.tradingPartnerId) conditions.push(eq(ediTransactions.tradingPartnerId, filters.tradingPartnerId));
+  if (filters?.transactionSetCode) conditions.push(eq(ediTransactions.transactionSetCode, filters.transactionSetCode));
+  if (filters?.direction) conditions.push(eq(ediTransactions.direction, filters.direction as any));
+  if (filters?.status) conditions.push(eq(ediTransactions.status, filters.status as any));
+
+  const query = conditions.length > 0
+    ? db.select().from(ediTransactions).where(and(...conditions)).orderBy(desc(ediTransactions.createdAt))
+    : db.select().from(ediTransactions).orderBy(desc(ediTransactions.createdAt));
+
+  if (filters?.limit) {
+    return query.limit(filters.limit);
+  }
+  return query;
+}
+
+export async function getEdiTransactionById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(ediTransactions).where(eq(ediTransactions.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getEdiTransactionWithItems(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const transaction = await getEdiTransactionById(id);
+  if (!transaction) return undefined;
+
+  const items = await db.select().from(ediTransactionItems).where(eq(ediTransactionItems.transactionId, id)).orderBy(ediTransactionItems.lineNumber);
+  return { ...transaction, items };
+}
+
+export async function createEdiTransaction(data: InsertEdiTransaction) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediTransactions).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEdiTransaction(id: number, data: Partial<InsertEdiTransaction>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediTransactions).set(data).where(eq(ediTransactions.id, id));
+}
+
+// --- EDI Transaction Items ---
+
+export async function getEdiTransactionItems(transactionId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(ediTransactionItems).where(eq(ediTransactionItems.transactionId, transactionId)).orderBy(ediTransactionItems.lineNumber);
+}
+
+export async function createEdiTransactionItem(data: InsertEdiTransactionItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediTransactionItems).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function createEdiTransactionItems(items: InsertEdiTransactionItem[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (items.length === 0) return;
+  await db.insert(ediTransactionItems).values(items);
+}
+
+// --- EDI Product Crosswalks ---
+
+export async function getEdiProductCrosswalks(tradingPartnerId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  if (tradingPartnerId) {
+    return db.select().from(ediProductCrosswalks).where(
+      and(eq(ediProductCrosswalks.tradingPartnerId, tradingPartnerId), eq(ediProductCrosswalks.isActive, true))
+    ).orderBy(ediProductCrosswalks.buyerPartNumber);
+  }
+  return db.select().from(ediProductCrosswalks).orderBy(ediProductCrosswalks.buyerPartNumber);
+}
+
+export async function getEdiProductCrosswalkByBuyerPart(tradingPartnerId: number, buyerPartNumber: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(ediProductCrosswalks).where(
+    and(
+      eq(ediProductCrosswalks.tradingPartnerId, tradingPartnerId),
+      eq(ediProductCrosswalks.buyerPartNumber, buyerPartNumber),
+      eq(ediProductCrosswalks.isActive, true)
+    )
+  ).limit(1);
+  return result[0];
+}
+
+export async function getEdiProductCrosswalkByUpc(tradingPartnerId: number, upc: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(ediProductCrosswalks).where(
+    and(
+      eq(ediProductCrosswalks.tradingPartnerId, tradingPartnerId),
+      eq(ediProductCrosswalks.upc, upc),
+      eq(ediProductCrosswalks.isActive, true)
+    )
+  ).limit(1);
+  return result[0];
+}
+
+export async function createEdiProductCrosswalk(data: InsertEdiProductCrosswalk) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediProductCrosswalks).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEdiProductCrosswalk(id: number, data: Partial<InsertEdiProductCrosswalk>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediProductCrosswalks).set(data).where(eq(ediProductCrosswalks.id, id));
+}
+
+export async function deleteEdiProductCrosswalk(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediProductCrosswalks).set({ isActive: false }).where(eq(ediProductCrosswalks.id, id));
+}
+
+// --- EDI Ship-To Locations ---
+
+export async function getEdiShipToLocations(tradingPartnerId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  if (tradingPartnerId) {
+    return db.select().from(ediShipToLocations).where(
+      and(eq(ediShipToLocations.tradingPartnerId, tradingPartnerId), eq(ediShipToLocations.isActive, true))
+    ).orderBy(ediShipToLocations.locationCode);
+  }
+  return db.select().from(ediShipToLocations).where(eq(ediShipToLocations.isActive, true)).orderBy(ediShipToLocations.locationCode);
+}
+
+export async function getEdiShipToLocationByCode(tradingPartnerId: number, locationCode: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(ediShipToLocations).where(
+    and(
+      eq(ediShipToLocations.tradingPartnerId, tradingPartnerId),
+      eq(ediShipToLocations.locationCode, locationCode)
+    )
+  ).limit(1);
+  return result[0];
+}
+
+export async function createEdiShipToLocation(data: InsertEdiShipToLocation) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediShipToLocations).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEdiShipToLocation(id: number, data: Partial<InsertEdiShipToLocation>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediShipToLocations).set(data).where(eq(ediShipToLocations.id, id));
+}
+
+// --- EDI Compliance Scorecards ---
+
+export async function getEdiComplianceScorecards(tradingPartnerId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  if (tradingPartnerId) {
+    return db.select().from(ediComplianceScorecards).where(eq(ediComplianceScorecards.tradingPartnerId, tradingPartnerId)).orderBy(desc(ediComplianceScorecards.periodEnd));
+  }
+  return db.select().from(ediComplianceScorecards).orderBy(desc(ediComplianceScorecards.periodEnd));
+}
+
+export async function createEdiComplianceScorecard(data: InsertEdiComplianceScorecard) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediComplianceScorecards).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEdiComplianceScorecard(id: number, data: Partial<InsertEdiComplianceScorecard>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediComplianceScorecards).set(data).where(eq(ediComplianceScorecards.id, id));
+}
+
+// --- EDI Dashboard Stats ---
+
+export async function getEdiDashboardStats() {
+  const db = await getDb();
+  if (!db) return { totalPartners: 0, activePartners: 0, totalTransactions: 0, recentTransactions: 0, pendingAcks: 0, errorTransactions: 0 };
+
+  const [partnersResult] = await db.select({ total: count(), active: sum(sql`CASE WHEN status = 'active' THEN 1 ELSE 0 END`) }).from(ediTradingPartners);
+  const [transactionsResult] = await db.select({ total: count(), errors: sum(sql`CASE WHEN status = 'error' THEN 1 ELSE 0 END`) }).from(ediTransactions);
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const [recentResult] = await db.select({ count: count() }).from(ediTransactions).where(gte(ediTransactions.createdAt, sevenDaysAgo));
+  const [pendingAcksResult] = await db.select({ count: count() }).from(ediTransactions).where(
+    and(eq(ediTransactions.ackRequired, true), eq(ediTransactions.ackStatus, "pending"))
+  );
+
+  return {
+    totalPartners: Number(partnersResult?.total ?? 0),
+    activePartners: Number(partnersResult?.active ?? 0),
+    totalTransactions: Number(transactionsResult?.total ?? 0),
+    recentTransactions: Number(recentResult?.count ?? 0),
+    pendingAcks: Number(pendingAcksResult?.count ?? 0),
+    errorTransactions: Number(transactionsResult?.errors ?? 0),
+  };
+}
+
+// ============================================
+// EDI CONTROL NUMBERS
+// ============================================
+
+export async function getNextControlNumber(
+  tradingPartnerId: number,
+  controlNumberType: "isa" | "gs" | "st"
+): Promise<string> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Try to find existing row
+  const [existing] = await db.select().from(ediControlNumbers).where(
+    and(eq(ediControlNumbers.tradingPartnerId, tradingPartnerId), eq(ediControlNumbers.controlNumberType, controlNumberType))
+  );
+
+  let nextNumber: number;
+  if (existing) {
+    nextNumber = existing.lastUsedNumber + 1;
+    await db.update(ediControlNumbers)
+      .set({ lastUsedNumber: nextNumber })
+      .where(eq(ediControlNumbers.id, existing.id));
+  } else {
+    nextNumber = 1;
+    await db.insert(ediControlNumbers).values({
+      tradingPartnerId,
+      controlNumberType,
+      lastUsedNumber: nextNumber,
+    });
+  }
+
+  // ISA control numbers are 9 digits, ST are 4 digits, GS varies
+  const padLen = controlNumberType === "isa" ? 9 : controlNumberType === "st" ? 4 : 6;
+  return nextNumber.toString().padStart(padLen, "0");
+}
+
+// ============================================
+// EDI SETTINGS
+// ============================================
+
+export async function getEdiSettings(companyId?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (companyId) {
+    const [result] = await db.select().from(ediSettings).where(eq(ediSettings.companyId, companyId));
+    return result || null;
+  }
+  // Return first/default settings
+  const [result] = await db.select().from(ediSettings).limit(1);
+  return result || null;
+}
+
+export async function upsertEdiSettings(data: InsertEdiSettings) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = await getEdiSettings(data.companyId || undefined);
+  if (existing) {
+    await db.update(ediSettings).set(data).where(eq(ediSettings.id, existing.id));
+    return { id: existing.id };
+  }
+  const result = await db.insert(ediSettings).values(data);
+  return { id: result[0].insertId };
+}
+export async function createInvestmentGrantChecklist(data: InsertInvestmentGrantChecklist) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(investmentGrantChecklists).values(data);
+  return { id: result[0].insertId };
 }
 
 // Recalculate checklist progress

@@ -69,6 +69,7 @@ import {
   Heart,
   Mic,
   BookOpen,
+  Plus,
   Calculator,
   Handshake,
   ClipboardCheck,
@@ -128,6 +129,15 @@ const menuGroups = [
       { icon: FileSpreadsheet, label: "Document Import", path: "/operations/document-import" },
       { icon: Calculator, label: "Inventory Costing", path: "/operations/inventory-costing" },
       { icon: Handshake, label: "Vendor Negotiations", path: "/operations/vendor-negotiations" },
+    ],
+  },
+  {
+    label: "EDI & Retail",
+    items: [
+      { icon: ArrowRightLeft, label: "EDI Hub", path: "/edi" },
+      { icon: Plus, label: "Connect Retailer", path: "/edi/connect" },
+      { icon: Building2, label: "Trading Partners", path: "/edi/partners" },
+      { icon: FileText, label: "Transactions", path: "/edi/transactions" },
     ],
   },
   {
