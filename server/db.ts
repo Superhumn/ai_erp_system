@@ -7,7 +7,7 @@ import {
   departments, employees, compensationHistory, employeePayments,
   contracts, contractKeyDates, disputes, documents,
   projects, projectMilestones, projectTasks,
-  auditLogs, notifications, integrationConfigs aiConversations, aiMessages,
+  auditLogs, notifications, integrationConfigs, aiConversations, aiMessages,
   googleOAuthTokens, InsertGoogleOAuthToken,
   quickbooksOAuthTokens, InsertQuickBooksOAuthToken,
   freightCarriers, freightRfqs, freightQuotes, freightEmails,
