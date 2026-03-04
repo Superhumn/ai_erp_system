@@ -115,26 +115,20 @@ export async function findVendorForMaterial(materialName: string) {
     }
   }
 
-  // Try fuzzy match on all raw materials and their vendors
-  const allMaterials = await db.getRawMaterials();
-  const materialLower = materialName.toLowerCase();
-  
-  for (const material of allMaterials) {
-    if (
-      material.name.toLowerCase().includes(materialLower) ||
-      materialLower.includes(material.name.toLowerCase())
-    ) {
-      if (material.preferredVendorId) {
-        const vendor = await db.getVendorById(material.preferredVendorId);
-        if (vendor) {
-          return {
-            vendorId: vendor.id,
-            vendorName: vendor.name,
-            rawMaterialId: material.id,
-            rawMaterialName: material.name,
-            unitCost: material.unitCost,
-          };
-        }
+  // Try fuzzy match using a DB LIKE query to avoid loading all materials into memory
+  const matchedMaterials = await db.getRawMaterials({ searchTerm: materialName, limit: 10 });
+
+  for (const material of matchedMaterials) {
+    if (material.preferredVendorId) {
+      const vendor = await db.getVendorById(material.preferredVendorId);
+      if (vendor) {
+        return {
+          vendorId: vendor.id,
+          vendorName: vendor.name,
+          rawMaterialId: material.id,
+          rawMaterialName: material.name,
+          unitCost: material.unitCost,
+        };
       }
     }
   }
