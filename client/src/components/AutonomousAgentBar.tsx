@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -30,7 +30,7 @@ import {
 } from "lucide-react";
 
 export function AutonomousAgentBar() {
-  const navigate = useNavigate();
+  const [, setLocation] = useLocation();
   const [isExpanded, setIsExpanded] = useState(false);
 
   // Fetch orchestrator status
@@ -129,7 +129,7 @@ export function AutonomousAgentBar() {
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={() => navigate("/approvals")}
+                onClick={() => setLocation("/approvals")}
                 className="flex items-center gap-1.5 px-2 py-1 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 transition-colors"
               >
                 <Clock className="h-3 w-3" />
@@ -147,7 +147,7 @@ export function AutonomousAgentBar() {
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={() => navigate("/exceptions")}
+                onClick={() => setLocation("/exceptions")}
                 className="flex items-center gap-1.5 px-2 py-1 rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-colors"
               >
                 <AlertTriangle className="h-3 w-3" />
@@ -205,7 +205,7 @@ export function AutonomousAgentBar() {
               <div className="space-y-1">
                 <button
                   onClick={() => {
-                    navigate("/autonomous-dashboard");
+                    setLocation("/autonomous-dashboard");
                     setIsExpanded(false);
                   }}
                   className="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-800 text-sm text-left"
@@ -216,7 +216,7 @@ export function AutonomousAgentBar() {
                 </button>
                 <button
                   onClick={() => {
-                    navigate("/approvals");
+                    setLocation("/approvals");
                     setIsExpanded(false);
                   }}
                   className="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-800 text-sm text-left"
@@ -231,7 +231,7 @@ export function AutonomousAgentBar() {
                 </button>
                 <button
                   onClick={() => {
-                    navigate("/exceptions");
+                    setLocation("/exceptions");
                     setIsExpanded(false);
                   }}
                   className="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-800 text-sm text-left"
@@ -246,7 +246,7 @@ export function AutonomousAgentBar() {
                 </button>
                 <button
                   onClick={() => {
-                    navigate("/autonomous-settings");
+                    setLocation("/autonomous-settings");
                     setIsExpanded(false);
                   }}
                   className="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-800 text-sm text-left"

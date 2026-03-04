@@ -341,11 +341,19 @@ const quickActions = [
   { icon: Truck, label: "Draft vendor delay response", query: "Draft a professional response to this vendor about their shipment delay", context: ["vendor", "po", "shipment"], taskType: "send_email" as TaskType },
   { icon: ClipboardList, label: "Generate PO from forecast", query: "Based on demand forecast, generate purchase orders for materials running low", context: ["procurement", "forecast"], taskType: "generate_po" as TaskType },
   { icon: Users, label: "Find customer insights", query: "Analyze this customer's purchase history and suggest upsell opportunities", context: ["customer", "sales"], taskType: "query" as TaskType },
+  { icon: DollarSign, label: "Create invoice quickly", query: "$500 invoice to Acme Corp for consulting services", context: ["finance", "sales", "invoice"], taskType: "generate_invoice" as TaskType },
+  { icon: ClipboardList, label: "Create PO with text", query: "Order 500kg mushrooms from Fresh Farms by Friday", context: ["procurement"], taskType: "generate_po" as TaskType },
+  { icon: Truck, label: "Track shipment", query: "FedEx tracking 123456789 delivered to warehouse", context: ["logistics", "shipment"], taskType: "create_shipment" as TaskType },
+  { icon: DollarSign, label: "Record payment", query: "$5000 payment received from Acme Corp for INV-001", context: ["finance", "payment"], taskType: "reconcile_payment" as TaskType },
+  { icon: Package, label: "Create work order", query: "Produce 1000 units of Widget A by end of month", context: ["manufacturing", "production"], taskType: "create_work_order" as TaskType },
+  { icon: Package, label: "Transfer inventory", query: "Transfer 100kg flour from Main Warehouse to Production", context: ["inventory", "warehouse"], taskType: "update_inventory" as TaskType },
   // Entity creation quick actions
   { icon: Building, label: "Add new vendor", query: "Create a new vendor", context: ["procurement", "vendor"], taskType: "create_vendor" as TaskType },
   { icon: Package, label: "Add new material", query: "Create a new raw material", context: ["procurement", "inventory"], taskType: "create_material" as TaskType },
   { icon: Box, label: "Add new product", query: "Create a new product", context: ["products", "manufacturing"], taskType: "create_product" as TaskType },
   { icon: Users, label: "Add new customer", query: "Create a new customer", context: ["sales", "customer"], taskType: "create_customer" as TaskType },
+  // Vendor suggestion
+  { icon: Building, label: "Suggest vendor", query: "Suggest the best vendor for this material based on order history", context: ["procurement", "vendor", "material"], taskType: "generate_po" as TaskType },
   // Email and approval actions
   { icon: Mail, label: "Reply to vendor email", query: "Draft a reply to this vendor's email", context: ["vendor", "email"], taskType: "reply_email" as TaskType },
   { icon: CheckCircle, label: "Approve pending PO", query: "Review and approve this purchase order", context: ["po", "approval"], taskType: "approve_po" as TaskType },
@@ -431,12 +439,45 @@ function parseIntent(query: string): ParsedIntent {
     return {
       taskType: "create_work_order",
       taskData: {
+        text: query,
         description: query,
         quantity: parsedQuantity?.value || null,
         quantityUnit: parsedQuantity?.unit || null,
         requiredDate: parsedDate?.date.toISOString() || null,
       },
       description: `Create work order${parsedQuantity ? ` for ${parsedQuantity.value} ${parsedQuantity.unit}` : ''}${parsedDate ? ` by ${parsedDate.originalText}` : ''}`
+    };
+  }
+  
+  // Check for shipment tracking intent
+  if ((lowerQuery.includes("track") || lowerQuery.includes("shipment") || lowerQuery.includes("tracking")) &&
+      (lowerQuery.includes("fedex") || lowerQuery.includes("ups") || lowerQuery.includes("dhl") || 
+       lowerQuery.includes("usps") || /\b\d{10,}\b/.test(query))) {
+    return {
+      taskType: "create_shipment",
+      taskData: { text: query },
+      description: "Track shipment"
+    };
+  }
+  
+  // Check for payment/reconciliation intent
+  if ((lowerQuery.includes("payment") || lowerQuery.includes("paid") || lowerQuery.includes("received")) &&
+      (lowerQuery.includes("$") || lowerQuery.includes("amount") || lowerQuery.includes("invoice"))) {
+    return {
+      taskType: "reconcile_payment",
+      taskData: { text: query },
+      description: "Record payment"
+    };
+  }
+  
+  // Check for inventory transfer intent
+  if ((lowerQuery.includes("transfer") || lowerQuery.includes("move")) &&
+      (lowerQuery.includes("inventory") || lowerQuery.includes("warehouse") || 
+       lowerQuery.includes("from") && lowerQuery.includes("to"))) {
+    return {
+      taskType: "update_inventory",
+      taskData: { text: query },
+      description: "Transfer inventory"
     };
   }
   
@@ -480,8 +521,24 @@ function parseIntent(query: string): ParsedIntent {
     };
   }
   
+  // Check for vendor suggestion intent
+  if ((lowerQuery.includes("suggest") || lowerQuery.includes("recommend") || lowerQuery.includes("best") || lowerQuery.includes("who sells") || lowerQuery.includes("where to buy")) &&
+      (lowerQuery.includes("vendor") || lowerQuery.includes("supplier") || materialName)) {
+    return {
+      taskType: "generate_po",
+      taskData: {
+        rawMaterialName: materialName,
+        quantity: parsedQuantity?.value || null,
+        quantityUnit: parsedQuantity?.unit || null,
+        vendorId: null,
+        showVendorSuggestion: true,
+      },
+      description: `Find best vendor${materialName ? ` for ${materialName}` : ''}`
+    };
+  }
+
   // Check for BOM creation intent
-  if ((lowerQuery.includes("create") || lowerQuery.includes("add") || lowerQuery.includes("new")) && 
+  if ((lowerQuery.includes("create") || lowerQuery.includes("add") || lowerQuery.includes("new")) &&
       (lowerQuery.includes("bom") || lowerQuery.includes("bill of material") || lowerQuery.includes("recipe"))) {
     return {
       taskType: "create_bom",
@@ -516,6 +573,50 @@ function parseIntent(query: string): ParsedIntent {
       taskType: "approve_invoice",
       taskData: { description: query },
       description: "Approve invoice"
+    };
+  }
+  
+  // Check for invoice creation intent
+  // Avoid treating informational or question-like queries as invoice-creation.
+  const isQuestionLike =
+    /(\bhow\b|\bwhat\b|\bwhy\b|\bwhen\b|\bwhere\b|\bwho\b)/.test(lowerQuery) ||
+    query.trim().endsWith("?");
+
+  // Rough detection of an amount, e.g. "$500", "500 usd", "500 dollars"
+  const hasAmount =
+    /\$\s*\d/.test(lowerQuery) ||
+    /\b\d+(?:\.\d{2})?\s*(?:usd|dollars?)\b/.test(lowerQuery);
+
+  const hasExplicitInvoiceVerb =
+    (lowerQuery.includes("create") ||
+      lowerQuery.includes("generate") ||
+      lowerQuery.includes("send"));
+
+  // Direct invoice patterns like "$500 invoice to customer", "invoice for client 200 usd"
+  const isDirectInvoicePattern =
+    lowerQuery.includes("invoice") &&
+    (lowerQuery.includes(" to ") || lowerQuery.includes(" for ")) &&
+    hasAmount;
+
+  // "bill to" patterns with an explicit amount, e.g. "bill to customer $500"
+  const isBillToWithAmount =
+    lowerQuery.includes("bill to") && hasAmount;
+
+  const isInvoiceIntent =
+    !isQuestionLike && (
+      // Explicit invoice creation: "create/generate/send invoice/bill"
+      (hasExplicitInvoiceVerb &&
+        (lowerQuery.includes("invoice") || lowerQuery.includes("bill"))) ||
+      // Direct invoice patterns: "$500 invoice to...", "invoice for...", etc.
+      isDirectInvoicePattern ||
+      // "bill to" with amount: "bill to customer $500"
+      isBillToWithAmount
+    );
+  if (isInvoiceIntent) {
+    return {
+      taskType: "generate_invoice",
+      taskData: { text: query },
+      description: "Create invoice from text"
     };
   }
   
@@ -613,6 +714,102 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
     },
     onError: (error) => {
       toast.error(`Failed to create task: ${error.message}`);
+      setIsLoading(false);
+    },
+  });
+
+  // Invoice creation from text mutation
+  const createInvoiceFromText = trpc.invoices.createFromText.useMutation({
+    onSuccess: (data) => {
+      setIsLoading(false);
+      toast.success("Invoice created successfully", {
+        description: `Invoice #${data.invoiceNumber} has been created as a draft`
+      });
+      utils.invoices.list.invalidate();
+      setLocation("/finance/invoices");
+      onOpenChange(false);
+    },
+    onError: (error) => {
+      toast.error(`Failed to create invoice: ${error.message}`);
+      setIsLoading(false);
+    },
+  });
+
+  // Universal entity creation from text mutations
+  const createPOFromText = trpc.purchaseOrders.createFromText.useMutation({
+    onSuccess: (data) => {
+      setIsLoading(false);
+      toast.success("Purchase Order created successfully", {
+        description: `PO #${data.poNumber} has been created`
+      });
+      utils.purchaseOrders.list.invalidate();
+      setLocation("/procurement");
+      onOpenChange(false);
+    },
+    onError: (error) => {
+      toast.error(`Failed to create PO: ${error.message}`);
+      setIsLoading(false);
+    },
+  });
+
+  const createShipmentFromText = trpc.shipments.createFromText.useMutation({
+    onSuccess: (data) => {
+      setIsLoading(false);
+      toast.success("Shipment tracked successfully", {
+        description: `Shipment #${data.trackingNumber} has been added`
+      });
+      utils.shipments.list.invalidate();
+      onOpenChange(false);
+    },
+    onError: (error) => {
+      toast.error(`Failed to track shipment: ${error.message}`);
+      setIsLoading(false);
+    },
+  });
+
+  const recordPaymentFromText = trpc.payments.createFromText.useMutation({
+    onSuccess: (data) => {
+      setIsLoading(false);
+      toast.success("Payment recorded successfully", {
+        description: `Payment of $${data.amount} has been recorded`
+      });
+      utils.payments.list.invalidate();
+      setLocation("/finance");
+      onOpenChange(false);
+    },
+    onError: (error) => {
+      toast.error(`Failed to record payment: ${error.message}`);
+      setIsLoading(false);
+    },
+  });
+
+  const createWorkOrderFromText = trpc.workOrders.createFromText.useMutation({
+    onSuccess: (data) => {
+      setIsLoading(false);
+      toast.success("Work Order created successfully", {
+        description: `Work Order #${data.workOrderNumber} has been created`
+      });
+      utils.workOrders.list.invalidate();
+      setLocation("/operations/manufacturing");
+      onOpenChange(false);
+    },
+    onError: (error) => {
+      toast.error(`Failed to create work order: ${error.message}`);
+      setIsLoading(false);
+    },
+  });
+
+  const transferInventoryFromText = trpc.inventory.transferFromText.useMutation({
+    onSuccess: (data) => {
+      setIsLoading(false);
+      toast.success("Inventory transfer initiated", {
+        description: `Transfer #${data.transferNumber} has been created`
+      });
+      utils.inventory.list.invalidate();
+      onOpenChange(false);
+    },
+    onError: (error) => {
+      toast.error(`Failed to transfer inventory: ${error.message}`);
       setIsLoading(false);
     },
   });
@@ -737,6 +934,48 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
     }
     if (taskType === "create_customer") {
       setShowQuickCreateCustomer(true);
+      return;
+    }
+    
+    // Handle invoice creation with natural language
+    if (taskType === "generate_invoice") {
+      setIsLoading(true);
+      createInvoiceFromText.mutate({ text: q });
+      return;
+    }
+    
+    // Handle purchase order creation with natural language
+    if (taskType === "generate_po" && (q.includes("from") || q.includes("to") || q.includes("vendor"))) {
+      setIsLoading(true);
+      createPOFromText.mutate({ text: q });
+      return;
+    }
+    
+    // Handle shipment tracking with natural language
+    if (taskType === "create_shipment") {
+      setIsLoading(true);
+      createShipmentFromText.mutate({ text: q });
+      return;
+    }
+    
+    // Handle payment recording with natural language
+    if (taskType === "reconcile_payment") {
+      setIsLoading(true);
+      recordPaymentFromText.mutate({ text: q });
+      return;
+    }
+    
+    // Handle work order creation with natural language
+    if (taskType === "create_work_order") {
+      setIsLoading(true);
+      createWorkOrderFromText.mutate({ text: q });
+      return;
+    }
+    
+    // Handle inventory transfer with natural language
+    if (taskType === "update_inventory") {
+      setIsLoading(true);
+      transferInventoryFromText.mutate({ text: q });
       return;
     }
     

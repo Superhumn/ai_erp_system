@@ -15,11 +15,9 @@ interface Message {
 export default function AIAssistant() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const [conversationId, setConversationId] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const createConversation = trpc.ai.createConversation.useMutation();
-  const chat = trpc.ai.chat.useMutation();
+  const agentChat = trpc.ai.agentChat.useMutation();
   const query = trpc.ai.query.useMutation();
 
   const scrollToBottom = () => {
@@ -40,16 +38,15 @@ export default function AIAssistant() {
     setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
 
     try {
-      let convId = conversationId;
-      if (!convId) {
-        const result = await createConversation.mutateAsync({ title: userMessage.slice(0, 50) });
-        convId = result.id;
-        setConversationId(convId);
-      }
+      // Build conversation history from previous messages for context
+      const conversationHistory = messages.map((m) => ({
+        role: m.role as "user" | "assistant" | "system",
+        content: m.content,
+      }));
 
-      const response = await chat.mutateAsync({
-        conversationId: convId,
+      const response = await agentChat.mutateAsync({
         message: userMessage,
+        conversationHistory,
       });
 
       setMessages((prev) => [...prev, { role: "assistant", content: response.message }]);
@@ -84,7 +81,7 @@ export default function AIAssistant() {
     "What are our top selling products?",
   ];
 
-  const isLoading = chat.isPending || query.isPending || createConversation.isPending;
+  const isLoading = agentChat.isPending || query.isPending;
 
   return (
     <div className="h-[calc(100vh-8rem)] flex flex-col animate-fade-in">
