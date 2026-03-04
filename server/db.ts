@@ -103,7 +103,7 @@ import {
   InsertCogsTransaction, InsertFreightCostAllocation,
   // QuickBooks integration
   quickbooksAccounts, quickbooksAccountMappings, quickbooksItems,
-  InsertQuickBooksAccount, InsertQuickBooksAccountMapping, InsertQuickBooksItem
+  InsertQuickBooksAccount, InsertQuickBooksAccountMapping, InsertQuickBooksItem,
   // EDI module
   ediTradingPartners, ediDocumentMaps, ediTransactions, ediTransactionItems, ediProductCrosswalks, ediShipToLocations, ediComplianceScorecards,
   ediControlNumbers, ediSettings,
