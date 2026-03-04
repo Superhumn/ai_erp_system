@@ -109,19 +109,19 @@ importers:
         specifier: ^5.90.2
         version: 5.90.21(react@19.2.4)
       '@trpc/client':
-        specifier: ^11.11.0
+        specifier: ^11.8.0
         version: 11.11.0(@trpc/server@11.11.0(typescript@5.9.3))(typescript@5.9.3)
       '@trpc/react-query':
-        specifier: ^11.11.0
+        specifier: ^11.8.0
         version: 11.11.0(@tanstack/react-query@5.90.2(react@19.2.1))(@trpc/client@11.11.0(@trpc/server@11.11.0(typescript@5.9.3))(typescript@5.9.3))(@trpc/server@11.11.0(typescript@5.9.3))(react@19.2.1)(typescript@5.9.3)
       '@trpc/server':
-        specifier: ^11.11.0
+        specifier: ^11.8.0
         version: 11.11.0(typescript@5.9.3)
       '@types/puppeteer':
         specifier: ^7.0.4
         version: 7.0.4(typescript@5.9.3)
       axios:
-        specifier: ^1.13.6
+        specifier: ^1.13.5
         version: 1.13.6
       canvas:
         specifier: ^3.2.1
@@ -209,7 +209,7 @@ importers:
         version: 3.0.6(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
       react-router-dom:
         specifier: ^7.13.0
-        version: 7.13.0(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
+        version: 7.13.1(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
       recharts:
         specifier: ^2.15.2
         version: 2.15.4(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -289,7 +289,7 @@ importers:
         specifier: ^0.25.0
         version: 0.25.12
       pnpm:
-        specifier: ^10.30.3
+        specifier: ^10.27.0
         version: 10.30.3
       postcss:
         specifier: ^8.4.47
@@ -2879,7 +2879,7 @@ packages:
     resolution: {integrity: sha512-NZKeq9AfyQvEeNlN0zSYAaWrmBffJh3IELMZfRpJVWgrpEbtEpnjvzqBPf+mxoI287JohRDoa+/nsfqqiZmF6g==}
     engines: {node: '>= 6.0.0'}
 
-   axios@1.13.6:
+  axios@1.13.6:
     resolution: {integrity: sha512-ChTCHMouEe2kn713WHbQGcuYrr6fXTBiu460OTwWrWob16g1bXn4vtz07Ope7ewMozJAnEquLk5lWQWtBig9DQ==}
 
   b4a@1.7.4:
@@ -4693,15 +4693,15 @@ packages:
       react: ^16.14.0 || ^17.0.0 || ^18.0.0 || ^19.0.0 || ^19.0.0-rc
       react-dom: ^16.14.0 || ^17.0.0 || ^18.0.0 || ^19.0.0 || ^19.0.0-rc
 
-  react-router-dom@7.13.0:
-    resolution: {integrity: sha512-5CO/l5Yahi2SKC6rGZ+HDEjpjkGaG/ncEP7eWFTvFxbHP8yeeI0PxTDjimtpXYlR3b3i9/WIL4VJttPrESIf2g==}
+  react-router-dom@7.13.1:
+    resolution: {integrity: sha512-UJnV3Rxc5TgUPJt2KJpo1Jpy0OKQr0AjgbZzBFjaPJcFOb2Y8jA5H3LT8HUJAiRLlWrEXWHbF1Z4SCZaQjWDHw==}
     engines: {node: '>=20.0.0'}
     peerDependencies:
       react: '>=18'
       react-dom: '>=18'
 
-  react-router@7.13.0:
-    resolution: {integrity: sha512-PZgus8ETambRT17BUm/LL8lX3Of+oiLaPuVTRH3l1eLvSPpKO3AvhAEb5N7ihAFZQrYDqkvvWfFh9p0z9VsjLw==}
+  react-router@7.13.1:
+    resolution: {integrity: sha512-td+xP4X2/6BJvZoX6xw++A2DdEi++YypA69bJUV5oVvqf6/9/9nNlD70YO1e9d3MyamJEBQFEzk6mbfDYbqrSA==}
     engines: {node: '>=20.0.0'}
     peerDependencies:
       react: '>=18'
@@ -10321,7 +10321,21 @@ snapshots:
       react-dom: 19.2.1(react@19.2.1)
       react-router: 7.13.0(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
 
-  react-router@7.13.0(react-dom@19.2.1(react@19.2.1))(react@19.2.1):
+  react-router-dom@7.13.1(react-dom@19.2.1(react@19.2.1))(react@19.2.1):
+    dependencies:
+      react: 19.2.1
+      react-dom: 19.2.1(react@19.2.1)
+      react-router: 7.13.1(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
+
+  react-router@7.13.1(react-dom@19.2.1(react@19.2.1))(react@19.2.1):
+    dependencies:
+      cookie: 1.0.2
+      react: 19.2.1
+      set-cookie-parser: 2.7.2
+    optionalDependencies:
+      react-dom: 19.2.1(react@19.2.1)
+
+  react-smooth@4.0.4(react-dom@19.2.1(react@19.2.1))(react@19.2.1):
     dependencies:
       cookie: 1.0.2
       react: 19.2.1
