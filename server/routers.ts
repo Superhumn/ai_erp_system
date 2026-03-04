@@ -36,14 +36,14 @@ const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
   return next({ ctx });
 });
 
-const financeProcedure = protectedProcedure.use(({ ctx, next }) => {
+export const financeProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (!['admin', 'finance', 'exec'].includes(ctx.user.role)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Finance access required' });
   }
   return next({ ctx });
 });
 
-const opsProcedure = protectedProcedure.use(({ ctx, next }) => {
+export const opsProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (!['admin', 'ops', 'exec'].includes(ctx.user.role)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Operations access required' });
   }
@@ -90,7 +90,7 @@ const procurementProcedure = protectedProcedure.use(({ ctx, next }) => {
 });
 
 // Helper to create audit log
-async function createAuditLog(userId: number, action: 'create' | 'update' | 'delete' | 'view' | 'export' | 'approve' | 'reject', entityType: string, entityId: number, entityName?: string, oldValues?: any, newValues?: any) {
+export async function createAuditLog(userId: number, action: 'create' | 'update' | 'delete' | 'view' | 'export' | 'approve' | 'reject', entityType: string, entityId: number, entityName?: string, oldValues?: any, newValues?: any) {
   await db.createAuditLog({
     userId,
     action,
@@ -172,7 +172,7 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
 }
 
 // Helper to generate unique numbers
-function generateNumber(prefix: string) {
+export function generateNumber(prefix: string) {
   const date = new Date();
   const year = date.getFullYear().toString().slice(-2);
   const month = (date.getMonth() + 1).toString().padStart(2, '0');
