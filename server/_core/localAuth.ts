@@ -90,10 +90,6 @@ function verifyPassword(password: string, salt: string, hash: string): boolean {
  * Generate a unique openId for local users
  * Format: local_{nanoid}
  */
-function verifyPassword(password: string, salt: string, hash: string): boolean {
-  return hashPassword(password, salt) === hash;
-}
-
 async function generateLocalOpenId(): Promise<string> {
   const { nanoid } = await import("nanoid");
   return `local_${nanoid(21)}`;
@@ -105,14 +101,6 @@ async function generateLocalOpenId(): Promise<string> {
 function isValidEmail(email: string): boolean {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return emailRegex.test(email);
-}
-
-/**
- * Validate password strength
- * At least 8 characters
- */
-function isValidEmail(email: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 function isValidPassword(password: string): boolean {
