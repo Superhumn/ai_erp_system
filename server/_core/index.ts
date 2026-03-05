@@ -195,6 +195,7 @@ async function startServer() {
     }
   };
 
+
   // ============================================
   // EDI WEBHOOK ENDPOINT
   // ============================================
@@ -228,6 +229,7 @@ async function startServer() {
       res.status(500).json({ error: 'Internal server error' });
     }
   });
+
 
   app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), handleShopifyWebhook);
   app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), handleShopifyWebhook);
