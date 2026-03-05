@@ -195,13 +195,9 @@ async function startServer() {
     }
   };
 
-  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), (req, res) => 
-    handleShopifyWebhook(req, res, 'orders')
-  );
+  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), handleShopifyWebhook);
 
-  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), (req, res) =>
-    handleShopifyWebhook(req, res, 'inventory')
-  );
+  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), handleShopifyWebhook);
 
   // ============================================
   // EDI WEBHOOK ENDPOINT
