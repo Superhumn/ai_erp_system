@@ -62,9 +62,7 @@ export default function CustomerDetail() {
     if (!customer.syncSource) return null;
     const colors: Record<string, string> = {
       quickbooks: "bg-green-100 text-green-800",
-      stripe: "bg-purple-100 text-purple-800",
       shopify: "bg-teal-100 text-teal-800",
-      woocommerce: "bg-purple-100 text-purple-800",
     };
     return (
       <Badge className={colors[customer.syncSource] || "bg-gray-100 text-gray-800"}>

@@ -86,9 +86,12 @@ import Documents from "./pages/legal/Documents";
 import Integrations from "./pages/settings/Integrations";
 import NotificationSettings from "./pages/settings/Notifications";
 import TransactionalEmails from "./pages/settings/TransactionalEmails";
+import Fireflies from "./pages/settings/Fireflies";
+import ShopifySettings from "./pages/settings/ShopifySettings";
 
 // Projects
 import Projects from "./pages/projects/Projects";
+import InvestmentGrantChecklist from "./pages/projects/InvestmentGrantChecklist";
 
 // Import
 import Import from "./pages/Import";
@@ -99,6 +102,12 @@ import Team from "./pages/settings/Team";
 // Portals
 import CopackerPortal from "./pages/portal/CopackerPortal";
 import VendorPortal from "./pages/portal/VendorPortal";
+
+// Auth
+import { Login } from "./pages/Login";
+
+// SOPs
+import SOPs from "./pages/SOPs";
 
 // Data Room
 import DataRooms from "./pages/DataRooms";
@@ -113,6 +122,9 @@ import AutonomousDashboard from "./pages/autonomous/Dashboard";
 import AutonomousApprovals from "./pages/autonomous/Approvals";
 import AutonomousExceptions from "./pages/autonomous/Exceptions";
 import AutonomousSettings from "./pages/autonomous/Settings";
+
+// Auth
+import { Login } from "./pages/Login";
 
 function Router() {
   return (
@@ -134,6 +146,8 @@ function Router() {
         <Route path="/settings/integrations" component={Integrations} />
         <Route path="/settings/notifications" component={NotificationSettings} />
         <Route path="/settings/emails" component={TransactionalEmails} />
+        <Route path="/settings/fireflies" component={Fireflies} />
+        <Route path="/settings/shopify" component={ShopifySettings} />
 
         {/* Finance */}
         <Route path="/finance/accounts" component={Accounts} />
@@ -205,6 +219,7 @@ function Router() {
 
         {/* Projects */}
         <Route path="/projects" component={Projects} />
+        <Route path="/projects/investment-grants" component={InvestmentGrantChecklist} />
 
         {/* Import */}
         <Route path="/import" component={Import} />
@@ -236,6 +251,9 @@ function App() {
           <TooltipProvider>
             <Toaster />
             <Switch>
+              {/* Public Login */}
+              {/* Public routes (outside dashboard) */}
+              <Route path="/login" component={Login} />
               {/* Public Data Room Access (outside dashboard) */}
               <Route path="/share/:code" component={DataRoomPublic} />
               {/* Supplier Portal (public) */}

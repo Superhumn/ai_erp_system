@@ -42,23 +42,25 @@ function KPICard({
 }) {
   return (
     <Card
-      className={`${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
+      className={`group relative overflow-hidden ${onClick ? 'cursor-pointer hover:shadow-md hover:border-primary/20 transition-all duration-200' : ''}`}
       onClick={onClick}
     >
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground">
+        <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
           {title}
         </CardTitle>
-        <Icon className="h-4 w-4 text-muted-foreground" />
+        <div className="h-8 w-8 rounded-lg bg-primary/8 flex items-center justify-center">
+          <Icon className="h-4 w-4 text-primary/70" />
+        </div>
       </CardHeader>
       <CardContent>
         {loading ? (
           <Skeleton className="h-8 w-24" />
         ) : (
           <>
-            <div className="text-2xl font-bold">{value}</div>
+            <div className="text-2xl font-semibold tracking-tight">{value}</div>
             {description && (
-              <p className="text-xs text-muted-foreground mt-1">{description}</p>
+              <p className="text-xs text-muted-foreground mt-1.5">{description}</p>
             )}
           </>
         )}
@@ -72,17 +74,17 @@ export default function Home() {
   const { data: metrics, isLoading } = trpc.dashboard.metrics.useQuery();
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-8 animate-fade-in">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-        <p className="text-muted-foreground mt-1">
+        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+        <p className="text-muted-foreground mt-1 text-sm">
           Overview of your business operations and key metrics.
         </p>
       </div>
 
       {/* KPI Grid */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
         <KPICard
           title="Revenue This Month"
           value={formatCurrency(metrics?.revenueThisMonth)}
@@ -118,7 +120,7 @@ export default function Home() {
       </div>
 
       {/* Secondary KPIs */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-5">
         <KPICard
           title="Customers"
           value={metrics?.customers || 0}
@@ -157,72 +159,72 @@ export default function Home() {
       </div>
 
       {/* Quick Actions */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <Card>
+      <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+        <Card className="hover:shadow-md hover:border-primary/15 transition-all duration-200">
           <CardHeader>
-            <CardTitle className="text-lg">Finance Overview</CardTitle>
-            <CardDescription>Track invoices, payments, and cash flow</CardDescription>
+            <CardTitle className="text-base font-semibold tracking-tight">Finance Overview</CardTitle>
+            <CardDescription className="text-xs">Track invoices, payments, and cash flow</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="flex justify-between text-sm">
+          <CardContent className="space-y-3">
+            <div className="flex justify-between items-center text-sm py-1">
               <span className="text-muted-foreground">Pending Invoices</span>
-              <span className="font-medium">{metrics?.pendingInvoices || 0}</span>
+              <span className="font-medium tabular-nums">{metrics?.pendingInvoices || 0}</span>
             </div>
-            <div className="flex justify-between text-sm">
+            <div className="flex justify-between items-center text-sm py-1">
               <span className="text-muted-foreground">Pending POs</span>
-              <span className="font-medium">{metrics?.pendingPurchaseOrders || 0}</span>
+              <span className="font-medium tabular-nums">{metrics?.pendingPurchaseOrders || 0}</span>
             </div>
-            <div className="flex justify-between text-sm">
+            <div className="flex justify-between items-center text-sm py-1">
               <span className="text-muted-foreground">Active Contracts</span>
-              <span className="font-medium">{metrics?.activeContracts || 0}</span>
+              <span className="font-medium tabular-nums">{metrics?.activeContracts || 0}</span>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="hover:shadow-md hover:border-primary/15 transition-all duration-200">
           <CardHeader>
-            <CardTitle className="text-lg">Operations Summary</CardTitle>
-            <CardDescription>Inventory, vendors, and logistics</CardDescription>
+            <CardTitle className="text-base font-semibold tracking-tight">Operations Summary</CardTitle>
+            <CardDescription className="text-xs">Inventory, vendors, and logistics</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="flex justify-between text-sm">
+          <CardContent className="space-y-3">
+            <div className="flex justify-between items-center text-sm py-1">
               <span className="text-muted-foreground">Total Products</span>
-              <span className="font-medium">{metrics?.products || 0}</span>
+              <span className="font-medium tabular-nums">{metrics?.products || 0}</span>
             </div>
-            <div className="flex justify-between text-sm">
+            <div className="flex justify-between items-center text-sm py-1">
               <span className="text-muted-foreground">Active Vendors</span>
-              <span className="font-medium">{metrics?.vendors || 0}</span>
+              <span className="font-medium tabular-nums">{metrics?.vendors || 0}</span>
             </div>
-            <div className="flex justify-between text-sm">
+            <div className="flex justify-between items-center text-sm py-1">
               <span className="text-muted-foreground">Pending POs</span>
-              <span className="font-medium">{metrics?.pendingPurchaseOrders || 0}</span>
+              <span className="font-medium tabular-nums">{metrics?.pendingPurchaseOrders || 0}</span>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="hover:shadow-md hover:border-primary/15 transition-all duration-200">
           <CardHeader>
-            <CardTitle className="text-lg">Quick Actions</CardTitle>
-            <CardDescription>Common tasks and shortcuts</CardDescription>
+            <CardTitle className="text-base font-semibold tracking-tight">Quick Actions</CardTitle>
+            <CardDescription className="text-xs">Common tasks and shortcuts</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-2">
+          <CardContent className="space-y-1">
             <button
               onClick={() => setLocation('/finance/invoices')}
-              className="w-full text-left text-sm p-2 rounded-md hover:bg-muted transition-colors flex items-center gap-2"
+              className="w-full text-left text-sm px-3 py-2 rounded-lg hover:bg-accent transition-colors duration-150 flex items-center gap-2.5 text-muted-foreground hover:text-foreground"
             >
               <FileText className="h-4 w-4" />
               Create Invoice
             </button>
             <button
               onClick={() => setLocation('/operations/purchase-orders')}
-              className="w-full text-left text-sm p-2 rounded-md hover:bg-muted transition-colors flex items-center gap-2"
+              className="w-full text-left text-sm px-3 py-2 rounded-lg hover:bg-accent transition-colors duration-150 flex items-center gap-2.5 text-muted-foreground hover:text-foreground"
             >
               <ShoppingCart className="h-4 w-4" />
               New Purchase Order
             </button>
             <button
               onClick={() => setLocation('/ai')}
-              className="w-full text-left text-sm p-2 rounded-md hover:bg-muted transition-colors flex items-center gap-2"
+              className="w-full text-left text-sm px-3 py-2 rounded-lg hover:bg-accent transition-colors duration-150 flex items-center gap-2.5 text-muted-foreground hover:text-foreground"
             >
               <TrendingUp className="h-4 w-4" />
               Ask AI Assistant
