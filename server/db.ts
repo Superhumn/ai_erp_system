@@ -1,3 +1,4 @@
+import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, max, min, gt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users, localAuthCredentials, InsertLocalAuthCredential, companies, customers, vendors, products,
@@ -91,12 +92,32 @@ import {
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
   InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
+  // Fireflies integration
+  firefliesMeetings, firefliesActionItems, firefliesContactMappings,
+  InsertFirefliesMeeting, InsertFirefliesActionItem, InsertFirefliesContactMapping,
+  // Copacker portal
+  copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
+  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
+  // COGS tracking
+  cogsTransactions, freightCostAllocations,
+  InsertCogsTransaction, InsertFreightCostAllocation,
+  // QuickBooks integration
+  quickbooksAccounts, quickbooksAccountMappings, quickbooksItems,
+  InsertQuickBooksAccount, InsertQuickBooksAccountMapping, InsertQuickBooksItem,
+  // EDI module
+  ediTradingPartners, ediDocumentMaps, ediTransactions, ediTransactionItems, ediProductCrosswalks, ediShipToLocations, ediComplianceScorecards,
+  ediControlNumbers, ediSettings,
+  InsertEdiTradingPartner, InsertEdiDocumentMap, InsertEdiTransaction, InsertEdiTransactionItem, InsertEdiProductCrosswalk, InsertEdiShipToLocation, InsertEdiComplianceScorecard,
+  InsertEdiControlNumber, InsertEdiSettings,
   // Inventory costing & COGS
   inventoryCostingConfig, inventoryCostLayers, cogsRecords, cogsPeriodSummary,
   InsertInventoryCostingConfig, InsertInventoryCostLayer, InsertCogsRecord, InsertCogsPeriodSummary,
   // Vendor negotiations
   vendorNegotiations, negotiationRounds,
-  InsertVendorNegotiation, InsertNegotiationRound
+  InsertVendorNegotiation, InsertNegotiationRound,
+  // Investment grant checklists
+  investmentGrantChecklists, investmentGrantItems,
+  InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -2538,7 +2559,7 @@ export async function deleteBomComponent(id: number) {
 }
 
 // Raw Materials
-export async function getRawMaterials(filters?: { status?: string; category?: string }) {
+export async function getRawMaterials(filters?: { status?: string; category?: string; searchTerm?: string; limit?: number }) {
   const db = await getDb();
   if (!db) return [];
   
@@ -2549,6 +2570,13 @@ export async function getRawMaterials(filters?: { status?: string; category?: st
   }
   if (filters?.category) {
     query = query.where(eq(rawMaterials.category, filters.category)) as typeof query;
+  }
+  if (filters?.searchTerm) {
+    const escapedTerm = filters.searchTerm.replace(/[%_\\]/g, "\\$&");
+    query = query.where(like(rawMaterials.name, `%${escapedTerm}%`)) as typeof query;
+  }
+  if (filters?.limit) {
+    query = query.limit(filters.limit) as typeof query;
   }
   
   return query;
@@ -6441,22 +6469,47 @@ export async function getDetailedVisitorAnalytics(dataRoomId: number, visitorId:
   const db = await getDb();
   if (!db) return null;
 
-  // Get visitor info
+  // Get visitor info, scoped to the specified data room
   const visitor = await db.select().from(dataRoomVisitors)
-    .where(eq(dataRoomVisitors.id, visitorId));
+    .where(and(
+      eq(dataRoomVisitors.id, visitorId),
+      eq(dataRoomVisitors.dataRoomId, dataRoomId),
+    ));
   if (!visitor[0]) return null;
 
-  // Get all sessions
-  const sessions = await getVisitorSessions(visitorId);
+  // Get sessions for this visitor scoped to the specified data room (filtered in SQL)
+  const sessions = await db.select().from(dataRoomVisitorSessions)
+    .where(and(
+      eq(dataRoomVisitorSessions.visitorId, visitorId),
+      eq(dataRoomVisitorSessions.dataRoomId, dataRoomId),
+    ))
+    .orderBy(desc(dataRoomVisitorSessions.sessionStartAt));
 
-  // Get all page views
-  const pageViews = await getPageViewsByVisitor(visitorId);
+  // Get all documents in this data room to scope page views and doc views
+  const roomDocIdList = (await db.select({ id: dataRoomDocuments.id })
+    .from(dataRoomDocuments)
+    .where(eq(dataRoomDocuments.dataRoomId, dataRoomId))).map(d => d.id);
 
-  // Get document views
-  const docViews = await db.select().from(documentViews)
-    .where(eq(documentViews.visitorId, visitorId));
+  // Get page views scoped to this data room's documents (filtered in SQL)
+  const pageViews = roomDocIdList.length > 0
+    ? await db.select().from(documentPageViews)
+      .where(and(
+        eq(documentPageViews.visitorId, visitorId),
+        inArray(documentPageViews.documentId, roomDocIdList),
+      ))
+      .orderBy(desc(documentPageViews.enterTime))
+    : [];
 
-  // Get documents info
+  // Get document views scoped to this data room's documents (filtered in SQL)
+  const docViews = roomDocIdList.length > 0
+    ? await db.select().from(documentViews)
+      .where(and(
+        eq(documentViews.visitorId, visitorId),
+        inArray(documentViews.documentId, roomDocIdList),
+      ))
+    : [];
+
+  // Get full document details for engagement computation
   const docIds = [...new Set(pageViews.map(pv => pv.documentId))];
   const documents = docIds.length > 0
     ? await db.select().from(dataRoomDocuments).where(inArray(dataRoomDocuments.id, docIds))

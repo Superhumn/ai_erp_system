@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { parseTextToPO, createPOPreview, findVendorForMaterial } from "./textToPOService";
+import { parseTextToPO, createPOPreview, findVendorForMaterial, createPOFromPreview } from "./textToPOService";
 
+// Mock the LLM module
 vi.mock("./_core/llm", () => ({
   invokeLLM: vi.fn(),
 }));
 
+// Mock the db module
 vi.mock("./db", () => ({
   getRawMaterialByNameOrSku: vi.fn(),
   getRawMaterials: vi.fn(),
@@ -153,7 +155,7 @@ describe("Text to PO Service", () => {
       expect(preview.items).toHaveLength(1);
       expect(preview.items[0].description).toContain("mushrooms");
       expect(preview.items[0].quantity).toBe("3");
-      expect(preview.totalAmount).toBe("16.50");
+      expect(preview.totalAmount).toBe("16.50"); // 3 * 5.50
       expect(preview.isPriceEstimated).toBe(false);
     });
 
@@ -168,7 +170,92 @@ describe("Text to PO Service", () => {
         unit: "kg",
       };
 
-      await expect(createPOPreview(parsed)).rejects.toThrow("No vendors found");
+      await expect(createPOPreview(parsed)).rejects.toThrow(
+        "No vendors found"
+      );
+    });
+  });
+
+  describe("createPOFromPreview", () => {
+    it("should create PO and items from preview", async () => {
+      const mockPO = {
+        id: 42,
+        vendorId: 10,
+        poNumber: "PO-2603-1234",
+        status: "draft",
+      };
+
+      vi.mocked(db.createPurchaseOrder).mockResolvedValue(mockPO as any);
+      vi.mocked(db.createPurchaseOrderItem).mockResolvedValue({} as any);
+
+      const preview = {
+        vendorId: 10,
+        vendorName: "Mushroom Supplier Inc",
+        rawMaterialId: 1,
+        items: [
+          {
+            description: "mushrooms (3 tons)",
+            quantity: "3",
+            unitPrice: "5.50",
+            totalAmount: "16.50",
+            rawMaterialId: 1,
+          },
+        ],
+        shippingAddress: "alex meats",
+        notes: "Auto-generated from text",
+        subtotal: "16.50",
+        totalAmount: "16.50",
+        suggested: false,
+        isPriceEstimated: false,
+      };
+
+      const result = await createPOFromPreview(preview, 1);
+
+      expect(db.createPurchaseOrder).toHaveBeenCalledWith(
+        expect.objectContaining({
+          vendorId: 10,
+          shippingAddress: "alex meats",
+          totalAmount: "16.50",
+          status: "draft",
+          createdBy: 1,
+        })
+      );
+      expect(db.createPurchaseOrderItem).toHaveBeenCalledWith(
+        expect.objectContaining({
+          purchaseOrderId: 42,
+          description: "mushrooms (3 tons)",
+          quantity: "3",
+          unitPrice: "5.50",
+          totalAmount: "16.50",
+          productId: 1,
+        })
+      );
+      expect(result.id).toBe(42);
+      expect(result.status).toBe("draft");
+    });
+
+    it("should generate PO number in standard format", async () => {
+      const mockPO = { id: 1, vendorId: 10, poNumber: "", status: "draft" };
+      vi.mocked(db.createPurchaseOrder).mockResolvedValue(mockPO as any);
+      vi.mocked(db.createPurchaseOrderItem).mockResolvedValue({} as any);
+
+      const preview = {
+        vendorId: 10,
+        vendorName: "Test Vendor",
+        rawMaterialId: null,
+        items: [],
+        shippingAddress: "",
+        notes: "",
+        subtotal: "0.00",
+        totalAmount: "0.00",
+        suggested: false,
+        isPriceEstimated: false,
+      };
+
+      await createPOFromPreview(preview, 1);
+
+      const callArg = vi.mocked(db.createPurchaseOrder).mock.calls[0][0];
+      expect(callArg.poNumber).toMatch(/^PO-\d{4}-\d{4}$/);
     });
   });
 });

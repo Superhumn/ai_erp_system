@@ -16,14 +16,17 @@ import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingA
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
+import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
-import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo } from "./_core/quickbooks";
-import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
+import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems } from "./_core/quickbooks";
+import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
+import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
+import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -33,14 +36,14 @@ const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
   return next({ ctx });
 });
 
-const financeProcedure = protectedProcedure.use(({ ctx, next }) => {
+export const financeProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (!['admin', 'finance', 'exec'].includes(ctx.user.role)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Finance access required' });
   }
   return next({ ctx });
 });
 
-const opsProcedure = protectedProcedure.use(({ ctx, next }) => {
+export const opsProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (!['admin', 'ops', 'exec'].includes(ctx.user.role)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Operations access required' });
   }
@@ -87,7 +90,7 @@ const procurementProcedure = protectedProcedure.use(({ ctx, next }) => {
 });
 
 // Helper to create audit log
-async function createAuditLog(userId: number, action: 'create' | 'update' | 'delete' | 'view' | 'export' | 'approve' | 'reject', entityType: string, entityId: number, entityName?: string, oldValues?: any, newValues?: any) {
+export async function createAuditLog(userId: number, action: 'create' | 'update' | 'delete' | 'view' | 'export' | 'approve' | 'reject', entityType: string, entityId: number, entityName?: string, oldValues?: any, newValues?: any) {
   await db.createAuditLog({
     userId,
     action,
@@ -169,7 +172,7 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
 }
 
 // Helper to generate unique numbers
-function generateNumber(prefix: string) {
+export function generateNumber(prefix: string) {
   const date = new Date();
   const year = date.getFullYear().toString().slice(-2);
   const month = (date.getMonth() + 1).toString().padStart(2, '0');
@@ -1226,6 +1229,114 @@ export const appRouter = router({
   }),
 
   // ============================================
+  // COGS & PROFITABILITY TRACKING
+  // ============================================
+  cogs: router({
+    // Record COGS when a sale is fulfilled
+    recordSale: opsProcedure
+      .input(z.object({
+        salesOrderId: z.number(),
+        salesOrderLineId: z.number(),
+        productId: z.number(),
+        warehouseId: z.number(),
+        quantitySold: z.number(),
+        revenueAmount: z.number(),
+        freightCostAllocated: z.number().optional(),
+        customsCostAllocated: z.number().optional(),
+        insuranceCostAllocated: z.number().optional(),
+        otherCostAllocated: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.recordCOGSSale(
+          input.salesOrderId,
+          input.salesOrderLineId,
+          input.productId,
+          input.warehouseId,
+          input.quantitySold,
+          input.revenueAmount,
+          input.freightCostAllocated,
+          input.customsCostAllocated,
+          input.insuranceCostAllocated,
+          input.otherCostAllocated
+        );
+        await createAuditLog(ctx.user.id, 'create', 'cogs_transaction', input.salesOrderLineId, `Recorded COGS for sale`);
+        return result;
+      }),
+
+    // Get COGS transaction history
+    getTransactions: opsProcedure
+      .input(z.object({
+        salesOrderId: z.number().optional(),
+        productId: z.number().optional(),
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+        limit: z.number().min(1).max(1000).optional(),
+      }).optional())
+      .query(({ input }) => db.getCOGSTransactions(input, input?.limit)),
+
+    // Get product profitability report
+    profitability: opsProcedure
+      .input(z.object({
+        productId: z.number().optional(),
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+      }).optional())
+      .query(({ input }) => db.getProductProfitability(input?.productId, input?.startDate, input?.endDate)),
+
+    // Get inventory valuation
+    valuation: opsProcedure
+      .input(z.object({
+        warehouseId: z.number().optional(),
+      }).optional())
+      .query(({ input }) => db.getInventoryValuation(input?.warehouseId)),
+
+    // Allocate freight costs to products
+    allocateFreight: opsProcedure
+      .input(z.object({
+        purchaseOrderId: z.number().optional(),
+        shipmentId: z.number().optional(),
+        totalFreightCost: z.number(),
+        totalCustomsDuties: z.number().optional(),
+        totalInsuranceCost: z.number().optional(),
+        totalHandlingFees: z.number().optional(),
+        allocationMethod: z.enum(['weight', 'volume', 'quantity', 'value', 'manual']).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await db.allocateFreightCosts(
+          input.purchaseOrderId || null,
+          input.shipmentId || null,
+          input.totalFreightCost,
+          input.totalCustomsDuties,
+          input.totalInsuranceCost,
+          input.totalHandlingFees,
+          input.allocationMethod || 'quantity',
+          ctx.user.id
+        );
+        await createAuditLog(ctx.user.id, 'create', 'freight_allocation', input.purchaseOrderId || input.shipmentId || 0, 'Allocated freight costs');
+        return { success: true };
+      }),
+
+    // Update inventory cost basis (when receiving goods)
+    updateCostBasis: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        warehouseId: z.number(),
+        receivedQuantity: z.number(),
+        unitCost: z.number(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await db.updateInventoryCostBasis(
+          input.productId,
+          input.warehouseId,
+          input.receivedQuantity,
+          input.unitCost
+        );
+        await createAuditLog(ctx.user.id, 'update', 'inventory', input.productId, 'Updated inventory cost basis');
+        return { success: true };
+      }),
+  }),
+
+  // ============================================
   // OPERATIONS - PRODUCTION BATCHES
   // ============================================
   productionBatches: router({
@@ -1379,6 +1490,7 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'approve', 'purchaseOrder', input.id);
         return { success: true };
       }),
+    // Parse text to PO preview
     parseText: opsProcedure
       .input(z.object({ text: z.string().min(1).max(1000) }))
       .mutation(async ({ input }) => {
@@ -1411,17 +1523,26 @@ export const appRouter = router({
         sendEmail: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
+        // Create the PO from preview
         const po = await createPOFromPreview(input.preview, ctx.user.id);
         
         await createAuditLog(ctx.user.id, 'create', 'purchaseOrder', po.id, po.poNumber);
         
+        // Send email if requested
         if (input.sendEmail) {
           const emailResult = await emailService.sendPOEmail(po.id, {
             triggeredBy: ctx.user.id,
           });
           
           if (!emailResult.success) {
+            // Log the error but don't fail the whole operation since PO is already created
             console.error(`Failed to send PO email for PO ${po.id}:`, emailResult.error);
+          }
+          
+          if (emailResult.success && emailResult.emailMessageId) {
+            await createAuditLog(ctx.user.id, 'create', 'email_message', emailResult.emailMessageId, 'PO Email', undefined, {
+              poId: po.id,
+            });
           }
           
           return { 
@@ -3540,6 +3661,121 @@ export const appRouter = router({
         companyName: result.data?.CompanyInfo?.CompanyName 
       };
     }),
+
+    // Sync Chart of Accounts from QuickBooks
+    syncAccounts: protectedProcedure
+      .input(z.object({ companyId: z.number().optional() }))
+      .mutation(async ({ input, ctx }) => {
+        const token = await db.getQuickBooksOAuthToken(ctx.user.id);
+        if (!token || !token.realmId) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'QuickBooks not connected' });
+        }
+
+        const result = await getChartOfAccounts(token.accessToken, token.realmId);
+        if (result.error) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
+        }
+
+        const accounts = result.data?.QueryResponse?.Account || [];
+        const companyId = input.companyId || 1; // Default to company 1
+        const synced = await db.syncQuickBooksAccounts(companyId, accounts);
+
+        await createAuditLog(ctx.user.id, 'create', 'quickbooks_sync', 0, `Synced ${synced.synced} accounts from QuickBooks`);
+        
+        return { 
+          success: true, 
+          synced: synced.synced,
+          message: `Successfully synced ${synced.synced} accounts from QuickBooks`
+        };
+      }),
+
+    // Sync Items/Products from QuickBooks
+    syncItems: protectedProcedure
+      .input(z.object({ 
+        companyId: z.number().optional(),
+        type: z.enum(['Inventory', 'NonInventory', 'Service']).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const token = await db.getQuickBooksOAuthToken(ctx.user.id);
+        if (!token || !token.realmId) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'QuickBooks not connected' });
+        }
+
+        const result = await getQuickBooksItems(token.accessToken, token.realmId, {
+          type: input.type,
+          activeOnly: true,
+        });
+        
+        if (result.error) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
+        }
+
+        const items = result.data?.QueryResponse?.Item || [];
+        const companyId = input.companyId || 1;
+        const synced = await db.syncQuickBooksItems(companyId, items);
+
+        await createAuditLog(ctx.user.id, 'create', 'quickbooks_sync', 0, `Synced ${synced.synced} items from QuickBooks`);
+        
+        return { 
+          success: true, 
+          synced: synced.synced,
+          message: `Successfully synced ${synced.synced} items from QuickBooks`
+        };
+      }),
+
+    // Get QuickBooks accounts for mapping
+    getAccounts: protectedProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        classification: z.enum(['Asset', 'Liability', 'Equity', 'Revenue', 'Expense']).optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const companyId = input?.companyId || 1;
+        return db.getQuickBooksAccountsByType(companyId, input?.classification);
+      }),
+
+    // Get account mappings
+    getAccountMappings: protectedProcedure
+      .input(z.object({ companyId: z.number().optional() }))
+      .query(async ({ input }) => {
+        const companyId = input.companyId || 1;
+        return db.getQuickBooksAccountMappings(companyId);
+      }),
+
+    // Create or update account mapping
+    upsertAccountMapping: protectedProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        mappingType: z.enum([
+          'cogs_product',
+          'cogs_freight',
+          'cogs_customs',
+          'inventory_asset',
+          'freight_expense',
+          'income_sales',
+          'expense_other'
+        ]),
+        quickbooksAccountId: z.string(),
+        erpCategoryName: z.string().optional(),
+        isDefault: z.boolean().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const companyId = input.companyId || 1;
+        const result = await db.upsertQuickBooksAccountMapping({
+          companyId,
+          mappingType: input.mappingType,
+          quickbooksAccountId: input.quickbooksAccountId,
+          erpCategoryName: input.erpCategoryName,
+          isDefault: input.isDefault ?? true,
+          notes: input.notes,
+          createdBy: ctx.user.id,
+        });
+
+        await createAuditLog(ctx.user.id, 'create', 'quickbooks_mapping', result.id, `Mapped ${input.mappingType} to QB account ${input.quickbooksAccountId}`);
+        
+        return { success: true, id: result.id };
+      }),
   }),
 
   // ============================================
@@ -13019,6 +13255,406 @@ Ask if they received the original request and if they can provide a quote.`;
     stats: opsProcedure
       .input(z.object({ companyId: z.number().optional() }).optional())
       .query(({ input }) => db.getVendorNegotiationStats(input?.companyId)),
+  }),
+
+  // ============================================
+  // EDI MODULE - Retail Customer Connections
+  // ============================================
+  edi: router({
+    // Dashboard stats
+    dashboardStats: protectedProcedure.query(() => db.getEdiDashboardStats()),
+
+    // Trading Partners
+    partners: router({
+      list: protectedProcedure
+        .input(z.object({ status: z.string().optional(), partnerType: z.string().optional() }).optional())
+        .query(({ input }) => db.getEdiTradingPartners(input)),
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getEdiTradingPartnerById(input.id)),
+      create: opsProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          customerId: z.number().optional(),
+          partnerType: z.enum(["retailer", "distributor", "wholesaler", "marketplace", "3pl"]).optional(),
+          isaId: z.string().min(1).max(15),
+          isaQualifier: z.string().max(2).optional(),
+          gsId: z.string().min(1).max(15),
+          connectionType: z.enum(["as2", "sftp", "van", "api", "email"]).optional(),
+          connectionHost: z.string().optional(),
+          connectionPort: z.number().optional(),
+          connectionUsername: z.string().optional(),
+          connectionPassword: z.string().optional(),
+          as2Id: z.string().optional(),
+          as2Url: z.string().optional(),
+          supportedDocuments: z.string().optional(),
+          requiresFunctionalAck: z.boolean().optional(),
+          ackTimeoutHours: z.number().optional(),
+          testMode: z.boolean().optional(),
+          ediContactName: z.string().optional(),
+          ediContactEmail: z.string().optional(),
+          ediContactPhone: z.string().optional(),
+          status: z.enum(["active", "inactive", "testing", "onboarding"]).optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createEdiTradingPartner(input);
+          await createAuditLog(ctx.user.id, 'create', 'edi_trading_partner', result.id, input.name);
+          return result;
+        }),
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          customerId: z.number().optional(),
+          partnerType: z.enum(["retailer", "distributor", "wholesaler", "marketplace", "3pl"]).optional(),
+          isaId: z.string().optional(),
+          isaQualifier: z.string().optional(),
+          gsId: z.string().optional(),
+          connectionType: z.enum(["as2", "sftp", "van", "api", "email"]).optional(),
+          connectionHost: z.string().optional(),
+          connectionPort: z.number().optional(),
+          connectionUsername: z.string().optional(),
+          connectionPassword: z.string().optional(),
+          as2Id: z.string().optional(),
+          as2Url: z.string().optional(),
+          supportedDocuments: z.string().optional(),
+          requiresFunctionalAck: z.boolean().optional(),
+          ackTimeoutHours: z.number().optional(),
+          testMode: z.boolean().optional(),
+          ediContactName: z.string().optional(),
+          ediContactEmail: z.string().optional(),
+          ediContactPhone: z.string().optional(),
+          status: z.enum(["active", "inactive", "testing", "onboarding"]).optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateEdiTradingPartner(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'edi_trading_partner', id);
+          return { success: true };
+        }),
+      delete: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteEdiTradingPartner(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'edi_trading_partner', input.id);
+          return { success: true };
+        }),
+    }),
+
+    // Document Maps
+    documentMaps: router({
+      list: protectedProcedure
+        .input(z.object({ tradingPartnerId: z.number().optional() }).optional())
+        .query(({ input }) => db.getEdiDocumentMaps(input?.tradingPartnerId)),
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getEdiDocumentMapById(input.id)),
+      create: opsProcedure
+        .input(z.object({
+          tradingPartnerId: z.number(),
+          transactionSetCode: z.string().min(1),
+          direction: z.enum(["inbound", "outbound"]),
+          version: z.string().optional(),
+          mappingRules: z.string(),
+          validationRules: z.string().optional(),
+          transformTemplate: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createEdiDocumentMap(input);
+          await createAuditLog(ctx.user.id, 'create', 'edi_document_map', result.id);
+          return result;
+        }),
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          mappingRules: z.string().optional(),
+          validationRules: z.string().optional(),
+          transformTemplate: z.string().optional(),
+          isActive: z.boolean().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateEdiDocumentMap(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'edi_document_map', id);
+          return { success: true };
+        }),
+    }),
+
+    // Transactions
+    transactions: router({
+      list: protectedProcedure
+        .input(z.object({
+          tradingPartnerId: z.number().optional(),
+          transactionSetCode: z.string().optional(),
+          direction: z.string().optional(),
+          status: z.string().optional(),
+          limit: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getEdiTransactions(input)),
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getEdiTransactionById(input.id)),
+      getWithItems: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getEdiTransactionWithItems(input.id)),
+      // Process inbound EDI document
+      processInbound: opsProcedure
+        .input(z.object({
+          tradingPartnerId: z.number(),
+          rawContent: z.string().min(1),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await processInboundEdi(input.rawContent, input.tradingPartnerId);
+          await createAuditLog(ctx.user.id, 'create', 'edi_transaction', result.transactionId, `Inbound EDI`);
+          return result;
+        }),
+      // Convert 850 PO to internal order
+      convertToOrder: opsProcedure
+        .input(z.object({ transactionId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await convertEdi850ToOrder(input.transactionId);
+          await createAuditLog(ctx.user.id, 'create', 'order', result.orderId, `From EDI 850`);
+          return result;
+        }),
+      // Generate outbound EDI document
+      generateOutbound: opsProcedure
+        .input(z.object({
+          tradingPartnerId: z.number(),
+          transactionSetCode: z.enum(["855", "810", "856"]),
+          sourceData: z.string(), // JSON string of the source data
+          controlNumber: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const sourceData = JSON.parse(input.sourceData);
+          const result = await generateOutboundEdi(input.tradingPartnerId, input.transactionSetCode, sourceData, input.controlNumber);
+          await createAuditLog(ctx.user.id, 'create', 'edi_transaction', result.transactionId, `Outbound ${input.transactionSetCode}`);
+          return result;
+        }),
+      // Reprocess a failed transaction
+      reprocess: opsProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const txn = await db.getEdiTransactionById(input.id);
+          if (!txn) throw new TRPCError({ code: 'NOT_FOUND', message: 'Transaction not found' });
+          if (!txn.rawContent) throw new TRPCError({ code: 'BAD_REQUEST', message: 'No raw content to reprocess' });
+
+          const result = await processInboundEdi(txn.rawContent, txn.tradingPartnerId);
+          await createAuditLog(ctx.user.id, 'update', 'edi_transaction', result.transactionId, 'Reprocessed');
+          return result;
+        }),
+    }),
+
+    // Product Crosswalks
+    crosswalks: router({
+      list: protectedProcedure
+        .input(z.object({ tradingPartnerId: z.number().optional() }).optional())
+        .query(({ input }) => db.getEdiProductCrosswalks(input?.tradingPartnerId)),
+      create: opsProcedure
+        .input(z.object({
+          tradingPartnerId: z.number(),
+          productId: z.number(),
+          buyerPartNumber: z.string().optional(),
+          vendorPartNumber: z.string().optional(),
+          upc: z.string().optional(),
+          buyerDescription: z.string().optional(),
+          unitOfMeasure: z.string().optional(),
+          packSize: z.number().optional(),
+          innerPackSize: z.number().optional(),
+          caseUpc: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createEdiProductCrosswalk(input);
+          await createAuditLog(ctx.user.id, 'create', 'edi_product_crosswalk', result.id);
+          return result;
+        }),
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          buyerPartNumber: z.string().optional(),
+          vendorPartNumber: z.string().optional(),
+          upc: z.string().optional(),
+          buyerDescription: z.string().optional(),
+          unitOfMeasure: z.string().optional(),
+          packSize: z.number().optional(),
+          innerPackSize: z.number().optional(),
+          caseUpc: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateEdiProductCrosswalk(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'edi_product_crosswalk', id);
+          return { success: true };
+        }),
+      delete: opsProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteEdiProductCrosswalk(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'edi_product_crosswalk', input.id);
+          return { success: true };
+        }),
+    }),
+
+    // Ship-To Locations
+    shipToLocations: router({
+      list: protectedProcedure
+        .input(z.object({ tradingPartnerId: z.number().optional() }).optional())
+        .query(({ input }) => db.getEdiShipToLocations(input?.tradingPartnerId)),
+      create: opsProcedure
+        .input(z.object({
+          tradingPartnerId: z.number(),
+          locationCode: z.string().min(1),
+          locationType: z.enum(["store", "distribution_center", "warehouse", "cross_dock"]).optional(),
+          name: z.string().min(1),
+          address: z.string().optional(),
+          city: z.string().optional(),
+          state: z.string().optional(),
+          postalCode: z.string().optional(),
+          country: z.string().optional(),
+          gln: z.string().optional(),
+          duns: z.string().optional(),
+          contactName: z.string().optional(),
+          contactPhone: z.string().optional(),
+          receivingHours: z.string().optional(),
+          specialInstructions: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createEdiShipToLocation(input);
+          await createAuditLog(ctx.user.id, 'create', 'edi_ship_to_location', result.id, input.name);
+          return result;
+        }),
+      update: opsProcedure
+        .input(z.object({
+          id: z.number(),
+          locationCode: z.string().optional(),
+          locationType: z.enum(["store", "distribution_center", "warehouse", "cross_dock"]).optional(),
+          name: z.string().optional(),
+          address: z.string().optional(),
+          city: z.string().optional(),
+          state: z.string().optional(),
+          postalCode: z.string().optional(),
+          country: z.string().optional(),
+          gln: z.string().optional(),
+          duns: z.string().optional(),
+          contactName: z.string().optional(),
+          contactPhone: z.string().optional(),
+          receivingHours: z.string().optional(),
+          specialInstructions: z.string().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateEdiShipToLocation(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'edi_ship_to_location', id);
+          return { success: true };
+        }),
+    }),
+
+    // Transport & Connectivity
+    transport: router({
+      testConnection: opsProcedure
+        .input(z.object({ partnerId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await testConnection(input.partnerId);
+          await createAuditLog(ctx.user.id, 'update', 'edi_trading_partner', input.partnerId, `Connection test: ${result.success ? 'success' : 'failed'}`);
+          return result;
+        }),
+      deliverOutbound: opsProcedure
+        .input(z.object({
+          partnerId: z.number(),
+          transactionSetCode: z.enum(["855", "810", "856"]),
+          sourceData: z.string(),
+          controlNumber: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const sourceData = JSON.parse(input.sourceData);
+          const result = await generateAndDeliver(input.partnerId, input.transactionSetCode, sourceData, input.controlNumber);
+          await createAuditLog(ctx.user.id, 'create', 'edi_transaction', result.transactionId, `Generated & delivered ${input.transactionSetCode}`);
+          return result;
+        }),
+      pollPartner: opsProcedure
+        .input(z.object({ partnerId: z.number(), remoteDir: z.string().optional() }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await pollSftpForInbound(input.partnerId, input.remoteDir);
+          await createAuditLog(ctx.user.id, 'update', 'edi_trading_partner', input.partnerId, `Polled: ${result.filesFound} files found, ${result.filesProcessed} processed`);
+          return result;
+        }),
+      pollAll: adminProcedure
+        .mutation(async ({ ctx }) => {
+          const results = await pollAllPartners();
+          const totalFound = results.reduce((sum, r) => sum + r.filesFound, 0);
+          const totalProcessed = results.reduce((sum, r) => sum + r.filesProcessed, 0);
+          await createAuditLog(ctx.user.id, 'update', 'edi_trading_partner', 0, `Poll all: ${totalFound} files found, ${totalProcessed} processed`);
+          return { partners: results.length, totalFound, totalProcessed, results };
+        }),
+    }),
+
+    // EDI Settings (company-wide config)
+    settings: router({
+      get: protectedProcedure.query(() => db.getEdiSettings()),
+      upsert: adminProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          isaId: z.string().min(1).max(15),
+          isaQualifier: z.string().max(2).optional(),
+          gsApplicationCode: z.string().min(1).max(15),
+          companyName: z.string().optional(),
+          ackTimeoutMinutes: z.number().optional(),
+          autoSend997: z.boolean().optional(),
+          defaultTestMode: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.upsertEdiSettings(input);
+          await createAuditLog(ctx.user.id, 'update', 'edi_settings', result.id, 'Updated EDI settings');
+          return result;
+        }),
+    }),
+
+    // Control Numbers
+    controlNumbers: router({
+      getNext: opsProcedure
+        .input(z.object({
+          tradingPartnerId: z.number(),
+          type: z.enum(["isa", "gs", "st"]),
+        }))
+        .mutation(async ({ input }) => {
+          const controlNumber = await db.getNextControlNumber(input.tradingPartnerId, input.type);
+          return { controlNumber };
+        }),
+    }),
+
+    // Compliance Scorecards
+    compliance: router({
+      list: protectedProcedure
+        .input(z.object({ tradingPartnerId: z.number().optional() }).optional())
+        .query(({ input }) => db.getEdiComplianceScorecards(input?.tradingPartnerId)),
+      create: opsProcedure
+        .input(z.object({
+          tradingPartnerId: z.number(),
+          periodStart: z.date(),
+          periodEnd: z.date(),
+          totalTransactions: z.number().optional(),
+          successfulTransactions: z.number().optional(),
+          failedTransactions: z.number().optional(),
+          avgProcessingTimeSeconds: z.number().optional(),
+          onTimeAckPercentage: z.string().optional(),
+          onTimeShipPercentage: z.string().optional(),
+          fillRatePercentage: z.string().optional(),
+          asnAccuracyPercentage: z.string().optional(),
+          chargebackCount: z.number().optional(),
+          chargebackAmount: z.string().optional(),
+          overallScore: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createEdiComplianceScorecard(input);
+          await createAuditLog(ctx.user.id, 'create', 'edi_compliance_scorecard', result.id);
+          return result;
+        }),
+    }),
   }),
 });
 
