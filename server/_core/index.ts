@@ -9,7 +9,7 @@ import { registerLocalAuthRoutes } from "./localAuth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { ENV, validateEmailConfig } from "./env";
+import { ENV, validateEmailConfig, validateCriticalConfig } from "./env";
 import * as sendgridProvider from "./sendgridProvider";
 import * as emailService from "./emailService";
 import * as db from "../db";
@@ -37,6 +37,8 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  validateCriticalConfig();
+
   const emailConfigValidation = validateEmailConfig();
   if (!emailConfigValidation.valid) {
     console.warn("[Email Config] Warning: Some email configuration is missing:");

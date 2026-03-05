@@ -38,6 +38,19 @@ export const ENV = {
 };
 
 /**
+ * Validate critical environment variables at startup
+ */
+export function validateCriticalConfig(): void {
+  const INSECURE_DEFAULTS = ["your-secret-key-here-min-32-chars", "changeme", "secret"];
+  if (!ENV.cookieSecret || ENV.cookieSecret.length < 32 || INSECURE_DEFAULTS.includes(ENV.cookieSecret)) {
+    if (ENV.isProduction) {
+      throw new Error("CRITICAL: JWT_SECRET must be a secure random value of at least 32 characters in production");
+    }
+    console.warn("[Security] WARNING: JWT_SECRET is weak or uses a default value. Generate a secure random value for production.");
+  }
+}
+
+/**
  * Validate required environment variables for production
  * Call this at startup to fail fast if critical config is missing
  */

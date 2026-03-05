@@ -215,8 +215,12 @@ export function verifyWebhookSignature(
   timestamp: string
 ): boolean {
   if (!ENV.sendgridWebhookSecret) {
-    console.warn("[SendGrid] Webhook secret not configured - skipping signature verification");
-    return true; // Allow if not configured (for development)
+    if (ENV.isProduction) {
+      console.error("[SendGrid] Webhook secret not configured in production - rejecting request");
+      return false;
+    }
+    console.warn("[SendGrid] Webhook secret not configured - skipping signature verification (dev only)");
+    return true;
   }
 
   try {
