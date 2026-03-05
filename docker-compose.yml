@@ -1,0 +1,60 @@
+services:
+  app:
+    build: .
+    container_name: erp-app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DATABASE_URL=mysql://erp_user:${MYSQL_PASSWORD:-erp_secure_password}@db:3306/ai_erp_system
+      - NODE_ENV=production
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - erp-network
+
+  db:
+    image: mysql:8.0
+    container_name: erp-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_secure_password}
+      MYSQL_DATABASE: ai_erp_system
+      MYSQL_USER: erp_user
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-erp_secure_password}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - erp-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: erp-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - app
+    networks:
+      - erp-network
+
+volumes:
+  mysql_data:
+
+networks:
+  erp-network:
+    driver: bridge
