@@ -8,7 +8,7 @@ import { sendEmail, isEmailConfigured, formatEmailHtml } from "./_core/email";
 import { processEmailReply, analyzeEmail, generateEmailReply } from "./emailReplyService";
 import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
-import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials, importParsedDocument, bulkImportDocuments } from "./documentImportService";
+import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, importCreditMemo, importBankStatement, importSalesOrder, importContract, matchLineItemsToMaterials, importParsedDocument, bulkImportDocuments } from "./documentImportService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
@@ -11392,6 +11392,114 @@ Ask if they received the original request and if they can provide a quote.`;
         return importCustomsDocument(input.documentData as any, ctx.user.id);
       }),
 
+    // Import a credit memo
+    importCreditMemo: protectedProcedure
+      .input(z.object({
+        memoData: z.object({
+          memoNumber: z.string(),
+          vendorName: z.string(),
+          vendorEmail: z.string().optional(),
+          memoDate: z.string(),
+          lineItems: z.array(z.object({
+            description: z.string(),
+            sku: z.string().optional(),
+            quantity: z.number(),
+            unit: z.string().optional(),
+            unitPrice: z.number(),
+            totalPrice: z.number(),
+          })),
+          subtotal: z.number().default(0),
+          taxAmount: z.number().optional(),
+          totalAmount: z.number(),
+          currency: z.string().optional(),
+          relatedInvoiceNumber: z.string().optional(),
+          reason: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importCreditMemo(input.memoData as any, ctx.user.id);
+      }),
+
+    // Import a bank statement
+    importBankStatement: protectedProcedure
+      .input(z.object({
+        statementData: z.object({
+          bankName: z.string(),
+          accountNumber: z.string(),
+          statementDate: z.string(),
+          periodStart: z.string(),
+          periodEnd: z.string(),
+          openingBalance: z.number(),
+          closingBalance: z.number(),
+          currency: z.string().optional(),
+          transactions: z.array(z.object({
+            date: z.string(),
+            description: z.string(),
+            amount: z.number(),
+            type: z.enum(["debit", "credit"]),
+            reference: z.string().optional(),
+          })),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importBankStatement(input.statementData as any, ctx.user.id);
+      }),
+
+    // Import a sales order (customer PO)
+    importSalesOrder: protectedProcedure
+      .input(z.object({
+        orderData: z.object({
+          orderNumber: z.string(),
+          customerName: z.string(),
+          customerEmail: z.string().optional(),
+          orderDate: z.string(),
+          deliveryDate: z.string().optional(),
+          lineItems: z.array(z.object({
+            description: z.string(),
+            sku: z.string().optional(),
+            quantity: z.number(),
+            unit: z.string().optional(),
+            unitPrice: z.number(),
+            totalPrice: z.number(),
+          })),
+          subtotal: z.number().default(0),
+          taxAmount: z.number().optional(),
+          shippingAmount: z.number().optional(),
+          totalAmount: z.number(),
+          currency: z.string().optional(),
+          shippingAddress: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importSalesOrder(input.orderData as any, ctx.user.id);
+      }),
+
+    // Import a contract/agreement
+    importContract: protectedProcedure
+      .input(z.object({
+        contractData: z.object({
+          contractNumber: z.string().optional(),
+          title: z.string(),
+          type: z.enum(["customer", "vendor", "employment", "nda", "partnership", "lease", "service", "other"]),
+          partyName: z.string(),
+          partyType: z.enum(["customer", "vendor", "employee", "other"]).optional(),
+          startDate: z.string(),
+          endDate: z.string().optional(),
+          value: z.number().optional(),
+          currency: z.string().optional(),
+          description: z.string().optional(),
+          terms: z.string().optional(),
+          renewalDate: z.string().optional(),
+          autoRenewal: z.boolean().optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importContract(input.contractData as any, ctx.user.id);
+      }),
+
     // Import a parsed document from the email inbox (bridge email OCR → real records)
     importParsedDocument: protectedProcedure
       .input(z.object({
@@ -11410,7 +11518,7 @@ Ask if they received the original request and if they can provide a quote.`;
         documents: z.array(z.object({
           content: z.string(),
           filename: z.string(),
-          hint: z.enum(["purchase_order", "vendor_invoice", "freight_invoice", "customs_document"]).optional(),
+          hint: z.enum(["purchase_order", "vendor_invoice", "freight_invoice", "customs_document", "credit_memo", "bank_statement", "sales_order", "contract"]).optional(),
         })),
         markPOsAsReceived: z.boolean().default(true),
       }))

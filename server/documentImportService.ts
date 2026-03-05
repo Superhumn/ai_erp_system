@@ -146,11 +146,15 @@ export interface ImportedCustomsDocument {
 
 export interface DocumentParseResult {
   success: boolean;
-  documentType: "purchase_order" | "freight_invoice" | "vendor_invoice" | "customs_document" | "unknown";
+  documentType: "purchase_order" | "freight_invoice" | "vendor_invoice" | "customs_document" | "credit_memo" | "bank_statement" | "sales_order" | "contract" | "unknown";
   purchaseOrder?: ImportedPurchaseOrder;
   freightInvoice?: ImportedFreightInvoice;
   vendorInvoice?: ImportedVendorInvoice;
   customsDocument?: ImportedCustomsDocument;
+  creditMemo?: ImportedCreditMemo;
+  bankStatement?: ImportedBankStatement;
+  salesOrder?: ImportedSalesOrder;
+  contract?: ImportedContract;
   rawText?: string;
   error?: string;
 }
@@ -179,7 +183,7 @@ export interface ImportResult {
 export async function parseUploadedDocument(
   fileUrl: string,
   filename: string,
-  documentHint?: "purchase_order" | "freight_invoice" | "vendor_invoice" | "customs_document",
+  documentHint?: "purchase_order" | "freight_invoice" | "vendor_invoice" | "customs_document" | "credit_memo" | "bank_statement" | "sales_order" | "contract",
   mimeType?: string
 ): Promise<DocumentParseResult> {
   console.log("[DocumentImport] Starting parse for:", filename, "URL:", fileUrl, "mimeType:", mimeType);
@@ -195,17 +199,25 @@ INSTRUCTIONS:
    - Vendor Invoice: A bill/invoice from a vendor for goods/services (has invoice number, line items with prices, amount due)
    - Freight Invoice: A shipping/logistics bill specifically for transportation/freight charges
    - Customs Document: Import/export documents like Bill of Lading, Customs Entry, Commercial Invoice for customs, Packing List, Certificate of Origin, Import Permit
+   - Credit Memo: A vendor adjustment/credit note reducing an amount owed (has memo/credit number, references original invoice)
+   - Bank Statement: A bank account statement showing transactions over a period (has account number, opening/closing balances, transaction list)
+   - Sales Order: A customer purchase order / sales order for YOUR goods/services (customer is buying FROM you)
+   - Contract: A legal agreement/contract between parties (vendor, customer, NDA, lease, service, employment, partnership)
 2. Extract all relevant structured data
 3. For Purchase Orders: extract PO number, vendor info, line items with quantities/prices, dates, totals
 4. For Vendor Invoices: extract invoice number, vendor info, line items with quantities/prices, due date, totals
 5. For Freight Invoices: extract invoice number, carrier info, shipment details, charges breakdown
 6. For Customs Documents: extract document number, shipper/consignee info, country of origin, port info, HS codes, duties/taxes
-7. Match line item descriptions to common raw materials if possible
-8. Assign a confidence score (0-100) based on extraction completeness
+7. For Credit Memos: extract memo number, vendor info, line items, related invoice number, reason for credit
+8. For Bank Statements: extract bank name, account number, period dates, opening/closing balances, all individual transactions
+9. For Sales Orders: extract order number, customer info, line items, shipping address, totals
+10. For Contracts: extract title, type, parties, dates, value, terms, renewal info
+11. Match line item descriptions to common raw materials if possible
+12. Assign a confidence score (0-100) based on extraction completeness
 
 Return a JSON object with this structure:
 {
-  "documentType": "purchase_order" | "vendor_invoice" | "freight_invoice" | "customs_document" | "unknown",
+  "documentType": "purchase_order" | "vendor_invoice" | "freight_invoice" | "customs_document" | "credit_memo" | "bank_statement" | "sales_order" | "contract" | "unknown",
   "confidence": 85,
   "purchaseOrder": {
     "poNumber": "PO-12345",
@@ -312,6 +324,62 @@ Return a JSON object with this structure:
     "relatedPoNumber": "PO-12345",
     "trackingNumber": "TRK123456",
     "notes": "Temperature controlled cargo"
+  },
+  "creditMemo": {
+    "memoNumber": "CM-001",
+    "vendorName": "Supplier Inc",
+    "vendorEmail": "billing@supplier.com",
+    "memoDate": "2025-01-20",
+    "lineItems": [{ "description": "Returned items", "quantity": 10, "unit": "EA", "unitPrice": 25.00, "totalPrice": 250.00 }],
+    "subtotal": 250.00,
+    "taxAmount": 20.00,
+    "totalAmount": 270.00,
+    "currency": "USD",
+    "relatedInvoiceNumber": "INV-12345",
+    "reason": "Defective goods returned"
+  },
+  "bankStatement": {
+    "bankName": "First National Bank",
+    "accountNumber": "****1234",
+    "statementDate": "2025-01-31",
+    "periodStart": "2025-01-01",
+    "periodEnd": "2025-01-31",
+    "openingBalance": 10000.00,
+    "closingBalance": 12500.00,
+    "currency": "USD",
+    "transactions": [
+      { "date": "2025-01-05", "description": "Customer payment - ABC Corp", "amount": 5000.00, "type": "credit", "reference": "CHK-1234" },
+      { "date": "2025-01-10", "description": "Vendor payment - Supplier Inc", "amount": 2500.00, "type": "debit", "reference": "ACH-5678" }
+    ]
+  },
+  "salesOrder": {
+    "orderNumber": "CUST-PO-001",
+    "customerName": "ABC Corporation",
+    "customerEmail": "purchasing@abc.com",
+    "orderDate": "2025-01-15",
+    "deliveryDate": "2025-02-01",
+    "lineItems": [{ "description": "Widget A", "quantity": 100, "unit": "EA", "unitPrice": 15.00, "totalPrice": 1500.00, "sku": "WID-A" }],
+    "subtotal": 1500.00,
+    "taxAmount": 120.00,
+    "shippingAmount": 50.00,
+    "totalAmount": 1670.00,
+    "currency": "USD",
+    "shippingAddress": "123 Main St, New York, NY 10001"
+  },
+  "contract": {
+    "contractNumber": "CTR-2025-001",
+    "title": "Supply Agreement with Supplier Inc",
+    "type": "vendor",
+    "partyName": "Supplier Inc",
+    "partyType": "vendor",
+    "startDate": "2025-01-01",
+    "endDate": "2025-12-31",
+    "value": 100000.00,
+    "currency": "USD",
+    "description": "Annual supply agreement for raw materials",
+    "terms": "Net 30 payment terms, minimum order quantity 1000 units",
+    "renewalDate": "2025-11-01",
+    "autoRenewal": true
   }
 }
 
@@ -721,6 +789,10 @@ If document type is unknown, return all as null.`;
       vendorInvoice: parsed.vendorInvoice,
       freightInvoice: parsed.freightInvoice,
       customsDocument: parsed.customsDocument,
+      creditMemo: parsed.creditMemo,
+      bankStatement: parsed.bankStatement,
+      salesOrder: parsed.salesOrder,
+      contract: parsed.contract,
       rawText: `Document parsed from: ${fileUrl}`
     };
   } catch (error) {
@@ -1283,11 +1355,460 @@ export async function importCustomsDocument(
   }
 }
 
+// ============================================
+// NEW DOCUMENT TYPES
+// ============================================
+
+export interface ImportedCreditMemo {
+  memoNumber: string;
+  vendorName: string;
+  vendorEmail?: string;
+  memoDate: string;
+  lineItems: ImportedLineItem[];
+  subtotal: number;
+  taxAmount?: number;
+  totalAmount: number;
+  currency?: string;
+  relatedInvoiceNumber?: string;
+  reason?: string;
+  notes?: string;
+  confidence: number;
+}
+
+export interface ImportedBankStatement {
+  bankName: string;
+  accountNumber: string;
+  statementDate: string;
+  periodStart: string;
+  periodEnd: string;
+  openingBalance: number;
+  closingBalance: number;
+  currency?: string;
+  transactions: {
+    date: string;
+    description: string;
+    amount: number;
+    type: "debit" | "credit";
+    reference?: string;
+  }[];
+  confidence: number;
+}
+
+export interface ImportedSalesOrder {
+  orderNumber: string;
+  customerName: string;
+  customerEmail?: string;
+  orderDate: string;
+  deliveryDate?: string;
+  lineItems: ImportedLineItem[];
+  subtotal: number;
+  taxAmount?: number;
+  shippingAmount?: number;
+  totalAmount: number;
+  currency?: string;
+  shippingAddress?: string;
+  notes?: string;
+  confidence: number;
+}
+
+export interface ImportedContract {
+  contractNumber?: string;
+  title: string;
+  type: "customer" | "vendor" | "employment" | "nda" | "partnership" | "lease" | "service" | "other";
+  partyName: string;
+  partyType?: "customer" | "vendor" | "employee" | "other";
+  startDate: string;
+  endDate?: string;
+  value?: number;
+  currency?: string;
+  description?: string;
+  terms?: string;
+  renewalDate?: string;
+  autoRenewal?: boolean;
+  notes?: string;
+  confidence: number;
+}
+
+/**
+ * Import a credit memo/debit note — creates a credit_note invoice in the system
+ */
+export async function importCreditMemo(
+  memo: ImportedCreditMemo,
+  userId: number
+): Promise<ImportResult> {
+  const createdRecords: ImportResult["createdRecords"] = [];
+  const updatedRecords: ImportResult["updatedRecords"] = [];
+  const warnings: string[] = [];
+
+  try {
+    // 1. Find or create vendor
+    let vendor = await db.getVendorByName(memo.vendorName);
+    if (!vendor) {
+      const vendorResult = await db.createVendor({
+        name: memo.vendorName,
+        email: memo.vendorEmail || "",
+        type: "supplier",
+        status: "active"
+      });
+      vendor = await db.getVendorById(vendorResult.id) || null;
+      createdRecords.push({ type: "vendor", id: vendorResult.id, name: memo.vendorName });
+    }
+
+    // 2. Create a credit note invoice (negative amount)
+    const invoiceResult = await db.createInvoice({
+      invoiceNumber: memo.memoNumber,
+      customerId: vendor!.id, // Using vendor as customerId for payables context
+      type: "credit_note",
+      status: "draft",
+      issueDate: new Date(memo.memoDate),
+      subtotal: (-Math.abs(memo.subtotal)).toString(),
+      taxAmount: memo.taxAmount ? (-Math.abs(memo.taxAmount)).toString() : "0",
+      totalAmount: (-Math.abs(memo.totalAmount)).toString(),
+      currency: memo.currency || "USD",
+      notes: `Credit memo from ${memo.vendorName}.${memo.relatedInvoiceNumber ? ` Related invoice: ${memo.relatedInvoiceNumber}.` : ''}${memo.reason ? ` Reason: ${memo.reason}` : ''}${memo.notes ? ` ${memo.notes}` : ''}`,
+      createdBy: userId,
+    });
+    createdRecords.push({ type: "invoice", id: invoiceResult.id, name: memo.memoNumber });
+
+    // 3. Create line items
+    for (const item of memo.lineItems) {
+      await db.createInvoiceItem({
+        invoiceId: invoiceResult.id,
+        description: item.description,
+        quantity: (-Math.abs(item.quantity)).toString(),
+        unitPrice: item.unitPrice.toString(),
+        totalAmount: (-Math.abs(item.totalPrice)).toString(),
+      });
+    }
+
+    const result: ImportResult = {
+      success: true,
+      documentType: "credit_memo",
+      createdRecords,
+      updatedRecords,
+      warnings
+    };
+
+    emitDocumentImportEvent("credit_memo_received", "invoice", invoiceResult.id, {
+      memoNumber: memo.memoNumber,
+      vendorName: memo.vendorName,
+      totalAmount: memo.totalAmount,
+    });
+
+    return result;
+  } catch (error) {
+    return {
+      success: false,
+      documentType: "credit_memo",
+      createdRecords,
+      updatedRecords,
+      warnings,
+      error: error instanceof Error ? error.message : "Import failed"
+    };
+  }
+}
+
+/**
+ * Import a bank statement — creates transactions for each statement line
+ */
+export async function importBankStatement(
+  statement: ImportedBankStatement,
+  userId: number
+): Promise<ImportResult> {
+  const createdRecords: ImportResult["createdRecords"] = [];
+  const updatedRecords: ImportResult["updatedRecords"] = [];
+  const warnings: string[] = [];
+
+  try {
+    // Create a parent transaction as a journal entry summarizing the statement
+    const txnResult = await db.createTransaction({
+      transactionNumber: `STMT-${statement.accountNumber}-${statement.statementDate}`,
+      type: "journal",
+      date: new Date(statement.statementDate),
+      description: `Bank statement: ${statement.bankName} account ${statement.accountNumber} (${statement.periodStart} to ${statement.periodEnd})`,
+      totalAmount: statement.closingBalance.toString(),
+      currency: statement.currency || "USD",
+      status: "draft",
+      createdBy: userId,
+    });
+    createdRecords.push({
+      type: "transaction",
+      id: txnResult.id,
+      name: `Statement ${statement.bankName} ${statement.periodStart}-${statement.periodEnd}`
+    });
+
+    // Create individual transactions for each statement line
+    for (const txn of statement.transactions) {
+      const txnLineResult = await db.createTransaction({
+        transactionNumber: `STMT-${txn.reference || Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        type: txn.type === "debit" ? "expense" : "payment",
+        referenceType: "bank_statement",
+        referenceId: txnResult.id,
+        date: new Date(txn.date),
+        description: txn.description,
+        totalAmount: txn.amount.toString(),
+        currency: statement.currency || "USD",
+        status: "draft",
+        createdBy: userId,
+      });
+      createdRecords.push({
+        type: "transaction",
+        id: txnLineResult.id,
+        name: `${txn.date}: ${txn.description} (${txn.type === "debit" ? "-" : "+"}$${Math.abs(txn.amount)})`
+      });
+    }
+
+    const result: ImportResult = {
+      success: true,
+      documentType: "bank_statement",
+      createdRecords,
+      updatedRecords,
+      warnings
+    };
+
+    emitDocumentImportEvent("bank_statement_imported", "transaction", txnResult.id, {
+      bankName: statement.bankName,
+      accountNumber: statement.accountNumber,
+      transactionCount: statement.transactions.length,
+      openingBalance: statement.openingBalance,
+      closingBalance: statement.closingBalance,
+    });
+
+    return result;
+  } catch (error) {
+    return {
+      success: false,
+      documentType: "bank_statement",
+      createdRecords,
+      updatedRecords,
+      warnings,
+      error: error instanceof Error ? error.message : "Import failed"
+    };
+  }
+}
+
+/**
+ * Import a sales order (customer PO) into the system
+ */
+export async function importSalesOrder(
+  order: ImportedSalesOrder,
+  userId: number
+): Promise<ImportResult> {
+  const createdRecords: ImportResult["createdRecords"] = [];
+  const updatedRecords: ImportResult["updatedRecords"] = [];
+  const warnings: string[] = [];
+
+  try {
+    // 1. Find or create customer
+    let customer = order.customerEmail
+      ? await db.getCustomerByEmail(order.customerEmail)
+      : await db.getCustomerByName(order.customerName);
+
+    if (!customer) {
+      const customerResult = await db.createCustomer({
+        name: order.customerName,
+        email: order.customerEmail || "",
+        status: "active",
+      });
+      customer = await db.getCustomerById(customerResult.id);
+      createdRecords.push({ type: "customer", id: customerResult.id, name: order.customerName });
+    }
+
+    // 2. Create the sales order
+    const soResult = await db.createSalesOrder({
+      source: "other",
+      customerId: customer!.id,
+      status: "confirmed",
+      fulfillmentStatus: "unfulfilled",
+      paymentStatus: "pending",
+      subtotal: order.subtotal.toString(),
+      taxAmount: (order.taxAmount || 0).toString(),
+      shippingAmount: (order.shippingAmount || 0).toString(),
+      totalAmount: order.totalAmount.toString(),
+      currency: order.currency || "USD",
+      notes: `Imported from document ${order.orderNumber}.${order.notes ? ` ${order.notes}` : ''}`,
+      orderDate: new Date(order.orderDate),
+    });
+    createdRecords.push({ type: "sales_order", id: soResult.id, name: soResult.orderNumber });
+
+    // 3. Match line items to products and create order lines
+    for (const item of order.lineItems) {
+      let productId: number | undefined;
+      if (item.sku) {
+        const product = await db.getProductBySku(item.sku);
+        if (product) productId = product.id;
+      }
+
+      if (!productId) {
+        // Create a placeholder product
+        const productResult = await db.createProduct({
+          name: item.description,
+          sku: item.sku || `PROD-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+          price: item.unitPrice.toString(),
+          cost: "0",
+          status: "active",
+        });
+        productId = productResult.id;
+        createdRecords.push({ type: "product", id: productResult.id, name: item.description });
+      }
+
+      await db.createSalesOrderLine({
+        salesOrderId: soResult.id,
+        productId,
+        sku: item.sku,
+        name: item.description,
+        quantity: item.quantity.toString(),
+        unitPrice: item.unitPrice.toString(),
+        totalPrice: item.totalPrice.toString(),
+        unit: item.unit || "EA",
+      });
+    }
+
+    const result: ImportResult = {
+      success: true,
+      documentType: "sales_order",
+      createdRecords,
+      updatedRecords,
+      warnings
+    };
+
+    emitDocumentImportEvent("sales_order_received", "sales_order", soResult.id, {
+      orderNumber: soResult.orderNumber,
+      customerName: order.customerName,
+      totalAmount: order.totalAmount,
+      lineItemCount: order.lineItems.length,
+    });
+
+    return result;
+  } catch (error) {
+    return {
+      success: false,
+      documentType: "sales_order",
+      createdRecords,
+      updatedRecords,
+      warnings,
+      error: error instanceof Error ? error.message : "Import failed"
+    };
+  }
+}
+
+/**
+ * Import a contract/agreement into the system
+ */
+export async function importContract(
+  contract: ImportedContract,
+  userId: number
+): Promise<ImportResult> {
+  const createdRecords: ImportResult["createdRecords"] = [];
+  const updatedRecords: ImportResult["updatedRecords"] = [];
+  const warnings: string[] = [];
+
+  try {
+    // 1. Find or create the other party
+    let partyId: number | undefined;
+    const partyType = contract.partyType || (contract.type === "customer" ? "customer" : contract.type === "vendor" ? "vendor" : "other");
+
+    if (partyType === "vendor") {
+      let vendor = await db.getVendorByName(contract.partyName);
+      if (!vendor) {
+        const vendorResult = await db.createVendor({
+          name: contract.partyName,
+          email: "",
+          type: "supplier",
+          status: "active"
+        });
+        vendor = await db.getVendorById(vendorResult.id) || null;
+        createdRecords.push({ type: "vendor", id: vendorResult.id, name: contract.partyName });
+      }
+      partyId = vendor!.id;
+    } else if (partyType === "customer") {
+      let customer = await db.getCustomerByName(contract.partyName);
+      if (!customer) {
+        const customerResult = await db.createCustomer({
+          name: contract.partyName,
+          email: "",
+          status: "active",
+        });
+        customer = await db.getCustomerById(customerResult.id);
+        createdRecords.push({ type: "customer", id: customerResult.id, name: contract.partyName });
+      }
+      partyId = customer!.id;
+    }
+
+    // 2. Create the contract
+    const contractResult = await db.createContract({
+      contractNumber: contract.contractNumber || `CTR-${Date.now().toString(36).toUpperCase()}`,
+      title: contract.title,
+      type: contract.type,
+      status: "pending_review",
+      partyType: partyType as any,
+      partyId,
+      partyName: contract.partyName,
+      startDate: new Date(contract.startDate),
+      endDate: contract.endDate ? new Date(contract.endDate) : undefined,
+      renewalDate: contract.renewalDate ? new Date(contract.renewalDate) : undefined,
+      autoRenewal: contract.autoRenewal ?? false,
+      value: contract.value?.toString(),
+      currency: contract.currency || "USD",
+      description: contract.description,
+      terms: contract.terms,
+      createdBy: userId,
+    });
+    createdRecords.push({ type: "contract", id: contractResult.id, name: contract.title });
+
+    // 3. Create key dates
+    if (contract.endDate) {
+      await db.createContractKeyDate({
+        contractId: contractResult.id,
+        dateType: "expiration",
+        date: new Date(contract.endDate),
+        description: "Contract expiration",
+        reminderDays: 30,
+      });
+    }
+    if (contract.renewalDate) {
+      await db.createContractKeyDate({
+        contractId: contractResult.id,
+        dateType: "renewal",
+        date: new Date(contract.renewalDate),
+        description: "Renewal date",
+        reminderDays: 60,
+      });
+    }
+
+    const result: ImportResult = {
+      success: true,
+      documentType: "contract",
+      createdRecords,
+      updatedRecords,
+      warnings
+    };
+
+    emitDocumentImportEvent("contract_received", "contract", contractResult.id, {
+      title: contract.title,
+      type: contract.type,
+      partyName: contract.partyName,
+      value: contract.value,
+    });
+
+    return result;
+  } catch (error) {
+    return {
+      success: false,
+      documentType: "contract",
+      createdRecords,
+      updatedRecords,
+      warnings,
+      error: error instanceof Error ? error.message : "Import failed"
+    };
+  }
+}
+
 /**
  * Process multiple documents in bulk
  */
 export async function bulkImportDocuments(
-  documents: { content: string; filename: string; hint?: "purchase_order" | "vendor_invoice" | "freight_invoice" | "customs_document" }[],
+  documents: { content: string; filename: string; hint?: "purchase_order" | "vendor_invoice" | "freight_invoice" | "customs_document" | "credit_memo" | "bank_statement" | "sales_order" | "contract" }[],
   userId: number,
   markPOsAsReceived: boolean = true
 ): Promise<{
@@ -1326,6 +1847,14 @@ export async function bulkImportDocuments(
       importResult = await importFreightInvoice(parseResult.freightInvoice, userId);
     } else if (parseResult.documentType === "customs_document" && parseResult.customsDocument) {
       importResult = await importCustomsDocument(parseResult.customsDocument, userId);
+    } else if (parseResult.documentType === "credit_memo" && parseResult.creditMemo) {
+      importResult = await importCreditMemo(parseResult.creditMemo, userId);
+    } else if (parseResult.documentType === "bank_statement" && parseResult.bankStatement) {
+      importResult = await importBankStatement(parseResult.bankStatement, userId);
+    } else if (parseResult.documentType === "sales_order" && parseResult.salesOrder) {
+      importResult = await importSalesOrder(parseResult.salesOrder, userId);
+    } else if (parseResult.documentType === "contract" && parseResult.contract) {
+      importResult = await importContract(parseResult.contract, userId);
     } else {
       importResult = {
         success: false,
@@ -1458,6 +1987,71 @@ export async function importParsedDocument(
       confidence: parseFloat(doc.confidence || "0"),
     };
     result = await importCustomsDocument(customsData, userId);
+
+  } else if (doc.documentType === "credit_memo") {
+    const rawData = (doc.rawExtractedData as any)?.structuredData || {};
+    const memoData: ImportedCreditMemo = {
+      memoNumber: doc.documentNumber || `EMAIL-CM-${doc.emailId}-${doc.id}`,
+      vendorName: doc.vendorName || "Unknown Vendor",
+      vendorEmail: doc.vendorEmail || undefined,
+      memoDate: doc.documentDate ? new Date(doc.documentDate).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+      lineItems,
+      subtotal: parseFloat(doc.subtotal || "0") || lineItems.reduce((s, i) => s + i.totalPrice, 0),
+      taxAmount: parseFloat(doc.taxAmount || "0") || undefined,
+      totalAmount: parseFloat(doc.totalAmount || "0") || lineItems.reduce((s, i) => s + i.totalPrice, 0),
+      currency: doc.currency || "USD",
+      relatedInvoiceNumber: rawData.invoiceNumber,
+      confidence: parseFloat(doc.confidence || "0"),
+    };
+    result = await importCreditMemo(memoData, userId);
+
+  } else if (doc.documentType === "bank_statement") {
+    const rawData = (doc.rawExtractedData as any)?.structuredData || {};
+    const stmtData: ImportedBankStatement = {
+      bankName: rawData.bankName || doc.vendorName || "Unknown Bank",
+      accountNumber: rawData.accountNumber || "Unknown",
+      statementDate: doc.documentDate ? new Date(doc.documentDate).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+      periodStart: rawData.statementPeriodStart || rawData.startDate || new Date().toISOString().split("T")[0],
+      periodEnd: rawData.statementPeriodEnd || rawData.endDate || new Date().toISOString().split("T")[0],
+      openingBalance: rawData.openingBalance || 0,
+      closingBalance: rawData.closingBalance || parseFloat(doc.totalAmount || "0"),
+      currency: doc.currency || "USD",
+      transactions: Array.isArray(rawData.statementTransactions) ? rawData.statementTransactions : [],
+      confidence: parseFloat(doc.confidence || "0"),
+    };
+    result = await importBankStatement(stmtData, userId);
+
+  } else if (doc.documentType === "sales_order") {
+    const rawData = (doc.rawExtractedData as any)?.structuredData || {};
+    const soData: ImportedSalesOrder = {
+      orderNumber: doc.documentNumber || `EMAIL-SO-${doc.emailId}-${doc.id}`,
+      customerName: rawData.customerName || doc.vendorName || "Unknown Customer",
+      customerEmail: rawData.customerEmail || doc.vendorEmail || undefined,
+      orderDate: doc.documentDate ? new Date(doc.documentDate).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+      lineItems,
+      subtotal: parseFloat(doc.subtotal || "0") || lineItems.reduce((s, i) => s + i.totalPrice, 0),
+      taxAmount: parseFloat(doc.taxAmount || "0") || undefined,
+      shippingAmount: parseFloat(doc.shippingAmount || "0") || undefined,
+      totalAmount: parseFloat(doc.totalAmount || "0") || lineItems.reduce((s, i) => s + i.totalPrice, 0),
+      currency: doc.currency || "USD",
+      confidence: parseFloat(doc.confidence || "0"),
+    };
+    result = await importSalesOrder(soData, userId);
+
+  } else if (doc.documentType === "contract") {
+    const rawData = (doc.rawExtractedData as any)?.structuredData || {};
+    const contractData: ImportedContract = {
+      title: rawData.notes || doc.documentNumber || `Contract from ${doc.vendorName || "Unknown"}`,
+      type: (rawData.contractType as any) || "other",
+      partyName: rawData.partyName || doc.vendorName || "Unknown Party",
+      startDate: rawData.startDate || (doc.documentDate ? new Date(doc.documentDate).toISOString().split("T")[0] : new Date().toISOString().split("T")[0]),
+      endDate: rawData.endDate,
+      value: parseFloat(doc.totalAmount || "0") || undefined,
+      currency: doc.currency || "USD",
+      description: rawData.notes,
+      confidence: parseFloat(doc.confidence || "0"),
+    };
+    result = await importContract(contractData, userId);
 
   } else {
     result = {

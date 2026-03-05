@@ -6,7 +6,7 @@
 import { invokeLLM } from './llm';
 
 export interface ExtractedAttachmentData {
-  type: 'invoice' | 'receipt' | 'purchase_order' | 'shipping_document' | 'customs_document' | 'bill_of_lading' | 'packing_list' | 'unknown';
+  type: 'invoice' | 'receipt' | 'purchase_order' | 'shipping_document' | 'customs_document' | 'bill_of_lading' | 'packing_list' | 'credit_memo' | 'bank_statement' | 'sales_order' | 'contract' | 'unknown';
   confidence: number;
   extractedText: string;
   structuredData: {
@@ -52,6 +52,27 @@ export interface ExtractedAttachmentData {
     containerNumber?: string;
     hsCode?: string;
 
+    // Contract fields
+    contractType?: string;
+    startDate?: string;
+    endDate?: string;
+    partyName?: string;
+
+    // Bank statement fields
+    accountNumber?: string;
+    bankName?: string;
+    statementPeriodStart?: string;
+    statementPeriodEnd?: string;
+    openingBalance?: number;
+    closingBalance?: number;
+    statementTransactions?: Array<{
+      date: string;
+      description: string;
+      amount: number;
+      type: string;
+      reference?: string;
+    }>;
+
     // Additional fields
     poNumber?: string;
     invoiceNumber?: string;
@@ -90,7 +111,7 @@ export async function processAttachment(
           content: `You are a document processing assistant specialized in extracting structured data from business documents.
           
 Analyze the provided document image/PDF and extract:
-1. Document type (invoice, receipt, purchase_order, shipping_document, customs_document, bill_of_lading, packing_list, or unknown)
+1. Document type (invoice, receipt, purchase_order, shipping_document, customs_document, bill_of_lading, packing_list, credit_memo, bank_statement, sales_order, contract, or unknown)
 2. All visible text
 3. Structured data including:
    - Document number, date, amounts
@@ -135,7 +156,7 @@ Return your analysis in the specified JSON format.`
             properties: {
               documentType: {
                 type: 'string',
-                enum: ['invoice', 'receipt', 'purchase_order', 'shipping_document', 'customs_document', 'bill_of_lading', 'packing_list', 'unknown'],
+                enum: ['invoice', 'receipt', 'purchase_order', 'shipping_document', 'customs_document', 'bill_of_lading', 'packing_list', 'credit_memo', 'bank_statement', 'sales_order', 'contract', 'unknown'],
                 description: 'The type of document'
               },
               confidence: {
@@ -182,6 +203,32 @@ Return your analysis in the specified JSON format.`
               portOfEntry: { type: 'string', description: 'Port of entry for customs docs' },
               containerNumber: { type: 'string', description: 'Container number for shipping/customs' },
               hsCode: { type: 'string', description: 'Harmonized System code for customs' },
+              contractType: { type: 'string', description: 'Contract type (vendor, customer, nda, lease, service, employment, partnership)' },
+              startDate: { type: 'string', description: 'Contract/period start date' },
+              endDate: { type: 'string', description: 'Contract/period end date' },
+              partyName: { type: 'string', description: 'Other party name (for contracts)' },
+              accountNumber: { type: 'string', description: 'Bank account number (for bank statements)' },
+              bankName: { type: 'string', description: 'Bank name (for bank statements)' },
+              statementPeriodStart: { type: 'string', description: 'Statement period start date' },
+              statementPeriodEnd: { type: 'string', description: 'Statement period end date' },
+              openingBalance: { type: 'number', description: 'Opening balance (for bank statements)' },
+              closingBalance: { type: 'number', description: 'Closing balance (for bank statements)' },
+              statementTransactions: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    date: { type: 'string' },
+                    description: { type: 'string' },
+                    amount: { type: 'number' },
+                    type: { type: 'string', description: 'debit or credit' },
+                    reference: { type: 'string' }
+                  },
+                  required: ['date', 'description', 'amount', 'type'],
+                  additionalProperties: false
+                },
+                description: 'Individual transactions from a bank statement'
+              },
               poNumber: { type: 'string', description: 'Purchase order reference' },
               invoiceNumber: { type: 'string', description: 'Invoice number reference' },
               notes: { type: 'string', description: 'Any additional notes or comments' }
@@ -226,6 +273,17 @@ Return your analysis in the specified JSON format.`
         portOfEntry: parsed.portOfEntry,
         containerNumber: parsed.containerNumber,
         hsCode: parsed.hsCode,
+        contractType: parsed.contractType,
+        startDate: parsed.startDate,
+        endDate: parsed.endDate,
+        partyName: parsed.partyName,
+        accountNumber: parsed.accountNumber,
+        bankName: parsed.bankName,
+        statementPeriodStart: parsed.statementPeriodStart,
+        statementPeriodEnd: parsed.statementPeriodEnd,
+        openingBalance: parsed.openingBalance,
+        closingBalance: parsed.closingBalance,
+        statementTransactions: parsed.statementTransactions,
         poNumber: parsed.poNumber,
         invoiceNumber: parsed.invoiceNumber,
         notes: parsed.notes,
@@ -318,6 +376,10 @@ export function categorizeByAttachments(
     'customs_document': 'customs_document',
     'bill_of_lading': 'shipping_confirmation',
     'packing_list': 'shipping_confirmation',
+    'credit_memo': 'invoice',
+    'bank_statement': 'general',
+    'sales_order': 'purchase_order',
+    'contract': 'general',
   };
 
   return {
