@@ -6,6 +6,7 @@ import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { invokeLLM } from "./_core/llm";
 import { sendEmail, isEmailConfigured, formatEmailHtml } from "./_core/email";
 import { processEmailReply, analyzeEmail, generateEmailReply } from "./emailReplyService";
+import { analyzeTone, analyzeMultipleEmails, generateToneMatchedReply } from "./emailToneService";
 import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
@@ -4846,6 +4847,354 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
         });
         
         return { task, preview };
+      }),
+  }),
+
+  // ============================================
+  // EMAIL TONE & REPLY GENERATOR
+  // ============================================
+  emailTone: router({
+    // Get all tone profiles for the current user
+    getProfiles: protectedProcedure.query(async ({ ctx }) => {
+      return db.getEmailToneProfiles(ctx.user.id);
+    }),
+
+    // Get a single tone profile by ID
+    getProfile: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        return db.getEmailToneProfileById(input.id);
+      }),
+
+    // Analyze a single email text for tone
+    analyzeTone: protectedProcedure
+      .input(z.object({ emailText: z.string().min(10) }))
+      .mutation(async ({ input }) => {
+        return analyzeTone(input.emailText);
+      }),
+
+    // Create a new tone profile from sample emails
+    createProfile: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        emails: z.array(z.string().min(10)).min(1).max(20),
+        isDefault: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Analyze all provided emails
+        const aggregated = await analyzeMultipleEmails(input.emails);
+
+        // If setting as default, unset other defaults
+        if (input.isDefault) {
+          const existing = await db.getEmailToneProfiles(ctx.user.id);
+          for (const profile of existing) {
+            if (profile.isDefault) {
+              await db.updateEmailToneProfile(profile.id, { isDefault: false });
+            }
+          }
+        }
+
+        // Create the profile
+        const profile = await db.createEmailToneProfile({
+          userId: ctx.user.id,
+          name: input.name,
+          description: input.description || null,
+          formality: String(aggregated.formality),
+          friendliness: String(aggregated.friendliness),
+          assertiveness: String(aggregated.assertiveness),
+          verbosity: String(aggregated.verbosity),
+          commonGreetings: aggregated.commonGreetings,
+          commonClosings: aggregated.commonClosings,
+          vocabularyLevel: aggregated.vocabularyLevel,
+          sentenceStructure: aggregated.sentenceStructure,
+          usesEmoji: aggregated.usesEmoji,
+          usesBulletPoints: aggregated.usesBulletPoints,
+          signatureStyle: aggregated.signatureStyle,
+          samplePhrases: aggregated.samplePhrases,
+          emailsScanned: aggregated.emailsScanned,
+          isDefault: input.isDefault ?? false,
+          isActive: true,
+        });
+
+        // Store individual email samples
+        for (const emailText of input.emails) {
+          const analysis = await analyzeTone(emailText);
+          await db.createEmailToneSample({
+            profileId: profile.id as number,
+            subject: null,
+            bodySnippet: emailText.substring(0, 500),
+            detectedTone: analysis.detectedTone,
+            formality: String(analysis.formality),
+            friendliness: String(analysis.friendliness),
+            assertiveness: String(analysis.assertiveness),
+            verbosity: String(analysis.verbosity),
+            sourceType: "pasted_text",
+            sourceEmailId: null,
+          });
+        }
+
+        return profile;
+      }),
+
+    // Add more sample emails to an existing profile and re-analyze
+    addSamples: protectedProcedure
+      .input(z.object({
+        profileId: z.number(),
+        emails: z.array(z.string().min(10)).min(1).max(20),
+      }))
+      .mutation(async ({ input }) => {
+        const profile = await db.getEmailToneProfileById(input.profileId);
+        if (!profile) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Profile not found" });
+        }
+
+        // Get existing samples
+        const existingSamples = await db.getEmailToneSamples(input.profileId);
+        const allEmailTexts = [
+          ...existingSamples.map((s) => s.bodySnippet || ""),
+          ...input.emails,
+        ].filter(Boolean);
+
+        // Re-analyze with all emails
+        const aggregated = await analyzeMultipleEmails(allEmailTexts);
+
+        // Store new samples
+        for (const emailText of input.emails) {
+          const analysis = await analyzeTone(emailText);
+          await db.createEmailToneSample({
+            profileId: input.profileId,
+            subject: null,
+            bodySnippet: emailText.substring(0, 500),
+            detectedTone: analysis.detectedTone,
+            formality: String(analysis.formality),
+            friendliness: String(analysis.friendliness),
+            assertiveness: String(analysis.assertiveness),
+            verbosity: String(analysis.verbosity),
+            sourceType: "pasted_text",
+            sourceEmailId: null,
+          });
+        }
+
+        // Update the profile with new aggregated data
+        return db.updateEmailToneProfile(input.profileId, {
+          formality: String(aggregated.formality),
+          friendliness: String(aggregated.friendliness),
+          assertiveness: String(aggregated.assertiveness),
+          verbosity: String(aggregated.verbosity),
+          commonGreetings: aggregated.commonGreetings,
+          commonClosings: aggregated.commonClosings,
+          vocabularyLevel: aggregated.vocabularyLevel,
+          sentenceStructure: aggregated.sentenceStructure,
+          usesEmoji: aggregated.usesEmoji,
+          usesBulletPoints: aggregated.usesBulletPoints,
+          signatureStyle: aggregated.signatureStyle,
+          samplePhrases: aggregated.samplePhrases,
+          emailsScanned: aggregated.emailsScanned,
+        });
+      }),
+
+    // Scan sent emails from the database to build a profile
+    scanSentEmails: protectedProcedure
+      .input(z.object({
+        profileId: z.number(),
+        limit: z.number().min(1).max(50).default(20),
+      }))
+      .mutation(async ({ input }) => {
+        const profile = await db.getEmailToneProfileById(input.profileId);
+        if (!profile) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Profile not found" });
+        }
+
+        // Fetch recent sent emails
+        const sentEmailRecords = await db.getSentEmailsForToneAnalysis(input.limit);
+        if (sentEmailRecords.length === 0) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "No sent emails found to analyze" });
+        }
+
+        const emailTexts = sentEmailRecords.map((e) =>
+          [e.subject ? `Subject: ${e.subject}` : "", e.bodyText || ""].filter(Boolean).join("\n\n")
+        );
+
+        // Get existing samples for full re-analysis
+        const existingSamples = await db.getEmailToneSamples(input.profileId);
+        const allTexts = [
+          ...existingSamples.map((s) => s.bodySnippet || "").filter(Boolean),
+          ...emailTexts,
+        ];
+
+        const aggregated = await analyzeMultipleEmails(allTexts);
+
+        // Store new samples
+        for (let i = 0; i < sentEmailRecords.length; i++) {
+          const analysis = await analyzeTone(emailTexts[i]);
+          await db.createEmailToneSample({
+            profileId: input.profileId,
+            subject: sentEmailRecords[i].subject,
+            bodySnippet: emailTexts[i].substring(0, 500),
+            detectedTone: analysis.detectedTone,
+            formality: String(analysis.formality),
+            friendliness: String(analysis.friendliness),
+            assertiveness: String(analysis.assertiveness),
+            verbosity: String(analysis.verbosity),
+            sourceType: "sent_email",
+            sourceEmailId: sentEmailRecords[i].id,
+          });
+        }
+
+        return db.updateEmailToneProfile(input.profileId, {
+          formality: String(aggregated.formality),
+          friendliness: String(aggregated.friendliness),
+          assertiveness: String(aggregated.assertiveness),
+          verbosity: String(aggregated.verbosity),
+          commonGreetings: aggregated.commonGreetings,
+          commonClosings: aggregated.commonClosings,
+          vocabularyLevel: aggregated.vocabularyLevel,
+          sentenceStructure: aggregated.sentenceStructure,
+          usesEmoji: aggregated.usesEmoji,
+          usesBulletPoints: aggregated.usesBulletPoints,
+          signatureStyle: aggregated.signatureStyle,
+          samplePhrases: aggregated.samplePhrases,
+          emailsScanned: aggregated.emailsScanned,
+        });
+      }),
+
+    // Get samples for a profile
+    getSamples: protectedProcedure
+      .input(z.object({ profileId: z.number() }))
+      .query(async ({ input }) => {
+        return db.getEmailToneSamples(input.profileId);
+      }),
+
+    // Delete a tone profile
+    deleteProfile: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const profile = await db.getEmailToneProfileById(input.id);
+        if (!profile) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Profile not found" });
+        }
+        if (profile.userId !== ctx.user.id) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not your profile" });
+        }
+        await db.deleteEmailToneProfile(input.id);
+        return { success: true };
+      }),
+
+    // Update profile metadata
+    updateProfile: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().min(1).optional(),
+        description: z.string().optional(),
+        isDefault: z.boolean().optional(),
+        isActive: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const profile = await db.getEmailToneProfileById(input.id);
+        if (!profile) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Profile not found" });
+        }
+        if (profile.userId !== ctx.user.id) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Not your profile" });
+        }
+
+        // If setting as default, unset other defaults
+        if (input.isDefault) {
+          const existing = await db.getEmailToneProfiles(ctx.user.id);
+          for (const p of existing) {
+            if (p.isDefault && p.id !== input.id) {
+              await db.updateEmailToneProfile(p.id, { isDefault: false });
+            }
+          }
+        }
+
+        const { id, ...updateData } = input;
+        return db.updateEmailToneProfile(id, updateData);
+      }),
+
+    // Generate a tone-matched reply to an incoming email
+    generateReply: protectedProcedure
+      .input(z.object({
+        profileId: z.number(),
+        incomingEmail: z.object({
+          from: z.string(),
+          subject: z.string(),
+          body: z.string(),
+        }),
+        senderName: z.string().optional(),
+        senderTitle: z.string().optional(),
+        additionalInstructions: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const profile = await db.getEmailToneProfileById(input.profileId);
+        if (!profile) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Profile not found" });
+        }
+
+        return generateToneMatchedReply({
+          incomingEmail: input.incomingEmail,
+          toneProfile: {
+            formality: Number(profile.formality) || 50,
+            friendliness: Number(profile.friendliness) || 50,
+            assertiveness: Number(profile.assertiveness) || 50,
+            verbosity: Number(profile.verbosity) || 50,
+            commonGreetings: (profile.commonGreetings as string[]) || [],
+            commonClosings: (profile.commonClosings as string[]) || [],
+            vocabularyLevel: profile.vocabularyLevel || "moderate",
+            sentenceStructure: profile.sentenceStructure || "mixed",
+            usesEmoji: profile.usesEmoji ?? false,
+            usesBulletPoints: profile.usesBulletPoints ?? false,
+            samplePhrases: (profile.samplePhrases as string[]) || [],
+            signatureStyle: profile.signatureStyle || "",
+          },
+          senderName: input.senderName || ctx.user.name || "Customer Service",
+          senderTitle: input.senderTitle,
+          additionalInstructions: input.additionalInstructions,
+        });
+      }),
+
+    // Quick reply: analyze incoming email and generate reply in user's default tone
+    quickReply: protectedProcedure
+      .input(z.object({
+        incomingEmail: z.object({
+          from: z.string(),
+          subject: z.string(),
+          body: z.string(),
+        }),
+        additionalInstructions: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Find user's default profile
+        const profiles = await db.getEmailToneProfiles(ctx.user.id);
+        const defaultProfile = profiles.find((p) => p.isDefault) || profiles[0];
+
+        if (!defaultProfile) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "No tone profile found. Please create one first by scanning your sent emails.",
+          });
+        }
+
+        return generateToneMatchedReply({
+          incomingEmail: input.incomingEmail,
+          toneProfile: {
+            formality: Number(defaultProfile.formality) || 50,
+            friendliness: Number(defaultProfile.friendliness) || 50,
+            assertiveness: Number(defaultProfile.assertiveness) || 50,
+            verbosity: Number(defaultProfile.verbosity) || 50,
+            commonGreetings: (defaultProfile.commonGreetings as string[]) || [],
+            commonClosings: (defaultProfile.commonClosings as string[]) || [],
+            vocabularyLevel: defaultProfile.vocabularyLevel || "moderate",
+            sentenceStructure: defaultProfile.sentenceStructure || "mixed",
+            usesEmoji: defaultProfile.usesEmoji ?? false,
+            usesBulletPoints: defaultProfile.usesBulletPoints ?? false,
+            samplePhrases: (defaultProfile.samplePhrases as string[]) || [],
+            signatureStyle: defaultProfile.signatureStyle || "",
+          },
+          senderName: ctx.user.name || "Customer Service",
+          additionalInstructions: input.additionalInstructions,
+        });
       }),
   }),
 

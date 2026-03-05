@@ -120,6 +120,9 @@ import {
   // Investment grant checklists
   investmentGrantChecklists, investmentGrantItems,
   InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
+  // Email tone profiles
+  emailToneProfiles, emailToneSamples,
+  InsertEmailToneProfile, InsertEmailToneSample,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -9113,4 +9116,62 @@ export async function getChecklistSummary(dataRoomId: number) {
     byCategory,
     requiredMissing: items.filter(i => i.status === 'missing' && i.requirement === 'required'),
   };
+}
+
+// ============================================
+// EMAIL TONE PROFILES
+// ============================================
+
+export async function getEmailToneProfiles(userId: number) {
+  const db = await getDb();
+  return db.select().from(emailToneProfiles).where(eq(emailToneProfiles.userId, userId)).orderBy(desc(emailToneProfiles.updatedAt));
+}
+
+export async function getEmailToneProfileById(id: number) {
+  const db = await getDb();
+  const results = await db.select().from(emailToneProfiles).where(eq(emailToneProfiles.id, id));
+  return results[0] || null;
+}
+
+export async function createEmailToneProfile(data: InsertEmailToneProfile) {
+  const db = await getDb();
+  const result = await db.insert(emailToneProfiles).values(data);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function updateEmailToneProfile(id: number, data: Partial<InsertEmailToneProfile>) {
+  const db = await getDb();
+  await db.update(emailToneProfiles).set(data).where(eq(emailToneProfiles.id, id));
+  return getEmailToneProfileById(id);
+}
+
+export async function deleteEmailToneProfile(id: number) {
+  const db = await getDb();
+  // Delete associated samples first
+  await db.delete(emailToneSamples).where(eq(emailToneSamples.profileId, id));
+  await db.delete(emailToneProfiles).where(eq(emailToneProfiles.id, id));
+}
+
+export async function getEmailToneSamples(profileId: number) {
+  const db = await getDb();
+  return db.select().from(emailToneSamples).where(eq(emailToneSamples.profileId, profileId)).orderBy(desc(emailToneSamples.createdAt));
+}
+
+export async function createEmailToneSample(data: InsertEmailToneSample) {
+  const db = await getDb();
+  const result = await db.insert(emailToneSamples).values(data);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function deleteEmailToneSample(id: number) {
+  const db = await getDb();
+  await db.delete(emailToneSamples).where(eq(emailToneSamples.id, id));
+}
+
+export async function getSentEmailsForToneAnalysis(limit: number = 20) {
+  const db = await getDb();
+  return db.select().from(sentEmails)
+    .where(eq(sentEmails.status, "sent"))
+    .orderBy(desc(sentEmails.sentAt))
+    .limit(limit);
 }

@@ -73,6 +73,7 @@ import {
   Calculator,
   Handshake,
   ClipboardCheck,
+  Sparkles,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -126,6 +127,7 @@ const menuGroups = [
       { icon: Building2, label: "Procurement", path: "/operations/procurement-hub" },
       { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
+      { icon: Sparkles, label: "Email Tone & Reply", path: "/operations/email-tone" },
       { icon: FileSpreadsheet, label: "Document Import", path: "/operations/document-import" },
       { icon: Calculator, label: "Inventory Costing", path: "/operations/inventory-costing" },
       { icon: Handshake, label: "Vendor Negotiations", path: "/operations/vendor-negotiations" },

@@ -5074,3 +5074,56 @@ export type EdiSettings = typeof ediSettings.$inferSelect;
 export type InsertEdiSettings = typeof ediSettings.$inferInsert;
 export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
 export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
+
+// ============================================
+// EMAIL TONE PROFILES
+// ============================================
+
+export const emailToneProfiles = mysqlTable("email_tone_profiles", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  // Analyzed tone dimensions
+  formality: decimal("formality", { precision: 5, scale: 2 }), // 0 = very casual, 100 = very formal
+  friendliness: decimal("friendliness", { precision: 5, scale: 2 }), // 0 = cold, 100 = very warm
+  assertiveness: decimal("assertiveness", { precision: 5, scale: 2 }), // 0 = passive, 100 = very assertive
+  verbosity: decimal("verbosity", { precision: 5, scale: 2 }), // 0 = terse, 100 = very verbose
+  // Style characteristics extracted from scanned emails
+  commonGreetings: json("commonGreetings"), // e.g. ["Hi", "Dear", "Hey"]
+  commonClosings: json("commonClosings"), // e.g. ["Best", "Thanks", "Regards"]
+  vocabularyLevel: mysqlEnum("vocabularyLevel", ["simple", "moderate", "advanced", "technical"]).default("moderate"),
+  sentenceStructure: mysqlEnum("sentenceStructure", ["short", "mixed", "long"]).default("mixed"),
+  usesEmoji: boolean("usesEmoji").default(false),
+  usesBulletPoints: boolean("usesBulletPoints").default(false),
+  signatureStyle: text("signatureStyle"),
+  samplePhrases: json("samplePhrases"), // representative phrases from scanned emails
+  // How many emails were scanned to build this profile
+  emailsScanned: int("emailsScanned").default(0),
+  isDefault: boolean("isDefault").default(false),
+  isActive: boolean("isActive").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailToneProfile = typeof emailToneProfiles.$inferSelect;
+export type InsertEmailToneProfile = typeof emailToneProfiles.$inferInsert;
+
+// Stores the individual scanned emails used to build a tone profile
+export const emailToneSamples = mysqlTable("email_tone_samples", {
+  id: int("id").autoincrement().primaryKey(),
+  profileId: int("profileId").notNull(),
+  subject: varchar("subject", { length: 500 }),
+  bodySnippet: text("bodySnippet"), // First ~500 chars as a reference
+  detectedTone: varchar("detectedTone", { length: 100 }),
+  formality: decimal("formality", { precision: 5, scale: 2 }),
+  friendliness: decimal("friendliness", { precision: 5, scale: 2 }),
+  assertiveness: decimal("assertiveness", { precision: 5, scale: 2 }),
+  verbosity: decimal("verbosity", { precision: 5, scale: 2 }),
+  sourceType: mysqlEnum("sourceType", ["sent_email", "pasted_text", "gmail_sync"]).default("pasted_text"),
+  sourceEmailId: int("sourceEmailId"), // link to sentEmails.id if applicable
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type EmailToneSample = typeof emailToneSamples.$inferSelect;
+export type InsertEmailToneSample = typeof emailToneSamples.$inferInsert;
