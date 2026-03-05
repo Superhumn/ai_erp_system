@@ -73,6 +73,7 @@ import {
   Calculator,
   Handshake,
   ClipboardCheck,
+  Globe,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -94,6 +95,7 @@ const menuGroups = [
     items: [
       { icon: LayoutDashboard, label: "Dashboard", path: "/" },
       { icon: Bot, label: "AI Assistant", path: "/ai" },
+      { icon: Globe, label: "Platform Agent", path: "/offline-platforms" },
       { icon: ClipboardList, label: "Approval Queue", path: "/ai/approvals" },
     ],
   },

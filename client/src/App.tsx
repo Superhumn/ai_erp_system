@@ -126,6 +126,9 @@ import DataRoomPublic from "./pages/DataRoomPublic";
 // AI Agent
 import ApprovalQueue from "./pages/ai/ApprovalQueue";
 
+// Offline Platform Agent
+import OfflinePlatforms from "./pages/OfflinePlatforms";
+
 // Autonomous Supply Chain
 import AutonomousDashboard from "./pages/autonomous/Dashboard";
 import AutonomousApprovals from "./pages/autonomous/Approvals";
@@ -141,6 +144,9 @@ function Router() {
         <Route path="/ai" component={AIAssistant} />
         <Route path="/ai/approvals" component={ApprovalQueue} />
         <Route path="/search" component={GlobalSearch} />
+
+        {/* Offline Platform Agent */}
+        <Route path="/offline-platforms" component={OfflinePlatforms} />
 
         {/* Autonomous Supply Chain */}
         <Route path="/autonomous-dashboard" component={AutonomousDashboard} />

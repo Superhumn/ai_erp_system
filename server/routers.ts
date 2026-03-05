@@ -16,6 +16,7 @@ import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingA
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
+import { offlinePlatformRouter } from "./offlinePlatformRouter";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 import * as db from "./db";
 import { storagePut } from "./storage";
@@ -186,6 +187,9 @@ export const appRouter = router({
 
   // Autonomous Supply Chain Workflows
   autonomousWorkflows: autonomousWorkflowRouter,
+
+  // Offline Platform Agent (browser-based automation without APIs)
+  offlinePlatform: offlinePlatformRouter,
 
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
