@@ -1,7 +1,7 @@
-import { eq, desc, and, sql, gte, lte, lt, like, or, count, sum, isNull, inArray } from "drizzle-orm";
+import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, max, min, gt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
-  InsertUser, users, companies, customers, vendors, products,
+  InsertUser, users, localAuthCredentials, InsertLocalAuthCredential, companies, customers, vendors, products,
   accounts, invoices, invoiceItems, payments, transactions, transactionLines,
   orders, orderItems, inventory, warehouses, productionBatches,
   purchaseOrders, purchaseOrderItems, shipments,
@@ -39,6 +39,8 @@ import {
   inboundEmails, emailAttachments, parsedDocuments, parsedDocumentLineItems, autoReplyRules, sentEmails,
   // Data room
   dataRooms, dataRoomFolders, dataRoomDocuments, dataRoomLinks, dataRoomVisitors, documentViews, dataRoomInvitations,
+  // Data room enhanced tracking
+  documentPageViews, dataRoomDriveSyncConfig, dataRoomDriveSyncLogs, dataRoomEmailAccessRules, dataRoomVisitorSessions,
   // NDA e-signatures
   ndaDocuments, ndaSignatures, ndaSignatureAuditLog,
   // IMAP credentials
@@ -76,6 +78,8 @@ import {
   InsertInboundEmail, InsertEmailAttachment, InsertParsedDocument, InsertParsedDocumentLineItem,
   // Data room types
   InsertDataRoom, InsertDataRoomFolder, InsertDataRoomDocument, InsertDataRoomLink, InsertDataRoomVisitor, InsertDocumentView, InsertDataRoomInvitation,
+  // Data room enhanced tracking types
+  InsertDocumentPageView, InsertDataRoomDriveSyncConfig, InsertDataRoomDriveSyncLog, InsertDataRoomEmailAccessRule, InsertDataRoomVisitorSession,
   // NDA types
   InsertNdaDocument, InsertNdaSignature, InsertNdaSignatureAuditLog,
   InsertImapCredential,
@@ -93,7 +97,29 @@ import {
   InsertFirefliesMeeting, InsertFirefliesActionItem, InsertFirefliesContactMapping,
   // Copacker portal
   copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
-  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument
+  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
+  // COGS tracking
+  cogsTransactions, freightCostAllocations,
+  InsertCogsTransaction, InsertFreightCostAllocation,
+  // QuickBooks integration
+  quickbooksAccounts, quickbooksAccountMappings, quickbooksItems,
+  InsertQuickBooksAccount, InsertQuickBooksAccountMapping, InsertQuickBooksItem,
+  // EDI module
+  ediTradingPartners, ediDocumentMaps, ediTransactions, ediTransactionItems, ediProductCrosswalks, ediShipToLocations, ediComplianceScorecards,
+  ediControlNumbers, ediSettings,
+  InsertEdiTradingPartner, InsertEdiDocumentMap, InsertEdiTransaction, InsertEdiTransactionItem, InsertEdiProductCrosswalk, InsertEdiShipToLocation, InsertEdiComplianceScorecard,
+  InsertEdiControlNumber, InsertEdiSettings,
+  // Inventory costing & COGS
+  inventoryCostingConfig, inventoryCostLayers, cogsRecords, cogsPeriodSummary,
+  InsertInventoryCostingConfig, InsertInventoryCostLayer, InsertCogsRecord, InsertCogsPeriodSummary,
+  // Vendor negotiations
+  vendorNegotiations, negotiationRounds,
+  InsertVendorNegotiation, InsertNegotiationRound,
+  // Local authentication
+  localAuthCredentials, InsertLocalAuthCredential,
+  // Investment grant checklists
+  investmentGrantChecklists, investmentGrantItems,
+  InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -272,13 +298,6 @@ export async function getCustomerByEmail(email: string) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(customers).where(eq(customers.email, email)).limit(1);
-  return result[0];
-}
-
-export async function getCustomerByName(name: string) {
-  const db = await getDb();
-  if (!db) return undefined;
-  const result = await db.select().from(customers).where(sql`LOWER(${customers.name}) = LOWER(${name})`).limit(1);
   return result[0];
 }
 
@@ -2143,6 +2162,43 @@ export async function updateTeamMember(id: number, data: Partial<InsertUser>) {
   }).where(eq(users.id, id));
 }
 
+export async function getUserById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getUsersByRoles(roles: string[]) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(users).where(
+    and(
+      inArray(users.role, roles),
+      eq(users.isActive, true)
+    )
+  );
+}
+
+export async function getInvitationByIdWithDataRoom(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db
+    .select({
+      id: dataRoomInvitations.id,
+      email: dataRoomInvitations.email,
+      name: dataRoomInvitations.name,
+      inviteCode: dataRoomInvitations.inviteCode,
+      dataRoomId: dataRoomInvitations.dataRoomId,
+      dataRoomName: dataRooms.name,
+    })
+    .from(dataRoomInvitations)
+    .leftJoin(dataRooms, eq(dataRoomInvitations.dataRoomId, dataRooms.id))
+    .where(eq(dataRoomInvitations.id, id))
+    .limit(1);
+  return result[0] || null;
+}
+
 export async function deactivateTeamMember(id: number) {
   const db = await getDb();
   if (!db) return;
@@ -2512,7 +2568,7 @@ export async function deleteBomComponent(id: number) {
 }
 
 // Raw Materials
-export async function getRawMaterials(filters?: { status?: string; category?: string }) {
+export async function getRawMaterials(filters?: { status?: string; category?: string; searchTerm?: string; limit?: number }) {
   const db = await getDb();
   if (!db) return [];
   
@@ -2523,6 +2579,13 @@ export async function getRawMaterials(filters?: { status?: string; category?: st
   }
   if (filters?.category) {
     query = query.where(eq(rawMaterials.category, filters.category)) as typeof query;
+  }
+  if (filters?.searchTerm) {
+    const escapedTerm = filters.searchTerm.replace(/[%_\\]/g, "\\$&");
+    query = query.where(like(rawMaterials.name, `%${escapedTerm}%`)) as typeof query;
+  }
+  if (filters?.limit) {
+    query = query.limit(filters.limit) as typeof query;
   }
   
   return query;
@@ -4100,24 +4163,6 @@ export async function updateShopifyStore(id: number, data: Partial<InsertShopify
   await db.update(shopifyStores).set(data).where(eq(shopifyStores.id, id));
 }
 
-export async function upsertShopifyStore(storeDomain: string, data: Partial<InsertShopifyStore>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  
-  const existing = await getShopifyStoreByDomain(storeDomain);
-  if (existing) {
-    await updateShopifyStore(existing.id, data);
-    return { id: existing.id };
-  } else {
-    // Ensure storeDomain is included in the create payload
-    const createData: InsertShopifyStore = {
-      ...data,
-      storeDomain,
-    } as InsertShopifyStore;
-    return createShopifyStore(createData);
-  }
-}
-
 // Webhook Events
 export async function createWebhookEvent(data: InsertWebhookEvent) {
   const db = await getDb();
@@ -4794,10 +4839,26 @@ export async function notifyUsersOfEvent(
       inAppCount++;
     }
     
-    // Email notifications would be handled here with SendGrid
     if (shouldEmail) {
       emailCount++;
-      // TODO: Send email notification via SendGrid
+      try {
+        const { sendEmail, isEmailConfigured, formatEmailHtml } = await import("./_core/email");
+        if (isEmailConfigured()) {
+          const user = await getUserById(userId);
+          if (user?.email) {
+            await sendEmail({
+              to: user.email,
+              subject: `[${event.severity || 'info'}] ${event.title}`,
+              html: formatEmailHtml(
+                `${event.title}\n\n${event.message}${event.link ? `\n\nView details: ${event.link}` : ""}`
+              ),
+              text: `${event.title}\n\n${event.message}${event.link ? `\n\nView details: ${event.link}` : ""}`,
+            });
+          }
+        }
+      } catch (emailErr) {
+        console.warn("[Notification] Failed to send email notification:", emailErr);
+      }
     }
   }
   
@@ -6073,6 +6134,556 @@ export async function updateEmailCategory(id: number, data: {
   if (!db) return;
   
   await db.update(inboundEmails).set(data).where(eq(inboundEmails.id, id));
+}
+
+
+// ============================================
+// DATA ROOM - PAGE-LEVEL TRACKING FUNCTIONS
+// ============================================
+
+// Document Page Views
+export async function createDocumentPageView(data: InsertDocumentPageView) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(documentPageViews).values(data);
+  return result[0].insertId;
+}
+
+export async function getDocumentPageViewById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const result = await db.select().from(documentPageViews)
+    .where(eq(documentPageViews.id, id))
+    .limit(1);
+  return result[0] || null;
+}
+
+export async function getDocumentPageViews(documentId: number, visitorId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [eq(documentPageViews.documentId, documentId)];
+  if (visitorId) {
+    conditions.push(eq(documentPageViews.visitorId, visitorId));
+  }
+
+  return db.select().from(documentPageViews)
+    .where(and(...conditions))
+    .orderBy(desc(documentPageViews.enterTime));
+}
+
+export async function getPageViewsByVisitor(visitorId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db.select().from(documentPageViews)
+    .where(eq(documentPageViews.visitorId, visitorId))
+    .orderBy(desc(documentPageViews.enterTime));
+}
+
+export async function updateDocumentPageView(id: number, data: Partial<InsertDocumentPageView>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(documentPageViews).set(data).where(eq(documentPageViews.id, id));
+}
+
+export async function getPageViewAnalytics(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return { pageViews: [], documentStats: [], visitorStats: [] };
+
+  // Get all documents in the data room
+  const docs = await db.select().from(dataRoomDocuments)
+    .where(eq(dataRoomDocuments.dataRoomId, dataRoomId));
+
+  const docIds = docs.map(d => d.id);
+  if (docIds.length === 0) {
+    return { pageViews: [], documentStats: [], visitorStats: [] };
+  }
+
+  // Get page views for those documents
+  const pageViews = await db.select().from(documentPageViews)
+    .where(inArray(documentPageViews.documentId, docIds))
+    .orderBy(desc(documentPageViews.enterTime));
+
+  // Aggregate stats by document
+  const documentStats = docs.map(doc => {
+    const docPageViews = pageViews.filter(pv => pv.documentId === doc.id);
+    const totalDuration = docPageViews.reduce((sum, pv) => sum + (pv.durationMs || 0), 0);
+    const uniqueVisitors = new Set(docPageViews.map(pv => pv.visitorId)).size;
+    const pageStats: Record<number, { views: number; avgDuration: number }> = {};
+
+    docPageViews.forEach(pv => {
+      if (!pageStats[pv.pageNumber]) {
+        pageStats[pv.pageNumber] = { views: 0, avgDuration: 0 };
+      }
+      pageStats[pv.pageNumber].views++;
+      pageStats[pv.pageNumber].avgDuration += pv.durationMs || 0;
+    });
+
+    // Calculate averages
+    Object.keys(pageStats).forEach(page => {
+      const p = parseInt(page);
+      if (pageStats[p].views > 0) {
+        pageStats[p].avgDuration = pageStats[p].avgDuration / pageStats[p].views;
+      }
+    });
+
+    return {
+      documentId: doc.id,
+      documentName: doc.name,
+      totalViews: docPageViews.length,
+      uniqueVisitors,
+      totalDurationMs: totalDuration,
+      avgDurationMs: docPageViews.length > 0 ? totalDuration / docPageViews.length : 0,
+      pageStats,
+    };
+  });
+
+  // Aggregate stats by visitor
+  const visitorIds = [...new Set(pageViews.map(pv => pv.visitorId))];
+  const visitors = visitorIds.length > 0
+    ? await db.select().from(dataRoomVisitors).where(inArray(dataRoomVisitors.id, visitorIds))
+    : [];
+
+  const visitorStats = visitors.map(visitor => {
+    const visitorPageViews = pageViews.filter(pv => pv.visitorId === visitor.id);
+    const totalDuration = visitorPageViews.reduce((sum, pv) => sum + (pv.durationMs || 0), 0);
+    const documentsViewed = new Set(visitorPageViews.map(pv => pv.documentId)).size;
+
+    // Group by document
+    const byDocument: Record<number, { pages: number[]; totalDuration: number }> = {};
+    visitorPageViews.forEach(pv => {
+      if (!byDocument[pv.documentId]) {
+        byDocument[pv.documentId] = { pages: [], totalDuration: 0 };
+      }
+      if (!byDocument[pv.documentId].pages.includes(pv.pageNumber)) {
+        byDocument[pv.documentId].pages.push(pv.pageNumber);
+      }
+      byDocument[pv.documentId].totalDuration += pv.durationMs || 0;
+    });
+
+    return {
+      visitorId: visitor.id,
+      email: visitor.email,
+      name: visitor.name,
+      company: visitor.company,
+      totalPageViews: visitorPageViews.length,
+      documentsViewed,
+      totalDurationMs: totalDuration,
+      byDocument,
+    };
+  });
+
+  return { pageViews, documentStats, visitorStats };
+}
+
+// ============================================
+// DATA ROOM - GOOGLE DRIVE SYNC FUNCTIONS
+// ============================================
+
+export async function createDriveSyncConfig(data: InsertDataRoomDriveSyncConfig) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dataRoomDriveSyncConfig).values(data);
+  return result[0].insertId;
+}
+
+export async function getDriveSyncConfig(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomDriveSyncConfig)
+    .where(eq(dataRoomDriveSyncConfig.dataRoomId, dataRoomId));
+  return result[0] || null;
+}
+
+export async function updateDriveSyncConfig(id: number, data: Partial<InsertDataRoomDriveSyncConfig>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(dataRoomDriveSyncConfig).set(data).where(eq(dataRoomDriveSyncConfig.id, id));
+}
+
+export async function deleteDriveSyncConfig(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(dataRoomDriveSyncConfig).where(eq(dataRoomDriveSyncConfig.dataRoomId, dataRoomId));
+}
+
+export async function createDriveSyncLog(data: InsertDataRoomDriveSyncLog) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dataRoomDriveSyncLogs).values(data);
+  return result[0].insertId;
+}
+
+export async function getDriveSyncLogs(dataRoomId: number, limit: number = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(dataRoomDriveSyncLogs)
+    .where(eq(dataRoomDriveSyncLogs.dataRoomId, dataRoomId))
+    .orderBy(desc(dataRoomDriveSyncLogs.startedAt))
+    .limit(limit);
+}
+
+export async function updateDriveSyncLog(id: number, data: Partial<InsertDataRoomDriveSyncLog>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(dataRoomDriveSyncLogs).set(data).where(eq(dataRoomDriveSyncLogs.id, id));
+}
+
+// ============================================
+// DATA ROOM - EMAIL ACCESS RULES FUNCTIONS
+// ============================================
+
+export async function createEmailAccessRule(data: InsertDataRoomEmailAccessRule) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dataRoomEmailAccessRules).values(data);
+  return result[0].insertId;
+}
+
+export async function getEmailAccessRules(dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(dataRoomEmailAccessRules)
+    .where(eq(dataRoomEmailAccessRules.dataRoomId, dataRoomId))
+    .orderBy(desc(dataRoomEmailAccessRules.priority));
+}
+
+export async function updateEmailAccessRule(id: number, data: Partial<InsertDataRoomEmailAccessRule>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(dataRoomEmailAccessRules).set(data).where(eq(dataRoomEmailAccessRules.id, id));
+}
+
+export async function deleteEmailAccessRule(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(dataRoomEmailAccessRules).where(eq(dataRoomEmailAccessRules.id, id));
+}
+
+export async function checkEmailAccess(dataRoomId: number, email: string): Promise<{
+  allowed: boolean;
+  rule: typeof dataRoomEmailAccessRules.$inferSelect | null;
+  permissions: { allowDownload: boolean; allowPrint: boolean; maxViews: number | null; requireNda: boolean };
+}> {
+  const db = await getDb();
+  if (!db) return { allowed: true, rule: null, permissions: { allowDownload: true, allowPrint: true, maxViews: null, requireNda: true } };
+
+  const rules = await db.select().from(dataRoomEmailAccessRules)
+    .where(and(
+      eq(dataRoomEmailAccessRules.dataRoomId, dataRoomId),
+      eq(dataRoomEmailAccessRules.isActive, true),
+      // Filter out expired rules
+      or(
+        isNull(dataRoomEmailAccessRules.expiresAt),
+        gte(dataRoomEmailAccessRules.expiresAt, new Date())
+      )
+    ))
+    .orderBy(desc(dataRoomEmailAccessRules.priority));
+
+  const emailLower = email.toLowerCase();
+  const domain = emailLower.split('@')[1];
+
+  for (const rule of rules) {
+    const pattern = rule.emailPattern.toLowerCase();
+    let matches = false;
+
+    if (rule.ruleType === 'allow_email' || rule.ruleType === 'block_email') {
+      matches = emailLower === pattern;
+    } else if (rule.ruleType === 'allow_domain' || rule.ruleType === 'block_domain') {
+      matches = domain === pattern || pattern === '*';
+    }
+
+    if (matches) {
+      const isBlock = rule.ruleType === 'block_email' || rule.ruleType === 'block_domain';
+      return {
+        allowed: !isBlock,
+        rule,
+        permissions: {
+          allowDownload: rule.allowDownload ?? true,
+          allowPrint: rule.allowPrint ?? true,
+          maxViews: rule.maxViews,
+          requireNda: rule.requireNdaSignature ?? true,
+        }
+      };
+    }
+  }
+
+  // Default: allow with default permissions
+  return { allowed: true, rule: null, permissions: { allowDownload: true, allowPrint: true, maxViews: null, requireNda: true } };
+}
+
+// ============================================
+// DATA ROOM - VISITOR SESSION FUNCTIONS
+// ============================================
+
+export async function createVisitorSession(data: InsertDataRoomVisitorSession) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dataRoomVisitorSessions).values(data);
+  return result[0].insertId;
+}
+
+export async function getVisitorSessions(visitorId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(dataRoomVisitorSessions)
+    .where(eq(dataRoomVisitorSessions.visitorId, visitorId))
+    .orderBy(desc(dataRoomVisitorSessions.sessionStartAt));
+}
+
+export async function getDataRoomSessions(dataRoomId: number, limit: number = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(dataRoomVisitorSessions)
+    .where(eq(dataRoomVisitorSessions.dataRoomId, dataRoomId))
+    .orderBy(desc(dataRoomVisitorSessions.sessionStartAt))
+    .limit(limit);
+}
+
+export async function updateVisitorSession(id: number, data: Partial<InsertDataRoomVisitorSession>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(dataRoomVisitorSessions).set(data).where(eq(dataRoomVisitorSessions.id, id));
+}
+
+export async function getSessionByToken(sessionToken: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomVisitorSessions)
+    .where(eq(dataRoomVisitorSessions.sessionToken, sessionToken));
+  return result[0] || null;
+}
+
+export async function getActiveSession(visitorId: number, dataRoomId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomVisitorSessions)
+    .where(and(
+      eq(dataRoomVisitorSessions.visitorId, visitorId),
+      eq(dataRoomVisitorSessions.dataRoomId, dataRoomId),
+      eq(dataRoomVisitorSessions.isActive, true)
+    ))
+    .orderBy(desc(dataRoomVisitorSessions.sessionStartAt))
+    .limit(1);
+  return result[0] || null;
+}
+
+// ============================================
+// DATA ROOM - DETAILED ANALYTICS FUNCTIONS
+// ============================================
+
+export async function getDetailedVisitorAnalytics(dataRoomId: number, visitorId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  // Get visitor info, scoped to the specified data room
+  const visitor = await db.select().from(dataRoomVisitors)
+    .where(and(
+      eq(dataRoomVisitors.id, visitorId),
+      eq(dataRoomVisitors.dataRoomId, dataRoomId),
+    ));
+  if (!visitor[0]) return null;
+
+  // Get sessions for this visitor scoped to the specified data room (filtered in SQL)
+  const sessions = await db.select().from(dataRoomVisitorSessions)
+    .where(and(
+      eq(dataRoomVisitorSessions.visitorId, visitorId),
+      eq(dataRoomVisitorSessions.dataRoomId, dataRoomId),
+    ))
+    .orderBy(desc(dataRoomVisitorSessions.sessionStartAt));
+
+  // Get all documents in this data room to scope page views and doc views
+  const roomDocs = await db.select({ id: dataRoomDocuments.id })
+    .from(dataRoomDocuments)
+    .where(eq(dataRoomDocuments.dataRoomId, dataRoomId));
+  const roomDocIdList = roomDocs.map(d => d.id);
+
+  // Get page views scoped to this data room's documents (filtered in SQL)
+  const pageViews = roomDocIdList.length > 0
+    ? await db.select().from(documentPageViews)
+      .where(and(
+        eq(documentPageViews.visitorId, visitorId),
+        inArray(documentPageViews.documentId, roomDocIdList),
+      ))
+      .orderBy(desc(documentPageViews.enterTime))
+    : [];
+
+  // Get document views scoped to this data room's documents (filtered in SQL)
+  const docViews = roomDocIdList.length > 0
+    ? await db.select().from(documentViews)
+      .where(and(
+        eq(documentViews.visitorId, visitorId),
+        inArray(documentViews.documentId, roomDocIdList),
+      ))
+    : [];
+  // Get visitor info
+  const visitor = await db.select().from(dataRoomVisitors)
+    .where(eq(dataRoomVisitors.id, visitorId));
+  if (!visitor[0]) return null;
+
+  // Get all sessions
+  const sessions = await getVisitorSessions(visitorId);
+
+  // Get all page views
+  const pageViews = await getPageViewsByVisitor(visitorId);
+
+  // Get document views
+  const docViews = await db.select().from(documentViews)
+    .where(eq(documentViews.visitorId, visitorId));
+
+  // Get documents info
+  const docIds = [...new Set(pageViews.map(pv => pv.documentId))];
+  const documents = docIds.length > 0
+    ? await db.select().from(dataRoomDocuments).where(inArray(dataRoomDocuments.id, docIds))
+    : [];
+
+  // Build detailed analytics
+  const documentEngagement = documents.map(doc => {
+    const docPageViews = pageViews.filter(pv => pv.documentId === doc.id);
+    const uniquePages = [...new Set(docPageViews.map(pv => pv.pageNumber))];
+    const totalDuration = docPageViews.reduce((sum, pv) => sum + (pv.durationMs || 0), 0);
+
+    // Page-by-page breakdown
+    const pageBreakdown: Record<number, { views: number; totalDuration: number; avgDuration: number; scrollDepth: number }> = {};
+    docPageViews.forEach(pv => {
+      if (!pageBreakdown[pv.pageNumber]) {
+        pageBreakdown[pv.pageNumber] = { views: 0, totalDuration: 0, avgDuration: 0, scrollDepth: 0 };
+      }
+      pageBreakdown[pv.pageNumber].views++;
+      pageBreakdown[pv.pageNumber].totalDuration += pv.durationMs || 0;
+      pageBreakdown[pv.pageNumber].scrollDepth = Math.max(pageBreakdown[pv.pageNumber].scrollDepth, pv.scrollDepth || 0);
+    });
+
+    Object.keys(pageBreakdown).forEach(page => {
+      const p = parseInt(page);
+      pageBreakdown[p].avgDuration = pageBreakdown[p].totalDuration / pageBreakdown[p].views;
+    });
+
+    return {
+      documentId: doc.id,
+      documentName: doc.name,
+      pageCount: doc.pageCount || 1,
+      pagesViewed: uniquePages.length,
+      percentViewed: doc.pageCount ? Math.round((uniquePages.length / doc.pageCount) * 100) : 100,
+      totalViews: docPageViews.length,
+      totalDurationMs: totalDuration,
+      avgPageDurationMs: docPageViews.length > 0 ? totalDuration / docPageViews.length : 0,
+      pageBreakdown,
+    };
+  });
+
+  return {
+    visitor: visitor[0],
+    sessions,
+    documentEngagement,
+    summary: {
+      totalSessions: sessions.length,
+      totalDocuments: documents.length,
+      totalPageViews: pageViews.length,
+      totalTimeMs: sessions.reduce((sum, s) => sum + (s.totalDurationMs || 0), 0),
+      downloads: docViews.filter(dv => dv.downloaded).length,
+      prints: docViews.filter(dv => dv.printed).length,
+    },
+  };
+}
+
+export async function getDataRoomEngagementReport(dataRoomId: number, startDate?: Date, endDate?: Date) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const room = await db.select().from(dataRooms).where(eq(dataRooms.id, dataRoomId));
+  if (!room[0]) return null;
+
+  // Get all visitors
+  const visitors = await db.select().from(dataRoomVisitors)
+    .where(eq(dataRoomVisitors.dataRoomId, dataRoomId));
+
+  // Get all documents
+  const documents = await db.select().from(dataRoomDocuments)
+    .where(eq(dataRoomDocuments.dataRoomId, dataRoomId));
+
+  // Get all sessions with date filter applied in SQL
+  const sessionsConditions = [eq(dataRoomVisitorSessions.dataRoomId, dataRoomId)];
+  if (startDate) {
+    sessionsConditions.push(gte(dataRoomVisitorSessions.sessionStartAt, startDate));
+  }
+  if (endDate) {
+    sessionsConditions.push(lte(dataRoomVisitorSessions.sessionStartAt, endDate));
+  }
+  const filteredSessions = await db.select().from(dataRoomVisitorSessions)
+    .where(and(...sessionsConditions));
+
+  // Get page views for documents with date filter applied in SQL
+  const docIds = documents.map(d => d.id);
+  let filteredPageViews: any[] = [];
+  if (docIds.length > 0) {
+    const pageViewConditions = [inArray(documentPageViews.documentId, docIds)];
+    if (startDate) {
+      pageViewConditions.push(gte(documentPageViews.enterTime, startDate));
+    }
+    if (endDate) {
+      pageViewConditions.push(lte(documentPageViews.enterTime, endDate));
+    }
+    filteredPageViews = await db.select().from(documentPageViews)
+      .where(and(...pageViewConditions));
+  }
+
+  // Build report
+  const visitorEngagement = visitors.map(v => {
+    const vSessions = filteredSessions.filter(s => s.visitorId === v.id);
+    const vPageViews = filteredPageViews.filter(pv => pv.visitorId === v.id);
+
+    return {
+      visitorId: v.id,
+      email: v.email,
+      name: v.name,
+      company: v.company,
+      accessStatus: v.accessStatus,
+      ndaAcceptedAt: v.ndaAcceptedAt,
+      sessionsCount: vSessions.length,
+      totalTimeMs: vSessions.reduce((sum, s) => sum + (s.totalDurationMs || 0), 0),
+      documentsViewed: [...new Set(vPageViews.map(pv => pv.documentId))].length,
+      pagesViewed: vPageViews.length,
+      lastActivity: vSessions.length > 0
+        ? vSessions.reduce((latest, s) => s.sessionStartAt > latest ? s.sessionStartAt : latest, vSessions[0].sessionStartAt)
+        : v.lastViewedAt,
+    };
+  });
+
+  const documentEngagement = documents.map(d => {
+    const dPageViews = filteredPageViews.filter(pv => pv.documentId === d.id);
+    const uniqueVisitors = [...new Set(dPageViews.map(pv => pv.visitorId))];
+
+    return {
+      documentId: d.id,
+      documentName: d.name,
+      pageCount: d.pageCount || 1,
+      views: dPageViews.length,
+      uniqueVisitors: uniqueVisitors.length,
+      totalTimeMs: dPageViews.reduce((sum, pv) => sum + (pv.durationMs || 0), 0),
+      avgTimePerPageMs: dPageViews.length > 0
+        ? dPageViews.reduce((sum, pv) => sum + (pv.durationMs || 0), 0) / dPageViews.length
+        : 0,
+    };
+  });
+
+  return {
+    dataRoom: room[0],
+    period: { startDate, endDate },
+    summary: {
+      totalVisitors: visitors.length,
+      activeVisitors: visitors.filter(v => v.accessStatus === 'active').length,
+      totalSessions: filteredSessions.length,
+      totalDocuments: documents.length,
+      totalPageViews: filteredPageViews.length,
+      totalEngagementTimeMs: filteredSessions.reduce((sum, s) => sum + (s.totalDurationMs || 0), 0),
+      ndaSignedCount: visitors.filter(v => v.ndaAcceptedAt).length,
+    },
+    visitorEngagement: visitorEngagement.sort((a, b) => b.totalTimeMs - a.totalTimeMs),
+    documentEngagement: documentEngagement.sort((a, b) => b.views - a.views),
+  };
 }
 
 
@@ -8046,267 +8657,467 @@ export async function checkAndTriggerLowStockPurchaseOrder(
   };
 }
 
+
 // ============================================
-// FIREFLIES INTEGRATION
+// DUE DILIGENCE CHECKLIST FUNCTIONS
 // ============================================
 
-export async function getFirefliesMeetings(filters?: {
-  processingStatus?: string;
-  limit?: number;
-  offset?: number;
-}) {
+// Due Diligence Templates
+export async function createDueDiligenceTemplate(data: InsertDueDiligenceTemplate) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dueDiligenceTemplates).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getDueDiligenceTemplates(userId?: number, includePublic: boolean = true) {
   const db = await getDb();
   if (!db) return [];
 
-  const conditions = [];
-  if (filters?.processingStatus) {
-    conditions.push(eq(firefliesMeetings.processingStatus, filters.processingStatus as any));
+  if (userId && includePublic) {
+    return db.select().from(dueDiligenceTemplates)
+      .where(or(eq(dueDiligenceTemplates.createdBy, userId), eq(dueDiligenceTemplates.isPublic, true)))
+      .orderBy(desc(dueDiligenceTemplates.createdAt));
+  } else if (userId) {
+    return db.select().from(dueDiligenceTemplates)
+      .where(eq(dueDiligenceTemplates.createdBy, userId))
+      .orderBy(desc(dueDiligenceTemplates.createdAt));
+  } else {
+    return db.select().from(dueDiligenceTemplates)
+      .where(eq(dueDiligenceTemplates.isPublic, true))
+      .orderBy(desc(dueDiligenceTemplates.createdAt));
   }
-
-  let query = db.select().from(firefliesMeetings);
-  if (conditions.length > 0) {
-    query = query.where(and(...conditions)) as any;
-  }
-
-  return query
-    .orderBy(desc(firefliesMeetings.date))
-    .limit(filters?.limit || 50)
-    .offset(filters?.offset || 0);
 }
 
-export async function getFirefliesMeetingById(id: number) {
+export async function getDueDiligenceTemplateById(id: number) {
   const db = await getDb();
-  if (!db) return undefined;
-  const result = await db.select().from(firefliesMeetings).where(eq(firefliesMeetings.id, id)).limit(1);
-  return result[0];
+  if (!db) return null;
+  const result = await db.select().from(dueDiligenceTemplates).where(eq(dueDiligenceTemplates.id, id));
+  return result[0] || null;
 }
 
-export async function getFirefliesMeetingByFirefliesId(firefliesId: string) {
-  const db = await getDb();
-  if (!db) return undefined;
-  const result = await db.select().from(firefliesMeetings).where(eq(firefliesMeetings.firefliesId, firefliesId)).limit(1);
-  return result[0];
-}
-
-export async function createFirefliesMeeting(data: InsertFirefliesMeeting) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(firefliesMeetings).values(data);
-  return { id: result[0].insertId };
-}
-
-export async function updateFirefliesMeeting(id: number, data: Partial<InsertFirefliesMeeting>) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(firefliesMeetings).set(data).where(eq(firefliesMeetings.id, id));
-}
-
-export async function getFirefliesActionItems(meetingId: number) {
-  const db = await getDb();
-  if (!db) return [];
-  return db.select().from(firefliesActionItems)
-    .where(eq(firefliesActionItems.meetingId, meetingId))
-    .orderBy(firefliesActionItems.id);
-}
-
-export async function getFirefliesActionItemById(id: number) {
-  const db = await getDb();
-  if (!db) return undefined;
-  const result = await db.select().from(firefliesActionItems).where(eq(firefliesActionItems.id, id)).limit(1);
-  return result[0];
-}
-
-export async function createFirefliesActionItem(data: InsertFirefliesActionItem) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(firefliesActionItems).values(data);
-  return { id: result[0].insertId };
-}
-
-export async function updateFirefliesActionItem(id: number, data: Partial<InsertFirefliesActionItem>) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(firefliesActionItems).set(data).where(eq(firefliesActionItems.id, id));
-}
-
-export async function getFirefliesContactMappings(meetingId: number) {
-  const db = await getDb();
-  if (!db) return [];
-  return db.select().from(firefliesContactMappings)
-    .where(eq(firefliesContactMappings.meetingId, meetingId))
-    .orderBy(firefliesContactMappings.id);
-}
-
-export async function createFirefliesContactMapping(data: InsertFirefliesContactMapping) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(firefliesContactMappings).values(data);
-  return { id: result[0].insertId };
-}
-
-export async function getFirefliesMeetingStats() {
-  const db = await getDb();
-  if (!db) return { total: 0, pending: 0, processed: 0, contactsCreated: 0, tasksCreated: 0 };
-
-  const allMeetings = await db.select().from(firefliesMeetings);
-  const total = allMeetings.length;
-  const pending = allMeetings.filter(m => m.processingStatus === 'pending').length;
-  const processed = allMeetings.filter(m => ['fully_processed', 'contacts_created', 'tasks_created', 'project_created'].includes(m.processingStatus)).length;
-  const contactsCreated = allMeetings.reduce((sum, m) => sum + (m.autoCreatedContactCount || 0), 0);
-  const tasksCreated = allMeetings.reduce((sum, m) => sum + (m.autoCreatedTaskCount || 0), 0);
-
-  return { total, pending, processed, contactsCreated, tasksCreated };
-}
-
-// ============================================
-// COPACKER PORTAL
-// ============================================
-
-// --- Inventory Updates ---
-
-export async function getCopackerInventoryUpdates(warehouseId?: number) {
-  const db = await getDb();
-  if (!db) return [];
-
-  const conditions = [];
-  if (warehouseId) conditions.push(eq(copackerInventoryUpdates.warehouseId, warehouseId));
-
-  const result = conditions.length
-    ? await db.select().from(copackerInventoryUpdates).where(and(...conditions)).orderBy(desc(copackerInventoryUpdates.createdAt))
-    : await db.select().from(copackerInventoryUpdates).orderBy(desc(copackerInventoryUpdates.createdAt));
-
-  return result;
-}
-
-export async function getCopackerInventoryUpdateById(id: number) {
+export async function getTemplateWithItems(templateId: number) {
   const db = await getDb();
   if (!db) return null;
 
-  const rows = await db.select().from(copackerInventoryUpdates).where(eq(copackerInventoryUpdates.id, id)).limit(1);
-  return rows[0] || null;
+  const template = await getDueDiligenceTemplateById(templateId);
+  if (!template) return null;
+
+  const categories = await db.select().from(dueDiligenceCategories)
+    .where(eq(dueDiligenceCategories.templateId, templateId))
+    .orderBy(dueDiligenceCategories.sortOrder);
+
+  const items = await db.select().from(dueDiligenceItems)
+    .where(eq(dueDiligenceItems.templateId, templateId))
+    .orderBy(dueDiligenceItems.sortOrder);
+
+  return {
+    ...template,
+    categories: categories.map(cat => ({
+      ...cat,
+      items: items.filter(item => item.categoryId === cat.id),
+    })),
+  };
 }
 
-export async function createCopackerInventoryUpdate(data: InsertCopackerInventoryUpdate) {
+export async function createDueDiligenceCategory(data: InsertDueDiligenceCategory) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(copackerInventoryUpdates).values(data);
+  const result = await db.insert(dueDiligenceCategories).values(data);
   return { id: result[0].insertId };
 }
 
-export async function updateCopackerInventoryUpdate(id: number, data: Partial<InsertCopackerInventoryUpdate>) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(copackerInventoryUpdates).set(data).where(eq(copackerInventoryUpdates.id, id));
-}
-
-export async function getCopackerInventoryUpdateItems(updateId: number) {
-  const db = await getDb();
-  if (!db) return [];
-
-  return db.select({
-    item: copackerInventoryUpdateItems,
-    product: products,
-  })
-    .from(copackerInventoryUpdateItems)
-    .leftJoin(products, eq(copackerInventoryUpdateItems.productId, products.id))
-    .where(eq(copackerInventoryUpdateItems.updateId, updateId))
-    .orderBy(copackerInventoryUpdateItems.id);
-}
-
-export async function createCopackerInventoryUpdateItem(data: InsertCopackerInventoryUpdateItem) {
+export async function createDueDiligenceItem(data: InsertDueDiligenceItem) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(copackerInventoryUpdateItems).values(data);
+  const result = await db.insert(dueDiligenceItems).values(data);
   return { id: result[0].insertId };
 }
 
-export async function deleteCopackerInventoryUpdateItems(updateId: number) {
+// Data Room Checklists
+export async function createDataRoomChecklist(data: InsertDataRoomChecklist) {
   const db = await getDb();
-  if (!db) return;
-  await db.delete(copackerInventoryUpdateItems).where(eq(copackerInventoryUpdateItems.updateId, updateId));
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dataRoomChecklists).values(data);
+  return { id: result[0].insertId };
 }
 
-// --- Copacker Invoices ---
-
-export async function getCopackerInvoices(warehouseId?: number) {
+export async function getDataRoomChecklists(dataRoomId: number) {
   const db = await getDb();
   if (!db) return [];
+  return db.select().from(dataRoomChecklists)
+    .where(eq(dataRoomChecklists.dataRoomId, dataRoomId))
+    .orderBy(desc(dataRoomChecklists.createdAt));
+}
 
-  const conditions = [];
-  if (warehouseId) conditions.push(eq(copackerInvoices.warehouseId, warehouseId));
+export async function getDataRoomChecklistById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomChecklists).where(eq(dataRoomChecklists.id, id));
+  return result[0] || null;
+}
 
-  const result = conditions.length
-    ? await db.select().from(copackerInvoices).where(and(...conditions)).orderBy(desc(copackerInvoices.createdAt))
-    : await db.select().from(copackerInvoices).orderBy(desc(copackerInvoices.createdAt));
+export async function updateDataRoomChecklist(id: number, data: Partial<InsertDataRoomChecklist>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(dataRoomChecklists).set(data).where(eq(dataRoomChecklists.id, id));
+}
 
+export async function deleteDataRoomChecklist(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(dataRoomChecklistItems).where(eq(dataRoomChecklistItems.checklistId, id));
+  await db.delete(dataRoomChecklists).where(eq(dataRoomChecklists.id, id));
+}
+
+// Data Room Checklist Items
+export async function createDataRoomChecklistItem(data: InsertDataRoomChecklistItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(dataRoomChecklistItems).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getChecklistItems(checklistId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(dataRoomChecklistItems)
+    .where(eq(dataRoomChecklistItems.checklistId, checklistId))
+    .orderBy(dataRoomChecklistItems.categoryName, dataRoomChecklistItems.sortOrder);
+}
+
+export async function getChecklistItemById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomChecklistItems).where(eq(dataRoomChecklistItems.id, id));
+  return result[0] || null;
+}
+
+export async function updateChecklistItem(id: number, data: Partial<InsertDataRoomChecklistItem>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(dataRoomChecklistItems).set(data).where(eq(dataRoomChecklistItems.id, id));
+}
+
+export async function deleteChecklistItem(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(dataRoomChecklistItems).where(eq(dataRoomChecklistItems.id, id));
+}
+
+export async function bulkCreateChecklistItems(items: InsertDataRoomChecklistItem[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (items.length === 0) return [];
+  const result = await db.insert(dataRoomChecklistItems).values(items);
   return result;
 }
 
-export async function getCopackerInvoiceById(id: number) {
+// Get checklist with all items and linked documents
+export async function getChecklistWithItems(checklistId: number) {
   const db = await getDb();
   if (!db) return null;
 
-  const rows = await db.select().from(copackerInvoices).where(eq(copackerInvoices.id, id)).limit(1);
-  return rows[0] || null;
+  const checklist = await getDataRoomChecklistById(checklistId);
+  if (!checklist) return null;
+
+  const items = await getChecklistItems(checklistId);
+
+  // Group items by category
+  const categories: Record<string, typeof items> = {};
+  items.forEach(item => {
+    if (!categories[item.categoryName]) {
+      categories[item.categoryName] = [];
+    }
+    categories[item.categoryName].push(item);
+  });
+
+  // Get linked documents for each item
+  const documentsMap: Record<number, any[]> = {};
+  for (const item of items) {
+    if (item.linkedDocumentIds) {
+      try {
+        const docIds = JSON.parse(item.linkedDocumentIds) as number[];
+        if (docIds.length > 0) {
+          const docs = await db.select().from(dataRoomDocuments).where(inArray(dataRoomDocuments.id, docIds));
+          documentsMap[item.id] = docs;
+        }
+      } catch (e) {
+        documentsMap[item.id] = [];
+      }
+    }
+  }
+
+  return {
+    ...checklist,
+    categories: Object.entries(categories).map(([name, catItems]) => ({
+      name,
+      items: catItems.map(item => ({
+        ...item,
+        linkedDocuments: documentsMap[item.id] || [],
+      })),
+    })),
+  };
 }
 
-export async function createCopackerInvoice(data: InsertCopackerInvoice) {
+// Normalize a filename for matching: strip extension, split camelCase, replace separators
+function normalizeForMatching(name: string): string {
+  return name
+    .replace(/\.[^.]+$/, '')           // strip file extension
+    .replace(/[-_./\\]+/g, ' ')        // separators to spaces
+    .replace(/([a-z])([A-Z])/g, '$1 $2') // split camelCase
+    .toLowerCase()
+    .trim();
+}
+
+// Score how well a document matches a checklist item's keywords
+function scoreDocumentMatch(docName: string, docDescription: string | null | undefined, keywords: string[]): number {
+  const normalizedName = normalizeForMatching(docName);
+  const nameTokens = normalizedName.split(/\s+/).filter(t => t.length > 1);
+  const descNorm = docDescription ? normalizeForMatching(docDescription) : '';
+
+  let score = 0;
+
+  for (const keyword of keywords) {
+    const kwLower = keyword.toLowerCase();
+
+    // Exact phrase in normalized name (strongest signal)
+    if (normalizedName.includes(kwLower)) {
+      score += 10;
+      continue;
+    }
+
+    // Exact phrase in description
+    if (descNorm.includes(kwLower)) {
+      score += 5;
+      continue;
+    }
+
+    // Token overlap: split keyword into words, check how many appear in doc name tokens
+    const kwTokens = kwLower.split(/\s+/).filter(t => t.length > 1);
+    if (kwTokens.length === 0) continue;
+
+    const hits = kwTokens.filter(kt =>
+      nameTokens.some(nt => nt === kt || nt.includes(kt) || kt.includes(nt))
+    ).length;
+
+    if (hits === kwTokens.length) {
+      score += 7; // all keyword tokens matched
+    } else if (hits > 0) {
+      score += hits * 2; // partial
+    }
+  }
+
+  return score;
+}
+
+// Auto-match documents against checklist items using keyword scoring
+export async function autoMatchChecklistDocuments(checklistId: number) {
   const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(copackerInvoices).values(data);
-  return { id: result[0].insertId };
+  if (!db) return { matched: 0, items: [] };
+
+  const checklist = await getDataRoomChecklistById(checklistId);
+  if (!checklist) return { matched: 0, items: [] };
+
+  const items = await getChecklistItems(checklistId);
+  const documents = await getDataRoomDocuments(checklist.dataRoomId);
+
+  let matchedCount = 0;
+  const matchedItems: any[] = [];
+
+  for (const item of items) {
+    // Skip items manually set to waived or n/a
+    if (item.status === 'waived' || item.status === 'not_applicable') continue;
+
+    let keywords: string[] = [];
+    try {
+      keywords = item.matchKeywords ? JSON.parse(item.matchKeywords) : [];
+    } catch (e) {
+      keywords = [];
+    }
+
+    if (keywords.length === 0) continue;
+
+    // Score every document against this item
+    const scored = documents
+      .map(doc => ({ doc, score: scoreDocumentMatch(doc.name, doc.description, keywords) }))
+      .filter(s => s.score >= 5)
+      .sort((a, b) => b.score - a.score);
+
+    if (scored.length > 0) {
+      const linkedDocIds = scored.map(s => s.doc.id);
+
+      await updateChecklistItem(item.id, {
+        status: 'complete',
+        linkedDocumentIds: JSON.stringify(linkedDocIds),
+        linkedDocumentCount: linkedDocIds.length,
+      });
+
+      matchedCount++;
+      matchedItems.push({
+        itemId: item.id,
+        itemName: item.itemName,
+        matchedDocuments: scored.map(s => ({ id: s.doc.id, name: s.doc.name, score: s.score })),
+        status: 'complete',
+      });
+    }
+  }
+
+  // Update checklist progress
+  await recalculateChecklistProgress(checklistId);
+
+  return { matched: matchedCount, items: matchedItems };
 }
 
-export async function updateCopackerInvoice(id: number, data: Partial<InsertCopackerInvoice>) {
+// Recalculate checklist progress
+export async function recalculateChecklistProgress(checklistId: number) {
   const db = await getDb();
   if (!db) return;
-  await db.update(copackerInvoices).set(data).where(eq(copackerInvoices.id, id));
+
+  const items = await getChecklistItems(checklistId);
+
+  const total = items.length;
+  const completed = items.filter(i => i.status === 'complete').length;
+  const partial = items.filter(i => i.status === 'partial').length;
+  const missing = items.filter(i => i.status === 'missing').length;
+
+  await updateDataRoomChecklist(checklistId, {
+    totalItems: total,
+    completedItems: completed,
+    partialItems: partial,
+    missingItems: missing,
+  });
 }
 
-export async function getCopackerInvoiceItems(invoiceId: number) {
-  const db = await getDb();
-  if (!db) return [];
-  return db.select().from(copackerInvoiceItems).where(eq(copackerInvoiceItems.invoiceId, invoiceId)).orderBy(copackerInvoiceItems.id);
+// Create a checklist from a template
+export async function createChecklistFromTemplate(
+  dataRoomId: number,
+  templateId: number,
+  userId: number,
+  customName?: string
+) {
+  const template = await getTemplateWithItems(templateId);
+  if (!template) throw new Error("Template not found");
+
+  // Create the checklist
+  const checklist = await createDataRoomChecklist({
+    dataRoomId,
+    templateId,
+    name: customName || template.name,
+    description: template.description,
+    createdBy: userId,
+    totalItems: template.categories.reduce((sum, cat) => sum + cat.items.length, 0),
+    missingItems: template.categories.reduce((sum, cat) => sum + cat.items.length, 0),
+  });
+
+  // Create checklist items from template
+  let sortOrder = 0;
+  for (const category of template.categories) {
+    for (const item of category.items) {
+      await createDataRoomChecklistItem({
+        checklistId: checklist.id,
+        dataRoomId,
+        categoryName: category.name,
+        itemName: item.name,
+        itemDescription: item.description,
+        requirement: item.requirement,
+        matchKeywords: item.matchKeywords,
+        matchFileTypes: item.matchFileTypes,
+        sortOrder: sortOrder++,
+        status: 'missing',
+      });
+    }
+  }
+
+  return checklist;
 }
 
-export async function createCopackerInvoiceItem(data: InsertCopackerInvoiceItem) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(copackerInvoiceItems).values(data);
-  return { id: result[0].insertId };
+// Create a standard due diligence checklist
+export async function createStandardChecklist(
+  dataRoomId: number,
+  userId: number,
+  checklistType: 'fundraising' | 'ma' | 'full' | 'series_b' = 'full',
+  customName?: string
+) {
+  // Select the appropriate category template
+  const categories = checklistType === 'series_b'
+    ? SERIES_B_DD_CATEGORIES
+    : STANDARD_DD_CATEGORIES;
+
+  // Generate name based on template type
+  const templateNames: Record<string, string> = {
+    'series_b': 'Series B Due Diligence Checklist',
+    'fundraising': 'Fundraising Due Diligence Checklist',
+    'ma': 'M&A Due Diligence Checklist',
+    'full': 'Standard Due Diligence Checklist',
+  };
+
+  // Create the checklist
+  const totalItems = Object.values(categories).reduce((sum, cat) => sum + cat.items.length, 0);
+  const checklist = await createDataRoomChecklist({
+    dataRoomId,
+    name: customName || templateNames[checklistType] || 'Due Diligence Checklist',
+    description: `${templateNames[checklistType] || 'Due diligence checklist'} with ${totalItems} items across ${Object.keys(categories).length} categories`,
+    createdBy: userId,
+    totalItems,
+    missingItems: totalItems,
+  });
+
+  // Create checklist items
+  let sortOrder = 0;
+  for (const [key, category] of Object.entries(categories)) {
+    for (const item of category.items) {
+      await createDataRoomChecklistItem({
+        checklistId: checklist.id,
+        dataRoomId,
+        categoryName: category.name,
+        itemName: item.name,
+        itemDescription: undefined,
+        requirement: 'required',
+        matchKeywords: JSON.stringify(item.keywords),
+        sortOrder: sortOrder++,
+        status: 'missing',
+      });
+    }
+  }
+
+  return checklist;
 }
 
-export async function deleteCopackerInvoiceItems(invoiceId: number) {
+// Get checklist summary for a data room
+export async function getChecklistSummary(dataRoomId: number) {
   const db = await getDb();
-  if (!db) return;
-  await db.delete(copackerInvoiceItems).where(eq(copackerInvoiceItems.invoiceId, invoiceId));
-}
+  if (!db) return null;
 
-// --- Copacker Shipping Documents ---
+  const checklists = await getDataRoomChecklists(dataRoomId);
+  if (checklists.length === 0) return null;
 
-export async function getCopackerShippingDocuments(warehouseId?: number) {
-  const db = await getDb();
-  if (!db) return [];
+  // Get the most recent active checklist
+  const activeChecklist = checklists.find(c => c.status === 'active') || checklists[0];
+  const items = await getChecklistItems(activeChecklist.id);
 
-  const conditions = [];
-  if (warehouseId) conditions.push(eq(copackerShippingDocuments.warehouseId, warehouseId));
+  // Group by category and status
+  const byCategory: Record<string, { total: number; complete: number; partial: number; missing: number }> = {};
+  items.forEach(item => {
+    if (!byCategory[item.categoryName]) {
+      byCategory[item.categoryName] = { total: 0, complete: 0, partial: 0, missing: 0 };
+    }
+    byCategory[item.categoryName].total++;
+    if (item.status === 'complete') byCategory[item.categoryName].complete++;
+    else if (item.status === 'partial') byCategory[item.categoryName].partial++;
+    else if (item.status === 'missing') byCategory[item.categoryName].missing++;
+  });
 
-  const result = conditions.length
-    ? await db.select().from(copackerShippingDocuments).where(and(...conditions)).orderBy(desc(copackerShippingDocuments.createdAt))
-    : await db.select().from(copackerShippingDocuments).orderBy(desc(copackerShippingDocuments.createdAt));
-
-  return result;
-}
-
-export async function createCopackerShippingDocument(data: InsertCopackerShippingDocument) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(copackerShippingDocuments).values(data);
-  return { id: result[0].insertId };
-}
-
-export async function updateCopackerShippingDocument(id: number, data: Partial<InsertCopackerShippingDocument>) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(copackerShippingDocuments).set(data).where(eq(copackerShippingDocuments.id, id));
+  return {
+    checklist: activeChecklist,
+    totalItems: items.length,
+    completedItems: items.filter(i => i.status === 'complete').length,
+    partialItems: items.filter(i => i.status === 'partial').length,
+    missingItems: items.filter(i => i.status === 'missing').length,
+    completionPercent: items.length > 0
+      ? Math.round((items.filter(i => i.status === 'complete').length / items.length) * 100)
+      : 0,
+    byCategory,
+    requiredMissing: items.filter(i => i.status === 'missing' && i.requirement === 'required'),
+  };
 }

@@ -62,8 +62,7 @@ export function useAuth(options?: UseAuthOptions) {
     if (state.user) return;
     if (typeof window === "undefined") return;
     if (window.location.pathname === redirectPath) return;
-
-    window.location.href = redirectPath
+    window.location.href = redirectPath;
   }, [
     redirectOnUnauthenticated,
     redirectPath,

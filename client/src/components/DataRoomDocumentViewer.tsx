@@ -21,8 +21,14 @@ import {
   RotateCw,
 } from 'lucide-react';
 
-// Set up PDF.js worker
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
+// Set up PDF.js worker - use bundled worker for security and offline support
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.js',
+  import.meta.url,
+).toString();
+
+// Throttle interval for mouse movement tracking (in milliseconds)
+const MOUSE_MOVE_THROTTLE_MS = 100;
 
 interface DocumentViewerProps {
   documentId: number;
@@ -66,6 +72,7 @@ export default function DataRoomDocumentViewer({
   // Page tracking state
   const currentPageTracking = useRef<PageTrackingData | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const lastMouseMoveTime = useRef<number>(0);
 
   // Mutations for tracking
   const recordPageViewMutation = trpc.dataRoom.pageTracking.recordPageView.useMutation();
@@ -136,10 +143,14 @@ export default function DataRoomDocumentViewer({
     );
   }, []);
 
-  // Track mouse movements (throttled)
+  // Track mouse movements (throttled to at most once per 100ms)
   const handleMouseMove = useCallback(() => {
-    if (currentPageTracking.current) {
+    if (!currentPageTracking.current) return;
+    
+    const now = Date.now();
+    if (now - lastMouseMoveTime.current >= MOUSE_MOVE_THROTTLE_MS) {
       currentPageTracking.current.mouseMovements++;
+      lastMouseMoveTime.current = now;
     }
   }, []);
 
@@ -183,6 +194,18 @@ export default function DataRoomDocumentViewer({
     }
   };
 
+  // Keep isFullscreen in sync with actual fullscreen state
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, []);
   // Cleanup on unmount
   useEffect(() => {
     return () => {

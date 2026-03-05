@@ -18,10 +18,7 @@ export type SessionPayload = {
 
 class SDKServer {
   private parseCookies(cookieHeader: string | undefined) {
-    if (!cookieHeader) {
-      return new Map<string, string>();
-    }
-
+    if (!cookieHeader) return new Map<string, string>();
     const parsed = parseCookieHeader(cookieHeader);
     return new Map(Object.entries(parsed));
   }
@@ -45,37 +42,24 @@ class SDKServer {
     );
   }
 
-  async signSession(
-    payload: SessionPayload,
-    options: { expiresInMs?: number } = {}
-  ): Promise<string> {
+  async signSession(payload: SessionPayload, options: { expiresInMs?: number } = {}): Promise<string> {
     const issuedAt = Date.now();
     const expiresInMs = options.expiresInMs ?? ONE_YEAR_MS;
     const expirationSeconds = Math.floor((issuedAt + expiresInMs) / 1000);
     const secretKey = this.getSessionSecret();
-
-    return new SignJWT({
-      openId: payload.openId,
-      appId: payload.appId,
-      name: payload.name,
-    })
+    return new SignJWT({ openId: payload.openId, appId: payload.appId, name: payload.name })
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
       .setExpirationTime(expirationSeconds)
       .sign(secretKey);
   }
 
-  async verifySession(
-    cookieValue: string | undefined | null
-  ): Promise<{ openId: string; appId: string; name: string } | null> {
+  async verifySession(cookieValue: string | undefined | null): Promise<{ openId: string; appId: string; name: string } | null> {
     if (!cookieValue) {
       return null;
     }
-
     try {
       const secretKey = this.getSessionSecret();
-      const { payload } = await jwtVerify(cookieValue, secretKey, {
-        algorithms: ["HS256"],
-      });
+      const { payload } = await jwtVerify(cookieValue, secretKey, { algorithms: ["HS256"] });
       const { openId, appId, name } = payload as Record<string, unknown>;
 
       if (
@@ -85,12 +69,7 @@ class SDKServer {
       ) {
         return null;
       }
-
-      return {
-        openId,
-        appId,
-        name,
-      };
+      return { openId, appId, name };
     } catch (error) {
       console.warn("[Auth] Session verification failed", String(error));
       return null;

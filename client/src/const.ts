@@ -1,3 +1,4 @@
-export { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+export const APP_URL = import.meta.env.VITE_APP_URL || window.location.origin;
+export const LOGIN_PATH = "/login";
 
 export const getLoginUrl = () => "/login";
