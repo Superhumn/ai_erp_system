@@ -6,7 +6,7 @@
 import { invokeLLM } from './llm';
 
 export interface ExtractedAttachmentData {
-  type: 'invoice' | 'receipt' | 'purchase_order' | 'shipping_document' | 'customs_document' | 'bill_of_lading' | 'packing_list' | 'credit_memo' | 'bank_statement' | 'sales_order' | 'contract' | 'unknown';
+  type: 'invoice' | 'receipt' | 'purchase_order' | 'shipping_document' | 'customs_document' | 'bill_of_lading' | 'packing_list' | 'credit_memo' | 'bank_statement' | 'sales_order' | 'contract' | 'quote' | 'term_sheet' | 'contact_card' | 'unknown';
   confidence: number;
   extractedText: string;
   structuredData: {
@@ -73,6 +73,29 @@ export interface ExtractedAttachmentData {
       reference?: string;
     }>;
 
+    // Quote/proposal fields
+    quoteNumber?: string;
+    validUntil?: string;
+    proposalTitle?: string;
+
+    // Term sheet fields
+    investmentAmount?: number;
+    preMoneyValuation?: number;
+    postMoneyValuation?: number;
+    investorName?: string;
+    roundType?: string;
+    keyTerms?: string[];
+
+    // Contact card fields
+    contactFirstName?: string;
+    contactLastName?: string;
+    contactEmail?: string;
+    contactPhone?: string;
+    contactOrganization?: string;
+    contactJobTitle?: string;
+    contactLinkedinUrl?: string;
+    contactAddress?: string;
+
     // Additional fields
     poNumber?: string;
     invoiceNumber?: string;
@@ -111,7 +134,7 @@ export async function processAttachment(
           content: `You are a document processing assistant specialized in extracting structured data from business documents.
           
 Analyze the provided document image/PDF and extract:
-1. Document type (invoice, receipt, purchase_order, shipping_document, customs_document, bill_of_lading, packing_list, credit_memo, bank_statement, sales_order, contract, or unknown)
+1. Document type (invoice, receipt, purchase_order, shipping_document, customs_document, bill_of_lading, packing_list, credit_memo, bank_statement, sales_order, contract, quote, term_sheet, contact_card, or unknown)
 2. All visible text
 3. Structured data including:
    - Document number, date, amounts
@@ -156,7 +179,7 @@ Return your analysis in the specified JSON format.`
             properties: {
               documentType: {
                 type: 'string',
-                enum: ['invoice', 'receipt', 'purchase_order', 'shipping_document', 'customs_document', 'bill_of_lading', 'packing_list', 'credit_memo', 'bank_statement', 'sales_order', 'contract', 'unknown'],
+                enum: ['invoice', 'receipt', 'purchase_order', 'shipping_document', 'customs_document', 'bill_of_lading', 'packing_list', 'credit_memo', 'bank_statement', 'sales_order', 'contract', 'quote', 'term_sheet', 'contact_card', 'unknown'],
                 description: 'The type of document'
               },
               confidence: {
@@ -229,6 +252,23 @@ Return your analysis in the specified JSON format.`
                 },
                 description: 'Individual transactions from a bank statement'
               },
+              quoteNumber: { type: 'string', description: 'Quote/proposal number' },
+              validUntil: { type: 'string', description: 'Quote validity/expiry date' },
+              proposalTitle: { type: 'string', description: 'Proposal or quote title' },
+              investmentAmount: { type: 'number', description: 'Investment amount (for term sheets)' },
+              preMoneyValuation: { type: 'number', description: 'Pre-money valuation (for term sheets)' },
+              postMoneyValuation: { type: 'number', description: 'Post-money valuation (for term sheets)' },
+              investorName: { type: 'string', description: 'Investor name (for term sheets)' },
+              roundType: { type: 'string', description: 'Funding round type (seed, series_a, etc.)' },
+              keyTerms: { type: 'array', items: { type: 'string' }, description: 'Key terms from term sheet' },
+              contactFirstName: { type: 'string', description: 'Contact first name (for business cards)' },
+              contactLastName: { type: 'string', description: 'Contact last name (for business cards)' },
+              contactEmail: { type: 'string', description: 'Contact email (for business cards)' },
+              contactPhone: { type: 'string', description: 'Contact phone (for business cards)' },
+              contactOrganization: { type: 'string', description: 'Contact organization (for business cards)' },
+              contactJobTitle: { type: 'string', description: 'Contact job title (for business cards)' },
+              contactLinkedinUrl: { type: 'string', description: 'Contact LinkedIn URL (for business cards)' },
+              contactAddress: { type: 'string', description: 'Contact address (for business cards)' },
               poNumber: { type: 'string', description: 'Purchase order reference' },
               invoiceNumber: { type: 'string', description: 'Invoice number reference' },
               notes: { type: 'string', description: 'Any additional notes or comments' }
@@ -284,6 +324,23 @@ Return your analysis in the specified JSON format.`
         openingBalance: parsed.openingBalance,
         closingBalance: parsed.closingBalance,
         statementTransactions: parsed.statementTransactions,
+        quoteNumber: parsed.quoteNumber,
+        validUntil: parsed.validUntil,
+        proposalTitle: parsed.proposalTitle,
+        investmentAmount: parsed.investmentAmount,
+        preMoneyValuation: parsed.preMoneyValuation,
+        postMoneyValuation: parsed.postMoneyValuation,
+        investorName: parsed.investorName,
+        roundType: parsed.roundType,
+        keyTerms: parsed.keyTerms,
+        contactFirstName: parsed.contactFirstName,
+        contactLastName: parsed.contactLastName,
+        contactEmail: parsed.contactEmail,
+        contactPhone: parsed.contactPhone,
+        contactOrganization: parsed.contactOrganization,
+        contactJobTitle: parsed.contactJobTitle,
+        contactLinkedinUrl: parsed.contactLinkedinUrl,
+        contactAddress: parsed.contactAddress,
         poNumber: parsed.poNumber,
         invoiceNumber: parsed.invoiceNumber,
         notes: parsed.notes,
@@ -380,6 +437,9 @@ export function categorizeByAttachments(
     'bank_statement': 'general',
     'sales_order': 'purchase_order',
     'contract': 'general',
+    'quote': 'invoice',
+    'term_sheet': 'general',
+    'contact_card': 'general',
   };
 
   return {

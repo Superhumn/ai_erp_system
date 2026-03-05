@@ -8,7 +8,7 @@ import { sendEmail, isEmailConfigured, formatEmailHtml } from "./_core/email";
 import { processEmailReply, analyzeEmail, generateEmailReply } from "./emailReplyService";
 import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
-import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, importCreditMemo, importBankStatement, importSalesOrder, importContract, matchLineItemsToMaterials, importParsedDocument, bulkImportDocuments } from "./documentImportService";
+import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, importCreditMemo, importBankStatement, importSalesOrder, importContract, importQuote, importTermSheet, importContactCard, matchLineItemsToMaterials, importParsedDocument, bulkImportDocuments } from "./documentImportService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
@@ -11500,6 +11500,84 @@ Ask if they received the original request and if they can provide a quote.`;
         return importContract(input.contractData as any, ctx.user.id);
       }),
 
+    // Import a quote/proposal
+    importQuote: protectedProcedure
+      .input(z.object({
+        quoteData: z.object({
+          quoteNumber: z.string(),
+          title: z.string().optional(),
+          customerName: z.string(),
+          customerEmail: z.string().optional(),
+          quoteDate: z.string(),
+          validUntil: z.string().optional(),
+          lineItems: z.array(z.object({
+            description: z.string(),
+            sku: z.string().optional(),
+            quantity: z.number(),
+            unit: z.string().optional(),
+            unitPrice: z.number(),
+            totalPrice: z.number(),
+          })),
+          subtotal: z.number().default(0),
+          taxAmount: z.number().optional(),
+          discountAmount: z.number().optional(),
+          totalAmount: z.number(),
+          currency: z.string().optional(),
+          terms: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importQuote(input.quoteData as any, ctx.user.id);
+      }),
+
+    // Import a term sheet
+    importTermSheet: protectedProcedure
+      .input(z.object({
+        termSheetData: z.object({
+          title: z.string(),
+          investorName: z.string(),
+          investorEmail: z.string().optional(),
+          roundType: z.string(),
+          investmentAmount: z.number(),
+          preMoneyValuation: z.number().optional(),
+          postMoneyValuation: z.number().optional(),
+          currency: z.string().optional(),
+          keyTerms: z.array(z.string()).optional(),
+          boardSeats: z.number().optional(),
+          liquidationPreference: z.string().optional(),
+          date: z.string(),
+          expiryDate: z.string().optional(),
+          notes: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importTermSheet(input.termSheetData as any, ctx.user.id);
+      }),
+
+    // Import a business card / contact info
+    importContactCard: protectedProcedure
+      .input(z.object({
+        contactData: z.object({
+          firstName: z.string(),
+          lastName: z.string().optional(),
+          email: z.string().optional(),
+          phone: z.string().optional(),
+          organization: z.string().optional(),
+          jobTitle: z.string().optional(),
+          linkedinUrl: z.string().optional(),
+          address: z.string().optional(),
+          city: z.string().optional(),
+          country: z.string().optional(),
+          website: z.string().optional(),
+          notes: z.string().optional(),
+          source: z.string().optional(),
+        }),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importContactCard(input.contactData as any, ctx.user.id);
+      }),
+
     // Import a parsed document from the email inbox (bridge email OCR → real records)
     importParsedDocument: protectedProcedure
       .input(z.object({
@@ -11518,7 +11596,7 @@ Ask if they received the original request and if they can provide a quote.`;
         documents: z.array(z.object({
           content: z.string(),
           filename: z.string(),
-          hint: z.enum(["purchase_order", "vendor_invoice", "freight_invoice", "customs_document", "credit_memo", "bank_statement", "sales_order", "contract"]).optional(),
+          hint: z.enum(["purchase_order", "vendor_invoice", "freight_invoice", "customs_document", "credit_memo", "bank_statement", "sales_order", "contract", "quote", "term_sheet", "contact_card"]).optional(),
         })),
         markPOsAsReceived: z.boolean().default(true),
       }))

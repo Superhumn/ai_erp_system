@@ -871,6 +871,9 @@ export const parsedDocumentTypeEnum = mysqlEnum("parsed_document_type", [
   "bank_statement",
   "sales_order",
   "contract",
+  "quote",
+  "term_sheet",
+  "contact_card",
   "other",
 ]);
 

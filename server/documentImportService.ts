@@ -146,7 +146,7 @@ export interface ImportedCustomsDocument {
 
 export interface DocumentParseResult {
   success: boolean;
-  documentType: "purchase_order" | "freight_invoice" | "vendor_invoice" | "customs_document" | "credit_memo" | "bank_statement" | "sales_order" | "contract" | "unknown";
+  documentType: "purchase_order" | "freight_invoice" | "vendor_invoice" | "customs_document" | "credit_memo" | "bank_statement" | "sales_order" | "contract" | "quote" | "term_sheet" | "contact_card" | "unknown";
   purchaseOrder?: ImportedPurchaseOrder;
   freightInvoice?: ImportedFreightInvoice;
   vendorInvoice?: ImportedVendorInvoice;
@@ -155,6 +155,9 @@ export interface DocumentParseResult {
   bankStatement?: ImportedBankStatement;
   salesOrder?: ImportedSalesOrder;
   contract?: ImportedContract;
+  quote?: ImportedQuote;
+  termSheet?: ImportedTermSheet;
+  contactCard?: ImportedContactCard;
   rawText?: string;
   error?: string;
 }
@@ -183,7 +186,7 @@ export interface ImportResult {
 export async function parseUploadedDocument(
   fileUrl: string,
   filename: string,
-  documentHint?: "purchase_order" | "freight_invoice" | "vendor_invoice" | "customs_document" | "credit_memo" | "bank_statement" | "sales_order" | "contract",
+  documentHint?: "purchase_order" | "freight_invoice" | "vendor_invoice" | "customs_document" | "credit_memo" | "bank_statement" | "sales_order" | "contract" | "quote" | "term_sheet" | "contact_card",
   mimeType?: string
 ): Promise<DocumentParseResult> {
   console.log("[DocumentImport] Starting parse for:", filename, "URL:", fileUrl, "mimeType:", mimeType);
@@ -203,6 +206,9 @@ INSTRUCTIONS:
    - Bank Statement: A bank account statement showing transactions over a period (has account number, opening/closing balances, transaction list)
    - Sales Order: A customer purchase order / sales order for YOUR goods/services (customer is buying FROM you)
    - Contract: A legal agreement/contract between parties (vendor, customer, NDA, lease, service, employment, partnership)
+   - Quote/Proposal: A price quote or proposal TO a customer for your goods/services (has quote number, line items, validity date)
+   - Term Sheet: An investment term sheet from an investor (has investment amount, valuation, round type, key terms)
+   - Contact Card: A business card, vCard, or contact information document (has name, email, phone, organization)
 2. Extract all relevant structured data
 3. For Purchase Orders: extract PO number, vendor info, line items with quantities/prices, dates, totals
 4. For Vendor Invoices: extract invoice number, vendor info, line items with quantities/prices, due date, totals
@@ -212,12 +218,15 @@ INSTRUCTIONS:
 8. For Bank Statements: extract bank name, account number, period dates, opening/closing balances, all individual transactions
 9. For Sales Orders: extract order number, customer info, line items, shipping address, totals
 10. For Contracts: extract title, type, parties, dates, value, terms, renewal info
-11. Match line item descriptions to common raw materials if possible
-12. Assign a confidence score (0-100) based on extraction completeness
+11. For Quotes/Proposals: extract quote number, customer info, line items with prices, validity date, terms
+12. For Term Sheets: extract investor info, round type, investment amount, valuations, key terms, board seats
+13. For Contact Cards/Business Cards: extract name, email, phone, organization, job title, LinkedIn, address
+14. Match line item descriptions to common raw materials if possible
+15. Assign a confidence score (0-100) based on extraction completeness
 
 Return a JSON object with this structure:
 {
-  "documentType": "purchase_order" | "vendor_invoice" | "freight_invoice" | "customs_document" | "credit_memo" | "bank_statement" | "sales_order" | "contract" | "unknown",
+  "documentType": "purchase_order" | "vendor_invoice" | "freight_invoice" | "customs_document" | "credit_memo" | "bank_statement" | "sales_order" | "contract" | "quote" | "term_sheet" | "contact_card" | "unknown",
   "confidence": 85,
   "purchaseOrder": {
     "poNumber": "PO-12345",
@@ -380,6 +389,47 @@ Return a JSON object with this structure:
     "terms": "Net 30 payment terms, minimum order quantity 1000 units",
     "renewalDate": "2025-11-01",
     "autoRenewal": true
+  },
+  "quote": {
+    "quoteNumber": "QT-2025-001",
+    "title": "Website Redesign Proposal",
+    "customerName": "ABC Corporation",
+    "customerEmail": "purchasing@abc.com",
+    "quoteDate": "2025-01-15",
+    "validUntil": "2025-02-15",
+    "lineItems": [{ "description": "Design Phase", "quantity": 1, "unit": "EA", "unitPrice": 5000.00, "totalPrice": 5000.00 }],
+    "subtotal": 5000.00,
+    "taxAmount": 400.00,
+    "totalAmount": 5400.00,
+    "currency": "USD",
+    "terms": "50% upfront, 50% on delivery"
+  },
+  "termSheet": {
+    "title": "Series A Term Sheet - Venture Capital Partners",
+    "investorName": "Venture Capital Partners",
+    "investorEmail": "partner@vcfund.com",
+    "roundType": "series_a",
+    "investmentAmount": 5000000,
+    "preMoneyValuation": 15000000,
+    "postMoneyValuation": 20000000,
+    "currency": "USD",
+    "keyTerms": ["1x non-participating liquidation preference", "Anti-dilution: broad-based weighted average", "Board: 2 founder, 1 investor, 1 independent"],
+    "boardSeats": 1,
+    "liquidationPreference": "1x non-participating",
+    "date": "2025-01-20",
+    "expiryDate": "2025-02-20"
+  },
+  "contactCard": {
+    "firstName": "John",
+    "lastName": "Smith",
+    "email": "john.smith@company.com",
+    "phone": "+1-555-123-4567",
+    "organization": "Tech Innovations Inc",
+    "jobTitle": "VP of Procurement",
+    "linkedinUrl": "https://linkedin.com/in/johnsmith",
+    "address": "123 Business Ave, Suite 100",
+    "city": "San Francisco",
+    "country": "USA"
   }
 }
 
@@ -793,6 +843,9 @@ If document type is unknown, return all as null.`;
       bankStatement: parsed.bankStatement,
       salesOrder: parsed.salesOrder,
       contract: parsed.contract,
+      quote: parsed.quote,
+      termSheet: parsed.termSheet,
+      contactCard: parsed.contactCard,
       rawText: `Document parsed from: ${fileUrl}`
     };
   } catch (error) {
@@ -1804,11 +1857,425 @@ export async function importContract(
   }
 }
 
+// ============================================
+// SALES & FUNDRAISING DOCUMENT TYPES
+// ============================================
+
+export interface ImportedQuote {
+  quoteNumber: string;
+  title?: string;
+  customerName: string;
+  customerEmail?: string;
+  quoteDate: string;
+  validUntil?: string;
+  lineItems: ImportedLineItem[];
+  subtotal: number;
+  taxAmount?: number;
+  discountAmount?: number;
+  totalAmount: number;
+  currency?: string;
+  terms?: string;
+  notes?: string;
+  confidence: number;
+}
+
+export interface ImportedTermSheet {
+  title: string;
+  investorName: string;
+  investorEmail?: string;
+  roundType: string;
+  investmentAmount: number;
+  preMoneyValuation?: number;
+  postMoneyValuation?: number;
+  currency?: string;
+  keyTerms?: string[];
+  boardSeats?: number;
+  liquidationPreference?: string;
+  date: string;
+  expiryDate?: string;
+  notes?: string;
+  confidence: number;
+}
+
+export interface ImportedContactCard {
+  firstName: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
+  organization?: string;
+  jobTitle?: string;
+  linkedinUrl?: string;
+  address?: string;
+  city?: string;
+  country?: string;
+  website?: string;
+  notes?: string;
+  source?: string;
+  confidence: number;
+}
+
+/**
+ * Import a quote/proposal — creates a quote invoice + CRM deal
+ */
+export async function importQuote(
+  quote: ImportedQuote,
+  userId: number
+): Promise<ImportResult> {
+  const createdRecords: ImportResult["createdRecords"] = [];
+  const updatedRecords: ImportResult["updatedRecords"] = [];
+  const warnings: string[] = [];
+
+  try {
+    // 1. Find or create customer
+    let customer = quote.customerEmail
+      ? await db.getCustomerByEmail(quote.customerEmail)
+      : await db.getCustomerByName(quote.customerName);
+
+    if (!customer) {
+      const customerResult = await db.createCustomer({
+        name: quote.customerName,
+        email: quote.customerEmail || "",
+        status: "active",
+      });
+      customer = await db.getCustomerById(customerResult.id);
+      createdRecords.push({ type: "customer", id: customerResult.id, name: quote.customerName });
+    }
+
+    // 2. Create a quote invoice
+    const invoiceResult = await db.createInvoice({
+      invoiceNumber: quote.quoteNumber,
+      customerId: customer!.id,
+      type: "quote",
+      status: "draft",
+      issueDate: new Date(quote.quoteDate),
+      dueDate: quote.validUntil ? new Date(quote.validUntil) : undefined,
+      subtotal: quote.subtotal.toString(),
+      taxAmount: (quote.taxAmount || 0).toString(),
+      discountAmount: (quote.discountAmount || 0).toString(),
+      totalAmount: quote.totalAmount.toString(),
+      currency: quote.currency || "USD",
+      notes: `${quote.title ? quote.title + ". " : ""}${quote.notes || ""}`,
+      terms: quote.terms,
+      createdBy: userId,
+    });
+    createdRecords.push({ type: "invoice", id: invoiceResult.id, name: quote.quoteNumber });
+
+    // 3. Create line items
+    for (const item of quote.lineItems) {
+      await db.createInvoiceItem({
+        invoiceId: invoiceResult.id,
+        description: item.description,
+        quantity: item.quantity.toString(),
+        unitPrice: item.unitPrice.toString(),
+        totalAmount: item.totalPrice.toString(),
+      });
+    }
+
+    // 4. Create or update a CRM deal if there's a sales pipeline
+    try {
+      const pipelines = await db.getCrmPipelines("sales");
+      if (pipelines.length > 0) {
+        const pipeline = pipelines[0];
+        const stages = JSON.parse(pipeline.stages || "[]");
+        const proposalStage = stages.find((s: any) => s.name?.toLowerCase().includes("proposal")) || stages[1] || stages[0];
+
+        // Find or create CRM contact
+        let crmContact = quote.customerEmail
+          ? await db.getCrmContactByEmail(quote.customerEmail)
+          : undefined;
+
+        if (!crmContact) {
+          const contactResult = await db.createCrmContact({
+            firstName: quote.customerName.split(" ")[0],
+            lastName: quote.customerName.split(" ").slice(1).join(" ") || undefined,
+            fullName: quote.customerName,
+            email: quote.customerEmail,
+            contactType: "prospect",
+            source: "import",
+            pipelineStage: "proposal",
+            dealValue: quote.totalAmount.toString(),
+            dealCurrency: quote.currency || "USD",
+          });
+          crmContact = await db.getCrmContactById(contactResult.id);
+          createdRecords.push({ type: "crm_contact", id: contactResult.id, name: quote.customerName });
+        }
+
+        if (crmContact) {
+          const dealResult = await db.createCrmDeal({
+            pipelineId: pipeline.id,
+            contactId: crmContact.id,
+            name: quote.title || `Quote ${quote.quoteNumber} - ${quote.customerName}`,
+            stage: proposalStage?.name || "proposal",
+            amount: quote.totalAmount.toString(),
+            currency: quote.currency || "USD",
+            probability: 30,
+            expectedCloseDate: quote.validUntil ? new Date(quote.validUntil) : undefined,
+            status: "open",
+            source: "document_import",
+            notes: `Auto-created from quote ${quote.quoteNumber}`,
+          });
+          createdRecords.push({ type: "crm_deal", id: dealResult.id, name: quote.title || quote.quoteNumber });
+        }
+      }
+    } catch (crmError) {
+      warnings.push(`CRM deal creation skipped: ${crmError instanceof Error ? crmError.message : "unknown error"}`);
+    }
+
+    const result: ImportResult = {
+      success: true,
+      documentType: "quote",
+      createdRecords,
+      updatedRecords,
+      warnings
+    };
+
+    emitDocumentImportEvent("quote_received", "invoice", invoiceResult.id, {
+      quoteNumber: quote.quoteNumber,
+      customerName: quote.customerName,
+      totalAmount: quote.totalAmount,
+    });
+
+    return result;
+  } catch (error) {
+    return {
+      success: false,
+      documentType: "quote",
+      createdRecords,
+      updatedRecords,
+      warnings,
+      error: error instanceof Error ? error.message : "Import failed"
+    };
+  }
+}
+
+/**
+ * Import a term sheet — creates a CRM deal in the fundraising pipeline + interaction log
+ */
+export async function importTermSheet(
+  termSheet: ImportedTermSheet,
+  userId: number
+): Promise<ImportResult> {
+  const createdRecords: ImportResult["createdRecords"] = [];
+  const updatedRecords: ImportResult["updatedRecords"] = [];
+  const warnings: string[] = [];
+
+  try {
+    // 1. Find or create CRM contact for the investor
+    let crmContact = termSheet.investorEmail
+      ? await db.getCrmContactByEmail(termSheet.investorEmail)
+      : undefined;
+
+    if (!crmContact) {
+      const contactResult = await db.createCrmContact({
+        firstName: termSheet.investorName.split(" ")[0],
+        lastName: termSheet.investorName.split(" ").slice(1).join(" ") || undefined,
+        fullName: termSheet.investorName,
+        email: termSheet.investorEmail,
+        contactType: "investor",
+        source: "import",
+        pipelineStage: "negotiation",
+        dealValue: termSheet.investmentAmount.toString(),
+        dealCurrency: termSheet.currency || "USD",
+      });
+      crmContact = await db.getCrmContactById(contactResult.id);
+      createdRecords.push({ type: "crm_contact", id: contactResult.id, name: termSheet.investorName });
+    }
+
+    // 2. Find or create fundraising pipeline
+    let pipeline: any;
+    const pipelines = await db.getCrmPipelines("fundraising");
+    if (pipelines.length > 0) {
+      pipeline = pipelines[0];
+    } else {
+      // Create a default fundraising pipeline
+      const pipelineResult = await db.createCrmPipeline({
+        name: "Fundraising",
+        type: "fundraising",
+        stages: JSON.stringify([
+          { name: "lead", order: 1 },
+          { name: "contacted", order: 2 },
+          { name: "term_sheet", order: 3 },
+          { name: "due_diligence", order: 4 },
+          { name: "closing", order: 5 },
+          { name: "closed", order: 6 },
+        ]),
+        isDefault: true,
+      });
+      pipeline = await db.getCrmPipelineById(pipelineResult.id);
+      createdRecords.push({ type: "crm_pipeline", id: pipelineResult.id, name: "Fundraising" });
+    }
+
+    // 3. Create the deal
+    const keyTermsSummary = termSheet.keyTerms?.join("; ") || "";
+    const dealNotes = [
+      `Round: ${termSheet.roundType}`,
+      `Investment: ${termSheet.currency || "USD"} ${termSheet.investmentAmount.toLocaleString()}`,
+      termSheet.preMoneyValuation ? `Pre-money: ${termSheet.currency || "USD"} ${termSheet.preMoneyValuation.toLocaleString()}` : null,
+      termSheet.postMoneyValuation ? `Post-money: ${termSheet.currency || "USD"} ${termSheet.postMoneyValuation.toLocaleString()}` : null,
+      termSheet.boardSeats ? `Board seats: ${termSheet.boardSeats}` : null,
+      termSheet.liquidationPreference ? `Liquidation: ${termSheet.liquidationPreference}` : null,
+      keyTermsSummary ? `Key terms: ${keyTermsSummary}` : null,
+      termSheet.notes,
+    ].filter(Boolean).join("\n");
+
+    const dealResult = await db.createCrmDeal({
+      pipelineId: pipeline.id,
+      contactId: crmContact!.id,
+      name: termSheet.title,
+      description: dealNotes,
+      stage: "term_sheet",
+      amount: termSheet.investmentAmount.toString(),
+      currency: termSheet.currency || "USD",
+      probability: 50,
+      expectedCloseDate: termSheet.expiryDate ? new Date(termSheet.expiryDate) : undefined,
+      status: "open",
+      source: "document_import",
+      campaign: termSheet.roundType,
+      notes: dealNotes,
+    });
+    createdRecords.push({ type: "crm_deal", id: dealResult.id, name: termSheet.title });
+
+    // 4. Log the interaction
+    await db.createCrmInteraction({
+      contactId: crmContact!.id,
+      channel: "email",
+      interactionType: "received",
+      subject: `Term Sheet: ${termSheet.title}`,
+      content: dealNotes,
+      relatedDealId: dealResult.id,
+      performedBy: userId,
+    });
+
+    const result: ImportResult = {
+      success: true,
+      documentType: "term_sheet",
+      createdRecords,
+      updatedRecords,
+      warnings
+    };
+
+    emitDocumentImportEvent("term_sheet_received", "crm_deal", dealResult.id, {
+      investorName: termSheet.investorName,
+      roundType: termSheet.roundType,
+      investmentAmount: termSheet.investmentAmount,
+    });
+
+    return result;
+  } catch (error) {
+    return {
+      success: false,
+      documentType: "term_sheet",
+      createdRecords,
+      updatedRecords,
+      warnings,
+      error: error instanceof Error ? error.message : "Import failed"
+    };
+  }
+}
+
+/**
+ * Import a business card / contact info document → CRM contact + capture record
+ */
+export async function importContactCard(
+  card: ImportedContactCard,
+  userId: number
+): Promise<ImportResult> {
+  const createdRecords: ImportResult["createdRecords"] = [];
+  const updatedRecords: ImportResult["updatedRecords"] = [];
+  const warnings: string[] = [];
+
+  try {
+    const fullName = [card.firstName, card.lastName].filter(Boolean).join(" ");
+
+    // 1. Check for existing contact by email
+    let existingContact = card.email ? await db.getCrmContactByEmail(card.email) : undefined;
+
+    if (existingContact) {
+      // Update with any new info
+      const updates: any = {};
+      if (card.phone && !existingContact.phone) updates.phone = card.phone;
+      if (card.organization && !existingContact.organization) updates.organization = card.organization;
+      if (card.jobTitle && !existingContact.jobTitle) updates.jobTitle = card.jobTitle;
+      if (card.linkedinUrl && !existingContact.linkedinUrl) updates.linkedinUrl = card.linkedinUrl;
+      if (card.address && !existingContact.address) updates.address = card.address;
+
+      if (Object.keys(updates).length > 0) {
+        await db.updateCrmContact(existingContact.id, updates);
+        updatedRecords.push({ type: "crm_contact", id: existingContact.id, name: fullName });
+      } else {
+        warnings.push(`Contact ${fullName} (${card.email}) already exists with no new info to update`);
+      }
+    } else {
+      // Create new contact
+      const contactResult = await db.createCrmContact({
+        firstName: card.firstName,
+        lastName: card.lastName,
+        fullName,
+        email: card.email,
+        phone: card.phone,
+        organization: card.organization,
+        jobTitle: card.jobTitle,
+        linkedinUrl: card.linkedinUrl,
+        address: card.address,
+        city: card.city,
+        country: card.country,
+        contactType: "lead",
+        source: (card.source as any) || "business_card",
+        status: "active",
+        notes: card.notes,
+      });
+      createdRecords.push({ type: "crm_contact", id: contactResult.id, name: fullName });
+
+      // Create capture record
+      await db.createContactCapture({
+        contactId: contactResult.id,
+        captureMethod: "business_card_scan",
+        rawData: JSON.stringify(card),
+        parsedData: JSON.stringify({
+          firstName: card.firstName,
+          lastName: card.lastName,
+          email: card.email,
+          phone: card.phone,
+          organization: card.organization,
+          jobTitle: card.jobTitle,
+        }),
+        status: "contact_created",
+        capturedBy: userId,
+      });
+    }
+
+    const result: ImportResult = {
+      success: true,
+      documentType: "contact_card",
+      createdRecords,
+      updatedRecords,
+      warnings
+    };
+
+    emitDocumentImportEvent("contact_captured", "crm_contact", createdRecords[0]?.id || existingContact?.id || 0, {
+      contactName: fullName,
+      organization: card.organization,
+      email: card.email,
+    });
+
+    return result;
+  } catch (error) {
+    return {
+      success: false,
+      documentType: "contact_card",
+      createdRecords,
+      updatedRecords,
+      warnings,
+      error: error instanceof Error ? error.message : "Import failed"
+    };
+  }
+}
+
 /**
  * Process multiple documents in bulk
  */
 export async function bulkImportDocuments(
-  documents: { content: string; filename: string; hint?: "purchase_order" | "vendor_invoice" | "freight_invoice" | "customs_document" | "credit_memo" | "bank_statement" | "sales_order" | "contract" }[],
+  documents: { content: string; filename: string; hint?: "purchase_order" | "vendor_invoice" | "freight_invoice" | "customs_document" | "credit_memo" | "bank_statement" | "sales_order" | "contract" | "quote" | "term_sheet" | "contact_card" }[],
   userId: number,
   markPOsAsReceived: boolean = true
 ): Promise<{
@@ -1855,6 +2322,12 @@ export async function bulkImportDocuments(
       importResult = await importSalesOrder(parseResult.salesOrder, userId);
     } else if (parseResult.documentType === "contract" && parseResult.contract) {
       importResult = await importContract(parseResult.contract, userId);
+    } else if (parseResult.documentType === "quote" && parseResult.quote) {
+      importResult = await importQuote(parseResult.quote, userId);
+    } else if (parseResult.documentType === "term_sheet" && parseResult.termSheet) {
+      importResult = await importTermSheet(parseResult.termSheet, userId);
+    } else if (parseResult.documentType === "contact_card" && parseResult.contactCard) {
+      importResult = await importContactCard(parseResult.contactCard, userId);
     } else {
       importResult = {
         success: false,
@@ -2052,6 +2525,63 @@ export async function importParsedDocument(
       confidence: parseFloat(doc.confidence || "0"),
     };
     result = await importContract(contractData, userId);
+
+  } else if (doc.documentType === "quote") {
+    const rawData = (doc.rawExtractedData as any)?.structuredData || {};
+    const quoteData: ImportedQuote = {
+      quoteNumber: doc.documentNumber || `EMAIL-QT-${doc.emailId}-${doc.id}`,
+      title: rawData.proposalTitle,
+      customerName: rawData.customerName || doc.vendorName || "Unknown Customer",
+      customerEmail: rawData.customerEmail || doc.vendorEmail || undefined,
+      quoteDate: doc.documentDate ? new Date(doc.documentDate).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+      validUntil: rawData.validUntil,
+      lineItems,
+      subtotal: parseFloat(doc.subtotal || "0") || lineItems.reduce((s, i) => s + i.totalPrice, 0),
+      taxAmount: parseFloat(doc.taxAmount || "0") || undefined,
+      totalAmount: parseFloat(doc.totalAmount || "0") || lineItems.reduce((s, i) => s + i.totalPrice, 0),
+      currency: doc.currency || "USD",
+      terms: rawData.terms,
+      notes: rawData.notes,
+      confidence: parseFloat(doc.confidence || "0"),
+    };
+    result = await importQuote(quoteData, userId);
+
+  } else if (doc.documentType === "term_sheet") {
+    const rawData = (doc.rawExtractedData as any)?.structuredData || {};
+    const termSheetData: ImportedTermSheet = {
+      title: rawData.proposalTitle || rawData.notes || `Term Sheet from ${rawData.investorName || doc.vendorName || "Unknown"}`,
+      investorName: rawData.investorName || doc.vendorName || "Unknown Investor",
+      investorEmail: rawData.investorEmail || doc.vendorEmail || undefined,
+      roundType: rawData.roundType || "unknown",
+      investmentAmount: rawData.investmentAmount || parseFloat(doc.totalAmount || "0"),
+      preMoneyValuation: rawData.preMoneyValuation,
+      postMoneyValuation: rawData.postMoneyValuation,
+      currency: doc.currency || "USD",
+      keyTerms: rawData.keyTerms,
+      boardSeats: rawData.boardSeats,
+      liquidationPreference: rawData.liquidationPreference,
+      date: doc.documentDate ? new Date(doc.documentDate).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+      expiryDate: rawData.validUntil || rawData.endDate,
+      notes: rawData.notes,
+      confidence: parseFloat(doc.confidence || "0"),
+    };
+    result = await importTermSheet(termSheetData, userId);
+
+  } else if (doc.documentType === "contact_card") {
+    const rawData = (doc.rawExtractedData as any)?.structuredData || {};
+    const contactData: ImportedContactCard = {
+      firstName: rawData.contactFirstName || doc.vendorName?.split(" ")[0] || "Unknown",
+      lastName: rawData.contactLastName || doc.vendorName?.split(" ").slice(1).join(" "),
+      email: rawData.contactEmail || doc.vendorEmail,
+      phone: rawData.contactPhone,
+      organization: rawData.contactOrganization,
+      jobTitle: rawData.contactJobTitle,
+      linkedinUrl: rawData.contactLinkedinUrl,
+      address: rawData.contactAddress,
+      source: "import",
+      confidence: parseFloat(doc.confidence || "0"),
+    };
+    result = await importContactCard(contactData, userId);
 
   } else {
     result = {
