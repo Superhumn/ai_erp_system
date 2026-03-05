@@ -89,6 +89,7 @@ import Payroll from "./pages/hr/Payroll";
 import Contracts from "./pages/legal/Contracts";
 import Disputes from "./pages/legal/Disputes";
 import Documents from "./pages/legal/Documents";
+import DocumentTemplates from "./pages/legal/DocumentTemplates";
 
 // Settings
 import Integrations from "./pages/settings/Integrations";
@@ -231,6 +232,7 @@ function Router() {
         <Route path="/legal/contracts" component={Contracts} />
         <Route path="/legal/disputes" component={Disputes} />
         <Route path="/legal/documents" component={Documents} />
+        <Route path="/legal/templates" component={DocumentTemplates} />
 
         {/* Projects */}
         <Route path="/projects" component={Projects} />

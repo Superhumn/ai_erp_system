@@ -1,0 +1,43 @@
+CREATE TABLE `legal_document_templates` (
+  `id` int AUTO_INCREMENT NOT NULL,
+  `companyId` int,
+  `name` varchar(255) NOT NULL,
+  `description` text,
+  `category` enum('offer_letter','nda','employment_agreement','contractor_agreement','vendor_agreement','partnership_agreement','lease_agreement','service_agreement','ip_assignment','severance_agreement','non_compete','consulting_agreement','other') NOT NULL DEFAULT 'other',
+  `content` text NOT NULL,
+  `variables` json,
+  `googleDocId` varchar(128),
+  `googleDocUrl` text,
+  `lastSyncedAt` timestamp,
+  `version` int NOT NULL DEFAULT 1,
+  `isActive` boolean NOT NULL DEFAULT true,
+  `createdBy` int NOT NULL,
+  `updatedBy` int,
+  `createdAt` timestamp NOT NULL DEFAULT (now()),
+  `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `legal_document_templates_id` PRIMARY KEY(`id`)
+);
+
+CREATE TABLE `legal_generated_documents` (
+  `id` int AUTO_INCREMENT NOT NULL,
+  `companyId` int,
+  `templateId` int NOT NULL,
+  `name` varchar(255) NOT NULL,
+  `variableValues` json,
+  `content` text NOT NULL,
+  `employeeId` int,
+  `vendorId` int,
+  `customerId` int,
+  `contractId` int,
+  `googleDocId` varchar(128),
+  `googleDocUrl` text,
+  `status` enum('draft','pending_review','approved','sent','signed','archived') NOT NULL DEFAULT 'draft',
+  `sentAt` timestamp,
+  `signedAt` timestamp,
+  `approvedBy` int,
+  `approvedAt` timestamp,
+  `createdBy` int NOT NULL,
+  `createdAt` timestamp NOT NULL DEFAULT (now()),
+  `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `legal_generated_documents_id` PRIMARY KEY(`id`)
+);

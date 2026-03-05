@@ -2067,6 +2067,241 @@ export const appRouter = router({
   }),
 
   // ============================================
+  // LEGAL DOCUMENT TEMPLATES
+  // ============================================
+  legalTemplates: router({
+    list: legalProcedure
+      .input(z.object({
+        category: z.string().optional(),
+        isActive: z.boolean().optional(),
+        companyId: z.number().optional(),
+      }).optional())
+      .query(({ input }) => db.getLegalDocumentTemplates(input)),
+    get: legalProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getLegalDocumentTemplateById(input.id)),
+    create: legalProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        category: z.enum([
+          "offer_letter", "nda", "employment_agreement", "contractor_agreement",
+          "vendor_agreement", "partnership_agreement", "lease_agreement",
+          "service_agreement", "ip_assignment", "severance_agreement",
+          "non_compete", "consulting_agreement", "other"
+        ]),
+        content: z.string().min(1),
+        variables: z.any().optional(),
+        googleDocId: z.string().optional(),
+        googleDocUrl: z.string().optional(),
+        companyId: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createLegalDocumentTemplate({
+          ...input,
+          createdBy: ctx.user.id,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'legal_template', result.id, input.name);
+        return result;
+      }),
+    update: legalProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        description: z.string().optional(),
+        category: z.enum([
+          "offer_letter", "nda", "employment_agreement", "contractor_agreement",
+          "vendor_agreement", "partnership_agreement", "lease_agreement",
+          "service_agreement", "ip_assignment", "severance_agreement",
+          "non_compete", "consulting_agreement", "other"
+        ]).optional(),
+        content: z.string().optional(),
+        variables: z.any().optional(),
+        isActive: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateLegalDocumentTemplate(id, { ...data, updatedBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'update', 'legal_template', id);
+        return { success: true };
+      }),
+    delete: legalProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteLegalDocumentTemplate(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'legal_template', input.id);
+        return { success: true };
+      }),
+    // Import from Google Docs
+    importFromGoogleDoc: legalProcedure
+      .input(z.object({ googleDocId: z.string().min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        const { importTemplateFromGoogleDoc } = await import("./legalTemplateService");
+        const token = await db.getGoogleOAuthToken(ctx.user.id);
+        if (!token?.accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected. Please connect via Settings > Integrations.' });
+        }
+        const result = await importTemplateFromGoogleDoc(token.accessToken, input.googleDocId);
+        if (!result.success) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: result.error || 'Failed to import template' });
+        }
+        return result;
+      }),
+    // Sync existing template from Google Docs
+    syncFromGoogleDoc: legalProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const template = await db.getLegalDocumentTemplateById(input.id);
+        if (!template?.googleDocId) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Template is not linked to a Google Doc' });
+        }
+        const { syncTemplateFromGoogleDoc } = await import("./legalTemplateService");
+        const token = await db.getGoogleOAuthToken(ctx.user.id);
+        if (!token?.accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected.' });
+        }
+        const result = await syncTemplateFromGoogleDoc(token.accessToken, template.googleDocId);
+        if (!result.success) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: result.error || 'Failed to sync template' });
+        }
+        await db.updateLegalDocumentTemplate(input.id, {
+          content: result.content!,
+          variables: result.variables,
+          lastSyncedAt: new Date(),
+          updatedBy: ctx.user.id,
+        });
+        return { success: true, variables: result.variables };
+      }),
+    // Get built-in templates
+    builtInTemplates: legalProcedure.query(async () => {
+      const { BUILT_IN_TEMPLATES } = await import("./legalTemplateService");
+      return Object.entries(BUILT_IN_TEMPLATES).map(([key, t]) => ({
+        key,
+        name: t.name,
+        category: t.category,
+        description: t.description,
+        variableCount: t.variables.length,
+      }));
+    }),
+    // Create from built-in template
+    createFromBuiltIn: legalProcedure
+      .input(z.object({ templateKey: z.string() }))
+      .mutation(async ({ input, ctx }) => {
+        const { BUILT_IN_TEMPLATES } = await import("./legalTemplateService");
+        const template = BUILT_IN_TEMPLATES[input.templateKey as keyof typeof BUILT_IN_TEMPLATES];
+        if (!template) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Built-in template not found' });
+        }
+        const result = await db.createLegalDocumentTemplate({
+          name: template.name,
+          category: template.category,
+          description: template.description,
+          content: template.content,
+          variables: template.variables,
+          createdBy: ctx.user.id,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'legal_template', result.id, template.name);
+        return result;
+      }),
+    // Generate a document from a template
+    generate: legalProcedure
+      .input(z.object({
+        templateId: z.number(),
+        name: z.string().min(1),
+        variableValues: z.record(z.string()),
+        employeeId: z.number().optional(),
+        vendorId: z.number().optional(),
+        customerId: z.number().optional(),
+        contractId: z.number().optional(),
+        companyId: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const template = await db.getLegalDocumentTemplateById(input.templateId);
+        if (!template) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Template not found' });
+        }
+        const { renderTemplate } = await import("./legalTemplateService");
+        const renderedContent = renderTemplate(template.content, input.variableValues);
+        const result = await db.createLegalGeneratedDocument({
+          templateId: input.templateId,
+          name: input.name,
+          variableValues: input.variableValues,
+          content: renderedContent,
+          employeeId: input.employeeId,
+          vendorId: input.vendorId,
+          customerId: input.customerId,
+          contractId: input.contractId,
+          companyId: input.companyId,
+          createdBy: ctx.user.id,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'legal_generated_document', result.id, input.name);
+        return result;
+      }),
+    // Export generated document to Google Docs
+    exportToGoogleDoc: legalProcedure
+      .input(z.object({ documentId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const doc = await db.getLegalGeneratedDocumentById(input.documentId);
+        if (!doc) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
+        }
+        const token = await db.getGoogleOAuthToken(ctx.user.id);
+        if (!token?.accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected.' });
+        }
+        const { createGoogleDoc } = await import("./_core/googleWorkspace");
+        const result = await createGoogleDoc(token.accessToken, {
+          title: doc.name,
+          content: doc.content,
+        });
+        if (!result.success) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to create Google Doc' });
+        }
+        const googleDocUrl = `https://docs.google.com/document/d/${result.document!.documentId}/edit`;
+        await db.updateLegalGeneratedDocument(input.documentId, {
+          googleDocId: result.document!.documentId,
+          googleDocUrl,
+        });
+        return { success: true, googleDocUrl, googleDocId: result.document!.documentId };
+      }),
+    // List generated documents
+    generatedDocuments: legalProcedure
+      .input(z.object({
+        templateId: z.number().optional(),
+        status: z.string().optional(),
+        employeeId: z.number().optional(),
+        companyId: z.number().optional(),
+      }).optional())
+      .query(({ input }) => db.getLegalGeneratedDocuments(input)),
+    // Get generated document by ID
+    getGeneratedDocument: legalProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getLegalGeneratedDocumentById(input.id)),
+    // Update generated document status
+    updateGeneratedDocument: legalProcedure
+      .input(z.object({
+        id: z.number(),
+        status: z.enum(["draft", "pending_review", "approved", "sent", "signed", "archived"]).optional(),
+        content: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        const updateData: any = { ...data };
+        if (data.status === 'approved') {
+          updateData.approvedBy = ctx.user.id;
+          updateData.approvedAt = new Date();
+        } else if (data.status === 'sent') {
+          updateData.sentAt = new Date();
+        } else if (data.status === 'signed') {
+          updateData.signedAt = new Date();
+        }
+        await db.updateLegalGeneratedDocument(id, updateData);
+        await createAuditLog(ctx.user.id, 'update', 'legal_generated_document', id);
+        return { success: true };
+      }),
+  }),
+
+  // ============================================
   // PROJECTS
   // ============================================
   projects: router({

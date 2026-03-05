@@ -5074,3 +5074,70 @@ export type EdiSettings = typeof ediSettings.$inferSelect;
 export type InsertEdiSettings = typeof ediSettings.$inferInsert;
 export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
 export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
+
+// ============================================
+// LEGAL DOCUMENT TEMPLATES
+// ============================================
+
+export const legalDocumentTemplates = mysqlTable("legal_document_templates", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  category: mysqlEnum("category", [
+    "offer_letter", "nda", "employment_agreement", "contractor_agreement",
+    "vendor_agreement", "partnership_agreement", "lease_agreement",
+    "service_agreement", "ip_assignment", "severance_agreement",
+    "non_compete", "consulting_agreement", "other"
+  ]).default("other").notNull(),
+  // Template content (rich text with {{variable}} placeholders)
+  content: text("content").notNull(),
+  // JSON array of variable definitions: [{key, label, type, required, defaultValue, description}]
+  variables: json("variables"),
+  // Google Docs source
+  googleDocId: varchar("googleDocId", { length: 128 }),
+  googleDocUrl: text("googleDocUrl"),
+  lastSyncedAt: timestamp("lastSyncedAt"),
+  // Metadata
+  version: int("version").default(1).notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdBy: int("createdBy").notNull(),
+  updatedBy: int("updatedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type LegalDocumentTemplate = typeof legalDocumentTemplates.$inferSelect;
+export type InsertLegalDocumentTemplate = typeof legalDocumentTemplates.$inferInsert;
+
+// Generated documents from templates
+export const legalGeneratedDocuments = mysqlTable("legal_generated_documents", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  templateId: int("templateId").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  // The filled-in variable values used to generate this document
+  variableValues: json("variableValues"),
+  // The final rendered content
+  content: text("content").notNull(),
+  // Link to related entities
+  employeeId: int("employeeId"),
+  vendorId: int("vendorId"),
+  customerId: int("customerId"),
+  contractId: int("contractId"),
+  // Google Docs export
+  googleDocId: varchar("googleDocId", { length: 128 }),
+  googleDocUrl: text("googleDocUrl"),
+  // Status tracking
+  status: mysqlEnum("status", ["draft", "pending_review", "approved", "sent", "signed", "archived"]).default("draft").notNull(),
+  sentAt: timestamp("sentAt"),
+  signedAt: timestamp("signedAt"),
+  approvedBy: int("approvedBy"),
+  approvedAt: timestamp("approvedAt"),
+  createdBy: int("createdBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type LegalGeneratedDocument = typeof legalGeneratedDocuments.$inferSelect;
+export type InsertLegalGeneratedDocument = typeof legalGeneratedDocuments.$inferInsert;

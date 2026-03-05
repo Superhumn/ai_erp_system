@@ -120,6 +120,9 @@ import {
   // Investment grant checklists
   investmentGrantChecklists, investmentGrantItems,
   InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
+  // Legal document templates
+  legalDocumentTemplates, legalGeneratedDocuments,
+  InsertLegalDocumentTemplate, InsertLegalGeneratedDocument,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -9113,4 +9116,75 @@ export async function getChecklistSummary(dataRoomId: number) {
     byCategory,
     requiredMissing: items.filter(i => i.status === 'missing' && i.requirement === 'required'),
   };
+}
+
+// ============================================
+// LEGAL DOCUMENT TEMPLATES
+// ============================================
+
+export async function getLegalDocumentTemplates(filters?: { category?: string; isActive?: boolean; companyId?: number }) {
+  const db = await getDb();
+  let query = db.select().from(legalDocumentTemplates).orderBy(desc(legalDocumentTemplates.updatedAt));
+  const conditions = [];
+  if (filters?.category) conditions.push(eq(legalDocumentTemplates.category, filters.category as any));
+  if (filters?.isActive !== undefined) conditions.push(eq(legalDocumentTemplates.isActive, filters.isActive));
+  if (filters?.companyId) conditions.push(eq(legalDocumentTemplates.companyId, filters.companyId));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query;
+}
+
+export async function getLegalDocumentTemplateById(id: number) {
+  const db = await getDb();
+  const [template] = await db.select().from(legalDocumentTemplates).where(eq(legalDocumentTemplates.id, id));
+  return template || null;
+}
+
+export async function createLegalDocumentTemplate(data: InsertLegalDocumentTemplate) {
+  const db = await getDb();
+  const [result] = await db.insert(legalDocumentTemplates).values(data);
+  return { id: result.insertId, ...data };
+}
+
+export async function updateLegalDocumentTemplate(id: number, data: Partial<InsertLegalDocumentTemplate>) {
+  const db = await getDb();
+  await db.update(legalDocumentTemplates).set(data).where(eq(legalDocumentTemplates.id, id));
+  return { success: true };
+}
+
+export async function deleteLegalDocumentTemplate(id: number) {
+  const db = await getDb();
+  await db.update(legalDocumentTemplates).set({ isActive: false }).where(eq(legalDocumentTemplates.id, id));
+  return { success: true };
+}
+
+// Generated documents
+
+export async function getLegalGeneratedDocuments(filters?: { templateId?: number; status?: string; employeeId?: number; companyId?: number }) {
+  const db = await getDb();
+  let query = db.select().from(legalGeneratedDocuments).orderBy(desc(legalGeneratedDocuments.createdAt));
+  const conditions = [];
+  if (filters?.templateId) conditions.push(eq(legalGeneratedDocuments.templateId, filters.templateId));
+  if (filters?.status) conditions.push(eq(legalGeneratedDocuments.status, filters.status as any));
+  if (filters?.employeeId) conditions.push(eq(legalGeneratedDocuments.employeeId, filters.employeeId));
+  if (filters?.companyId) conditions.push(eq(legalGeneratedDocuments.companyId, filters.companyId));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query;
+}
+
+export async function getLegalGeneratedDocumentById(id: number) {
+  const db = await getDb();
+  const [doc] = await db.select().from(legalGeneratedDocuments).where(eq(legalGeneratedDocuments.id, id));
+  return doc || null;
+}
+
+export async function createLegalGeneratedDocument(data: InsertLegalGeneratedDocument) {
+  const db = await getDb();
+  const [result] = await db.insert(legalGeneratedDocuments).values(data);
+  return { id: result.insertId, ...data };
+}
+
+export async function updateLegalGeneratedDocument(id: number, data: Partial<InsertLegalGeneratedDocument>) {
+  const db = await getDb();
+  await db.update(legalGeneratedDocuments).set(data).where(eq(legalGeneratedDocuments.id, id));
+  return { success: true };
 }

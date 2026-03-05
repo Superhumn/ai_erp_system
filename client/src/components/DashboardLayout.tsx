@@ -145,6 +145,7 @@ const menuGroups = [
     items: [
       { icon: UserCog, label: "Team & Payroll", path: "/hr/employees" },
       { icon: FileSignature, label: "Contracts & Legal", path: "/legal/contracts" },
+      { icon: FileCheck, label: "Document Templates", path: "/legal/templates" },
     ],
   },
   {
