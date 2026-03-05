@@ -214,6 +214,10 @@ importers:
         version: 2.15.4(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       sonner:
         specifier: ^2.0.7
+        version: 2.0.7(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
+      ssh2-sftp-client:
+        specifier: ^12.0.1
+        version: 12.0.1
         version: 2.0.7(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       ssh2-sftp-client:
         specifier: ^12.0.1
@@ -266,6 +270,10 @@ importers:
         version: 19.2.14
       '@types/react-dom':
         specifier: ^19.2.1
+        version: 19.2.1(@types/react@19.2.1)
+      '@types/ssh2-sftp-client':
+        specifier: ^9.0.6
+        version: 9.0.6
         version: 19.2.3(@types/react@19.2.14)
       '@types/ssh2-sftp-client':
         specifier: ^9.0.6
@@ -5093,6 +5101,9 @@ packages:
   typedarray@0.0.6:
     resolution: {integrity: sha512-/aCDEGatGvZ2BIk+HmLf4ifCJFwvKFNb9/JeZPMulfgFracn9QFcAf5GO8B/mweUjSoblS5In0cWhqpfs/5PQA==}
 
+  typedarray@0.0.6:
+    resolution: {integrity: sha512-/aCDEGatGvZ2BIk+HmLf4ifCJFwvKFNb9/JeZPMulfgFracn9QFcAf5GO8B/mweUjSoblS5In0cWhqpfs/5PQA==}
+
   typescript@5.9.3:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
     engines: {node: '>=14.17'}
@@ -7946,6 +7957,14 @@ snapshots:
     dependencies:
       '@types/node': 18.19.130
 
+  '@types/ssh2-sftp-client@9.0.6':
+    dependencies:
+      '@types/ssh2': 1.15.5
+
+  '@types/ssh2@1.15.5':
+    dependencies:
+      '@types/node': 18.19.130
+
   '@types/trusted-types@2.0.7':
     optional: true
 
@@ -8124,6 +8143,10 @@ snapshots:
   baseline-browser-mapping@2.10.0: {}
 
   basic-ftp@5.2.0: {}
+
+  bcrypt-pbkdf@1.0.2:
+    dependencies:
+      tweetnacl: 0.14.5
 
   bcrypt-pbkdf@1.0.2:
     dependencies:
@@ -10583,6 +10606,19 @@ snapshots:
       cpu-features: 0.0.10
       nan: 2.25.0
 
+  ssh2-sftp-client@12.0.1:
+    dependencies:
+      concat-stream: 2.0.0
+      ssh2: 1.17.0
+
+  ssh2@1.17.0:
+    dependencies:
+      asn1: 0.2.6
+      bcrypt-pbkdf: 1.0.2
+    optionalDependencies:
+      cpu-features: 0.0.10
+      nan: 2.25.0
+
   stackback@0.0.2: {}
 
   statuses@2.0.2: {}
@@ -10782,6 +10818,8 @@ snapshots:
       mime-types: 2.1.35
 
   typed-query-selector@2.12.1: {}
+
+  typedarray@0.0.6: {}
 
   typedarray@0.0.6: {}
 
