@@ -879,6 +879,82 @@ Consider demand trends and storage capacity.`,
       return { success: true, data: { pendingPOs: createdPOs } };
     });
 
+    // Step 4: Create actual POs for auto-approved reorders
+    const step4 = await engine.recordStep(context, 4, "Create POs for Auto-Approved Reorders", "create_record", async () => {
+      const createdPOs: any[] = [];
+
+      // Group recommendations by vendor
+      const vendorGroups = new Map<number, any[]>();
+      for (const rec of step2.data?.recommendations || []) {
+        if (rec.vendorId) {
+          if (!vendorGroups.has(rec.vendorId)) vendorGroups.set(rec.vendorId, []);
+          vendorGroups.get(rec.vendorId)!.push(rec);
+        }
+      }
+
+      for (const [vendorId, items] of vendorGroups) {
+        const poTotal = items.reduce((sum: number, item: any) => sum + item.value, 0);
+
+        // Check if this was auto-approved (small order)
+        const approvalResult = await engine.checkApprovalRequired("purchase_order", poTotal);
+        if (!approvalResult.autoApprove) {
+          continue; // Skip non-auto-approved — they go through manual approval flow
+        }
+
+        try {
+          // Get vendor details
+          const [vendor] = await db
+            .select()
+            .from(vendors)
+            .where(eq(vendors.id, vendorId));
+
+          const poNumber = `PO-REORDER-${Date.now().toString(36).toUpperCase()}`;
+          const expectedDate = new Date();
+          expectedDate.setDate(expectedDate.getDate() + (vendor?.defaultLeadTimeDays || 14));
+
+          const subtotal = items.reduce((sum: number, item: any) => sum + item.value, 0);
+
+          const [po] = await db
+            .insert(purchaseOrders)
+            .values({
+              poNumber,
+              vendorId,
+              status: "sent",
+              orderDate: new Date(),
+              expectedDate,
+              subtotal: subtotal.toString(),
+              totalAmount: subtotal.toString(),
+              currency: "USD",
+              notes: `Auto-generated from inventory reorder workflow (run #${context.runId})`,
+            })
+            .$returningId();
+
+          // Create PO line items from reorder recommendations
+          for (const item of items) {
+            const [product] = await db
+              .select()
+              .from(products)
+              .where(eq(products.id, item.productId));
+
+            await db.insert(purchaseOrderItems).values({
+              purchaseOrderId: po.id,
+              productId: item.productId,
+              description: item.productName || product?.name || `Product #${item.productId}`,
+              quantity: item.recommendedQty.toString(),
+              unitPrice: (item.value / item.recommendedQty).toFixed(2),
+              totalAmount: item.value.toFixed(2),
+            });
+          }
+
+          createdPOs.push({ id: po.id, poNumber, vendorId, total: subtotal });
+        } catch (err) {
+          console.error(`[ReorderPO] Failed to create PO for vendor #${vendorId}:`, err);
+        }
+      }
+
+      return { success: true, data: { createdPOs } };
+    });
+
     // Emit low inventory event
     await engine.emitEvent(
       "inventory_low",
@@ -886,18 +962,23 @@ Consider demand trends and storage capacity.`,
       "inventory",
       "inventory",
       context.runId,
-      { lowStockCount: itemsProcessed, totalValue }
+      { lowStockCount: itemsProcessed, totalValue, autoPOsCreated: step4.data?.createdPOs?.length || 0 }
     );
+
+    const hasAutoApprovedPOs = (step4.data?.createdPOs?.length || 0) > 0;
 
     return {
       success: true,
       runId: context.runId,
-      status: "awaiting_approval",
+      status: hasAutoApprovedPOs ? "completed" : "awaiting_approval",
       itemsProcessed,
       itemsSucceeded,
       itemsFailed,
       totalValue,
-      outputData: { recommendations: step2.data?.recommendations },
+      outputData: {
+        recommendations: step2.data?.recommendations,
+        autoCreatedPOs: step4.data?.createdPOs,
+      },
     };
   },
 };

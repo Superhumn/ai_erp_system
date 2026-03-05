@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "./_core/trpc";
 import { getOrchestrator, startOrchestrator, stopOrchestrator } from "./supplyChainOrchestrator";
 import { getWorkflowEngine } from "./autonomousWorkflowEngine";
+import { autoImportParsedDocuments } from "./emailDocumentAutoImport";
 import { getDb } from "./db";
 import {
   supplyChainWorkflows,
@@ -191,6 +192,47 @@ export const autonomousWorkflowRouter = router({
       .mutation(async ({ input, ctx }) => {
         const orchestrator = getOrchestrator();
         const result = await orchestrator.triggerWorkflow(input.id, input.inputData || {}, ctx.user.id);
+        return result;
+      }),
+  }),
+
+  // ============================================
+  // CONVENIENCE TRIGGERS
+  // ============================================
+  invoiceMatching: router({
+    // Trigger invoice matching workflow by name (no need to know the workflow ID)
+    trigger: opsOrAdminProcedure
+      .input(z.object({
+        invoiceIds: z.array(z.number()).optional(),
+      }).optional())
+      .mutation(async ({ input, ctx }) => {
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+        // Find the invoice matching workflow
+        const [workflow] = await db
+          .select()
+          .from(supplyChainWorkflows)
+          .where(eq(supplyChainWorkflows.workflowType, "invoice_matching"));
+
+        if (!workflow) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Invoice matching workflow not configured. Run orchestrator initialization first." });
+        }
+
+        const orchestrator = getOrchestrator();
+        const result = await orchestrator.triggerWorkflow(workflow.id, input || {}, ctx.user.id);
+        return result;
+      }),
+  }),
+
+  // ============================================
+  // EMAIL DOCUMENT AUTO-IMPORT
+  // ============================================
+  emailAutoImport: router({
+    // Trigger auto-import of high-confidence parsed email documents
+    trigger: opsOrAdminProcedure
+      .mutation(async () => {
+        const result = await autoImportParsedDocuments();
         return result;
       }),
   }),

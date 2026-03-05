@@ -515,6 +515,22 @@ Always provide clear reasoning for your decision.`,
         })
         .$returningId();
 
+      // Emit approval_completed event so downstream workflows (e.g. procurement) are triggered
+      await this.emitEvent(
+        "approval_completed",
+        "info",
+        "approval",
+        relatedEntityType,
+        relatedEntityId,
+        {
+          approvalId: approval.id,
+          runId: context.runId,
+          approvalType,
+          monetaryValue: amount,
+          autoApproved: true,
+        }
+      );
+
       return { approvalId: approval.id, autoApproved: true };
     }
 
@@ -607,9 +623,21 @@ Always provide clear reasoning for your decision.`,
       .where(eq(workflowRuns.id, approval.runId));
 
     if (approved) {
-      // Resume workflow execution
-      // This would trigger continuation of the workflow from where it paused
-      // For now, we'll mark it as approved and let the scheduler pick it up
+      // Emit approval_completed event to trigger downstream workflows (e.g. procurement)
+      await this.emitEvent(
+        "approval_completed",
+        "info",
+        "approval",
+        approval.relatedEntityType || "workflow",
+        approval.relatedEntityId || approval.runId,
+        {
+          approvalId,
+          runId: approval.runId,
+          approvalType: approval.approvalType,
+          monetaryValue: approval.monetaryValue,
+          contextData: approval.contextData,
+        }
+      );
     }
 
     // Send notification about resolution

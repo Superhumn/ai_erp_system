@@ -17,6 +17,7 @@ import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingA
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
+import { getWorkflowEngine } from "./autonomousWorkflowEngine";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 import * as db from "./db";
 import { storagePut } from "./storage";
@@ -604,6 +605,22 @@ export const appRouter = router({
         }
         
         await createAuditLog(ctx.user.id, 'create', 'invoice', result.id, invoiceNumber);
+
+        // Emit invoice_received event to trigger invoice matching workflow
+        try {
+          const engine = await getWorkflowEngine();
+          await engine.emitEvent(
+            "invoice_received",
+            "info",
+            "invoices",
+            "invoice",
+            result.id,
+            { invoiceId: result.id, invoiceNumber, vendorId: invoiceData.vendorId, customerId: invoiceData.customerId }
+          );
+        } catch (e) {
+          console.error("[Invoice] Failed to emit invoice_received event:", e);
+        }
+
         return result;
       }),
     update: financeProcedure
@@ -3185,8 +3202,8 @@ export const appRouter = router({
                 }
                 const invoiceNumber = generateNumber('INV');
                 const amount = mappedData.amount || '0';
-                await db.createInvoice({ 
-                  ...mappedData, 
+                const importedInv = await db.createInvoice({
+                  ...mappedData,
                   invoiceNumber,
                   customerId: parseInt(mappedData.customerId) || 0,
                   issueDate: new Date(),
@@ -3194,8 +3211,13 @@ export const appRouter = router({
                   subtotal: amount,
                   totalAmount: amount,
                 });
+                // Emit invoice_received event for workflow automation
+                try {
+                  const engine = await getWorkflowEngine();
+                  await engine.emitEvent("invoice_received", "info", "sheets_import", "invoice", importedInv.id, { invoiceId: importedInv.id, invoiceNumber });
+                } catch (e) { /* non-critical */ }
                 break;
-                
+
               case 'contracts':
                 if (!mappedData.title) {
                   results.errors.push(`Row missing required field: title`);
@@ -11929,7 +11951,13 @@ Ask if they received the original request and if they can provide a quote.`;
         });
         
         await createAuditLog(ctx.user.id, 'create', 'invoice', invoiceResult.id, `Generated from recurring: ${recurring.templateName}`);
-        
+
+        // Emit invoice_received event for workflow automation
+        try {
+          const engine = await getWorkflowEngine();
+          await engine.emitEvent("invoice_received", "info", "recurring_invoices", "invoice", invoiceResult.id, { invoiceId: invoiceResult.id, invoiceNumber, customerId: recurring.customerId });
+        } catch (e) { /* non-critical */ }
+
         return { invoiceId: invoiceResult.id, invoiceNumber };
       }),
     history: financeProcedure
@@ -12171,7 +12199,20 @@ Ask if they received the original request and if they can provide a quote.`;
         updateInventory: z.boolean().default(true),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importVendorInvoice(input.invoiceData as any, ctx.user.id, input.markAsReceived);
+        const result = await importVendorInvoice(input.invoiceData as any, ctx.user.id, input.markAsReceived);
+
+        // Emit invoice_received event for automatic invoice matching workflow
+        try {
+          const engine = await getWorkflowEngine();
+          await engine.emitEvent("invoice_received", "info", "document_import", "invoice", result.invoiceId || 0, {
+            invoiceNumber: input.invoiceData.invoiceNumber,
+            vendorName: input.invoiceData.vendorName,
+            totalAmount: input.invoiceData.totalAmount,
+            relatedPoNumber: input.invoiceData.relatedPoNumber,
+          });
+        } catch (e) { /* non-critical */ }
+
+        return result;
       }),
 
     // Import a customs document

@@ -11,6 +11,7 @@ import {
 } from "../drizzle/schema";
 import { eq, and, lt, lte, gte, desc, asc, sql, isNull, or, inArray } from "drizzle-orm";
 import { sendEmail } from "./_core/email";
+import { autoImportParsedDocuments } from "./emailDocumentAutoImport";
 
 // ============================================
 // AUTONOMOUS SUPPLY CHAIN ORCHESTRATOR
@@ -38,6 +39,7 @@ class SupplyChainOrchestrator {
   private schedulerInterval: NodeJS.Timeout | null = null;
   private eventInterval: NodeJS.Timeout | null = null;
   private escalationInterval: NodeJS.Timeout | null = null;
+  private autoImportInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
   private activeWorkflows = 0;
 
@@ -88,6 +90,15 @@ class SupplyChainOrchestrator {
       }
     }, this.config.escalationCheckIntervalMs);
 
+    // Start email document auto-import loop (every 5 minutes)
+    this.autoImportInterval = setInterval(async () => {
+      try {
+        await autoImportParsedDocuments();
+      } catch (err) {
+        console.error("[Orchestrator] Auto-import error:", err);
+      }
+    }, 300000);
+
     // Run initial checks
     await this.runScheduledWorkflows();
     await this.processEvents();
@@ -116,6 +127,11 @@ class SupplyChainOrchestrator {
     if (this.escalationInterval) {
       clearInterval(this.escalationInterval);
       this.escalationInterval = null;
+    }
+
+    if (this.autoImportInterval) {
+      clearInterval(this.autoImportInterval);
+      this.autoImportInterval = null;
     }
 
     this.isRunning = false;
@@ -227,21 +243,16 @@ class SupplyChainOrchestrator {
       .limit(50);
 
     for (const event of unprocessedEvents) {
-      // Find workflows triggered by this event type
-      const triggeredWorkflows = await db
+      // Find workflows triggered by this event type (both event-driven and scheduled workflows with triggerEvents)
+      const candidateWorkflows = await db
         .select()
         .from(supplyChainWorkflows)
-        .where(
-          and(
-            eq(supplyChainWorkflows.isActive, true),
-            eq(supplyChainWorkflows.triggerType, "event")
-          )
-        );
+        .where(eq(supplyChainWorkflows.isActive, true));
 
-      for (const workflow of triggeredWorkflows) {
+      for (const workflow of candidateWorkflows) {
         const triggerEvents = workflow.triggerEvents ? JSON.parse(workflow.triggerEvents) : [];
 
-        if (triggerEvents.includes(event.eventType)) {
+        if (triggerEvents.length > 0 && triggerEvents.includes(event.eventType)) {
           // Trigger the workflow
           const eventData = event.eventData ? JSON.parse(event.eventData) : {};
           this.executeWorkflowAsync(workflow, "event", {
@@ -685,8 +696,9 @@ Please review and approve/reject at your earliest convenience.`,
       {
         name: "Invoice Matching",
         workflowType: "invoice_matching" as const,
-        description: "Match vendor invoices to purchase orders",
-        triggerType: "event" as const,
+        description: "Match vendor invoices to purchase orders and flag discrepancies",
+        triggerType: "scheduled" as const,
+        cronSchedule: "0 9 * * *", // 9 AM daily
         triggerEvents: JSON.stringify(["invoice_received"]),
         requiresApproval: false,
       },
