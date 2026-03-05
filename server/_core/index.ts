@@ -239,12 +239,16 @@ async function startServer() {
   app.get('/api/google/callback', oauthCallbackLimiter, async (req, res) => {
     const { code, state } = req.query;
     if (!code || !state) return res.redirect('/import?error=missing_params');
-    const userId = parseInt(state as string, 10);
-    if (isNaN(userId) || userId <= 0) return res.redirect('/import?error=invalid_state');
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
     if (!clientId || !clientSecret) return res.redirect('/import?error=not_configured');
     try {
+      // Authenticate the request to prevent OAuth CSRF — don't trust state param alone
+      const { sdk: authSdk } = await import('./sdk');
+      let user: any;
+      try { user = await authSdk.authenticateRequest(req); } catch { return res.redirect('/import?error=not_authenticated'); }
+      if (!user) return res.redirect('/import?error=not_authenticated');
+      const userId = user.id;
       const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

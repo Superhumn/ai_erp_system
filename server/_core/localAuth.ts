@@ -236,6 +236,8 @@ export function registerLocalAuthRoutes(app: Express) {
       // Get user credentials
       const credentials = await db.getLocalAuthCredentialByEmail(email.toLowerCase());
       if (!credentials) {
+        // Run a dummy hash to prevent timing-based email enumeration
+        hashPassword(password, "0".repeat(SALT_LENGTH * 2));
         return res.status(401).json({ error: "Invalid email or password" });
       }
 
