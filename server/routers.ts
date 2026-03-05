@@ -5547,9 +5547,43 @@ Extract and return as JSON:
           otherFees: z.string().optional(),
           totalAmount: z.string().optional(),
           notes: z.string().optional(),
+          warehouseId: z.number().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const { id, ...data } = input;
+          const { id, warehouseId, ...data } = input;
+
+          // If clearing customs, process inventory updates
+          if (data.status === 'cleared') {
+            const clearance = await db.getCustomsClearanceById(id);
+            if (clearance?.shipmentId) {
+              if (!warehouseId) {
+                throw new TRPCError({ code: 'BAD_REQUEST', message: 'warehouseId is required when clearing customs with inventory update' });
+              }
+              const shipment = await db.getShipmentById(clearance.shipmentId);
+              if (shipment?.purchaseOrderId) {
+                const poItems = await db.getPurchaseOrderItems(shipment.purchaseOrderId);
+                for (const item of poItems) {
+                  const qty = item.quantity?.toString() || '0';
+                  await db.createInventory({
+                    productId: item.productId,
+                    warehouseId,
+                    quantity: qty,
+                    companyId: (shipment as any).companyId || 1,
+                  });
+                  await db.createInventoryTransaction({
+                    transactionType: 'receive',
+                    productId: item.productId,
+                    toWarehouseId: warehouseId,
+                    quantity: qty,
+                    notes: `Customs cleared - ${clearance.clearanceNumber}`,
+                  });
+                  await db.updatePurchaseOrderItem(item.id, { receivedQuantity: qty });
+                }
+                await db.updateShipment(clearance.shipmentId, { status: 'delivered' as any });
+              }
+            }
+          }
+
           await db.updateCustomsClearance(id, data);
           await createAuditLog(ctx.user.id, 'update', 'customs_clearance', id);
           return { success: true };
@@ -6212,6 +6246,37 @@ Provide a brief status summary, any missing documents, and next steps.`;
           : `${periodStart.toLocaleDateString('en-US', { month: 'short' })} 16-${periodEnd.getDate()}, ${year}`,
       };
     }),
+
+    // Get customs clearances for copacker
+    getCustomsClearances: copackerProcedure.query(async ({ ctx }) => {
+      const allClearances = await db.getCustomsClearances();
+      if (ctx.user.role === 'copacker') {
+        const allShipments = await db.getShipments();
+        const shipmentIds = allShipments.map(s => s.id);
+        return allClearances.filter(c => c.shipmentId && shipmentIds.includes(c.shipmentId));
+      }
+      return allClearances;
+    }),
+
+    // Get customs documents for a clearance (copacker access)
+    getCustomsDocuments: copackerProcedure
+      .input(z.object({ clearanceId: z.number() }))
+      .query(async ({ input, ctx }) => {
+        const clearance = await db.getCustomsClearanceById(input.clearanceId);
+        if (!clearance) throw new TRPCError({ code: 'NOT_FOUND', message: 'Customs clearance not found' });
+
+        if (ctx.user.role === 'copacker') {
+          if (!clearance.shipmentId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+          }
+          const shipment = await db.getShipmentById(clearance.shipmentId);
+          if (!shipment) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+          }
+        }
+
+        return db.getCustomsDocuments(input.clearanceId);
+      }),
   }),
 
   // Vendor Portal - restricted views for vendors
@@ -6315,6 +6380,47 @@ Provide a brief status summary, any missing documents, and next steps.`;
         await createAuditLog(ctx.user.id, 'create', 'document', result.id, input.name);
         
         return { id: result.id, url };
+      }),
+
+    // Get customs clearances for vendor's shipments
+    getCustomsClearances: vendorProcedure.query(async ({ ctx }) => {
+      const allClearances = await db.getCustomsClearances();
+      if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId) {
+        const vendorPOs = await db.getPurchaseOrders();
+        const vendorPOIds = vendorPOs
+          .filter(po => po.vendorId === ctx.user.linkedVendorId)
+          .map(po => po.id);
+        const allShipments = await db.getShipments();
+        const vendorShipmentIds = allShipments
+          .filter(s => s.purchaseOrderId && vendorPOIds.includes(s.purchaseOrderId))
+          .map(s => s.id);
+        return allClearances.filter(c => c.shipmentId && vendorShipmentIds.includes(c.shipmentId));
+      }
+      return allClearances;
+    }),
+
+    // Get customs documents for a clearance (with access control)
+    getCustomsDocuments: vendorProcedure
+      .input(z.object({ clearanceId: z.number() }))
+      .query(async ({ input, ctx }) => {
+        const clearance = await db.getCustomsClearanceById(input.clearanceId);
+        if (!clearance) throw new TRPCError({ code: 'NOT_FOUND', message: 'Customs clearance not found' });
+
+        if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId) {
+          if (!clearance.shipmentId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+          }
+          const shipment = await db.getShipmentById(clearance.shipmentId);
+          if (!shipment?.purchaseOrderId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+          }
+          const po = await db.getPurchaseOrderById(shipment.purchaseOrderId);
+          if (!po || po.vendorId !== ctx.user.linkedVendorId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+          }
+        }
+
+        return db.getCustomsDocuments(input.clearanceId);
       }),
   }),
 
@@ -13897,7 +14003,7 @@ Ask if they received the original request and if they can provide a quote.`;
   // ============================================
   // MATERIAL SHORTAGE & ANOMALY DETECTION
   // ============================================
-  alerts: router({
+  materialAlerts: router({
     // Get material shortage alerts (inventory vs BOM requirements)
     materialShortages: protectedProcedure.query(async () => {
       return detectMaterialShortages();

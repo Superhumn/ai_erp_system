@@ -882,6 +882,13 @@ export async function createPurchaseOrderItem(data: typeof purchaseOrderItems.$i
   return { id: result[0].insertId };
 }
 
+export async function updatePurchaseOrderItem(id: number, data: Partial<typeof purchaseOrderItems.$inferInsert>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(purchaseOrderItems).set(data).where(eq(purchaseOrderItems.id, id));
+  return { success: true };
+}
+
 // ============================================
 // OPERATIONS - SHIPMENTS
 // ============================================
@@ -899,6 +906,13 @@ export async function getShipments(filters?: { companyId?: number; status?: stri
     return db.select().from(shipments).where(and(...conditions)).orderBy(desc(shipments.createdAt));
   }
   return db.select().from(shipments).orderBy(desc(shipments.createdAt));
+}
+
+export async function getShipmentById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const results = await db.select().from(shipments).where(eq(shipments.id, id));
+  return results[0];
 }
 
 export async function createShipment(data: typeof shipments.$inferInsert) {
