@@ -28,7 +28,6 @@ import {
 } from "@/components/ui/tabs";
 import {
   Handshake,
-  TrendingDown,
   MessageSquare,
   Sparkles,
   Plus,

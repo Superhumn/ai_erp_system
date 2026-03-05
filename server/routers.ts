@@ -12968,11 +12968,11 @@ Ask if they received the original request and if they can provide a quote.`;
         id: z.number(),
         status: z.enum(["draft", "analyzing", "ready", "in_progress", "counter_offered", "accepted", "rejected", "expired"]).optional(),
         priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
-        targetUnitPrice: z.string().optional(),
+        targetUnitPrice: z.coerce.number().optional(),
         targetPaymentTerms: z.number().optional(),
         targetLeadTimeDays: z.number().optional(),
-        targetMinOrderAmount: z.string().optional(),
-        targetAnnualVolume: z.string().optional(),
+        targetMinOrderAmount: z.coerce.number().optional(),
+        targetAnnualVolume: z.coerce.number().optional(),
         assignedTo: z.number().optional(),
       }))
       .mutation(async ({ input, ctx }) => {

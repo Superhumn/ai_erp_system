@@ -8645,14 +8645,21 @@ export async function getInventoryCostLayers(filters?: {
   return query.orderBy(inventoryCostLayers.layerDate);
 }
 
-export async function getActiveCostLayers(productId: number, order: 'asc' | 'desc' = 'asc') {
+export async function getActiveCostLayers(productId: number, order: 'asc' | 'desc' = 'asc', warehouseId?: number) {
   const db = await getDb();
   if (!db) return [];
+  
+  const conditions = [
+    eq(inventoryCostLayers.productId, productId),
+    eq(inventoryCostLayers.status, 'active')
+  ];
+  
+  if (warehouseId !== undefined) {
+    conditions.push(eq(inventoryCostLayers.warehouseId, warehouseId));
+  }
+  
   const query = db.select().from(inventoryCostLayers)
-    .where(and(
-      eq(inventoryCostLayers.productId, productId),
-      eq(inventoryCostLayers.status, 'active')
-    ));
+    .where(and(...conditions));
   if (order === 'desc') {
     return query.orderBy(desc(inventoryCostLayers.layerDate));
   }
@@ -8672,17 +8679,24 @@ export async function updateInventoryCostLayer(id: number, data: Partial<InsertI
   await db.update(inventoryCostLayers).set(data as any).where(eq(inventoryCostLayers.id, id));
 }
 
-export async function getWeightedAverageCost(productId: number) {
+export async function getWeightedAverageCost(productId: number, warehouseId?: number) {
   const db = await getDb();
   if (!db) return null;
+  
+  const conditions = [
+    eq(inventoryCostLayers.productId, productId),
+    eq(inventoryCostLayers.status, 'active')
+  ];
+  
+  if (warehouseId !== undefined) {
+    conditions.push(eq(inventoryCostLayers.warehouseId, warehouseId));
+  }
+  
   const result = await db.select({
     totalValue: sql<string>`SUM(CAST(${inventoryCostLayers.remainingQuantity} AS DECIMAL(15,4)) * CAST(${inventoryCostLayers.unitCost} AS DECIMAL(15,4)))`,
     totalQuantity: sql<string>`SUM(CAST(${inventoryCostLayers.remainingQuantity} AS DECIMAL(15,4)))`,
   }).from(inventoryCostLayers)
-    .where(and(
-      eq(inventoryCostLayers.productId, productId),
-      eq(inventoryCostLayers.status, 'active')
-    ));
+    .where(and(...conditions));
 
   if (!result[0] || !result[0].totalQuantity || parseFloat(result[0].totalQuantity) === 0) return null;
   const totalValue = parseFloat(result[0].totalValue || '0');
@@ -8874,6 +8888,22 @@ export async function createNegotiationRound(data: InsertNegotiationRound) {
   if (!db) throw new Error("Database not available");
   const result = await db.insert(negotiationRounds).values(data);
   return { id: result[0].insertId };
+}
+
+export async function getNextRoundNumber(negotiationId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Compute the next round number; concurrency safety relies on DB constraints and caller retries
+  const result = await db
+    .select({ maxRound: sql<number>`COALESCE(MAX(${negotiationRounds.roundNumber}), 0) + 1` })
+    .from(negotiationRounds)
+    .where(eq(negotiationRounds.negotiationId, negotiationId));
+
+  const rawMaxRound = result[0]?.maxRound;
+  const nextRound = rawMaxRound != null ? Number(rawMaxRound) : NaN;
+
+  return Number.isFinite(nextRound) && nextRound > 0 ? nextRound : 1;
 }
 
 export async function getVendorNegotiationStats(companyId?: number) {

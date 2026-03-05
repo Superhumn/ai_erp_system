@@ -65,10 +65,11 @@ export async function addCostLayer(params: {
  */
 export async function calculateFifoCogs(
   productId: number,
-  quantityToSell: number
+  quantityToSell: number,
+  warehouseId?: number
 ): Promise<CogsCalculationResult> {
   // Get active layers ordered oldest-first
-  const layers = await db.getActiveCostLayers(productId, "asc");
+  const layers = await db.getActiveCostLayers(productId, "asc", warehouseId);
   return consumeLayers(layers, quantityToSell);
 }
 
@@ -78,10 +79,11 @@ export async function calculateFifoCogs(
  */
 export async function calculateLifoCogs(
   productId: number,
-  quantityToSell: number
+  quantityToSell: number,
+  warehouseId?: number
 ): Promise<CogsCalculationResult> {
   // Get active layers ordered newest-first
-  const layers = await db.getActiveCostLayers(productId, "desc");
+  const layers = await db.getActiveCostLayers(productId, "desc", warehouseId);
   return consumeLayers(layers, quantityToSell);
 }
 
@@ -91,9 +93,10 @@ export async function calculateLifoCogs(
  */
 export async function calculateWeightedAverageCogs(
   productId: number,
-  quantityToSell: number
+  quantityToSell: number,
+  warehouseId?: number
 ): Promise<CogsCalculationResult> {
-  const avgData = await db.getWeightedAverageCost(productId);
+  const avgData = await db.getWeightedAverageCost(productId, warehouseId);
   if (!avgData || avgData.totalQuantity < quantityToSell) {
     throw new Error(
       `Insufficient inventory. Available: ${avgData?.totalQuantity || 0}, Requested: ${quantityToSell}`
@@ -104,7 +107,7 @@ export async function calculateWeightedAverageCogs(
   const totalCogs = unitCogs * quantityToSell;
 
   // For weighted average, consume inventory pro-rata across all active layers
-  const layers = await db.getActiveCostLayers(productId, "asc");
+  const layers = await db.getActiveCostLayers(productId, "asc", warehouseId);
   const breakdown: CostLayerConsumption[] = [];
   const remainingLayers: { layerId: number; remainingQuantity: number }[] = [];
 
@@ -254,18 +257,18 @@ export async function recordCogs(params: {
   const config = await db.getInventoryCostingConfigByProduct(params.productId);
   const method: CostingMethod = config?.costingMethod || "weighted_average";
 
-  // Calculate COGS based on method
+  // Calculate COGS based on method, filtering by warehouse if provided
   let result: CogsCalculationResult;
   switch (method) {
     case "fifo":
-      result = await calculateFifoCogs(params.productId, params.quantitySold);
+      result = await calculateFifoCogs(params.productId, params.quantitySold, params.warehouseId);
       break;
     case "lifo":
-      result = await calculateLifoCogs(params.productId, params.quantitySold);
+      result = await calculateLifoCogs(params.productId, params.quantitySold, params.warehouseId);
       break;
     case "weighted_average":
     default:
-      result = await calculateWeightedAverageCogs(params.productId, params.quantitySold);
+      result = await calculateWeightedAverageCogs(params.productId, params.quantitySold, params.warehouseId);
       break;
   }
 

@@ -4647,7 +4647,10 @@ export const negotiationRounds = mysqlTable("negotiationRounds", {
   receivedAt: timestamp("receivedAt"),
   sentBy: int("sentBy"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (table) => ({
+  // Unique constraint to prevent duplicate round numbers for the same negotiation
+  uniqueNegotiationRound: uniqueIndex("unique_negotiation_round").on(table.negotiationId, table.roundNumber),
+}));
 
 export type NegotiationRound = typeof negotiationRounds.$inferSelect;
 export type InsertNegotiationRound = typeof negotiationRounds.$inferInsert;
