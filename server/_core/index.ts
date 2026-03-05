@@ -13,6 +13,7 @@ import { ENV, validateEmailConfig } from "./env";
 import * as sendgridProvider from "./sendgridProvider";
 import * as emailService from "./emailService";
 import * as db from "../db";
+import * as emailTracking from "../emailTrackingService";
 import { startEmailQueueWorker } from "../emailQueueWorker";
 import { startOrchestrator } from "../supplyChainOrchestrator";
 import { startScheduler } from "../aiAgentScheduler";
@@ -154,13 +155,59 @@ async function startServer() {
           const providerMessageId = event.sg_message_id?.split('.')[0];
           const email = event.email;
           const timestamp = event.timestamp ? new Date(event.timestamp * 1000) : new Date();
-          const emailEvent = await db.createEmailEvent({ providerEventType, providerMessageId, providerTimestamp: timestamp, rawEventJson: event, email, reason: event.reason || event.response || null, bounceType: event.type || null, processedAt: new Date() });
+          await db.createEmailEvent({
+            providerEventType,
+            providerMessageId,
+            providerTimestamp: timestamp,
+            rawEventJson: event,
+            email,
+            reason: event.reason || event.response || null,
+            bounceType: event.type || null,
+            url: event.url || null,
+            userAgent: event.useragent || null,
+            ip: event.ip || null,
+            processedAt: new Date(),
+          });
           if (providerMessageId) {
             const message = await db.getEmailMessageByProviderMessageId(providerMessageId);
             if (message) {
-              await db.createEmailEvent({ ...emailEvent, emailMessageId: message.id });
-              const newStatus = sendgridProvider.mapEventToStatus(providerEventType);
-              if (newStatus) await db.updateEmailMessageStatus(message.id, newStatus);
+              const mappedStatus = sendgridProvider.mapEventToStatus(providerEventType);
+              // Update message delivery status (only for delivery lifecycle events)
+              if (mappedStatus && ['delivered', 'bounced', 'dropped', 'deferred'].includes(mappedStatus)) {
+                await db.updateEmailMessageStatus(message.id, mappedStatus);
+              }
+              // Process tracking events
+              if (providerEventType === 'delivered') {
+                await emailTracking.updateEngagementOnDelivery(message.id, email);
+              } else if (providerEventType === 'open') {
+                await db.createEmailTrackingEvent({
+                  emailMessageId: message.id, eventType: 'open', recipientEmail: email,
+                  userAgent: event.useragent || null, ip: event.ip || null,
+                });
+                await emailTracking.updateEngagementOnDelivery(message.id, email); // Ensure delivery is tracked
+                // Open engagement is updated via tracking pixel; also record provider open
+                const existing = await db.getEngagementSummary(message.id);
+                await db.upsertEngagementSummary(message.id, {
+                  recipientEmail: email, opened: true,
+                  openCount: (existing?.openCount || 0) + 1,
+                  firstOpenedAt: existing?.firstOpenedAt || new Date(),
+                  lastOpenedAt: new Date(),
+                  engagementScore: Math.min(100, (existing?.engagementScore || 10) + 15),
+                });
+              } else if (providerEventType === 'click') {
+                await db.createEmailTrackingEvent({
+                  emailMessageId: message.id, eventType: 'click', recipientEmail: email,
+                  url: event.url || null, userAgent: event.useragent || null, ip: event.ip || null,
+                });
+              } else if (providerEventType === 'bounce' || providerEventType === 'blocked') {
+                await emailTracking.processBounceEvent(email, providerEventType, event.reason || event.response || '', message.id);
+              } else if (providerEventType === 'unsubscribe' || providerEventType === 'group_unsubscribe') {
+                await emailTracking.updateEngagementOnUnsubscribe(message.id, email);
+                await emailTracking.processBounceEvent(email, 'unsubscribe', 'User unsubscribed', message.id);
+              } else if (providerEventType === 'spamreport') {
+                await emailTracking.updateEngagementOnSpamReport(message.id, email);
+                await emailTracking.processBounceEvent(email, 'spamreport', 'Marked as spam', message.id);
+              }
             }
           }
         } catch (eventError) {
@@ -174,6 +221,59 @@ async function startServer() {
     }
   });
   
+  // ============================================
+  // EMAIL TRACKING ENDPOINTS
+  // ============================================
+
+  // Open tracking pixel - serves a 1x1 transparent GIF
+  app.get('/t/o/:token.gif', async (req, res) => {
+    try {
+      const { token } = req.params;
+      // Process open event asynchronously (don't block pixel response)
+      emailTracking.processOpenEvent(token, {
+        userAgent: req.headers['user-agent'] as string,
+        ip: req.ip || req.socket.remoteAddress || undefined,
+      }).catch(err => console.error('[Email Tracking] Open event error:', err));
+
+      // Always return the pixel immediately
+      const pixel = emailTracking.getTrackingPixelBuffer();
+      res.set({
+        'Content-Type': 'image/gif',
+        'Content-Length': pixel.length,
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      });
+      res.status(200).send(pixel);
+    } catch (error) {
+      // Always return pixel even on error
+      const pixel = emailTracking.getTrackingPixelBuffer();
+      res.set({ 'Content-Type': 'image/gif' });
+      res.status(200).send(pixel);
+    }
+  });
+
+  // Click tracking redirect - records click and redirects to original URL
+  app.get('/t/c/:trackingId', async (req, res) => {
+    try {
+      const { trackingId } = req.params;
+      const originalUrl = await emailTracking.processClickRedirect(trackingId, {
+        userAgent: req.headers['user-agent'] as string,
+        ip: req.ip || req.socket.remoteAddress || undefined,
+      });
+
+      if (originalUrl) {
+        res.redirect(302, originalUrl);
+      } else {
+        // Fallback to homepage if link not found
+        res.redirect(302, ENV.publicAppUrl || '/');
+      }
+    } catch (error) {
+      console.error('[Email Tracking] Click redirect error:', error);
+      res.redirect(302, ENV.publicAppUrl || '/');
+    }
+  });
+
   // Shopify webhooks
   const handleShopifyWebhook = async (req: any, res: any) => {
     try {
@@ -237,11 +337,6 @@ async function startServer() {
     }
   });
 
-  // Google OAuth callback for Drive/Sheets integration
-  app.get('/api/google/callback', async (req, res) => {
-  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), handleShopifyWebhook);
-  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), handleShopifyWebhook);
-  
   // Google OAuth callback
   app.get('/api/google/callback', oauthCallbackLimiter, async (req, res) => {
     const { code, state } = req.query;

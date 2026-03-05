@@ -8,6 +8,8 @@ import { sendEmail, isEmailConfigured, formatEmailHtml } from "./_core/email";
 import { processEmailReply, analyzeEmail, generateEmailReply } from "./emailReplyService";
 import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
+import * as emailTracking from "./emailTrackingService";
+import { enhancedParse as enhancedEmailParse } from "./_core/emailParserEnhanced";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
 import { detectMaterialShortages, detectAnomalies, runShortageCheckAndNotify, runAnomalyCheckAndNotify } from "./materialShortageService";
 import { linkParsedEmailToEntities } from "./emailDocumentLinker";
@@ -2822,6 +2824,70 @@ export const appRouter = router({
           failed: results.filter(r => !r.success).length,
           results,
         };
+      }),
+  }),
+
+  // ============================================
+  // EMAIL TRACKING & ANALYTICS
+  // ============================================
+  emailTracking: router({
+    // Get engagement analytics for a date range
+    getAnalytics: protectedProcedure
+      .input(z.object({
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+        relatedEntityType: z.string().optional(),
+      }).optional())
+      .query(({ input }) => emailTracking.getEmailAnalytics(input)),
+
+    // Get detailed tracking data for a single email message
+    getMessageTracking: protectedProcedure
+      .input(z.object({ emailMessageId: z.number() }))
+      .query(({ input }) => emailTracking.getEmailTrackingDetail(input.emailMessageId)),
+
+    // Get tracking events for a message
+    getEvents: protectedProcedure
+      .input(z.object({ emailMessageId: z.number() }))
+      .query(({ input }) => db.getEmailTrackingEvents(input.emailMessageId)),
+
+    // Get tracked links for a message
+    getLinks: protectedProcedure
+      .input(z.object({ emailMessageId: z.number() }))
+      .query(({ input }) => db.getEmailLinksForMessage(input.emailMessageId)),
+
+    // Get engagement summary for a message
+    getEngagement: protectedProcedure
+      .input(z.object({ emailMessageId: z.number() }))
+      .query(({ input }) => db.getEngagementSummary(input.emailMessageId)),
+
+    // Bounce management
+    bounces: router({
+      list: protectedProcedure
+        .input(z.object({ bounceType: z.string().optional(), limit: z.number().default(100) }).optional())
+        .query(({ input }) => db.getBounceList(input)),
+
+      stats: protectedProcedure.query(() => emailTracking.getBounceStats()),
+
+      unsuppress: adminProcedure
+        .input(z.object({ email: z.string().email() }))
+        .mutation(async ({ input }) => {
+          await db.unsuppressEmail(input.email);
+          return { success: true };
+        }),
+
+      checkEligibility: protectedProcedure
+        .input(z.object({ email: z.string().email() }))
+        .query(({ input }) => emailTracking.checkSendEligibility(input.email)),
+    }),
+
+    // Enhanced email parsing
+    parseEnhanced: protectedProcedure
+      .input(z.object({
+        bodyText: z.string(),
+        bodyHtml: z.string().optional(),
+      }))
+      .mutation(({ input }) => {
+        return enhancedEmailParse(input.bodyText, input.bodyHtml);
       }),
   }),
 

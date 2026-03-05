@@ -260,12 +260,12 @@ export function mapEventToStatus(eventType: string): string | null {
     // Processing events (we already have 'sent' status)
     'processed': null, // Don't update - we set this when we send
 
-    // Engagement events (informational only, don't change status)
-    'open': null,
-    'click': null,
-    'unsubscribe': null,
-    'spamreport': null,
-    'group_unsubscribe': null,
+    // Engagement events - tracked separately via emailTrackingService
+    'open': 'open',
+    'click': 'click',
+    'unsubscribe': 'unsubscribe',
+    'spamreport': 'spamreport',
+    'group_unsubscribe': 'unsubscribe',
     'group_resubscribe': null,
   };
 

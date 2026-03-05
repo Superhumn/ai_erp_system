@@ -8,6 +8,7 @@
 import { ENV } from "./env";
 import * as sendgrid from "./sendgridProvider";
 import * as db from "../db";
+import * as emailTracking from "../emailTrackingService";
 
 // Template name type matching the schema enum
 export type TemplateName =
@@ -59,6 +60,13 @@ export interface SendEmailResult {
  */
 export async function queueEmail(options: QueueEmailOptions): Promise<QueueEmailResult> {
   try {
+    // Check if recipient is on bounce/suppression list
+    const eligibility = await emailTracking.checkSendEligibility(options.to.email);
+    if (!eligibility.canSend) {
+      console.log(`[EmailService] Skipping suppressed recipient: ${options.to.email} - ${eligibility.reason}`);
+      return { success: false, error: eligibility.reason };
+    }
+
     // Check for duplicate using idempotency key
     if (options.idempotencyKey) {
       const existing = await db.getEmailMessageByIdempotencyKey(options.idempotencyKey);

@@ -120,6 +120,9 @@ import {
   // Investment grant checklists
   investmentGrantChecklists, investmentGrantItems,
   InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
+  // Email messages & tracking
+  emailMessages, emailEvents, emailTrackingEvents, emailLinks, emailBounceList, emailEngagementSummary,
+  InsertEmailMessage, InsertEmailEvent, InsertEmailTrackingEvent, InsertEmailLink, InsertEmailBounce, InsertEmailEngagementSummary,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -9113,4 +9116,307 @@ export async function getChecklistSummary(dataRoomId: number) {
     byCategory,
     requiredMissing: items.filter(i => i.status === 'missing' && i.requirement === 'required'),
   };
+}
+
+// ============================================
+// EMAIL MESSAGES - Queue & Lifecycle
+// ============================================
+
+export async function createEmailMessage(data: InsertEmailMessage) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(emailMessages).values(data);
+  return { id: result.insertId, ...data };
+}
+
+export async function getEmailMessageById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select().from(emailMessages).where(eq(emailMessages.id, id));
+  return row || null;
+}
+
+export async function getEmailMessageByIdempotencyKey(key: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select().from(emailMessages).where(eq(emailMessages.idempotencyKey, key));
+  return row || null;
+}
+
+export async function getEmailMessageByProviderMessageId(providerMessageId: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select().from(emailMessages).where(eq(emailMessages.providerMessageId, providerMessageId));
+  return row || null;
+}
+
+export async function updateEmailMessageStatus(
+  id: number,
+  status: string,
+  providerMessageId?: string,
+  errorJson?: any
+) {
+  const db = await getDb();
+  if (!db) return;
+  const updates: Record<string, any> = { status };
+  if (providerMessageId) updates.providerMessageId = providerMessageId;
+  if (errorJson) updates.errorJson = errorJson;
+  if (status === "sent") updates.sentAt = new Date();
+  if (status === "delivered") updates.deliveredAt = new Date();
+  await db.update(emailMessages).set(updates).where(eq(emailMessages.id, id));
+}
+
+export async function updateEmailMessage(id: number, data: Partial<InsertEmailMessage>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailMessages).set(data).where(eq(emailMessages.id, id));
+}
+
+export async function incrementEmailMessageRetry(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailMessages)
+    .set({ retryCount: sql`${emailMessages.retryCount} + 1`, status: "queued" as any })
+    .where(eq(emailMessages.id, id));
+}
+
+export async function getQueuedEmailMessages(limit: number = 10) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailMessages)
+    .where(and(
+      eq(emailMessages.status, "queued"),
+      lt(emailMessages.retryCount, emailMessages.maxRetries)
+    ))
+    .orderBy(asc(emailMessages.createdAt))
+    .limit(limit);
+}
+
+export async function getEmailMessages(filters?: {
+  status?: string;
+  relatedEntityType?: string;
+  relatedEntityId?: number;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.status) conditions.push(eq(emailMessages.status, filters.status as any));
+  if (filters?.relatedEntityType) conditions.push(eq(emailMessages.relatedEntityType, filters.relatedEntityType));
+  if (filters?.relatedEntityId) conditions.push(eq(emailMessages.relatedEntityId, filters.relatedEntityId));
+  let query = db.select().from(emailMessages);
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(emailMessages.createdAt)).limit(filters?.limit || 50).offset(filters?.offset || 0);
+}
+
+export async function getTransactionalEmailTemplateByName(templateName: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select().from(emailTemplates)
+    .where(and(eq(emailTemplates.templateType, templateName as any), eq(emailTemplates.isActive, true)));
+  return row || null;
+}
+
+// ============================================
+// EMAIL EVENTS - Provider webhook events
+// ============================================
+
+export async function createEmailEvent(data: InsertEmailEvent) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(emailEvents).values(data);
+  return { id: result.insertId, ...data };
+}
+
+export async function getEmailEvents(filters?: {
+  emailMessageId?: number;
+  providerEventType?: string;
+  limit?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.emailMessageId) conditions.push(eq(emailEvents.emailMessageId, filters.emailMessageId));
+  if (filters?.providerEventType) conditions.push(eq(emailEvents.providerEventType, filters.providerEventType));
+  let query = db.select().from(emailEvents);
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(emailEvents.createdAt)).limit(filters?.limit || 100);
+}
+
+// ============================================
+// EMAIL TRACKING - Opens, Clicks, Engagement
+// ============================================
+
+export async function createEmailTrackingEvent(data: InsertEmailTrackingEvent) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(emailTrackingEvents).values(data);
+  return { id: result.insertId, ...data };
+}
+
+export async function getEmailTrackingEvents(emailMessageId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailTrackingEvents)
+    .where(eq(emailTrackingEvents.emailMessageId, emailMessageId))
+    .orderBy(desc(emailTrackingEvents.createdAt));
+}
+
+export async function createEmailLink(data: InsertEmailLink) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(emailLinks).values(data);
+  return { id: result.insertId, ...data };
+}
+
+export async function getEmailLinkByTrackingId(trackingId: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select().from(emailLinks).where(eq(emailLinks.trackingId, trackingId));
+  return row || null;
+}
+
+export async function incrementEmailLinkClick(trackingId: string) {
+  const db = await getDb();
+  if (!db) return;
+  const now = new Date();
+  await db.update(emailLinks)
+    .set({
+      clickCount: sql`${emailLinks.clickCount} + 1`,
+      lastClickedAt: now,
+      firstClickedAt: sql`COALESCE(${emailLinks.firstClickedAt}, ${now})`,
+    })
+    .where(eq(emailLinks.trackingId, trackingId));
+}
+
+export async function getEmailLinksForMessage(emailMessageId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailLinks)
+    .where(eq(emailLinks.emailMessageId, emailMessageId))
+    .orderBy(desc(emailLinks.clickCount));
+}
+
+// ============================================
+// EMAIL BOUNCE LIST - Suppression Management
+// ============================================
+
+export async function addToBounceList(data: InsertEmailBounce) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // Upsert - increment bounce count if already exists
+  try {
+    const [existing] = await db.select().from(emailBounceList).where(eq(emailBounceList.email, data.email));
+    if (existing) {
+      await db.update(emailBounceList).set({
+        bounceCount: sql`${emailBounceList.bounceCount} + 1`,
+        lastBouncedAt: data.lastBouncedAt,
+        bounceType: data.bounceType as any,
+        reason: data.reason,
+        isSuppressed: true,
+      }).where(eq(emailBounceList.email, data.email));
+      return existing;
+    }
+    const [result] = await db.insert(emailBounceList).values(data);
+    return { id: result.insertId, ...data };
+  } catch (error) {
+    console.error("[DB] Error adding to bounce list:", error);
+    throw error;
+  }
+}
+
+export async function isEmailSuppressed(email: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  const [row] = await db.select().from(emailBounceList)
+    .where(and(eq(emailBounceList.email, email), eq(emailBounceList.isSuppressed, true)));
+  return !!row;
+}
+
+export async function getBounceList(filters?: { bounceType?: string; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [eq(emailBounceList.isSuppressed, true)];
+  if (filters?.bounceType) conditions.push(eq(emailBounceList.bounceType, filters.bounceType as any));
+  return db.select().from(emailBounceList)
+    .where(and(...conditions))
+    .orderBy(desc(emailBounceList.lastBouncedAt))
+    .limit(filters?.limit || 100);
+}
+
+export async function unsuppressEmail(email: string) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailBounceList).set({
+    isSuppressed: false,
+    unsuppressedAt: new Date(),
+  }).where(eq(emailBounceList.email, email));
+}
+
+// ============================================
+// EMAIL ENGAGEMENT SUMMARY
+// ============================================
+
+export async function upsertEngagementSummary(emailMessageId: number, data: Partial<InsertEmailEngagementSummary>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [existing] = await db.select().from(emailEngagementSummary)
+    .where(eq(emailEngagementSummary.emailMessageId, emailMessageId));
+  if (existing) {
+    await db.update(emailEngagementSummary).set(data)
+      .where(eq(emailEngagementSummary.emailMessageId, emailMessageId));
+    return { ...existing, ...data };
+  }
+  const [result] = await db.insert(emailEngagementSummary).values({
+    emailMessageId,
+    recipientEmail: data.recipientEmail || "",
+    ...data,
+  });
+  return { id: result.insertId, emailMessageId, ...data };
+}
+
+export async function getEngagementSummary(emailMessageId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select().from(emailEngagementSummary)
+    .where(eq(emailEngagementSummary.emailMessageId, emailMessageId));
+  return row || null;
+}
+
+export async function getEngagementStats(filters?: {
+  startDate?: Date;
+  endDate?: Date;
+  relatedEntityType?: string;
+}) {
+  const db = await getDb();
+  if (!db) return null;
+
+  // Join emailMessages with engagement summary to get aggregate stats
+  const conditions: any[] = [];
+  if (filters?.startDate) conditions.push(gte(emailMessages.createdAt, filters.startDate));
+  if (filters?.endDate) conditions.push(lte(emailMessages.createdAt, filters.endDate));
+  if (filters?.relatedEntityType) conditions.push(eq(emailMessages.relatedEntityType, filters.relatedEntityType));
+
+  const baseQuery = db.select({
+    totalSent: count(emailMessages.id),
+    totalDelivered: sql<number>`SUM(CASE WHEN ${emailEngagementSummary.delivered} = true THEN 1 ELSE 0 END)`,
+    totalOpened: sql<number>`SUM(CASE WHEN ${emailEngagementSummary.opened} = true THEN 1 ELSE 0 END)`,
+    totalClicked: sql<number>`SUM(CASE WHEN ${emailEngagementSummary.clicked} = true THEN 1 ELSE 0 END)`,
+    totalBounced: sql<number>`SUM(CASE WHEN ${emailEngagementSummary.bounced} = true THEN 1 ELSE 0 END)`,
+    totalUnsubscribed: sql<number>`SUM(CASE WHEN ${emailEngagementSummary.unsubscribed} = true THEN 1 ELSE 0 END)`,
+    totalSpamReported: sql<number>`SUM(CASE WHEN ${emailEngagementSummary.spamReported} = true THEN 1 ELSE 0 END)`,
+    avgEngagementScore: sql<number>`AVG(${emailEngagementSummary.engagementScore})`,
+    totalOpenCount: sql<number>`SUM(${emailEngagementSummary.openCount})`,
+    totalClickCount: sql<number>`SUM(${emailEngagementSummary.clickCount})`,
+  })
+  .from(emailMessages)
+  .leftJoin(emailEngagementSummary, eq(emailMessages.id, emailEngagementSummary.emailMessageId));
+
+  if (conditions.length > 0) {
+    const [row] = await (baseQuery.where(and(...conditions)) as any);
+    return row || null;
+  }
+  const [row] = await baseQuery;
+  return row || null;
 }

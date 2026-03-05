@@ -5074,3 +5074,148 @@ export type EdiSettings = typeof ediSettings.$inferSelect;
 export type InsertEdiSettings = typeof ediSettings.$inferInsert;
 export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
 export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
+
+// ============================================
+// EMAIL MESSAGES & TRACKING
+// ============================================
+
+// Email Messages - outbound email queue with full lifecycle tracking
+export const emailMessages = mysqlTable("email_messages", {
+  id: int("id").autoincrement().primaryKey(),
+  toEmail: varchar("toEmail", { length: 320 }).notNull(),
+  toName: varchar("toName", { length: 255 }),
+  fromEmail: varchar("fromEmail", { length: 320 }).notNull(),
+  fromName: varchar("fromName", { length: 255 }),
+  replyTo: varchar("replyTo", { length: 320 }),
+  subject: varchar("subject", { length: 500 }).notNull(),
+  templateName: varchar("templateName", { length: 100 }),
+  payloadJson: json("payloadJson"),
+  htmlBody: text("htmlBody"),
+  textBody: text("textBody"),
+  idempotencyKey: varchar("idempotencyKey", { length: 255 }).unique(),
+  status: mysqlEnum("status", ["queued", "sending", "sent", "delivered", "bounced", "dropped", "deferred", "failed"]).default("queued").notNull(),
+  providerMessageId: varchar("providerMessageId", { length: 255 }),
+  relatedEntityType: varchar("relatedEntityType", { length: 50 }),
+  relatedEntityId: int("relatedEntityId"),
+  triggeredBy: int("triggeredBy"),
+  aiGenerated: boolean("aiGenerated").default(false),
+  scheduledAt: timestamp("scheduledAt"),
+  sentAt: timestamp("sentAt"),
+  deliveredAt: timestamp("deliveredAt"),
+  retryCount: int("retryCount").default(0),
+  maxRetries: int("maxRetries").default(3),
+  errorJson: json("errorJson"),
+  metadata: json("metadata"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailMessage = typeof emailMessages.$inferSelect;
+export type InsertEmailMessage = typeof emailMessages.$inferInsert;
+
+// Email Events - raw webhook/provider events for audit trail
+export const emailEvents = mysqlTable("email_events", {
+  id: int("id").autoincrement().primaryKey(),
+  emailMessageId: int("emailMessageId"),
+  providerEventType: varchar("providerEventType", { length: 50 }).notNull(),
+  providerMessageId: varchar("providerMessageId", { length: 255 }),
+  providerTimestamp: timestamp("providerTimestamp"),
+  email: varchar("email", { length: 320 }),
+  reason: text("reason"),
+  bounceType: varchar("bounceType", { length: 50 }),
+  url: varchar("url", { length: 2048 }),
+  userAgent: varchar("userAgent", { length: 512 }),
+  ip: varchar("ip", { length: 45 }),
+  rawEventJson: json("rawEventJson"),
+  processedAt: timestamp("processedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type EmailEvent = typeof emailEvents.$inferSelect;
+export type InsertEmailEvent = typeof emailEvents.$inferInsert;
+
+// Email Tracking Events - normalized open/click/engagement events
+export const emailTrackingEvents = mysqlTable("email_tracking_events", {
+  id: int("id").autoincrement().primaryKey(),
+  emailMessageId: int("emailMessageId").notNull(),
+  eventType: mysqlEnum("eventType", ["open", "click", "unsubscribe", "spam_report"]).notNull(),
+  recipientEmail: varchar("recipientEmail", { length: 320 }).notNull(),
+  url: varchar("url", { length: 2048 }),
+  userAgent: varchar("userAgent", { length: 512 }),
+  ip: varchar("ip", { length: 45 }),
+  deviceType: varchar("deviceType", { length: 50 }),
+  os: varchar("os", { length: 100 }),
+  browser: varchar("browser", { length: 100 }),
+  country: varchar("country", { length: 100 }),
+  region: varchar("region", { length: 100 }),
+  city: varchar("city", { length: 100 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type EmailTrackingEvent = typeof emailTrackingEvents.$inferSelect;
+export type InsertEmailTrackingEvent = typeof emailTrackingEvents.$inferInsert;
+
+// Email Links - tracked links in outbound emails for click analytics
+export const emailLinks = mysqlTable("email_links", {
+  id: int("id").autoincrement().primaryKey(),
+  emailMessageId: int("emailMessageId").notNull(),
+  trackingId: varchar("trackingId", { length: 64 }).notNull().unique(),
+  originalUrl: varchar("originalUrl", { length: 2048 }).notNull(),
+  clickCount: int("clickCount").default(0),
+  firstClickedAt: timestamp("firstClickedAt"),
+  lastClickedAt: timestamp("lastClickedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type EmailLink = typeof emailLinks.$inferSelect;
+export type InsertEmailLink = typeof emailLinks.$inferInsert;
+
+// Email Bounce List - suppression list for bounced/invalid addresses
+export const emailBounceList = mysqlTable("email_bounce_list", {
+  id: int("id").autoincrement().primaryKey(),
+  email: varchar("email", { length: 320 }).notNull().unique(),
+  bounceType: mysqlEnum("bounceType", ["hard", "soft", "complaint", "unsubscribe"]).notNull(),
+  reason: text("reason"),
+  provider: varchar("provider", { length: 50 }),
+  bounceCount: int("bounceCount").default(1),
+  firstBouncedAt: timestamp("firstBouncedAt").notNull(),
+  lastBouncedAt: timestamp("lastBouncedAt").notNull(),
+  isSuppressed: boolean("isSuppressed").default(true).notNull(),
+  unsuppressedAt: timestamp("unsuppressedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailBounce = typeof emailBounceList.$inferSelect;
+export type InsertEmailBounce = typeof emailBounceList.$inferInsert;
+
+// Email Engagement Summary - aggregated per-message engagement metrics
+export const emailEngagementSummary = mysqlTable("email_engagement_summary", {
+  id: int("id").autoincrement().primaryKey(),
+  emailMessageId: int("emailMessageId").notNull().unique(),
+  recipientEmail: varchar("recipientEmail", { length: 320 }).notNull(),
+  delivered: boolean("delivered").default(false),
+  deliveredAt: timestamp("deliveredAt"),
+  opened: boolean("opened").default(false),
+  openCount: int("openCount").default(0),
+  firstOpenedAt: timestamp("firstOpenedAt"),
+  lastOpenedAt: timestamp("lastOpenedAt"),
+  clicked: boolean("clicked").default(false),
+  clickCount: int("clickCount").default(0),
+  firstClickedAt: timestamp("firstClickedAt"),
+  lastClickedAt: timestamp("lastClickedAt"),
+  uniqueLinksClicked: int("uniqueLinksClicked").default(0),
+  bounced: boolean("bounced").default(false),
+  bounceType: varchar("bounceType", { length: 50 }),
+  bouncedAt: timestamp("bouncedAt"),
+  unsubscribed: boolean("unsubscribed").default(false),
+  unsubscribedAt: timestamp("unsubscribedAt"),
+  spamReported: boolean("spamReported").default(false),
+  spamReportedAt: timestamp("spamReportedAt"),
+  engagementScore: int("engagementScore").default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+})
+
+export type EmailEngagementSummary = typeof emailEngagementSummary.$inferSelect;
+export type InsertEmailEngagementSummary = typeof emailEngagementSummary.$inferInsert;
