@@ -179,7 +179,7 @@ export interface ImportResult {
 export async function parseUploadedDocument(
   fileUrl: string,
   filename: string,
-  documentHint?: "purchase_order" | "freight_invoice",
+  documentHint?: "purchase_order" | "freight_invoice" | "vendor_invoice" | "customs_document",
   mimeType?: string
 ): Promise<DocumentParseResult> {
   console.log("[DocumentImport] Starting parse for:", filename, "URL:", fileUrl, "mimeType:", mimeType);
@@ -1387,7 +1387,7 @@ export async function importParsedDocument(
 
   let result: ImportResult;
 
-  if (doc.documentType === "invoice" || doc.documentType === "vendor_invoice") {
+  if (doc.documentType === "invoice" || doc.documentType === "vendor_invoice" || doc.documentType === "receipt") {
     const invoiceData: ImportedVendorInvoice = {
       invoiceNumber: doc.documentNumber || `EMAIL-${doc.emailId}-${doc.id}`,
       vendorName: doc.vendorName || "Unknown Vendor",
@@ -1419,7 +1419,7 @@ export async function importParsedDocument(
     };
     result = await importPurchaseOrder(poData, userId, options.markAsReceived ?? false);
 
-  } else if (doc.documentType === "shipping_document" || doc.documentType === "freight_invoice") {
+  } else if (doc.documentType === "shipping_document" || doc.documentType === "freight_invoice" || doc.documentType === "freight_quote" || doc.documentType === "shipping_label") {
     const freightData: ImportedFreightInvoice = {
       invoiceNumber: doc.documentNumber || `EMAIL-FRT-${doc.emailId}-${doc.id}`,
       carrierName: doc.carrierName || doc.vendorName || "Unknown Carrier",
@@ -1431,6 +1431,33 @@ export async function importParsedDocument(
       confidence: parseFloat(doc.confidence || "0"),
     };
     result = await importFreightInvoice(freightData, userId);
+
+  } else if (doc.documentType === "customs_document" || doc.documentType === "bill_of_lading" || doc.documentType === "packing_list") {
+    const rawData = (doc.rawExtractedData as any)?.structuredData || {};
+    const customsData: ImportedCustomsDocument = {
+      documentNumber: doc.documentNumber || `EMAIL-CUS-${doc.emailId}-${doc.id}`,
+      documentType: doc.documentType === "bill_of_lading" ? "bill_of_lading"
+        : doc.documentType === "packing_list" ? "packing_list"
+        : "customs_entry",
+      entryDate: doc.documentDate ? new Date(doc.documentDate).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+      shipperName: doc.vendorName || rawData.vendorName || "Unknown Shipper",
+      consigneeName: rawData.customerName || "Unknown Consignee",
+      countryOfOrigin: rawData.countryOfOrigin || "Unknown",
+      portOfEntry: rawData.portOfEntry,
+      containerNumber: rawData.containerNumber,
+      trackingNumber: doc.trackingNumber || undefined,
+      lineItems: lineItems.map(item => ({
+        description: item.description,
+        quantity: item.quantity,
+        unit: item.unit,
+        declaredValue: item.totalPrice,
+      })),
+      totalDeclaredValue: parseFloat(doc.totalAmount || "0"),
+      totalCharges: parseFloat(doc.totalAmount || "0"),
+      currency: doc.currency || "USD",
+      confidence: parseFloat(doc.confidence || "0"),
+    };
+    result = await importCustomsDocument(customsData, userId);
 
   } else {
     result = {

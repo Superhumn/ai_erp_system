@@ -6,7 +6,7 @@
 import { invokeLLM } from './llm';
 
 export interface ExtractedAttachmentData {
-  type: 'invoice' | 'receipt' | 'purchase_order' | 'shipping_document' | 'unknown';
+  type: 'invoice' | 'receipt' | 'purchase_order' | 'shipping_document' | 'customs_document' | 'bill_of_lading' | 'packing_list' | 'unknown';
   confidence: number;
   extractedText: string;
   structuredData: {
@@ -46,6 +46,12 @@ export interface ExtractedAttachmentData {
     dueDate?: string;
     paymentMethod?: string;
     
+    // Customs/trade fields
+    countryOfOrigin?: string;
+    portOfEntry?: string;
+    containerNumber?: string;
+    hsCode?: string;
+
     // Additional fields
     poNumber?: string;
     invoiceNumber?: string;
@@ -84,7 +90,7 @@ export async function processAttachment(
           content: `You are a document processing assistant specialized in extracting structured data from business documents.
           
 Analyze the provided document image/PDF and extract:
-1. Document type (invoice, receipt, purchase_order, shipping_document, or unknown)
+1. Document type (invoice, receipt, purchase_order, shipping_document, customs_document, bill_of_lading, packing_list, or unknown)
 2. All visible text
 3. Structured data including:
    - Document number, date, amounts
@@ -129,7 +135,7 @@ Return your analysis in the specified JSON format.`
             properties: {
               documentType: {
                 type: 'string',
-                enum: ['invoice', 'receipt', 'purchase_order', 'shipping_document', 'unknown'],
+                enum: ['invoice', 'receipt', 'purchase_order', 'shipping_document', 'customs_document', 'bill_of_lading', 'packing_list', 'unknown'],
                 description: 'The type of document'
               },
               confidence: {
@@ -172,6 +178,10 @@ Return your analysis in the specified JSON format.`
               deliveryDate: { type: 'string', description: 'Expected delivery date' },
               paymentTerms: { type: 'string', description: 'Payment terms (Net 30, etc)' },
               dueDate: { type: 'string', description: 'Payment due date' },
+              countryOfOrigin: { type: 'string', description: 'Country of origin for customs/trade docs' },
+              portOfEntry: { type: 'string', description: 'Port of entry for customs docs' },
+              containerNumber: { type: 'string', description: 'Container number for shipping/customs' },
+              hsCode: { type: 'string', description: 'Harmonized System code for customs' },
               poNumber: { type: 'string', description: 'Purchase order reference' },
               invoiceNumber: { type: 'string', description: 'Invoice number reference' },
               notes: { type: 'string', description: 'Any additional notes or comments' }
@@ -212,6 +222,10 @@ Return your analysis in the specified JSON format.`
         deliveryDate: parsed.deliveryDate,
         paymentTerms: parsed.paymentTerms,
         dueDate: parsed.dueDate,
+        countryOfOrigin: parsed.countryOfOrigin,
+        portOfEntry: parsed.portOfEntry,
+        containerNumber: parsed.containerNumber,
+        hsCode: parsed.hsCode,
         poNumber: parsed.poNumber,
         invoiceNumber: parsed.invoiceNumber,
         notes: parsed.notes,
@@ -301,6 +315,9 @@ export function categorizeByAttachments(
     'receipt': 'receipt',
     'purchase_order': 'purchase_order',
     'shipping_document': 'shipping_confirmation',
+    'customs_document': 'customs_document',
+    'bill_of_lading': 'shipping_confirmation',
+    'packing_list': 'shipping_confirmation',
   };
 
   return {
