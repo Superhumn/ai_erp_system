@@ -8,7 +8,7 @@ import { sendEmail, isEmailConfigured, formatEmailHtml } from "./_core/email";
 import { processEmailReply, analyzeEmail, generateEmailReply } from "./emailReplyService";
 import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
-import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
+import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials, importParsedDocument, bulkImportDocuments } from "./documentImportService";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
@@ -8640,18 +8640,22 @@ Ask if they received the original request and if they can provide a quote.`;
 
     // Process attachments with OCR
     processAttachments: protectedProcedure
-      .input(z.object({ emailId: z.number() }))
-      .mutation(async ({ input }) => {
+      .input(z.object({
+        emailId: z.number(),
+        autoImport: z.boolean().default(false),
+        autoImportMinConfidence: z.number().default(0.85),
+      }))
+      .mutation(async ({ input, ctx }) => {
         const email = await db.getInboundEmailById(input.emailId);
         if (!email) throw new TRPCError({ code: "NOT_FOUND" });
 
         const attachments = await db.getEmailAttachments(input.emailId);
         if (attachments.length === 0) {
-          return { success: true, processed: 0, results: [] };
+          return { success: true, processed: 0, results: [], autoImported: [] };
         }
 
         const { processEmailAttachments, categorizeByAttachments } = await import("./_core/attachmentOcr");
-        
+
         const results = await processEmailAttachments(
           attachments.map(a => ({
             id: a.id,
@@ -8663,6 +8667,7 @@ Ask if they received the original request and if they can provide a quote.`;
 
         // Update attachments with OCR results
         const processedResults: any[] = [];
+        const parsedDocIds: number[] = [];
         for (const [attachmentId, result] of Array.from(results.entries())) {
           await db.updateEmailAttachment(attachmentId, {
             extractedText: result.extractedText,
@@ -8673,7 +8678,7 @@ Ask if they received the original request and if they can provide a quote.`;
           // Create parsed document from attachment if high confidence
           if (result.confidence >= 0.7 && result.type !== 'unknown') {
             const data = result.structuredData;
-            await db.createParsedDocument({
+            const { id: parsedDocId } = await db.createParsedDocument({
               emailId: input.emailId,
               attachmentId,
               documentType: result.type as any,
@@ -8689,6 +8694,7 @@ Ask if they received the original request and if they can provide a quote.`;
               lineItems: data.lineItems || null,
               rawExtractedData: result as any,
             });
+            parsedDocIds.push(parsedDocId);
           }
 
           processedResults.push({
@@ -8708,10 +8714,28 @@ Ask if they received the original request and if they can provide a quote.`;
           });
         }
 
+        // Auto-import high-confidence parsed documents into real ERP records
+        const autoImported: Array<{ parsedDocId: number; success: boolean; documentType: string; error?: string }> = [];
+        if (input.autoImport) {
+          for (const parsedDocId of parsedDocIds) {
+            const parsedDoc = await db.getParsedDocumentById(parsedDocId);
+            if (parsedDoc && parseFloat(parsedDoc.confidence || "0") >= input.autoImportMinConfidence) {
+              const importResult = await importParsedDocument(parsedDocId, ctx.user.id);
+              autoImported.push({
+                parsedDocId,
+                success: importResult.success,
+                documentType: importResult.documentType,
+                error: importResult.error,
+              });
+            }
+          }
+        }
+
         return {
           success: true,
           processed: results.size,
           results: processedResults,
+          autoImported,
         };
       }),
 
@@ -8760,9 +8784,10 @@ Ask if they received the original request and if they can provide a quote.`;
         unseenOnly: z.boolean().default(true),
         markAsSeen: z.boolean().default(false),
         fullAiParsing: z.boolean().default(false),
+        downloadAttachments: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
-        const { scanAndCategorizeInbox, getImapConfig } = await import("./_core/emailInboxScanner");
+        const { scanAndCategorizeInbox, getImapConfig, downloadEmailAttachments } = await import("./_core/emailInboxScanner");
         
         // Get config from input or environment
         let config = getImapConfig();
@@ -8866,15 +8891,31 @@ Ask if they received the original request and if they can provide a quote.`;
               }
             }
 
-            // Create attachment records
-            for (const attachment of email.attachments) {
-              await db.createEmailAttachment({
-                emailId,
-                filename: attachment.filename,
-                mimeType: attachment.contentType,
-                size: attachment.size,
-                storageUrl: null, // Attachments not downloaded in scan
-              });
+            // Download and store attachments if requested, otherwise just record metadata
+            if (input.downloadAttachments && email.attachments.length > 0 && config) {
+              const downloadedAttachments = await downloadEmailAttachments(config, email.uid, input.folder);
+              // Match downloaded attachments by filename
+              const downloadMap = new Map(downloadedAttachments.map(a => [a.filename, a]));
+              for (const attachment of email.attachments) {
+                const downloaded = downloadMap.get(attachment.filename);
+                await db.createEmailAttachment({
+                  emailId,
+                  filename: attachment.filename,
+                  mimeType: attachment.contentType,
+                  size: downloaded?.size || attachment.size,
+                  storageUrl: downloaded?.storageUrl || null,
+                });
+              }
+            } else {
+              for (const attachment of email.attachments) {
+                await db.createEmailAttachment({
+                  emailId,
+                  filename: attachment.filename,
+                  mimeType: attachment.contentType,
+                  size: attachment.size,
+                  storageUrl: null,
+                });
+              }
             }
 
             imported++;
@@ -11349,6 +11390,32 @@ Ask if they received the original request and if they can provide a quote.`;
       }))
       .mutation(async ({ input, ctx }) => {
         return importCustomsDocument(input.documentData as any, ctx.user.id);
+      }),
+
+    // Import a parsed document from the email inbox (bridge email OCR → real records)
+    importParsedDocument: protectedProcedure
+      .input(z.object({
+        parsedDocumentId: z.number(),
+        markAsReceived: z.boolean().default(false),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return importParsedDocument(input.parsedDocumentId, ctx.user.id, {
+          markAsReceived: input.markAsReceived,
+        });
+      }),
+
+    // Bulk import multiple documents (parse + import in one step)
+    bulkImport: protectedProcedure
+      .input(z.object({
+        documents: z.array(z.object({
+          content: z.string(),
+          filename: z.string(),
+          hint: z.enum(["purchase_order", "vendor_invoice", "freight_invoice", "customs_document"]).optional(),
+        })),
+        markPOsAsReceived: z.boolean().default(true),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return bulkImportDocuments(input.documents, ctx.user.id, input.markPOsAsReceived);
       }),
 
     // Get import history

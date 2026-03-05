@@ -418,6 +418,112 @@ export async function scanAndCategorizeInbox(
 }
 
 /**
+ * Download email attachments via IMAP and upload to storage.
+ * Returns a map of attachment filename -> storage URL.
+ */
+export async function downloadEmailAttachments(
+  config: EmailInboxConfig,
+  uid: number,
+  folder: string = "INBOX"
+): Promise<Array<{ filename: string; mimeType: string; size: number; storageUrl: string }>> {
+  const { storagePut } = await import("../storage");
+  const downloaded: Array<{ filename: string; mimeType: string; size: number; storageUrl: string }> = [];
+  let client: ImapFlow | null = null;
+
+  try {
+    client = new ImapFlow({
+      host: config.host,
+      port: config.port,
+      secure: config.secure,
+      auth: config.auth,
+      logger: false,
+    });
+
+    await client.connect();
+    await client.mailboxOpen(folder);
+
+    // Fetch body structure to find attachment parts
+    const message = await client.fetchOne(uid.toString(), {
+      uid: true,
+      bodyStructure: true,
+    }, { uid: true });
+
+    if (!message?.bodyStructure) {
+      return downloaded;
+    }
+
+    // Find attachment parts and their part numbers
+    const attachmentParts: Array<{ partNumber: string; filename: string; mimeType: string; size: number }> = [];
+    findAttachmentParts(message.bodyStructure, attachmentParts, "");
+
+    for (const part of attachmentParts) {
+      try {
+        const bodyPart = await client.download(uid.toString(), part.partNumber, { uid: true });
+        if (bodyPart?.content) {
+          const chunks: Buffer[] = [];
+          for await (const chunk of bodyPart.content) {
+            chunks.push(chunk);
+          }
+          const buffer = Buffer.concat(chunks);
+
+          // Upload to storage
+          const storageKey = `email-attachments/${uid}/${Date.now()}-${part.filename}`;
+          const { url } = await storagePut(storageKey, buffer, part.mimeType);
+
+          downloaded.push({
+            filename: part.filename,
+            mimeType: part.mimeType,
+            size: buffer.length,
+            storageUrl: url,
+          });
+        }
+      } catch (partErr) {
+        console.error(`[EmailScanner] Failed to download part ${part.partNumber}:`, partErr);
+      }
+    }
+  } catch (error) {
+    console.error("[EmailScanner] Failed to download attachments:", error);
+  } finally {
+    if (client) {
+      try { await client.logout(); } catch { /* ignore */ }
+    }
+  }
+
+  return downloaded;
+}
+
+/**
+ * Recursively find attachment parts in a body structure
+ */
+function findAttachmentParts(
+  structure: any,
+  parts: Array<{ partNumber: string; filename: string; mimeType: string; size: number }>,
+  parentPart: string
+): void {
+  if (!structure) return;
+
+  if (structure.disposition === "attachment" || structure.disposition === "inline") {
+    const mimeType = `${structure.type}/${structure.subtype}`;
+    // Only download processable types (PDFs and images)
+    if (mimeType === "application/pdf" || structure.type === "image") {
+      parts.push({
+        partNumber: structure.part || parentPart,
+        filename: structure.dispositionParameters?.filename || structure.parameters?.name || "attachment",
+        mimeType,
+        size: structure.size || 0,
+      });
+    }
+  }
+
+  if (structure.childNodes) {
+    for (let i = 0; i < structure.childNodes.length; i++) {
+      const childPart = parentPart ? `${parentPart}.${i + 1}` : `${i + 1}`;
+      findAttachmentParts(structure.childNodes[i], parts, childPart);
+    }
+  }
+}
+
+/**
  * Test IMAP connection
  */
 export async function testImapConnection(config: EmailInboxConfig): Promise<{

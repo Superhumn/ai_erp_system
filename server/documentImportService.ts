@@ -6,6 +6,33 @@ import { tmpdir } from "os";
 import { execSync } from "child_process";
 import { fromBuffer } from "pdf2pic";
 import { randomBytes } from "crypto";
+import { getWorkflowEngine } from "./autonomousWorkflowEngine";
+
+/**
+ * Emit a supply chain event after a successful document import.
+ * Non-blocking — logs errors but doesn't fail the import.
+ */
+async function emitDocumentImportEvent(
+  eventType: string,
+  entityType: string,
+  entityId: number,
+  data: Record<string, any>
+): Promise<void> {
+  try {
+    const engine = await getWorkflowEngine();
+    await engine.emitEvent(
+      eventType,
+      "info",
+      "document_import",
+      entityType,
+      entityId,
+      data
+    );
+    console.log(`[DocumentImport] Emitted event: ${eventType} for ${entityType} #${entityId}`);
+  } catch (err) {
+    console.error(`[DocumentImport] Failed to emit event ${eventType}:`, err);
+  }
+}
 
 // PDF.js will be imported dynamically in the function to avoid worker issues
 
@@ -826,13 +853,27 @@ export async function importPurchaseOrder(
       }
     }
 
-    return {
+    const result: ImportResult = {
       success: true,
       documentType: "purchase_order",
       createdRecords,
       updatedRecords,
       warnings
     };
+
+    // Emit supply chain event for downstream automation (invoice matching, etc.)
+    const poRecord = createdRecords.find(r => r.type === "purchase_order");
+    if (poRecord) {
+      emitDocumentImportEvent("po_received", "purchase_order", poRecord.id, {
+        poNumber: po.poNumber,
+        vendorName: po.vendorName,
+        totalAmount: po.totalAmount,
+        status: markAsReceived ? "received" : "confirmed",
+        lineItemCount: po.lineItems.length,
+      });
+    }
+
+    return result;
   } catch (error) {
     return {
       success: false,
@@ -915,13 +956,25 @@ export async function importFreightInvoice(
       });
     }
 
-    return {
+    const result: ImportResult = {
       success: true,
       documentType: "freight_invoice",
       createdRecords,
       updatedRecords,
       warnings
     };
+
+    const freightRecord = createdRecords.find(r => r.type === "freight_history");
+    if (freightRecord) {
+      emitDocumentImportEvent("freight_invoice_received", "freight_history", freightRecord.id, {
+        invoiceNumber: invoice.invoiceNumber,
+        carrierName: invoice.carrierName,
+        totalAmount: invoice.totalAmount,
+        relatedPoNumber: invoice.relatedPoNumber,
+      });
+    }
+
+    return result;
   } catch (error) {
     return {
       success: false,
@@ -1041,13 +1094,27 @@ export async function importVendorInvoice(
       }
     }
 
-    return {
+    const result: ImportResult = {
       success: true,
       documentType: "vendor_invoice",
       createdRecords,
       updatedRecords,
       warnings
     };
+
+    // Emit invoice_received — triggers the Invoice Matching workflow in the orchestrator
+    const poRecord = createdRecords.find(r => r.type === "purchase_order");
+    if (poRecord) {
+      emitDocumentImportEvent("invoice_received", "purchase_order", poRecord.id, {
+        invoiceNumber: invoice.invoiceNumber,
+        vendorName: invoice.vendorName,
+        totalAmount: invoice.totalAmount,
+        relatedPoNumber: invoice.relatedPoNumber,
+        lineItemCount: invoice.lineItems.length,
+      });
+    }
+
+    return result;
   } catch (error) {
     return {
       success: false,
@@ -1183,13 +1250,27 @@ export async function importCustomsDocument(
       });
     }
 
-    return {
+    const result: ImportResult = {
       success: true,
       documentType: "customs_document",
       createdRecords,
       updatedRecords,
       warnings
     };
+
+    const customsRecord = createdRecords.find(r => r.type === "customs_document");
+    if (customsRecord) {
+      emitDocumentImportEvent("customs_document_received", "customs_document", customsRecord.id, {
+        documentNumber: doc.documentNumber,
+        documentType: doc.documentType,
+        shipperName: doc.shipperName,
+        countryOfOrigin: doc.countryOfOrigin,
+        totalCharges: doc.totalCharges,
+        relatedPoNumber: doc.relatedPoNumber,
+      });
+    }
+
+    return result;
   } catch (error) {
     return {
       success: false,
@@ -1270,4 +1351,111 @@ export async function bulkImportDocuments(
     failed,
     results
   };
+}
+
+/**
+ * Import a parsed document record (from email OCR) into the real ERP system.
+ * Converts a parsedDocuments row into actual invoices, POs, freight records, etc.
+ */
+export async function importParsedDocument(
+  parsedDocId: number,
+  userId: number,
+  options: { markAsReceived?: boolean } = {}
+): Promise<ImportResult> {
+  const doc = await db.getParsedDocumentById(parsedDocId);
+  if (!doc) {
+    return {
+      success: false,
+      documentType: "unknown",
+      createdRecords: [],
+      updatedRecords: [],
+      warnings: [],
+      error: `Parsed document #${parsedDocId} not found`
+    };
+  }
+
+  const lineItems: ImportedLineItem[] = Array.isArray(doc.lineItems)
+    ? (doc.lineItems as any[]).map(item => ({
+        description: item.description || "Unknown item",
+        quantity: item.quantity || 1,
+        unit: item.unit,
+        unitPrice: item.unitPrice || item.unit_price || 0,
+        totalPrice: item.total || item.totalPrice || item.total_price || 0,
+        sku: item.sku,
+      }))
+    : [];
+
+  let result: ImportResult;
+
+  if (doc.documentType === "invoice" || doc.documentType === "vendor_invoice") {
+    const invoiceData: ImportedVendorInvoice = {
+      invoiceNumber: doc.documentNumber || `EMAIL-${doc.emailId}-${doc.id}`,
+      vendorName: doc.vendorName || "Unknown Vendor",
+      vendorEmail: doc.vendorEmail || undefined,
+      invoiceDate: doc.documentDate ? new Date(doc.documentDate).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+      dueDate: doc.dueDate ? new Date(doc.dueDate).toISOString().split("T")[0] : undefined,
+      lineItems,
+      subtotal: parseFloat(doc.subtotal || "0") || lineItems.reduce((s, i) => s + i.totalPrice, 0),
+      taxAmount: parseFloat(doc.taxAmount || "0") || undefined,
+      shippingAmount: parseFloat(doc.shippingAmount || "0") || undefined,
+      totalAmount: parseFloat(doc.totalAmount || "0") || lineItems.reduce((s, i) => s + i.totalPrice, 0),
+      currency: doc.currency || "USD",
+      confidence: parseFloat(doc.confidence || "0"),
+    };
+    result = await importVendorInvoice(invoiceData, userId, options.markAsReceived ?? false);
+
+  } else if (doc.documentType === "purchase_order") {
+    const poData: ImportedPurchaseOrder = {
+      poNumber: doc.documentNumber || `EMAIL-PO-${doc.emailId}-${doc.id}`,
+      vendorName: doc.vendorName || "Unknown Vendor",
+      vendorEmail: doc.vendorEmail || undefined,
+      orderDate: doc.documentDate ? new Date(doc.documentDate).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+      status: "confirmed",
+      lineItems,
+      subtotal: parseFloat(doc.subtotal || "0") || lineItems.reduce((s, i) => s + i.totalPrice, 0),
+      totalAmount: parseFloat(doc.totalAmount || "0") || lineItems.reduce((s, i) => s + i.totalPrice, 0),
+      currency: doc.currency || "USD",
+      confidence: parseFloat(doc.confidence || "0"),
+    };
+    result = await importPurchaseOrder(poData, userId, options.markAsReceived ?? false);
+
+  } else if (doc.documentType === "shipping_document" || doc.documentType === "freight_invoice") {
+    const freightData: ImportedFreightInvoice = {
+      invoiceNumber: doc.documentNumber || `EMAIL-FRT-${doc.emailId}-${doc.id}`,
+      carrierName: doc.carrierName || doc.vendorName || "Unknown Carrier",
+      invoiceDate: doc.documentDate ? new Date(doc.documentDate).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+      trackingNumber: doc.trackingNumber || undefined,
+      freightCharges: parseFloat(doc.totalAmount || "0"),
+      totalAmount: parseFloat(doc.totalAmount || "0"),
+      currency: doc.currency || "USD",
+      confidence: parseFloat(doc.confidence || "0"),
+    };
+    result = await importFreightInvoice(freightData, userId);
+
+  } else {
+    result = {
+      success: false,
+      documentType: doc.documentType,
+      createdRecords: [],
+      updatedRecords: [],
+      warnings: [],
+      error: `Unsupported document type for auto-import: ${doc.documentType}`
+    };
+  }
+
+  // Update the parsed document record with import results
+  if (result.success) {
+    const createdPO = result.createdRecords.find(r => r.type === "purchase_order");
+    const createdVendor = result.createdRecords.find(r => r.type === "vendor");
+    await db.updateParsedDocument(parsedDocId, {
+      isReviewed: true,
+      isApproved: true,
+      reviewedBy: userId,
+      reviewedAt: new Date(),
+      ...(createdPO ? { purchaseOrderId: createdPO.id } : {}),
+      ...(createdVendor ? { createdVendorId: createdVendor.id } : {}),
+    } as any);
+  }
+
+  return result;
 }
