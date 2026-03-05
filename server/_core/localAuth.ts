@@ -3,7 +3,7 @@
  * Provides email/password authentication as a replacement for manus.ai OAuth
  */
 
-import { pbkdf2Sync, randomBytes } from "crypto";
+import { pbkdf2Sync, randomBytes, timingSafeEqual } from "crypto";
 import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import type { Express, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
@@ -20,6 +20,14 @@ const DIGEST = "sha512";
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 const MAX_LOGIN_ATTEMPTS = 5;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+
+// Periodically clean up stale rate limit entries to prevent memory leaks
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of loginAttempts) {
+    if (now > entry.resetAt) loginAttempts.delete(ip);
+  }
+}, RATE_LIMIT_WINDOW_MS);
 
 /**
  * Check and update rate limit for an IP address
@@ -83,17 +91,14 @@ function generateSalt(): string {
  */
 function verifyPassword(password: string, salt: string, hash: string): boolean {
   const passwordHash = hashPassword(password, salt);
-  return passwordHash === hash;
+  if (passwordHash.length !== hash.length) return false;
+  return timingSafeEqual(Buffer.from(passwordHash), Buffer.from(hash));
 }
 
 /**
  * Generate a unique openId for local users
  * Format: local_{nanoid}
  */
-function verifyPassword(password: string, salt: string, hash: string): boolean {
-  return hashPassword(password, salt) === hash;
-}
-
 async function generateLocalOpenId(): Promise<string> {
   const { nanoid } = await import("nanoid");
   return `local_${nanoid(21)}`;
@@ -111,9 +116,6 @@ function isValidEmail(email: string): boolean {
  * Validate password strength
  * At least 8 characters
  */
-function isValidEmail(email: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
 
 function isValidPassword(password: string): boolean {
   return password.length >= 8;

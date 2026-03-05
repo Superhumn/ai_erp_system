@@ -47,7 +47,8 @@ async function startServer() {
   const app = express();
   const server = createServer(app);
 
-  // =====================================  // SECURITY HEADERS
+  // ============================================
+  // SECURITY HEADERS
   // ============================================
   app.use((_req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -195,13 +196,8 @@ async function startServer() {
     }
   };
 
-  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), (req, res) => 
-    handleShopifyWebhook(req, res, 'orders')
-  );
-
-  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), (req, res) =>
-    handleShopifyWebhook(req, res, 'inventory')
-  );
+  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), handleShopifyWebhook);
+  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), handleShopifyWebhook);
 
   // ============================================
   // EDI WEBHOOK ENDPOINT
@@ -237,11 +233,6 @@ async function startServer() {
     }
   });
 
-  // Google OAuth callback for Drive/Sheets integration
-  app.get('/api/google/callback', async (req, res) => {
-  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), handleShopifyWebhook);
-  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), handleShopifyWebhook);
-  
   // Google OAuth callback
   app.get('/api/google/callback', oauthCallbackLimiter, async (req, res) => {
     const { code, state } = req.query;
