@@ -1408,7 +1408,8 @@ export async function globalSearch(query: string) {
   const db = await getDb();
   if (!db) return { customers: [], vendors: [], products: [], employees: [], contracts: [], projects: [] };
   
-  const searchPattern = `%${query}%`;
+  const escapedQuery = query.replace(/[_%\\]/g, '\\$&');
+  const searchPattern = `%${escapedQuery}%`;
   
   const [customerResults, vendorResults, productResults, employeeResults, contractResults, projectResults] = await Promise.all([
     db.select().from(customers).where(or(like(customers.name, searchPattern), like(customers.email, searchPattern))).limit(5),
@@ -7730,12 +7731,13 @@ export async function getCrmContacts(filters?: {
     conditions.push(eq(crmContacts.assignedTo, filters.assignedTo));
   }
   if (filters?.search) {
+    const escapedSearch = filters.search.replace(/[_%\\]/g, '\\$&');
     conditions.push(
       or(
-        like(crmContacts.fullName, `%${filters.search}%`),
-        like(crmContacts.email, `%${filters.search}%`),
-        like(crmContacts.organization, `%${filters.search}%`),
-        like(crmContacts.phone, `%${filters.search}%`)
+        like(crmContacts.fullName, `%${escapedSearch}%`),
+        like(crmContacts.email, `%${escapedSearch}%`),
+        like(crmContacts.organization, `%${escapedSearch}%`),
+        like(crmContacts.phone, `%${escapedSearch}%`)
       )
     );
   }
