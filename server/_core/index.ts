@@ -195,6 +195,13 @@ async function startServer() {
     }
   };
 
+  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), (req, res) => 
+    handleShopifyWebhook(req, res, 'orders')
+  );
+
+  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), (req, res) =>
+    handleShopifyWebhook(req, res, 'inventory')
+  );
 
   // ============================================
   // EDI WEBHOOK ENDPOINT
@@ -230,10 +237,6 @@ async function startServer() {
     }
   });
 
-
-  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), handleShopifyWebhook);
-  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), handleShopifyWebhook);
-  
   // Google OAuth callback
   app.get('/api/google/callback', oauthCallbackLimiter, async (req, res) => {
     const { code, state } = req.query;
@@ -348,17 +351,16 @@ async function startServer() {
   const port = await findAvailablePort(preferredPort);
   if (port !== preferredPort) console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
 
-  server.listen(port, async () => {
+  server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
     startEmailQueueWorker();
 
     // Start EDI polling scheduler (check every 5 minutes)
-    try {
-      const { startEdiPolling } = await import('../ediTransportService');
+    import('../ediTransportService').then(({ startEdiPolling }) => {
       startEdiPolling(5 * 60 * 1000);
-    } catch (err: any) {
+    }).catch(err => {
       console.warn('[EDI Polling] Could not start polling scheduler:', err.message);
-    }
+    });
     console.log("[Startup] Starting autonomous supply chain orchestrator...");
     startOrchestrator().catch(err => {
       console.error("[Startup] Failed to start orchestrator:", err);

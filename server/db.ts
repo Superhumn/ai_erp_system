@@ -6486,9 +6486,10 @@ export async function getDetailedVisitorAnalytics(dataRoomId: number, visitorId:
     .orderBy(desc(dataRoomVisitorSessions.sessionStartAt));
 
   // Get all documents in this data room to scope page views and doc views
-  const roomDocIdList = (await db.select({ id: dataRoomDocuments.id })
+  const roomDocs = await db.select({ id: dataRoomDocuments.id })
     .from(dataRoomDocuments)
-    .where(eq(dataRoomDocuments.dataRoomId, dataRoomId))).map(d => d.id);
+    .where(eq(dataRoomDocuments.dataRoomId, dataRoomId));
+  const roomDocIdList = roomDocs.map(d => d.id);
 
   // Get page views scoped to this data room's documents (filtered in SQL)
   const pageViews = roomDocIdList.length > 0
