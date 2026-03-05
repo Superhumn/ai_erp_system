@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json, bigint } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json, bigint, uniqueIndex } from "drizzle-orm/mysql-core";
 import { relations } from "drizzle-orm";
 
 // ============================================
@@ -28,6 +28,21 @@ export const users = mysqlTable("users", {
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
+
+// Local authentication credentials for email/password auth
+export const localAuthCredentials = mysqlTable("localAuthCredentials", {
+  id: int("id").autoincrement().primaryKey(),
+  openId: varchar("openId", { length: 64 }).notNull().unique(),
+  email: varchar("email", { length: 320 }).notNull().unique(),
+  passwordHash: varchar("passwordHash", { length: 256 }).notNull(),
+  salt: varchar("salt", { length: 256 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type LocalAuthCredential = typeof localAuthCredentials.$inferSelect;
+export type InsertLocalAuthCredential = typeof localAuthCredentials.$inferInsert;
+
 
 // Team invitations for onboarding new users
 export const teamInvitations = mysqlTable("teamInvitations", {
@@ -93,6 +108,77 @@ export const quickbooksOAuthTokens = mysqlTable("quickbooksOAuthTokens", {
 
 export type QuickBooksOAuthToken = typeof quickbooksOAuthTokens.$inferSelect;
 export type InsertQuickBooksOAuthToken = typeof quickbooksOAuthTokens.$inferInsert;
+
+// QuickBooks Chart of Accounts sync
+export const quickbooksAccounts = mysqlTable("quickbooksAccounts", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  quickbooksAccountId: varchar("quickbooksAccountId", { length: 64 }).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  accountType: varchar("accountType", { length: 64 }), // e.g., "Cost of Goods Sold", "Inventory", "Other Current Asset"
+  accountSubType: varchar("accountSubType", { length: 64 }), // e.g., "SuppliesMaterialsCogs", "Inventory"
+  classification: varchar("classification", { length: 64 }), // Asset, Liability, Equity, Revenue, Expense
+  fullyQualifiedName: text("fullyQualifiedName"),
+  active: boolean("active").default(true),
+  currentBalance: decimal("currentBalance", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  lastSyncedAt: timestamp("lastSyncedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type QuickBooksAccount = typeof quickbooksAccounts.$inferSelect;
+export type InsertQuickBooksAccount = typeof quickbooksAccounts.$inferInsert;
+
+// QuickBooks account category mappings for COGS
+export const quickbooksAccountMappings = mysqlTable("quickbooksAccountMappings", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  mappingType: mysqlEnum("mappingType", [
+    "cogs_product", // Cost of Goods Sold - Products
+    "cogs_freight", // Cost of Goods Sold - Freight/Shipping
+    "cogs_customs", // Cost of Goods Sold - Customs/Duties
+    "inventory_asset", // Inventory Asset account
+    "freight_expense", // Freight/Delivery Expense
+    "income_sales", // Sales Income
+    "expense_other" // Other expenses
+  ]).notNull(),
+  quickbooksAccountId: varchar("quickbooksAccountId", { length: 64 }).notNull(),
+  erpCategoryName: varchar("erpCategoryName", { length: 255 }), // Optional ERP category name
+  isDefault: boolean("isDefault").default(false),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type QuickBooksAccountMapping = typeof quickbooksAccountMappings.$inferSelect;
+export type InsertQuickBooksAccountMapping = typeof quickbooksAccountMappings.$inferInsert;
+
+// QuickBooks Items sync (Products/Services)
+export const quickbooksItems = mysqlTable("quickbooksItems", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  quickbooksItemId: varchar("quickbooksItemId", { length: 64 }).notNull(),
+  productId: int("productId"), // Link to ERP product
+  name: varchar("name", { length: 255 }).notNull(),
+  sku: varchar("sku", { length: 64 }),
+  type: varchar("type", { length: 32 }), // Inventory, NonInventory, Service
+  description: text("description"),
+  unitPrice: decimal("unitPrice", { precision: 15, scale: 2 }),
+  purchaseCost: decimal("purchaseCost", { precision: 15, scale: 2 }),
+  quantityOnHand: decimal("quantityOnHand", { precision: 15, scale: 4 }),
+  incomeAccountId: varchar("incomeAccountId", { length: 64 }),
+  expenseAccountId: varchar("expenseAccountId", { length: 64 }),
+  assetAccountId: varchar("assetAccountId", { length: 64 }),
+  active: boolean("active").default(true),
+  lastSyncedAt: timestamp("lastSyncedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type QuickBooksItem = typeof quickbooksItems.$inferSelect;
+export type InsertQuickBooksItem = typeof quickbooksItems.$inferInsert;
 
 // ============================================
 // CORE ENTITIES
@@ -362,6 +448,8 @@ export const inventory = mysqlTable("inventory", {
   reorderQuantity: decimal("reorderQuantity", { precision: 15, scale: 4 }),
   lastCountDate: timestamp("lastCountDate"),
   lastCountQuantity: decimal("lastCountQuantity", { precision: 15, scale: 4 }),
+  averageCost: decimal("averageCost", { precision: 15, scale: 4 }), // Average cost per unit for COGS calculation
+  totalCostBasis: decimal("totalCostBasis", { precision: 15, scale: 2 }), // Total cost of inventory on hand
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -1848,6 +1936,56 @@ export const inventoryTransactions = mysqlTable("inventoryTransactions", {
 export type InventoryTransaction = typeof inventoryTransactions.$inferSelect;
 export type InsertInventoryTransaction = typeof inventoryTransactions.$inferInsert;
 
+// COGS (Cost of Goods Sold) transaction tracking
+export const cogsTransactions = mysqlTable("cogsTransactions", {
+  id: int("id").autoincrement().primaryKey(),
+  transactionNumber: varchar("transactionNumber", { length: 64 }).notNull(),
+  salesOrderId: int("salesOrderId").notNull(),
+  salesOrderLineId: int("salesOrderLineId").notNull(),
+  productId: int("productId").notNull(),
+  lotId: int("lotId"),
+  warehouseId: int("warehouseId"),
+  quantitySold: decimal("quantitySold", { precision: 15, scale: 4 }).notNull(),
+  unitCost: decimal("unitCost", { precision: 15, scale: 4 }).notNull(), // Cost per unit at time of sale
+  productCost: decimal("productCost", { precision: 15, scale: 2 }).notNull(), // Base product cost
+  freightCostAllocated: decimal("freightCostAllocated", { precision: 15, scale: 2 }).default("0"), // Allocated freight/delivery cost
+  customsCostAllocated: decimal("customsCostAllocated", { precision: 15, scale: 2 }).default("0"), // Allocated customs/duties
+  insuranceCostAllocated: decimal("insuranceCostAllocated", { precision: 15, scale: 2 }).default("0"), // Allocated insurance
+  otherCostAllocated: decimal("otherCostAllocated", { precision: 15, scale: 2 }).default("0"), // Other allocated costs
+  totalCOGS: decimal("totalCOGS", { precision: 15, scale: 2 }).notNull(), // Total COGS = productCost + all allocated costs
+  revenueAmount: decimal("revenueAmount", { precision: 15, scale: 2 }).notNull(), // Revenue from this sale
+  grossProfit: decimal("grossProfit", { precision: 15, scale: 2 }).notNull(), // Revenue - COGS
+  costingMethod: mysqlEnum("costingMethod", ["fifo", "lifo", "average", "specific"]).default("fifo").notNull(),
+  notes: text("notes"),
+  transactionDate: timestamp("transactionDate").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CogsTransaction = typeof cogsTransactions.$inferSelect;
+export type InsertCogsTransaction = typeof cogsTransactions.$inferInsert;
+
+// Freight cost allocation to products
+export const freightCostAllocations = mysqlTable("freightCostAllocations", {
+  id: int("id").autoincrement().primaryKey(),
+  purchaseOrderId: int("purchaseOrderId"),
+  shipmentId: int("shipmentId"),
+  productId: int("productId").notNull(),
+  quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),
+  freightCost: decimal("freightCost", { precision: 15, scale: 2 }).notNull(),
+  customsDuties: decimal("customsDuties", { precision: 15, scale: 2 }).default("0"),
+  insuranceCost: decimal("insuranceCost", { precision: 15, scale: 2 }).default("0"),
+  handlingFees: decimal("handlingFees", { precision: 15, scale: 2 }).default("0"),
+  totalAllocatedCost: decimal("totalAllocatedCost", { precision: 15, scale: 2 }).notNull(),
+  allocationMethod: mysqlEnum("allocationMethod", ["weight", "volume", "quantity", "value", "manual"]).default("quantity").notNull(),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FreightCostAllocation = typeof freightCostAllocations.$inferSelect;
+export type InsertFreightCostAllocation = typeof freightCostAllocations.$inferInsert;
+
 // Work order output lots
 export const workOrderOutputs = mysqlTable("workOrderOutputs", {
   id: int("id").autoincrement().primaryKey(),
@@ -2019,6 +2157,9 @@ export const salesOrders = mysqlTable("salesOrders", {
   shippingAmount: decimal("shippingAmount", { precision: 15, scale: 2 }).default("0"),
   discountAmount: decimal("discountAmount", { precision: 15, scale: 2 }).default("0"),
   totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).default("0"),
+  totalCOGS: decimal("totalCOGS", { precision: 15, scale: 2 }), // Total Cost of Goods Sold for order
+  grossProfit: decimal("grossProfit", { precision: 15, scale: 2 }), // Revenue - COGS
+  grossProfitMargin: decimal("grossProfitMargin", { precision: 5, scale: 2 }), // (Gross Profit / Revenue) * 100
   currency: varchar("currency", { length: 3 }).default("USD"),
   shippingAddress: json("shippingAddress"),
   billingAddress: json("billingAddress"),
@@ -2046,6 +2187,8 @@ export const salesOrderLines = mysqlTable("salesOrderLines", {
   fulfilledQuantity: decimal("fulfilledQuantity", { precision: 15, scale: 4 }).default("0"),
   unitPrice: decimal("unitPrice", { precision: 15, scale: 2 }).notNull(),
   totalPrice: decimal("totalPrice", { precision: 15, scale: 2 }).notNull(),
+  costOfGoodsSold: decimal("costOfGoodsSold", { precision: 15, scale: 2 }), // Total COGS for this line
+  grossProfit: decimal("grossProfit", { precision: 15, scale: 2 }), // totalPrice - COGS
   unit: varchar("unit", { length: 32 }).default("EA"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
@@ -2449,6 +2592,212 @@ export const dataRoomInvitations = mysqlTable("data_room_invitations", {
 
 export type DataRoomInvitation = typeof dataRoomInvitations.$inferSelect;
 export type InsertDataRoomInvitation = typeof dataRoomInvitations.$inferInsert;
+
+// Document Page Views - detailed page-level tracking
+export const documentPageViews = mysqlTable("document_page_views", {
+  id: int("id").autoincrement().primaryKey(),
+  documentId: int("documentId").notNull(),
+  visitorId: int("visitorId").notNull(),
+  viewSessionId: int("viewSessionId"), // Links to documentViews for session grouping
+  linkId: int("linkId"),
+
+  // Page details
+  pageNumber: int("pageNumber").notNull(),
+  pageLabel: varchar("pageLabel", { length: 100 }), // For named pages (e.g., "Executive Summary")
+
+  // Time tracking (in milliseconds for precision)
+  enterTime: timestamp("enterTime").defaultNow().notNull(),
+  exitTime: timestamp("exitTime"),
+  durationMs: int("durationMs").default(0), // Time spent on this page in milliseconds
+
+  // Engagement signals
+  scrollDepth: int("scrollDepth"), // 0-100 percentage of page scrolled
+  mouseMovements: int("mouseMovements").default(0), // Number of mouse movements (engagement indicator)
+  clicks: int("clicks").default(0), // Number of clicks on the page
+  zoomLevel: int("zoomLevel").default(100), // Document zoom percentage
+
+  // Context
+  deviceType: varchar("deviceType", { length: 32 }), // desktop, mobile, tablet
+  screenWidth: int("screenWidth"),
+  screenHeight: int("screenHeight"),
+  viewportWidth: int("viewportWidth"),
+  viewportHeight: int("viewportHeight"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DocumentPageView = typeof documentPageViews.$inferSelect;
+export type InsertDocumentPageView = typeof documentPageViews.$inferInsert;
+
+// Data Room Google Drive Sync Configuration
+export const dataRoomDriveSyncConfig = mysqlTable("data_room_drive_sync_config", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull().unique(),
+
+  // Google Drive folder configuration
+  googleDriveFolderId: varchar("googleDriveFolderId", { length: 255 }).notNull(),
+  googleDriveFolderName: varchar("googleDriveFolderName", { length: 255 }),
+  googleDriveFolderUrl: varchar("googleDriveFolderUrl", { length: 512 }),
+
+  // Sync settings
+  syncEnabled: boolean("syncEnabled").default(true).notNull(),
+  syncFrequencyMinutes: int("syncFrequencyMinutes").default(60), // Auto-sync interval
+  syncMode: mysqlEnum("syncMode", ["one_way_import", "one_way_export", "bidirectional"]).default("one_way_import").notNull(),
+  syncSubfolders: boolean("syncSubfolders").default(true).notNull(), // Include subfolders
+
+  // File filters
+  includeFileTypes: text("includeFileTypes"), // JSON array of extensions to include (null = all)
+  excludeFileTypes: text("excludeFileTypes"), // JSON array of extensions to exclude
+  maxFileSizeMb: int("maxFileSizeMb").default(100), // Max file size to sync
+
+  // Mapping
+  folderMapping: text("folderMapping"), // JSON mapping of Drive folder IDs to data room folder IDs
+
+  // Sync status
+  lastSyncAt: timestamp("lastSyncAt"),
+  lastSyncStatus: mysqlEnum("lastSyncStatus", ["success", "partial", "failed", "in_progress"]),
+  lastSyncError: text("lastSyncError"),
+  lastSyncFilesAdded: int("lastSyncFilesAdded").default(0),
+  lastSyncFilesUpdated: int("lastSyncFilesUpdated").default(0),
+  lastSyncFilesRemoved: int("lastSyncFilesRemoved").default(0),
+
+  // OAuth user for sync (which user's credentials to use)
+  syncUserId: int("syncUserId"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoomDriveSyncConfig = typeof dataRoomDriveSyncConfig.$inferSelect;
+export type InsertDataRoomDriveSyncConfig = typeof dataRoomDriveSyncConfig.$inferInsert;
+
+// Data Room Drive Sync Logs - history of sync operations
+export const dataRoomDriveSyncLogs = mysqlTable("data_room_drive_sync_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  syncConfigId: int("syncConfigId").notNull(),
+
+  // Sync details
+  syncType: mysqlEnum("syncType", ["manual", "scheduled", "webhook"]).notNull(),
+  status: mysqlEnum("status", ["started", "in_progress", "completed", "failed", "cancelled"]).default("started").notNull(),
+
+  // Results
+  filesScanned: int("filesScanned").default(0),
+  filesAdded: int("filesAdded").default(0),
+  filesUpdated: int("filesUpdated").default(0),
+  filesRemoved: int("filesRemoved").default(0),
+  filesSkipped: int("filesSkipped").default(0),
+  foldersCreated: int("foldersCreated").default(0),
+
+  // Errors
+  errors: text("errors"), // JSON array of error messages
+  warnings: text("warnings"), // JSON array of warnings
+
+  // Timing
+  startedAt: timestamp("startedAt").defaultNow().notNull(),
+  completedAt: timestamp("completedAt"),
+  durationMs: int("durationMs"),
+
+  // Triggered by
+  triggeredBy: int("triggeredBy"), // User ID if manual
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DataRoomDriveSyncLog = typeof dataRoomDriveSyncLogs.$inferSelect;
+export type InsertDataRoomDriveSyncLog = typeof dataRoomDriveSyncLogs.$inferInsert;
+
+// Data Room Email Access Settings - manage who can access by email
+export const dataRoomEmailAccessRules = mysqlTable("data_room_email_access_rules", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+
+  // Rule type
+  ruleType: mysqlEnum("ruleType", ["allow_email", "allow_domain", "block_email", "block_domain"]).notNull(),
+
+  // Pattern to match
+  emailPattern: varchar("emailPattern", { length: 320 }).notNull(), // Email or domain pattern
+
+  // Permissions when matched
+  allowDownload: boolean("allowDownload").default(true),
+  allowPrint: boolean("allowPrint").default(true),
+  maxViews: int("maxViews"), // null = unlimited
+  expiresAt: timestamp("expiresAt"),
+
+  // Auto-actions
+  requireNdaSignature: boolean("requireNdaSignature").default(true),
+  autoApprove: boolean("autoApprove").default(false), // Auto-approve matching visitors
+
+  // Notifications
+  notifyOnAccess: boolean("notifyOnAccess").default(true),
+  notifyEmail: varchar("notifyEmail", { length: 320 }), // Where to send notifications
+
+  isActive: boolean("isActive").default(true).notNull(),
+  priority: int("priority").default(0), // Higher priority rules evaluated first
+
+  createdBy: int("createdBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoomEmailAccessRule = typeof dataRoomEmailAccessRules.$inferSelect;
+export type InsertDataRoomEmailAccessRule = typeof dataRoomEmailAccessRules.$inferInsert;
+
+// Data Room Visitor Sessions - detailed session tracking
+export const dataRoomVisitorSessions = mysqlTable("data_room_visitor_sessions", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  visitorId: int("visitorId").notNull(),
+  linkId: int("linkId"),
+
+  // Session timing
+  sessionStartAt: timestamp("sessionStartAt").defaultNow().notNull(),
+  sessionEndAt: timestamp("sessionEndAt"),
+  totalDurationMs: int("totalDurationMs").default(0),
+  activeDurationMs: int("activeDurationMs").default(0), // Time with active engagement
+  idleDurationMs: int("idleDurationMs").default(0), // Time idle
+
+  // Session activity
+  documentsViewed: int("documentsViewed").default(0),
+  pagesViewed: int("pagesViewed").default(0),
+  totalScrollDistance: int("totalScrollDistance").default(0), // Pixels scrolled
+  totalClicks: int("totalClicks").default(0),
+
+  // Downloads/prints during session
+  downloadsCount: int("downloadsCount").default(0),
+  printsCount: int("printsCount").default(0),
+
+  // Device/browser info
+  deviceType: varchar("deviceType", { length: 32 }),
+  browser: varchar("browser", { length: 64 }),
+  browserVersion: varchar("browserVersion", { length: 32 }),
+  os: varchar("os", { length: 64 }),
+  osVersion: varchar("osVersion", { length: 32 }),
+  screenResolution: varchar("screenResolution", { length: 20 }),
+
+  // Location (from IP)
+  ipAddress: varchar("ipAddress", { length: 45 }),
+  country: varchar("country", { length: 64 }),
+  region: varchar("region", { length: 64 }),
+  city: varchar("city", { length: 64 }),
+  timezone: varchar("timezone", { length: 64 }),
+
+  // Referrer
+  referrer: varchar("referrer", { length: 512 }),
+  utmSource: varchar("utmSource", { length: 128 }),
+  utmMedium: varchar("utmMedium", { length: 128 }),
+  utmCampaign: varchar("utmCampaign", { length: 128 }),
+
+  // Session metadata
+  sessionToken: varchar("sessionToken", { length: 128 }).unique(), // For tracking across page loads
+  isActive: boolean("isActive").default(true).notNull(),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoomVisitorSession = typeof dataRoomVisitorSessions.$inferSelect;
+export type InsertDataRoomVisitorSession = typeof dataRoomVisitorSessions.$inferInsert;
 
 // ============================================
 // EMAIL IMAP CREDENTIALS

@@ -61,7 +61,17 @@ import InventoryHub from "./pages/operations/InventoryHub";
 import OperationsHub from "./pages/operations/OperationsHub";
 import InventoryManagementHub from "./pages/operations/InventoryManagementHub";
 import DocumentImport from "./pages/operations/DocumentImport";
+import Profitability from "./pages/operations/Profitability";
+import ReconciliationReport from "./pages/operations/ReconciliationReport";
+import InventoryCosting from "./pages/operations/InventoryCosting";
+import VendorNegotiations from "./pages/operations/VendorNegotiations";
 import SupplierPortal from "./pages/SupplierPortal";
+
+// EDI
+import EDIDashboard from "./pages/edi/EDIDashboard";
+import TradingPartners from "./pages/edi/TradingPartners";
+import EDITransactions from "./pages/edi/EDITransactions";
+import RetailerOnboarding from "./pages/edi/RetailerOnboarding";
 
 // Freight
 import FreightDashboard from "./pages/freight/FreightDashboard";
@@ -84,6 +94,9 @@ import Documents from "./pages/legal/Documents";
 import Integrations from "./pages/settings/Integrations";
 import NotificationSettings from "./pages/settings/Notifications";
 import TransactionalEmails from "./pages/settings/TransactionalEmails";
+import Fireflies from "./pages/settings/Fireflies";
+import QuickBooksIntegration from "./pages/settings/QuickBooksIntegration";
+import ShopifySettings from "./pages/settings/ShopifySettings";
 
 // Projects
 import Projects from "./pages/projects/Projects";
@@ -98,6 +111,12 @@ import Team from "./pages/settings/Team";
 // Portals
 import CopackerPortal from "./pages/portal/CopackerPortal";
 import VendorPortal from "./pages/portal/VendorPortal";
+
+// Auth
+import { Login } from "./pages/Login";
+
+// SOPs
+import SOPs from "./pages/SOPs";
 
 // Data Room
 import DataRooms from "./pages/DataRooms";
@@ -133,6 +152,9 @@ function Router() {
         <Route path="/settings/integrations" component={Integrations} />
         <Route path="/settings/notifications" component={NotificationSettings} />
         <Route path="/settings/emails" component={TransactionalEmails} />
+        <Route path="/settings/fireflies" component={Fireflies} />
+        <Route path="/settings/quickbooks" component={QuickBooksIntegration} />
+        <Route path="/settings/shopify" component={ShopifySettings} />
 
         {/* Finance */}
         <Route path="/finance/accounts" component={Accounts} />
@@ -181,7 +203,17 @@ function Router() {
         <Route path="/operations/logistics-hub" component={LogisticsHub} />
         <Route path="/operations/inventory-hub" component={InventoryHub} />
         <Route path="/operations/inventory-management" component={InventoryManagementHub} />
+        <Route path="/operations/profitability" component={Profitability} />
         <Route path="/operations/document-import" component={DocumentImport} />
+        <Route path="/operations/reconciliation" component={ReconciliationReport} />
+        <Route path="/operations/inventory-costing" component={InventoryCosting} />
+        <Route path="/operations/vendor-negotiations" component={VendorNegotiations} />
+
+        {/* EDI */}
+        <Route path="/edi" component={EDIDashboard} />
+        <Route path="/edi/connect" component={RetailerOnboarding} />
+        <Route path="/edi/partners" component={TradingPartners} />
+        <Route path="/edi/transactions" component={EDITransactions} />
 
         {/* Freight */}
         <Route path="/freight" component={FreightDashboard} />
@@ -234,6 +266,9 @@ function App() {
           <TooltipProvider>
             <Toaster />
             <Switch>
+              {/* Public Login */}
+              {/* Public routes (outside dashboard) */}
+              <Route path="/login" component={Login} />
               {/* Public Data Room Access (outside dashboard) */}
               <Route path="/share/:code" component={DataRoomPublic} />
               {/* Supplier Portal (public) */}

@@ -16,8 +16,10 @@ import {
   CheckCircle, Clock, AlertTriangle, DollarSign, Calendar,
   Truck, Mail, Phone
 } from "lucide-react";
+import { useCostVisibility } from "@/hooks/useCostVisibility";
 
 export default function Procurement() {
+  const { canSeeCosts } = useCostVisibility();
   const [activeTab, setActiveTab] = useState("purchase-orders");
   const [searchTerm, setSearchTerm] = useState("");
 
@@ -250,7 +252,7 @@ function PurchaseOrdersTab({ searchTerm }: { searchTerm: string }) {
                 <TableHead>PO Number</TableHead>
                 <TableHead>Vendor</TableHead>
                 <TableHead>Items</TableHead>
-                <TableHead>Total</TableHead>
+                {canSeeCosts && <TableHead>Total</TableHead>}
                 <TableHead>Status</TableHead>
                 <TableHead>Expected</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -262,7 +264,7 @@ function PurchaseOrdersTab({ searchTerm }: { searchTerm: string }) {
                   <TableCell className="font-mono">{po.poNumber}</TableCell>
                   <TableCell>{po.vendor?.name || "-"}</TableCell>
                   <TableCell>{po.lineItems?.length || 0}</TableCell>
-                  <TableCell>${Number(po.totalAmount || 0).toLocaleString()}</TableCell>
+                  {canSeeCosts && <TableCell>${Number(po.totalAmount || 0).toLocaleString()}</TableCell>}
                   <TableCell>{getStatusBadge(po.status)}</TableCell>
                   <TableCell>
                     {po.expectedDelivery 
@@ -600,7 +602,7 @@ function RawMaterialsTab({ searchTerm }: { searchTerm: string }) {
                 <TableHead>SKU</TableHead>
                 <TableHead>Name</TableHead>
                 <TableHead>Unit</TableHead>
-                <TableHead>Unit Cost</TableHead>
+                {canSeeCosts && <TableHead>Unit Cost</TableHead>}
                 <TableHead>On Hand</TableHead>
                 <TableHead>Lead Time</TableHead>
                 <TableHead>Vendor</TableHead>
@@ -612,7 +614,7 @@ function RawMaterialsTab({ searchTerm }: { searchTerm: string }) {
                   <TableCell className="font-mono">{material.sku || "-"}</TableCell>
                   <TableCell className="font-medium">{material.name}</TableCell>
                   <TableCell>{material.unit}</TableCell>
-                  <TableCell>${Number(material.unitCost || 0).toFixed(2)}</TableCell>
+                  {canSeeCosts && <TableCell>${Number(material.unitCost || 0).toFixed(2)}</TableCell>}
                   <TableCell>{Number(material.quantityOnHand || 0).toLocaleString()}</TableCell>
                   <TableCell>{material.leadTimeDays ? `${material.leadTimeDays} days` : "-"}</TableCell>
                   <TableCell>{material.vendor?.name || "-"}</TableCell>
