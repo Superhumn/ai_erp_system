@@ -4837,9 +4837,6 @@ export const investmentGrantItems = mysqlTable("investment_grant_items", {
 export type CopackerShippingDocument = typeof copackerShippingDocuments.$inferSelect;
 export type InsertCopackerShippingDocument = typeof copackerShippingDocuments.$inferInsert;
 
-export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
-export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
-
 // ============================================
 // EDI (ELECTRONIC DATA INTERCHANGE) MODULE
 // ============================================
@@ -5075,4 +5072,5 @@ export const ediSettings = mysqlTable("edi_settings", {
 
 export type EdiSettings = typeof ediSettings.$inferSelect;
 export type InsertEdiSettings = typeof ediSettings.$inferInsert;
-
+export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
+export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
