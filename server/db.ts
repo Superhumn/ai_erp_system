@@ -2561,7 +2561,7 @@ export async function deleteBomComponent(id: number) {
 }
 
 // Raw Materials
-export async function getRawMaterials(filters?: { status?: string; category?: string }) {
+export async function getRawMaterials(filters?: { status?: string; category?: string; searchTerm?: string; limit?: number }) {
   const db = await getDb();
   if (!db) return [];
   
@@ -2572,6 +2572,13 @@ export async function getRawMaterials(filters?: { status?: string; category?: st
   }
   if (filters?.category) {
     query = query.where(eq(rawMaterials.category, filters.category)) as typeof query;
+  }
+  if (filters?.searchTerm) {
+    const escapedTerm = filters.searchTerm.replace(/[%_\\]/g, "\\$&");
+    query = query.where(like(rawMaterials.name, `%${escapedTerm}%`)) as typeof query;
+  }
+  if (filters?.limit) {
+    query = query.limit(filters.limit) as typeof query;
   }
   
   return query;

@@ -16,6 +16,7 @@ import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingA
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
+import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
@@ -1490,6 +1491,7 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'approve', 'purchaseOrder', input.id);
         return { success: true };
       }),
+    // Parse text to PO preview
     parseText: opsProcedure
       .input(z.object({ text: z.string().min(1).max(1000) }))
       .mutation(async ({ input }) => {
@@ -1522,17 +1524,26 @@ export const appRouter = router({
         sendEmail: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
+        // Create the PO from preview
         const po = await createPOFromPreview(input.preview, ctx.user.id);
         
         await createAuditLog(ctx.user.id, 'create', 'purchaseOrder', po.id, po.poNumber);
         
+        // Send email if requested
         if (input.sendEmail) {
           const emailResult = await emailService.sendPOEmail(po.id, {
             triggeredBy: ctx.user.id,
           });
           
           if (!emailResult.success) {
+            // Log the error but don't fail the whole operation since PO is already created
             console.error(`Failed to send PO email for PO ${po.id}:`, emailResult.error);
+          }
+          
+          if (emailResult.success && emailResult.emailMessageId) {
+            await createAuditLog(ctx.user.id, 'create', 'email_message', emailResult.emailMessageId, 'PO Email', undefined, {
+              poId: po.id,
+            });
           }
           
           return { 
