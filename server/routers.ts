@@ -13657,6 +13657,167 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
     }),
   }),
+
+  // ============================================
+  // CONTENT CALENDAR & MEDIA COLLABORATION
+  // ============================================
+  contentCalendar: router({
+    list: protectedProcedure.query(() => db.getContentCalendarEntries()),
+
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getContentCalendarEntry(input.id)),
+
+    create: protectedProcedure
+      .input(z.object({
+        title: z.string().min(1),
+        description: z.string().optional(),
+        scheduledDate: z.string(),
+        status: z.enum(["draft", "scheduled", "in_review", "approved", "published"]).optional(),
+        contentType: z.enum(["image", "video", "audio", "mixed"]),
+        platform: z.string().optional(),
+        tags: z.string().optional(),
+        assignedTo: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const id = await db.createContentCalendarEntry({
+          ...input,
+          scheduledDate: new Date(input.scheduledDate),
+          createdBy: ctx.user.id,
+        });
+        return { id };
+      }),
+
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        title: z.string().optional(),
+        description: z.string().optional(),
+        scheduledDate: z.string().optional(),
+        status: z.enum(["draft", "scheduled", "in_review", "approved", "published"]).optional(),
+        contentType: z.enum(["image", "video", "audio", "mixed"]).optional(),
+        platform: z.string().optional(),
+        tags: z.string().optional(),
+        assignedTo: z.number().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        const updateData: any = { ...data };
+        if (data.scheduledDate) updateData.scheduledDate = new Date(data.scheduledDate);
+        await db.updateContentCalendarEntry(id, updateData);
+        return { success: true };
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.deleteContentCalendarEntry(input.id);
+        return { success: true };
+      }),
+
+    // Media management
+    media: router({
+      list: protectedProcedure
+        .input(z.object({ calendarEntryId: z.number() }))
+        .query(({ input }) => db.getContentMedia(input.calendarEntryId)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getContentMediaById(input.id)),
+
+      upload: protectedProcedure
+        .input(z.object({
+          calendarEntryId: z.number(),
+          fileName: z.string(),
+          fileData: z.string(),
+          mediaType: z.enum(["image", "video", "audio"]),
+          mimeType: z.string(),
+          fileSizeBytes: z.number().optional(),
+          durationSeconds: z.string().optional(),
+          width: z.number().optional(),
+          height: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const buffer = Buffer.from(input.fileData, "base64");
+          const key = `content-media/${Date.now()}-${input.fileName}`;
+          const { url } = await storagePut(key, buffer, input.mimeType);
+
+          const id = await db.createContentMedia({
+            calendarEntryId: input.calendarEntryId,
+            fileName: input.fileName,
+            fileUrl: url,
+            storageKey: key,
+            mediaType: input.mediaType,
+            mimeType: input.mimeType,
+            fileSizeBytes: input.fileSizeBytes,
+            durationSeconds: input.durationSeconds,
+            width: input.width,
+            height: input.height,
+            uploadedBy: ctx.user.id,
+          });
+          return { id, url };
+        }),
+
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.deleteContentMedia(input.id);
+          return { success: true };
+        }),
+    }),
+
+    // Comments with timestamp support
+    comments: router({
+      list: protectedProcedure
+        .input(z.object({ mediaId: z.number() }))
+        .query(({ input }) => db.getContentComments(input.mediaId)),
+
+      listByEntry: protectedProcedure
+        .input(z.object({ calendarEntryId: z.number() }))
+        .query(({ input }) => db.getContentCommentsByEntry(input.calendarEntryId)),
+
+      create: protectedProcedure
+        .input(z.object({
+          mediaId: z.number(),
+          calendarEntryId: z.number(),
+          comment: z.string().min(1),
+          timestampSeconds: z.string().optional(),
+          parentCommentId: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createContentComment({
+            ...input,
+            userId: ctx.user.id,
+          });
+          return { id };
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          comment: z.string().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, ...data } = input;
+          await db.updateContentComment(id, data);
+          return { success: true };
+        }),
+
+      resolve: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.resolveContentComment(input.id);
+          return { success: true };
+        }),
+
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.deleteContentComment(input.id);
+          return { success: true };
+        }),
+    }),
+  }),
 });
 
 // Helper function to calculate next generation date for recurring invoices

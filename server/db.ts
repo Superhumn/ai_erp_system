@@ -120,6 +120,9 @@ import {
   // Investment grant checklists
   investmentGrantChecklists, investmentGrantItems,
   InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
+  // Content calendar & media collaboration
+  contentCalendarEntries, contentMedia, contentComments,
+  InsertContentCalendarEntry, InsertContentMedia, InsertContentComment,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -9113,4 +9116,106 @@ export async function getChecklistSummary(dataRoomId: number) {
     byCategory,
     requiredMissing: items.filter(i => i.status === 'missing' && i.requirement === 'required'),
   };
+}
+
+// ============================================
+// CONTENT CALENDAR & MEDIA COLLABORATION
+// ============================================
+
+export async function getContentCalendarEntries() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(contentCalendarEntries).orderBy(desc(contentCalendarEntries.scheduledDate));
+}
+
+export async function getContentCalendarEntry(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [entry] = await db.select().from(contentCalendarEntries).where(eq(contentCalendarEntries.id, id));
+  return entry || null;
+}
+
+export async function createContentCalendarEntry(data: InsertContentCalendarEntry) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(contentCalendarEntries).values(data);
+  return result.insertId;
+}
+
+export async function updateContentCalendarEntry(id: number, data: Partial<InsertContentCalendarEntry>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(contentCalendarEntries).set(data).where(eq(contentCalendarEntries.id, id));
+}
+
+export async function deleteContentCalendarEntry(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(contentComments).where(eq(contentComments.calendarEntryId, id));
+  await db.delete(contentMedia).where(eq(contentMedia.calendarEntryId, id));
+  await db.delete(contentCalendarEntries).where(eq(contentCalendarEntries.id, id));
+}
+
+export async function getContentMedia(calendarEntryId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(contentMedia).where(eq(contentMedia.calendarEntryId, calendarEntryId)).orderBy(desc(contentMedia.createdAt));
+}
+
+export async function getContentMediaById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [media] = await db.select().from(contentMedia).where(eq(contentMedia.id, id));
+  return media || null;
+}
+
+export async function createContentMedia(data: InsertContentMedia) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(contentMedia).values(data);
+  return result.insertId;
+}
+
+export async function deleteContentMedia(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(contentComments).where(eq(contentComments.mediaId, id));
+  await db.delete(contentMedia).where(eq(contentMedia.id, id));
+}
+
+export async function getContentComments(mediaId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(contentComments).where(eq(contentComments.mediaId, mediaId)).orderBy(asc(contentComments.timestampSeconds), asc(contentComments.createdAt));
+}
+
+export async function getContentCommentsByEntry(calendarEntryId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(contentComments).where(eq(contentComments.calendarEntryId, calendarEntryId)).orderBy(asc(contentComments.createdAt));
+}
+
+export async function createContentComment(data: InsertContentComment) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(contentComments).values(data);
+  return result.insertId;
+}
+
+export async function updateContentComment(id: number, data: Partial<InsertContentComment>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(contentComments).set(data).where(eq(contentComments.id, id));
+}
+
+export async function deleteContentComment(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(contentComments).where(eq(contentComments.id, id));
+}
+
+export async function resolveContentComment(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(contentComments).set({ resolved: true }).where(eq(contentComments.id, id));
 }

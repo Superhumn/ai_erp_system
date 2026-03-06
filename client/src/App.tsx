@@ -112,6 +112,10 @@ import Team from "./pages/settings/Team";
 import CopackerPortal from "./pages/portal/CopackerPortal";
 import VendorPortal from "./pages/portal/VendorPortal";
 
+// Content Calendar
+import ContentCalendar from "./pages/content/ContentCalendar";
+import ContentDetail from "./pages/content/ContentDetail";
+
 // Auth
 import { Login } from "./pages/Login";
 
@@ -245,6 +249,10 @@ function Router() {
         {/* Portals */}
         <Route path="/portal/copacker" component={CopackerPortal} />
         <Route path="/portal/vendor" component={VendorPortal} />
+
+        {/* Content Calendar */}
+        <Route path="/content/calendar/:id" component={ContentDetail} />
+        <Route path="/content/calendar" component={ContentCalendar} />
 
         {/* Data Room */}
         <Route path="/datarooms" component={DataRooms} />

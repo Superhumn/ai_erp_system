@@ -5074,3 +5074,60 @@ export type EdiSettings = typeof ediSettings.$inferSelect;
 export type InsertEdiSettings = typeof ediSettings.$inferInsert;
 export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
 export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
+
+// ============================================
+// CONTENT CALENDAR & MEDIA COLLABORATION
+// ============================================
+
+export const contentCalendarEntries = mysqlTable("content_calendar_entries", {
+  id: int("id").autoincrement().primaryKey(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  scheduledDate: timestamp("scheduledDate").notNull(),
+  status: mysqlEnum("status", ["draft", "scheduled", "in_review", "approved", "published"]).default("draft").notNull(),
+  contentType: mysqlEnum("contentType", ["image", "video", "audio", "mixed"]).notNull(),
+  platform: varchar("platform", { length: 100 }),
+  tags: text("tags"),
+  createdBy: int("createdBy"),
+  assignedTo: int("assignedTo"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ContentCalendarEntry = typeof contentCalendarEntries.$inferSelect;
+export type InsertContentCalendarEntry = typeof contentCalendarEntries.$inferInsert;
+
+export const contentMedia = mysqlTable("content_media", {
+  id: int("id").autoincrement().primaryKey(),
+  calendarEntryId: int("calendarEntryId").notNull(),
+  fileName: varchar("fileName", { length: 500 }).notNull(),
+  fileUrl: varchar("fileUrl", { length: 2000 }).notNull(),
+  storageKey: varchar("storageKey", { length: 1000 }),
+  mediaType: mysqlEnum("mediaType", ["image", "video", "audio"]).notNull(),
+  mimeType: varchar("mimeType", { length: 100 }),
+  fileSizeBytes: int("fileSizeBytes"),
+  durationSeconds: decimal("durationSeconds", { precision: 10, scale: 2 }),
+  width: int("width"),
+  height: int("height"),
+  uploadedBy: int("uploadedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ContentMedia = typeof contentMedia.$inferSelect;
+export type InsertContentMedia = typeof contentMedia.$inferInsert;
+
+export const contentComments = mysqlTable("content_comments", {
+  id: int("id").autoincrement().primaryKey(),
+  mediaId: int("mediaId").notNull(),
+  calendarEntryId: int("calendarEntryId").notNull(),
+  userId: int("userId").notNull(),
+  comment: text("comment").notNull(),
+  timestampSeconds: decimal("timestampSeconds", { precision: 10, scale: 2 }),
+  parentCommentId: int("parentCommentId"),
+  resolved: boolean("resolved").default(false),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ContentComment = typeof contentComments.$inferSelect;
+export type InsertContentComment = typeof contentComments.$inferInsert;
