@@ -12,7 +12,7 @@ import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
 
 const SALT_LENGTH = 32;
-const HASH_ITERATIONS = 100000;
+const HASH_ITERATIONS = 600000;
 const KEY_LENGTH = 64;
 const DIGEST = "sha512";
 
@@ -114,11 +114,15 @@ function isValidEmail(email: string): boolean {
 
 /**
  * Validate password strength
- * At least 8 characters
+ * At least 10 characters, must include uppercase, lowercase, and a digit
  */
-
 function isValidPassword(password: string): boolean {
-  return password.length >= 8;
+  return (
+    password.length >= 10 &&
+    /[a-z]/.test(password) &&
+    /[A-Z]/.test(password) &&
+    /[0-9]/.test(password)
+  );
 }
 
 export interface LocalAuthCredentials {
@@ -158,7 +162,7 @@ export function registerLocalAuthRoutes(app: Express) {
       }
 
       if (!isValidPassword(password)) {
-        return res.status(400).json({ error: "Password must be at least 8 characters" });
+        return res.status(400).json({ error: "Password must be at least 10 characters and include uppercase, lowercase, and a digit" });
       }
 
       // Check if user already exists
