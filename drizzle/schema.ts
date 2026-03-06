@@ -4834,8 +4834,7 @@ export const investmentGrantItems = mysqlTable("investment_grant_items", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
-export type CopackerShippingDocument = typeof copackerShippingDocuments.$inferSelect;
-export type InsertCopackerShippingDocument = typeof copackerShippingDocuments.$inferInsert;
+// (InvestmentGrantItem types are exported below with the EDI section)
 
 // ============================================
 // EDI (ELECTRONIC DATA INTERCHANGE) MODULE
@@ -5074,3 +5073,60 @@ export type EdiSettings = typeof ediSettings.$inferSelect;
 export type InsertEdiSettings = typeof ediSettings.$inferInsert;
 export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
 export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
+
+// Transactional Email Templates
+export const transactionalEmailTemplates = mysqlTable("transactional_email_templates", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 64 }).notNull(), // e.g. "QUOTE", "PO", "SHIPMENT"
+  providerTemplateId: varchar("providerTemplateId", { length: 128 }).notNull(), // SendGrid template ID
+  description: text("description"),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type TransactionalEmailTemplate = typeof transactionalEmailTemplates.$inferSelect;
+export type InsertTransactionalEmailTemplate = typeof transactionalEmailTemplates.$inferInsert;
+
+// Email Messages - queued/sent transactional emails
+export const emailMessages = mysqlTable("email_messages", {
+  id: int("id").autoincrement().primaryKey(),
+  toEmail: varchar("toEmail", { length: 320 }).notNull(),
+  toName: varchar("toName", { length: 255 }),
+  fromEmail: varchar("fromEmail", { length: 320 }).notNull(),
+  fromName: varchar("fromName", { length: 255 }),
+  replyTo: varchar("replyTo", { length: 320 }),
+  subject: varchar("subject", { length: 998 }).notNull(),
+  templateName: varchar("templateName", { length: 64 }).notNull(),
+  payloadJson: json("payloadJson"),
+  idempotencyKey: varchar("idempotencyKey", { length: 255 }),
+  status: mysqlEnum("status", ["queued", "sending", "sent", "delivered", "failed", "bounced", "spam"]).default("queued").notNull(),
+  providerMessageId: varchar("providerMessageId", { length: 255 }),
+  errorJson: json("errorJson"),
+  retryCount: int("retryCount").default(0).notNull(),
+  maxRetries: int("maxRetries").default(3).notNull(),
+  scheduledAt: timestamp("scheduledAt"),
+  sentAt: timestamp("sentAt"),
+  relatedEntityType: varchar("relatedEntityType", { length: 64 }),
+  relatedEntityId: int("relatedEntityId"),
+  triggeredBy: int("triggeredBy"),
+  aiGenerated: boolean("aiGenerated").default(false).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type EmailMessage = typeof emailMessages.$inferSelect;
+export type InsertEmailMessage = typeof emailMessages.$inferInsert;
+
+// Email Events - SendGrid webhook events
+export const emailEvents = mysqlTable("email_events", {
+  id: int("id").autoincrement().primaryKey(),
+  emailMessageId: int("emailMessageId"),
+  providerMessageId: varchar("providerMessageId", { length: 255 }),
+  event: varchar("event", { length: 64 }).notNull(), // delivered, opened, clicked, bounced, etc.
+  recipientEmail: varchar("recipientEmail", { length: 320 }),
+  timestamp: timestamp("timestamp").notNull(),
+  metadata: json("metadata"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type EmailEvent = typeof emailEvents.$inferSelect;
+export type InsertEmailEvent = typeof emailEvents.$inferInsert;

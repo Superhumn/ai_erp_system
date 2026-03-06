@@ -9,7 +9,9 @@
     "strict": true,
 
     "noImplicitAny": false,
-    "strictNullChecks": false,    "lib": ["esnext", "dom", "dom.iterable"],
+    "strictNullChecks": false,
+    "target": "ES2020",
+    "lib": ["esnext", "dom", "dom.iterable"],
     "jsx": "preserve",
     "esModuleInterop": true,
     "skipLibCheck": true,

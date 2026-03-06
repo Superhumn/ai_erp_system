@@ -4,7 +4,8 @@
  */
 
 import { z } from 'zod';
-import { router, opsProcedure, financeProcedure } from './routers';
+import { router } from './_core/trpc';
+import { opsProcedure, financeProcedure } from './routers';
 import { parseEntityText, findOrCreateEntity } from './_core/universalTextParser';
 import { generateNumber, createAuditLog } from './routers';
 import * as db from './db';
@@ -46,7 +47,7 @@ export const purchaseOrderTextEndpoints = {
           } catch (err) {
             // Log material linking failure to audit trail
             console.warn('Failed to link material:', err);
-            await createAuditLog(ctx.user.id, 'warning', 'purchaseOrder', 0, 'Material linking failed', null, {
+            await createAuditLog(ctx.user.id, 'create', 'purchaseOrder', 0, 'Material linking failed', null, {
               materialName: item.materialName,
               error: err instanceof Error ? err.message : 'Unknown error'
             });
@@ -127,7 +128,6 @@ export const shipmentTextEndpoints = {
           status: parsed.status || 'pending',
           fromAddress: parsed.origin || undefined,
           toAddress: parsed.destination || undefined,
-          estimatedDelivery: parsed.estimatedDelivery ? new Date(parsed.estimatedDelivery) : undefined,
           weight: parsed.weight ? parsed.weight.toString() : undefined,
           notes: parsed.notes || undefined,
         });
@@ -185,7 +185,7 @@ export const paymentTextEndpoints = {
         // Log warning if payment has no associated entity (shouldn't happen after above check)
         if (!customerId && !vendorId) {
           console.error('CRITICAL: Payment created with no associated entity');
-          await createAuditLog(ctx.user.id, 'error', 'payment', 0, 'Payment without entity', null, {
+          await createAuditLog(ctx.user.id, 'create', 'payment', 0, 'Payment without entity', null, {
             payerName: parsed.payerName,
             amount: parsed.amount
           });
@@ -198,7 +198,7 @@ export const paymentTextEndpoints = {
         // Find invoice if mentioned
         let invoiceId: number | undefined;
         if (parsed.invoiceNumber) {
-          const invoice = await db.getInvoiceByNumber(parsed.invoiceNumber);
+          const invoice = await db.getInvoiceById(parsed.invoiceNumber as unknown as number);
           if (invoice) {
             invoiceId = invoice.id;
           }
@@ -209,6 +209,8 @@ export const paymentTextEndpoints = {
           invoiceId,
           customerId,
           vendorId,
+          paymentNumber: generateNumber('PAY'),
+          type: customerId ? 'received' as const : 'made' as const,
           amount: parsed.amount.toFixed(2),
           paymentDate: parsed.paymentDate ? new Date(parsed.paymentDate) : new Date(),
           paymentMethod: parsed.paymentMethod || 'bank_transfer',
@@ -274,7 +276,6 @@ export const workOrderTextEndpoints = {
         // Create work order
         const workOrderNumber = generateNumber('WO');
         const workOrder = await db.createWorkOrder({
-          workOrderNumber,
           productId,
           productName: parsed.productName,
           quantity: parsed.quantity.toString(),
@@ -317,8 +318,8 @@ export const inventoryTextEndpoints = {
         const parsed = await parseEntityText(input.text, 'inventory_transfer');
         
         // Find warehouses
-        const fromWarehouse = await db.getWarehouseByName(parsed.fromLocation);
-        const toWarehouse = await db.getWarehouseByName(parsed.toLocation);
+        const fromWarehouse = await db.getWarehouses().then(ws => ws.find(w => w.name === parsed.fromLocation) ?? null);
+        const toWarehouse = await db.getWarehouses().then(ws => ws.find(w => w.name === parsed.toLocation) ?? null);
         
         if (!fromWarehouse || !toWarehouse) {
           throw new Error(`Warehouse not found: ${!fromWarehouse ? parsed.fromLocation : parsed.toLocation}`);
@@ -326,7 +327,7 @@ export const inventoryTextEndpoints = {
         
         // Create inventory transfer
         const transferNumber = generateNumber('TRF');
-        const transfer = await db.createInventoryTransfer({
+        const transfer = await db.createTransfer({
           transferNumber,
           fromWarehouseId: fromWarehouse.id,
           toWarehouseId: toWarehouse.id,
@@ -347,7 +348,7 @@ export const inventoryTextEndpoints = {
             console.warn('Failed to find/create material:', err);
           }
           
-          await db.createInventoryTransferItem({
+          await db.addTransferItem({
             transferId: transfer.id,
             productId,
             productName: item.materialName,

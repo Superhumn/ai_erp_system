@@ -272,7 +272,7 @@ const productionPlanningProcessor: WorkflowProcessor = {
             .where(
               and(
                 eq(billOfMaterials.productId, forecast.productId),
-                eq(billOfMaterials.isActive, true)
+        eq(billOfMaterials.status, "active")
               )
             );
 
@@ -1435,7 +1435,7 @@ const freightProcurementProcessor: WorkflowProcessor = {
       const carriers = await db
         .select()
         .from(freightCarriers)
-        .where(eq(freightCarriers.status, "active"));
+        .where(eq(freightCarriers.isActive, true));
 
       return { success: true, data: { carriers } };
     });

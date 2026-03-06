@@ -703,11 +703,11 @@ export async function processInboundEdi(
           // Try to resolve product via crosswalk
           let productId: number | undefined;
           if (item.buyerPartNumber) {
-            const crosswalk = await db.getEdiProductCrosswalkByBuyerPart(tradingPartnerId, item.buyerPartNumber);
+            const crosswalk = await db.getEdiProductCrosswalkByBuyerPart(item.buyerPartNumber, tradingPartnerId);
             if (crosswalk) productId = crosswalk.productId;
           }
           if (!productId && item.upc) {
-            const crosswalk = await db.getEdiProductCrosswalkByUpc(tradingPartnerId, item.upc);
+            const crosswalk = await db.getEdiProductCrosswalkByUpc(item.upc, tradingPartnerId);
             if (crosswalk) productId = crosswalk.productId;
           }
 
@@ -864,7 +864,7 @@ export async function generateOutboundEdi(
 
   // Auto-generate control number if not provided
   if (!controlNumber) {
-    controlNumber = await db.getNextControlNumber(tradingPartnerId, "isa");
+    controlNumber = String(await db.getNextControlNumber(tradingPartnerId, "isa"));
   }
 
   // Use company settings for sender IDs, fall back to partner config for backwards compat
@@ -935,7 +935,7 @@ async function sendAuto997(
   const partner = await db.getEdiTradingPartnerById(tradingPartnerId);
   if (!partner) return;
 
-  const controlNumber = await db.getNextControlNumber(tradingPartnerId, "isa");
+  const controlNumber = String(await db.getNextControlNumber(tradingPartnerId, "isa"));
 
   const ourIsaId = settings?.isaId || "OURCOMPANY";
   const ourIsaQualifier = settings?.isaQualifier || "ZZ";

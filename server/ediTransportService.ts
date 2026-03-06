@@ -414,7 +414,8 @@ export function stopEdiPolling(): void {
  * Poll all active SFTP-connected partners for new inbound files
  */
 export async function pollAllPartners(): Promise<PollResult[]> {
-  const partners = await db.getEdiTradingPartners({ status: "active" });
+  const allPartners = await db.getEdiTradingPartners();
+  const partners = allPartners.filter(p => (p as any).status === "active" || !(p as any).status);
   const sftpPartners = partners.filter(p => p.connectionType === "sftp" || p.connectionType === "van");
 
   const results: PollResult[] = [];

@@ -249,9 +249,9 @@ export class WorkflowEngine {
         return workflowProcessors.paymentProcessing.execute(this, context);
       case "exception_handling":
         return workflowProcessors.exceptionHandling.execute(this, context);
-      case "vendor_quote_procurement":
+      case "vendor_quote_procurement" as any:
         return workflowProcessors.vendorQuoteProcurement.execute(this, context);
-      case "vendor_quote_analysis":
+      case "vendor_quote_analysis" as any:
         return workflowProcessors.vendorQuoteAnalysis.execute(this, context);
       default:
         throw new Error(`Unknown workflow type: ${workflow.workflowType}`);
