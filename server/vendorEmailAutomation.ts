@@ -78,7 +78,7 @@ Items:\n${itemList}`;
     case "payment_reminder": {
       const invoices = await db.getInvoices();
       const vendorInvoices = invoices.filter(
-        i => i.vendorId === request.vendorId && ["sent", "overdue"].includes(i.status)
+        i => i.customerId === request.vendorId && ["sent", "overdue"].includes(i.status)
       );
       if (vendorInvoices.length > 0) {
         const invList = vendorInvoices.map(
@@ -117,8 +117,8 @@ Write a concise, professional email. Return ONLY a JSON object with:
 Keep the email under 200 words. Be direct and professional. Include a clear call to action.`;
 
   try {
-    const response = await invokeLLM(prompt);
-    const parsed = JSON.parse(response);
+    const response = await invokeLLM({ prompt });
+    const parsed = JSON.parse(response.text);
     return {
       subject: parsed.subject || request.subject || defaultSubject,
       body: parsed.body || "",

@@ -115,8 +115,6 @@ import {
   // Vendor negotiations
   vendorNegotiations, negotiationRounds,
   InsertVendorNegotiation, InsertNegotiationRound,
-  // Local authentication
-  localAuthCredentials, InsertLocalAuthCredential,
   // Investment grant checklists
   investmentGrantChecklists, investmentGrantItems,
   InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
@@ -6511,22 +6509,8 @@ export async function getDetailedVisitorAnalytics(dataRoomId: number, visitorId:
         inArray(documentViews.documentId, roomDocIdList),
       ))
     : [];
-  // Get visitor info
-  const visitor = await db.select().from(dataRoomVisitors)
-    .where(eq(dataRoomVisitors.id, visitorId));
-  if (!visitor[0]) return null;
 
-  // Get all sessions
-  const sessions = await getVisitorSessions(visitorId);
-
-  // Get all page views
-  const pageViews = await getPageViewsByVisitor(visitorId);
-
-  // Get document views
-  const docViews = await db.select().from(documentViews)
-    .where(eq(documentViews.visitorId, visitorId));
-
-  // Get documents info
+  // Get full document details for engagement computation
   const docIds = [...new Set(pageViews.map(pv => pv.documentId))];
   const documents = docIds.length > 0
     ? await db.select().from(dataRoomDocuments).where(inArray(dataRoomDocuments.id, docIds))
@@ -8652,465 +8636,393 @@ export async function checkAndTriggerLowStockPurchaseOrder(
 
 
 // ============================================
-// DUE DILIGENCE CHECKLIST FUNCTIONS
+// INVENTORY COSTING CONFIG
 // ============================================
 
-// Due Diligence Templates
-export async function createDueDiligenceTemplate(data: InsertDueDiligenceTemplate) {
+export async function getInventoryCostingConfigs(filters?: { companyId?: number; productId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(inventoryCostingConfig.companyId, filters.companyId));
+  if (filters?.productId) conditions.push(eq(inventoryCostingConfig.productId, filters.productId));
+  let query = db.select().from(inventoryCostingConfig);
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(inventoryCostingConfig.updatedAt));
+}
+
+export async function getInventoryCostingConfigByProduct(productId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db
+    .select()
+    .from(inventoryCostingConfig)
+    .where(
+      and(
+        eq(inventoryCostingConfig.productId, productId),
+        eq(inventoryCostingConfig.isActive, true),
+      ),
+    )
+    .orderBy(desc(inventoryCostingConfig.updatedAt))
+    .limit(1);
+  return result[0] || null;
+}
+
+export async function createInventoryCostingConfig(data: InsertInventoryCostingConfig) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(dueDiligenceTemplates).values(data);
+  const result = await db.insert(inventoryCostingConfig).values(data);
   return { id: result[0].insertId };
 }
 
-export async function getDueDiligenceTemplates(userId?: number, includePublic: boolean = true) {
+export async function updateInventoryCostingConfig(id: number, data: Partial<InsertInventoryCostingConfig>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(inventoryCostingConfig).set(data as any).where(eq(inventoryCostingConfig.id, id));
+}
+
+// ============================================
+// INVENTORY COST LAYERS
+// ============================================
+
+export async function getInventoryCostLayers(filters?: {
+  companyId?: number; productId?: number; warehouseId?: number; status?: string;
+}) {
   const db = await getDb();
   if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(inventoryCostLayers.companyId, filters.companyId));
+  if (filters?.productId) conditions.push(eq(inventoryCostLayers.productId, filters.productId));
+  if (filters?.warehouseId) conditions.push(eq(inventoryCostLayers.warehouseId, filters.warehouseId));
+  if (filters?.status) conditions.push(eq(inventoryCostLayers.status, filters.status as any));
+  let query = db.select().from(inventoryCostLayers);
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(inventoryCostLayers.layerDate);
+}
 
-  if (userId && includePublic) {
-    return db.select().from(dueDiligenceTemplates)
-      .where(or(eq(dueDiligenceTemplates.createdBy, userId), eq(dueDiligenceTemplates.isPublic, true)))
-      .orderBy(desc(dueDiligenceTemplates.createdAt));
-  } else if (userId) {
-    return db.select().from(dueDiligenceTemplates)
-      .where(eq(dueDiligenceTemplates.createdBy, userId))
-      .orderBy(desc(dueDiligenceTemplates.createdAt));
+export async function getActiveCostLayers(productId: number, order: 'asc' | 'desc' = 'asc', warehouseId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const conditions = [
+    eq(inventoryCostLayers.productId, productId),
+    eq(inventoryCostLayers.status, 'active')
+  ];
+  
+  if (warehouseId !== undefined) {
+    conditions.push(eq(inventoryCostLayers.warehouseId, warehouseId));
+  }
+  
+  const query = db.select().from(inventoryCostLayers)
+    .where(and(...conditions));
+  if (order === 'desc') {
+    return query.orderBy(desc(inventoryCostLayers.layerDate));
+  }
+  return query.orderBy(inventoryCostLayers.layerDate);
+}
+
+export async function createInventoryCostLayer(data: InsertInventoryCostLayer) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(inventoryCostLayers).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateInventoryCostLayer(id: number, data: Partial<InsertInventoryCostLayer>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(inventoryCostLayers).set(data as any).where(eq(inventoryCostLayers.id, id));
+}
+
+export async function getWeightedAverageCost(productId: number, warehouseId?: number) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const conditions = [
+    eq(inventoryCostLayers.productId, productId),
+    eq(inventoryCostLayers.status, 'active')
+  ];
+  
+  if (warehouseId !== undefined) {
+    conditions.push(eq(inventoryCostLayers.warehouseId, warehouseId));
+  }
+  
+  const result = await db.select({
+    totalValue: sql<string>`SUM(CAST(${inventoryCostLayers.remainingQuantity} AS DECIMAL(15,4)) * CAST(${inventoryCostLayers.unitCost} AS DECIMAL(15,4)))`,
+    totalQuantity: sql<string>`SUM(CAST(${inventoryCostLayers.remainingQuantity} AS DECIMAL(15,4)))`,
+  }).from(inventoryCostLayers)
+    .where(and(...conditions));
+
+  if (!result[0] || !result[0].totalQuantity || parseFloat(result[0].totalQuantity) === 0) return null;
+  const totalValue = parseFloat(result[0].totalValue || '0');
+  const totalQuantity = parseFloat(result[0].totalQuantity || '0');
+  return {
+    averageCost: totalValue / totalQuantity,
+    totalValue,
+    totalQuantity,
+  };
+}
+
+// ============================================
+// COGS RECORDS
+// ============================================
+
+export async function getCogsRecords(filters?: {
+  companyId?: number; productId?: number; orderId?: number;
+  startDate?: Date; endDate?: Date;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(cogsRecords.companyId, filters.companyId));
+  if (filters?.productId) conditions.push(eq(cogsRecords.productId, filters.productId));
+  if (filters?.orderId) conditions.push(eq(cogsRecords.orderId, filters.orderId));
+  if (filters?.startDate) conditions.push(gte(cogsRecords.periodDate, filters.startDate));
+  if (filters?.endDate) conditions.push(lte(cogsRecords.periodDate, filters.endDate));
+  let query = db.select().from(cogsRecords);
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(cogsRecords.periodDate));
+}
+
+export async function createCogsRecord(data: InsertCogsRecord) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(cogsRecords).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getCogsSummary(filters?: {
+  companyId?: number; productId?: number; periodType?: string;
+  startDate?: Date; endDate?: Date;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(cogsPeriodSummary.companyId, filters.companyId));
+  if (filters?.productId) conditions.push(eq(cogsPeriodSummary.productId, filters.productId));
+  if (filters?.periodType) conditions.push(eq(cogsPeriodSummary.periodType, filters.periodType as any));
+  if (filters?.startDate) conditions.push(gte(cogsPeriodSummary.periodStart, filters.startDate));
+  if (filters?.endDate) conditions.push(lte(cogsPeriodSummary.periodEnd, filters.endDate));
+  let query = db.select().from(cogsPeriodSummary);
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(cogsPeriodSummary.periodStart));
+}
+
+/**
+ * Get an existing COGS period summary record by period parameters.
+ * Note: undefined companyId/productId represents NULL in the database (company-wide or product-wide aggregation)
+ */
+export async function getCogsPeriodSummary(params: {
+  companyId?: number;
+  productId?: number;
+  periodType: "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
+  periodStart: Date;
+  periodEnd: Date;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const conditions = [
+    eq(cogsPeriodSummary.periodType, params.periodType),
+    eq(cogsPeriodSummary.periodStart, params.periodStart),
+    eq(cogsPeriodSummary.periodEnd, params.periodEnd),
+  ];
+  
+  if (params.companyId !== undefined) {
+    conditions.push(eq(cogsPeriodSummary.companyId, params.companyId));
   } else {
-    return db.select().from(dueDiligenceTemplates)
-      .where(eq(dueDiligenceTemplates.isPublic, true))
-      .orderBy(desc(dueDiligenceTemplates.createdAt));
+    conditions.push(isNull(cogsPeriodSummary.companyId));
   }
+  
+  if (params.productId !== undefined) {
+    conditions.push(eq(cogsPeriodSummary.productId, params.productId));
+  } else {
+    conditions.push(isNull(cogsPeriodSummary.productId));
+  }
+  
+  const results = await db.select().from(cogsPeriodSummary).where(and(...conditions));
+  return results[0] || null;
 }
 
-export async function getDueDiligenceTemplateById(id: number) {
+export async function createCogsPeriodSummaryRecord(data: InsertCogsPeriodSummary) {
   const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(dueDiligenceTemplates).where(eq(dueDiligenceTemplates.id, id));
-  return result[0] || null;
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(cogsPeriodSummary).values(data);
+  return { id: result[0].insertId };
 }
 
-export async function getTemplateWithItems(templateId: number) {
+export async function updateCogsPeriodSummaryRecord(id: number, data: Partial<InsertCogsPeriodSummary>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(cogsPeriodSummary).set(data as any).where(eq(cogsPeriodSummary.id, id));
+  return { id };
+}
+
+// Aggregated COGS dashboard stats
+export async function getCogsDashboardStats(companyId?: number) {
   const db = await getDb();
   if (!db) return null;
+  const conditions = [];
+  if (companyId) conditions.push(eq(cogsRecords.companyId, companyId));
 
-  const template = await getDueDiligenceTemplateById(templateId);
-  if (!template) return null;
+  const now = new Date();
+  const thirtyDaysAgo = new Date(now);
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  conditions.push(gte(cogsRecords.periodDate, thirtyDaysAgo));
 
-  const categories = await db.select().from(dueDiligenceCategories)
-    .where(eq(dueDiligenceCategories.templateId, templateId))
-    .orderBy(dueDiligenceCategories.sortOrder);
+  const result = await db.select({
+    totalCogs: sql<string>`COALESCE(SUM(CAST(${cogsRecords.totalCogs} AS DECIMAL(15,2))), 0)`,
+    totalRevenue: sql<string>`COALESCE(SUM(CAST(${cogsRecords.totalRevenue} AS DECIMAL(15,2))), 0)`,
+    totalQuantitySold: sql<string>`COALESCE(SUM(CAST(${cogsRecords.quantitySold} AS DECIMAL(15,4))), 0)`,
+    recordCount: sql<number>`COUNT(*)`,
+  }).from(cogsRecords)
+    .where(and(...conditions));
 
-  const items = await db.select().from(dueDiligenceItems)
-    .where(eq(dueDiligenceItems.templateId, templateId))
-    .orderBy(dueDiligenceItems.sortOrder);
-
+  const totalCogs = parseFloat(result[0]?.totalCogs || '0');
+  const totalRevenue = parseFloat(result[0]?.totalRevenue || '0');
   return {
-    ...template,
-    categories: categories.map(cat => ({
-      ...cat,
-      items: items.filter(item => item.categoryId === cat.id),
-    })),
+    totalCogs,
+    totalRevenue,
+    grossMargin: totalRevenue - totalCogs,
+    grossMarginPercent: totalRevenue > 0 ? ((totalRevenue - totalCogs) / totalRevenue) * 100 : 0,
+    totalQuantitySold: parseFloat(result[0]?.totalQuantitySold || '0'),
+    recordCount: result[0]?.recordCount || 0,
   };
 }
 
-export async function createDueDiligenceCategory(data: InsertDueDiligenceCategory) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(dueDiligenceCategories).values(data);
-  return { id: result[0].insertId };
-}
+// ============================================
+// VENDOR NEGOTIATIONS
+// ============================================
 
-export async function createDueDiligenceItem(data: InsertDueDiligenceItem) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(dueDiligenceItems).values(data);
-  return { id: result[0].insertId };
-}
-
-// Data Room Checklists
-export async function createDataRoomChecklist(data: InsertDataRoomChecklist) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(dataRoomChecklists).values(data);
-  return { id: result[0].insertId };
-}
-
-export async function getDataRoomChecklists(dataRoomId: number) {
+export async function getVendorNegotiations(filters?: {
+  companyId?: number; vendorId?: number; status?: string; type?: string; assignedTo?: number;
+}) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(dataRoomChecklists)
-    .where(eq(dataRoomChecklists.dataRoomId, dataRoomId))
-    .orderBy(desc(dataRoomChecklists.createdAt));
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(vendorNegotiations.companyId, filters.companyId));
+  if (filters?.vendorId) conditions.push(eq(vendorNegotiations.vendorId, filters.vendorId));
+  if (filters?.status) conditions.push(eq(vendorNegotiations.status, filters.status as any));
+  if (filters?.type) conditions.push(eq(vendorNegotiations.type, filters.type as any));
+  if (filters?.assignedTo) conditions.push(eq(vendorNegotiations.assignedTo, filters.assignedTo));
+  let query = db.select().from(vendorNegotiations);
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(vendorNegotiations.updatedAt));
 }
 
-export async function getDataRoomChecklistById(id: number) {
+export async function getVendorNegotiationById(id: number) {
   const db = await getDb();
   if (!db) return null;
-  const result = await db.select().from(dataRoomChecklists).where(eq(dataRoomChecklists.id, id));
+  const result = await db.select().from(vendorNegotiations).where(eq(vendorNegotiations.id, id));
   return result[0] || null;
 }
 
-export async function updateDataRoomChecklist(id: number, data: Partial<InsertDataRoomChecklist>) {
+export async function createVendorNegotiation(data: InsertVendorNegotiation) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(dataRoomChecklists).set(data).where(eq(dataRoomChecklists.id, id));
-}
-
-export async function deleteDataRoomChecklist(id: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.delete(dataRoomChecklistItems).where(eq(dataRoomChecklistItems.checklistId, id));
-  await db.delete(dataRoomChecklists).where(eq(dataRoomChecklists.id, id));
-}
-
-// Data Room Checklist Items
-export async function createDataRoomChecklistItem(data: InsertDataRoomChecklistItem) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(dataRoomChecklistItems).values(data);
+  const result = await db.insert(vendorNegotiations).values(data);
   return { id: result[0].insertId };
 }
 
-export async function getChecklistItems(checklistId: number) {
+export async function updateVendorNegotiation(id: number, data: Partial<InsertVendorNegotiation>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(vendorNegotiations).set(data as any).where(eq(vendorNegotiations.id, id));
+}
+
+export async function getNegotiationRounds(negotiationId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(dataRoomChecklistItems)
-    .where(eq(dataRoomChecklistItems.checklistId, checklistId))
-    .orderBy(dataRoomChecklistItems.categoryName, dataRoomChecklistItems.sortOrder);
+  return db.select().from(negotiationRounds)
+    .where(eq(negotiationRounds.negotiationId, negotiationId))
+    .orderBy(negotiationRounds.roundNumber);
 }
 
-export async function getChecklistItemById(id: number) {
+export async function createNegotiationRound(data: InsertNegotiationRound) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(negotiationRounds).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getNextRoundNumber(negotiationId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Compute the next round number; concurrency safety relies on DB constraints and caller retries
+  const result = await db
+    .select({ maxRound: sql<number>`COALESCE(MAX(${negotiationRounds.roundNumber}), 0) + 1` })
+    .from(negotiationRounds)
+    .where(eq(negotiationRounds.negotiationId, negotiationId));
+
+  const rawMaxRound = result[0]?.maxRound;
+  const nextRound = rawMaxRound != null ? Number(rawMaxRound) : NaN;
+
+  return Number.isFinite(nextRound) && nextRound > 0 ? nextRound : 1;
+}
+
+export async function getVendorNegotiationStats(companyId?: number) {
   const db = await getDb();
   if (!db) return null;
-  const result = await db.select().from(dataRoomChecklistItems).where(eq(dataRoomChecklistItems.id, id));
-  return result[0] || null;
-}
+  const conditions: any[] = [];
+  if (companyId) conditions.push(eq(vendorNegotiations.companyId, companyId));
 
-export async function updateChecklistItem(id: number, data: Partial<InsertDataRoomChecklistItem>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(dataRoomChecklistItems).set(data).where(eq(dataRoomChecklistItems.id, id));
-}
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-export async function deleteChecklistItem(id: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.delete(dataRoomChecklistItems).where(eq(dataRoomChecklistItems.id, id));
-}
+  const stats = await db.select({
+    total: sql<number>`COUNT(*)`,
+    active: sql<number>`SUM(CASE WHEN ${vendorNegotiations.status} IN ('in_progress', 'counter_offered', 'analyzing', 'ready') THEN 1 ELSE 0 END)`,
+    completed: sql<number>`SUM(CASE WHEN ${vendorNegotiations.status} = 'accepted' THEN 1 ELSE 0 END)`,
+    rejected: sql<number>`SUM(CASE WHEN ${vendorNegotiations.status} = 'rejected' THEN 1 ELSE 0 END)`,
+    totalEstimatedSavings: sql<string>`COALESCE(SUM(CASE WHEN ${vendorNegotiations.status} = 'accepted' THEN CAST(${vendorNegotiations.estimatedSavings} AS DECIMAL(15,2)) ELSE 0 END), 0)`,
+    totalConfidenceScore: sql<string>`COALESCE(SUM(CASE WHEN ${vendorNegotiations.status} = 'accepted' THEN CAST(${vendorNegotiations.aiConfidenceScore} AS DECIMAL(5,2)) ELSE 0 END), 0)`,
+  })
+    .from(vendorNegotiations)
+    .where(whereClause);
 
-export async function bulkCreateChecklistItems(items: InsertDataRoomChecklistItem[]) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  if (items.length === 0) return [];
-  const result = await db.insert(dataRoomChecklistItems).values(items);
-  return result;
-}
-
-// Get checklist with all items and linked documents
-export async function getChecklistWithItems(checklistId: number) {
-  const db = await getDb();
-  if (!db) return null;
-
-  const checklist = await getDataRoomChecklistById(checklistId);
-  if (!checklist) return null;
-
-  const items = await getChecklistItems(checklistId);
-
-  // Group items by category
-  const categories: Record<string, typeof items> = {};
-  items.forEach(item => {
-    if (!categories[item.categoryName]) {
-      categories[item.categoryName] = [];
-    }
-    categories[item.categoryName].push(item);
-  });
-
-  // Get linked documents for each item
-  const documentsMap: Record<number, any[]> = {};
-  for (const item of items) {
-    if (item.linkedDocumentIds) {
-      try {
-        const docIds = JSON.parse(item.linkedDocumentIds) as number[];
-        if (docIds.length > 0) {
-          const docs = await db.select().from(dataRoomDocuments).where(inArray(dataRoomDocuments.id, docIds));
-          documentsMap[item.id] = docs;
-        }
-      } catch (e) {
-        documentsMap[item.id] = [];
-      }
-    }
+  const row = stats[0];
+  if (!row) {
+    return {
+      total: 0,
+      active: 0,
+      completed: 0,
+      rejected: 0,
+      totalEstimatedSavings: 0,
+      avgConfidenceScore: 0,
+    };
   }
 
+  const total = Number(row.total) || 0;
+  const active = Number(row.active) || 0;
+  const completed = Number(row.completed) || 0;
+  const rejected = Number(row.rejected) || 0;
+  const totalEstimatedSavings = parseFloat(row.totalEstimatedSavings || "0");
+  const totalConfidenceScore = parseFloat(row.totalConfidenceScore || "0");
+
   return {
-    ...checklist,
-    categories: Object.entries(categories).map(([name, catItems]) => ({
-      name,
-      items: catItems.map(item => ({
-        ...item,
-        linkedDocuments: documentsMap[item.id] || [],
-      })),
-    })),
+    total,
+    active,
+    completed,
+    rejected,
+    totalEstimatedSavings,
+    avgConfidenceScore: completed > 0 ? totalConfidenceScore / completed : 0,
   };
 }
 
-// Normalize a filename for matching: strip extension, split camelCase, replace separators
-function normalizeForMatching(name: string): string {
-  return name
-    .replace(/\.[^.]+$/, '')           // strip file extension
-    .replace(/[-_./\\]+/g, ' ')        // separators to spaces
-    .replace(/([a-z])([A-Z])/g, '$1 $2') // split camelCase
-    .toLowerCase()
-    .trim();
-}
-
-// Score how well a document matches a checklist item's keywords
-function scoreDocumentMatch(docName: string, docDescription: string | null | undefined, keywords: string[]): number {
-  const normalizedName = normalizeForMatching(docName);
-  const nameTokens = normalizedName.split(/\s+/).filter(t => t.length > 1);
-  const descNorm = docDescription ? normalizeForMatching(docDescription) : '';
-
-  let score = 0;
-
-  for (const keyword of keywords) {
-    const kwLower = keyword.toLowerCase();
-
-    // Exact phrase in normalized name (strongest signal)
-    if (normalizedName.includes(kwLower)) {
-      score += 10;
-      continue;
-    }
-
-    // Exact phrase in description
-    if (descNorm.includes(kwLower)) {
-      score += 5;
-      continue;
-    }
-
-    // Token overlap: split keyword into words, check how many appear in doc name tokens
-    const kwTokens = kwLower.split(/\s+/).filter(t => t.length > 1);
-    if (kwTokens.length === 0) continue;
-
-    const hits = kwTokens.filter(kt =>
-      nameTokens.some(nt => nt === kt || nt.includes(kt) || kt.includes(nt))
-    ).length;
-
-    if (hits === kwTokens.length) {
-      score += 7; // all keyword tokens matched
-    } else if (hits > 0) {
-      score += hits * 2; // partial
-    }
-  }
-
-  return score;
-}
-
-// Auto-match documents against checklist items using keyword scoring
-export async function autoMatchChecklistDocuments(checklistId: number) {
-  const db = await getDb();
-  if (!db) return { matched: 0, items: [] };
-
-  const checklist = await getDataRoomChecklistById(checklistId);
-  if (!checklist) return { matched: 0, items: [] };
-
-  const items = await getChecklistItems(checklistId);
-  const documents = await getDataRoomDocuments(checklist.dataRoomId);
-
-  let matchedCount = 0;
-  const matchedItems: any[] = [];
-
-  for (const item of items) {
-    // Skip items manually set to waived or n/a
-    if (item.status === 'waived' || item.status === 'not_applicable') continue;
-
-    let keywords: string[] = [];
-    try {
-      keywords = item.matchKeywords ? JSON.parse(item.matchKeywords) : [];
-    } catch (e) {
-      keywords = [];
-    }
-
-    if (keywords.length === 0) continue;
-
-    // Score every document against this item
-    const scored = documents
-      .map(doc => ({ doc, score: scoreDocumentMatch(doc.name, doc.description, keywords) }))
-      .filter(s => s.score >= 5)
-      .sort((a, b) => b.score - a.score);
-
-    if (scored.length > 0) {
-      const linkedDocIds = scored.map(s => s.doc.id);
-
-      await updateChecklistItem(item.id, {
-        status: 'complete',
-        linkedDocumentIds: JSON.stringify(linkedDocIds),
-        linkedDocumentCount: linkedDocIds.length,
-      });
-
-      matchedCount++;
-      matchedItems.push({
-        itemId: item.id,
-        itemName: item.itemName,
-        matchedDocuments: scored.map(s => ({ id: s.doc.id, name: s.doc.name, score: s.score })),
-        status: 'complete',
-      });
-    }
-  }
-
-  // Update checklist progress
-  await recalculateChecklistProgress(checklistId);
-
-  return { matched: matchedCount, items: matchedItems };
-}
-
-// Recalculate checklist progress
-export async function recalculateChecklistProgress(checklistId: number) {
-  const db = await getDb();
-  if (!db) return;
-
-  const items = await getChecklistItems(checklistId);
-
-  const total = items.length;
-  const completed = items.filter(i => i.status === 'complete').length;
-  const partial = items.filter(i => i.status === 'partial').length;
-  const missing = items.filter(i => i.status === 'missing').length;
-
-  await updateDataRoomChecklist(checklistId, {
-    totalItems: total,
-    completedItems: completed,
-    partialItems: partial,
-    missingItems: missing,
-  });
-}
-
-// Create a checklist from a template
-export async function createChecklistFromTemplate(
-  dataRoomId: number,
-  templateId: number,
-  userId: number,
-  customName?: string
-) {
-  const template = await getTemplateWithItems(templateId);
-  if (!template) throw new Error("Template not found");
-
-  // Create the checklist
-  const checklist = await createDataRoomChecklist({
-    dataRoomId,
-    templateId,
-    name: customName || template.name,
-    description: template.description,
-    createdBy: userId,
-    totalItems: template.categories.reduce((sum, cat) => sum + cat.items.length, 0),
-    missingItems: template.categories.reduce((sum, cat) => sum + cat.items.length, 0),
-  });
-
-  // Create checklist items from template
-  let sortOrder = 0;
-  for (const category of template.categories) {
-    for (const item of category.items) {
-      await createDataRoomChecklistItem({
-        checklistId: checklist.id,
-        dataRoomId,
-        categoryName: category.name,
-        itemName: item.name,
-        itemDescription: item.description,
-        requirement: item.requirement,
-        matchKeywords: item.matchKeywords,
-        matchFileTypes: item.matchFileTypes,
-        sortOrder: sortOrder++,
-        status: 'missing',
-      });
-    }
-  }
-
-  return checklist;
-}
-
-// Create a standard due diligence checklist
-export async function createStandardChecklist(
-  dataRoomId: number,
-  userId: number,
-  checklistType: 'fundraising' | 'ma' | 'full' | 'series_b' = 'full',
-  customName?: string
-) {
-  // Select the appropriate category template
-  const categories = checklistType === 'series_b'
-    ? SERIES_B_DD_CATEGORIES
-    : STANDARD_DD_CATEGORIES;
-
-  // Generate name based on template type
-  const templateNames: Record<string, string> = {
-    'series_b': 'Series B Due Diligence Checklist',
-    'fundraising': 'Fundraising Due Diligence Checklist',
-    'ma': 'M&A Due Diligence Checklist',
-    'full': 'Standard Due Diligence Checklist',
-  };
-
-  // Create the checklist
-  const totalItems = Object.values(categories).reduce((sum, cat) => sum + cat.items.length, 0);
-  const checklist = await createDataRoomChecklist({
-    dataRoomId,
-    name: customName || templateNames[checklistType] || 'Due Diligence Checklist',
-    description: `${templateNames[checklistType] || 'Due diligence checklist'} with ${totalItems} items across ${Object.keys(categories).length} categories`,
-    createdBy: userId,
-    totalItems,
-    missingItems: totalItems,
-  });
-
-  // Create checklist items
-  let sortOrder = 0;
-  for (const [key, category] of Object.entries(categories)) {
-    for (const item of category.items) {
-      await createDataRoomChecklistItem({
-        checklistId: checklist.id,
-        dataRoomId,
-        categoryName: category.name,
-        itemName: item.name,
-        itemDescription: undefined,
-        requirement: 'required',
-        matchKeywords: JSON.stringify(item.keywords),
-        sortOrder: sortOrder++,
-        status: 'missing',
-      });
-    }
-  }
-
-  return checklist;
-}
-
-// Get checklist summary for a data room
-export async function getChecklistSummary(dataRoomId: number) {
+// Get vendor spending history for negotiation leverage
+export async function getVendorSpendingHistory(vendorId: number) {
   const db = await getDb();
   if (!db) return null;
 
-  const checklists = await getDataRoomChecklists(dataRoomId);
-  if (checklists.length === 0) return null;
-
-  // Get the most recent active checklist
-  const activeChecklist = checklists.find(c => c.status === 'active') || checklists[0];
-  const items = await getChecklistItems(activeChecklist.id);
-
-  // Group by category and status
-  const byCategory: Record<string, { total: number; complete: number; partial: number; missing: number }> = {};
-  items.forEach(item => {
-    if (!byCategory[item.categoryName]) {
-      byCategory[item.categoryName] = { total: 0, complete: 0, partial: 0, missing: 0 };
-    }
-    byCategory[item.categoryName].total++;
-    if (item.status === 'complete') byCategory[item.categoryName].complete++;
-    else if (item.status === 'partial') byCategory[item.categoryName].partial++;
-    else if (item.status === 'missing') byCategory[item.categoryName].missing++;
-  });
+  const poData = await db.select({
+    totalSpend: sql<string>`COALESCE(SUM(CAST(${purchaseOrders.totalAmount} AS DECIMAL(15,2))), 0)`,
+    orderCount: sql<number>`COUNT(*)`,
+    avgOrderValue: sql<string>`COALESCE(AVG(CAST(${purchaseOrders.totalAmount} AS DECIMAL(15,2))), 0)`,
+  }).from(purchaseOrders)
+    .where(eq(purchaseOrders.vendorId, vendorId));
 
   return {
-    checklist: activeChecklist,
-    totalItems: items.length,
-    completedItems: items.filter(i => i.status === 'complete').length,
-    partialItems: items.filter(i => i.status === 'partial').length,
-    missingItems: items.filter(i => i.status === 'missing').length,
-    completionPercent: items.length > 0
-      ? Math.round((items.filter(i => i.status === 'complete').length / items.length) * 100)
-      : 0,
-    byCategory,
-    requiredMissing: items.filter(i => i.status === 'missing' && i.requirement === 'required'),
+    totalSpend: parseFloat(poData[0]?.totalSpend || '0'),
+    orderCount: poData[0]?.orderCount || 0,
+    avgOrderValue: parseFloat(poData[0]?.avgOrderValue || '0'),
   };
 }

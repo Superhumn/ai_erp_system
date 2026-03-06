@@ -59,15 +59,18 @@ export default function InventoryCosting() {
   const [layerDialogOpen, setLayerDialogOpen] = useState(false);
   const [cogsDialogOpen, setCogsDialogOpen] = useState(false);
 
+  // Config form state
   const [configProductId, setConfigProductId] = useState("");
   const [configMethod, setConfigMethod] = useState<CostingMethod>("weighted_average");
   const [configNotes, setConfigNotes] = useState("");
 
+  // Layer form state
   const [layerProductId, setLayerProductId] = useState("");
   const [layerQuantity, setLayerQuantity] = useState("");
   const [layerUnitCost, setLayerUnitCost] = useState("");
   const [layerReference, setLayerReference] = useState("");
 
+  // COGS form state
   const [cogsProductId, setCogsProductId] = useState("");
   const [cogsQuantity, setCogsQuantity] = useState("");
   const [cogsRevenue, setCogsRevenue] = useState("");
@@ -75,12 +78,14 @@ export default function InventoryCosting() {
   const { toast } = useToast();
   const utils = trpc.useUtils();
 
+  // Queries
   const { data: configs, isLoading: configsLoading } = trpc.inventoryCosting.configs.list.useQuery({});
   const { data: costLayers, isLoading: layersLoading } = trpc.inventoryCosting.layers.list.useQuery({});
   const { data: cogsRecords, isLoading: cogsLoading } = trpc.inventoryCosting.cogs.list.useQuery({});
   const { data: cogsDashboard } = trpc.inventoryCosting.cogs.dashboard.useQuery({});
   const { data: products } = trpc.products.list.useQuery({});
 
+  // Mutations
   const createConfigMutation = trpc.inventoryCosting.configs.create.useMutation({
     onSuccess: () => {
       toast({ title: "Costing Method Configured", description: "Product costing method has been set." });
@@ -146,6 +151,7 @@ export default function InventoryCosting() {
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Inventory Costing & COGS</h1>
@@ -169,6 +175,7 @@ export default function InventoryCosting() {
         </div>
       </div>
 
+      {/* Dashboard Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -232,6 +239,7 @@ export default function InventoryCosting() {
         </Card>
       </div>
 
+      {/* Main Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="dashboard">
@@ -248,6 +256,7 @@ export default function InventoryCosting() {
           </TabsTrigger>
         </TabsList>
 
+        {/* COGS Records Tab */}
         <TabsContent value="dashboard" className="space-y-4">
           {cogsLoading ? (
             <div className="flex items-center justify-center py-8">
@@ -259,7 +268,7 @@ export default function InventoryCosting() {
                 <Calculator className="h-12 w-12 text-muted-foreground mb-4" />
                 <h3 className="text-lg font-semibold">No COGS Records Yet</h3>
                 <p className="text-muted-foreground text-center max-w-sm mt-2">
-                  Record your first COGS entry by clicking "Record COGS" above.
+                  Record your first COGS entry by clicking "Record COGS" above. Configure costing methods per product first.
                 </p>
               </CardContent>
             </Card>
@@ -285,7 +294,9 @@ export default function InventoryCosting() {
                         const margin = parseFloat(record.grossMarginPercent || "0");
                         return (
                           <tr key={record.id} className="border-b hover:bg-muted/25">
-                            <td className="p-3">{new Date(record.periodDate).toLocaleDateString()}</td>
+                            <td className="p-3">
+                              {new Date(record.periodDate).toLocaleDateString()}
+                            </td>
                             <td className="p-3">{getProductName(record.productId)}</td>
                             <td className="p-3">
                               <Badge variant="outline">
@@ -316,6 +327,7 @@ export default function InventoryCosting() {
           )}
         </TabsContent>
 
+        {/* Cost Layers Tab */}
         <TabsContent value="layers" className="space-y-4">
           {layersLoading ? (
             <div className="flex items-center justify-center py-8">
@@ -327,7 +339,7 @@ export default function InventoryCosting() {
                 <Layers className="h-12 w-12 text-muted-foreground mb-4" />
                 <h3 className="text-lg font-semibold">No Cost Layers</h3>
                 <p className="text-muted-foreground text-center max-w-sm mt-2">
-                  Add cost layers when receiving inventory to track purchase costs.
+                  Add cost layers when receiving inventory to track purchase costs for FIFO/LIFO/Weighted Average calculations.
                 </p>
               </CardContent>
             </Card>
@@ -344,6 +356,7 @@ export default function InventoryCosting() {
                         <th className="text-right p-3 font-medium">Remaining Qty</th>
                         <th className="text-right p-3 font-medium">Unit Cost</th>
                         <th className="text-right p-3 font-medium">Total Value</th>
+                        <th className="text-left p-3 font-medium">Reference</th>
                         <th className="text-left p-3 font-medium">Status</th>
                       </tr>
                     </thead>
@@ -353,12 +366,27 @@ export default function InventoryCosting() {
                         const unitCost = parseFloat(layer.unitCost);
                         return (
                           <tr key={layer.id} className="border-b hover:bg-muted/25">
-                            <td className="p-3">{new Date(layer.layerDate).toLocaleDateString()}</td>
+                            <td className="p-3">
+                              {new Date(layer.layerDate).toLocaleDateString()}
+                            </td>
                             <td className="p-3">{getProductName(layer.productId)}</td>
                             <td className="p-3 text-right">{parseFloat(layer.originalQuantity).toFixed(2)}</td>
                             <td className="p-3 text-right">{remainingQty.toFixed(2)}</td>
                             <td className="p-3 text-right">${unitCost.toFixed(4)}</td>
-                            <td className="p-3 text-right font-medium">${(remainingQty * unitCost).toFixed(2)}</td>
+                            <td className="p-3 text-right font-medium">
+                              ${(remainingQty * unitCost).toFixed(2)}
+                            </td>
+                            <td className="p-3">
+                              {layer.referenceType ? (
+                                <span className="text-muted-foreground">
+                                  {layer.referenceId != null && layer.referenceId !== ""
+                                    ? `${layer.referenceType} #${layer.referenceId}`
+                                    : layer.referenceType}
+                                </span>
+                              ) : (
+                                "-"
+                              )}
+                            </td>
                             <td className="p-3">
                               <Badge variant={layer.status === "active" ? "default" : "secondary"}>
                                 {layer.status}
@@ -375,7 +403,9 @@ export default function InventoryCosting() {
           )}
         </TabsContent>
 
+        {/* Config Tab */}
         <TabsContent value="config" className="space-y-4">
+          {/* Method Explanation Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {(["fifo", "lifo", "weighted_average"] as CostingMethod[]).map((method) => (
               <Card key={method}>
@@ -393,14 +423,20 @@ export default function InventoryCosting() {
           </div>
 
           {configsLoading ? (
-            <div className="flex items-center justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div>
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin" />
+            </div>
           ) : (configs?.length || 0) === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12">
                 <Settings2 className="h-12 w-12 text-muted-foreground mb-4" />
                 <h3 className="text-lg font-semibold">No Costing Methods Configured</h3>
+                <p className="text-muted-foreground text-center max-w-sm mt-2">
+                  Configure a costing method per product to enable COGS tracking. Default is Weighted Average.
+                </p>
                 <Button className="mt-4" onClick={() => setConfigDialogOpen(true)}>
-                  <Plus className="h-4 w-4 mr-2" />Configure Product
+                  <Plus className="h-4 w-4 mr-2" />
+                  Configure Product
                 </Button>
               </CardContent>
             </Card>
@@ -414,6 +450,7 @@ export default function InventoryCosting() {
                         <th className="text-left p-3 font-medium">Product</th>
                         <th className="text-left p-3 font-medium">Costing Method</th>
                         <th className="text-left p-3 font-medium">Status</th>
+                        <th className="text-left p-3 font-medium">Effective Date</th>
                         <th className="text-left p-3 font-medium">Notes</th>
                       </tr>
                     </thead>
@@ -421,11 +458,16 @@ export default function InventoryCosting() {
                       {configs?.map((config: any) => (
                         <tr key={config.id} className="border-b hover:bg-muted/25">
                           <td className="p-3">{getProductName(config.productId)}</td>
-                          <td className="p-3"><Badge>{methodLabels[config.costingMethod as CostingMethod]}</Badge></td>
+                          <td className="p-3">
+                            <Badge>{methodLabels[config.costingMethod as CostingMethod]}</Badge>
+                          </td>
                           <td className="p-3">
                             <Badge variant={config.isActive ? "default" : "secondary"}>
                               {config.isActive ? "Active" : "Inactive"}
                             </Badge>
+                          </td>
+                          <td className="p-3">
+                            {config.effectiveDate ? new Date(config.effectiveDate).toLocaleDateString() : "-"}
                           </td>
                           <td className="p-3 text-muted-foreground">{config.notes || "-"}</td>
                         </tr>
@@ -439,20 +481,27 @@ export default function InventoryCosting() {
         </TabsContent>
       </Tabs>
 
+      {/* Configure Costing Method Dialog */}
       <Dialog open={configDialogOpen} onOpenChange={setConfigDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Configure Costing Method</DialogTitle>
-            <DialogDescription>Set the inventory costing method for a product.</DialogDescription>
+            <DialogDescription>
+              Set the inventory costing method for a product. This determines how COGS is calculated.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
               <Label>Product</Label>
               <Select value={configProductId} onValueChange={setConfigProductId}>
-                <SelectTrigger><SelectValue placeholder="Select product" /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select product" />
+                </SelectTrigger>
                 <SelectContent>
                   {products?.map((p: any) => (
-                    <SelectItem key={p.id} value={p.id.toString()}>{p.name} ({p.sku})</SelectItem>
+                    <SelectItem key={p.id} value={p.id.toString()}>
+                      {p.name} ({p.sku})
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -460,26 +509,41 @@ export default function InventoryCosting() {
             <div>
               <Label>Costing Method</Label>
               <Select value={configMethod} onValueChange={(v) => setConfigMethod(v as CostingMethod)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="fifo">FIFO (First In, First Out)</SelectItem>
                   <SelectItem value="lifo">LIFO (Last In, First Out)</SelectItem>
                   <SelectItem value="weighted_average">Weighted Average</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground mt-1">{methodDescriptions[configMethod]}</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {methodDescriptions[configMethod]}
+              </p>
             </div>
             <div>
               <Label>Notes (optional)</Label>
-              <Input value={configNotes} onChange={(e) => setConfigNotes(e.target.value)} placeholder="Reason..." />
+              <Input
+                value={configNotes}
+                onChange={(e) => setConfigNotes(e.target.value)}
+                placeholder="Reason for choosing this method..."
+              />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfigDialogOpen(false)}>Cancel</Button>
-            <Button onClick={() => {
-              if (!configProductId) return;
-              createConfigMutation.mutate({ productId: parseInt(configProductId), costingMethod: configMethod, notes: configNotes || undefined });
-            }} disabled={!configProductId || createConfigMutation.isPending}>
+            <Button
+              onClick={() => {
+                if (!configProductId) return;
+                createConfigMutation.mutate({
+                  productId: parseInt(configProductId),
+                  costingMethod: configMethod,
+                  notes: configNotes || undefined,
+                });
+              }}
+              disabled={!configProductId || createConfigMutation.isPending}
+            >
               {createConfigMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Save Configuration
             </Button>
@@ -487,20 +551,27 @@ export default function InventoryCosting() {
         </DialogContent>
       </Dialog>
 
+      {/* Add Cost Layer Dialog */}
       <Dialog open={layerDialogOpen} onOpenChange={setLayerDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add Cost Layer</DialogTitle>
-            <DialogDescription>Record a new inventory purchase lot with its cost.</DialogDescription>
+            <DialogDescription>
+              Record a new inventory purchase lot with its cost. This creates a cost layer for FIFO/LIFO calculations.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
               <Label>Product</Label>
               <Select value={layerProductId} onValueChange={setLayerProductId}>
-                <SelectTrigger><SelectValue placeholder="Select product" /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select product" />
+                </SelectTrigger>
                 <SelectContent>
                   {products?.map((p: any) => (
-                    <SelectItem key={p.id} value={p.id.toString()}>{p.name} ({p.sku})</SelectItem>
+                    <SelectItem key={p.id} value={p.id.toString()}>
+                      {p.name} ({p.sku})
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -508,24 +579,48 @@ export default function InventoryCosting() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label>Quantity</Label>
-                <Input type="number" value={layerQuantity} onChange={(e) => setLayerQuantity(e.target.value)} placeholder="100" />
+                <Input
+                  type="number"
+                  value={layerQuantity}
+                  onChange={(e) => setLayerQuantity(e.target.value)}
+                  placeholder="100"
+                />
               </div>
               <div>
                 <Label>Unit Cost ($)</Label>
-                <Input type="number" step="0.0001" value={layerUnitCost} onChange={(e) => setLayerUnitCost(e.target.value)} placeholder="12.50" />
+                <Input
+                  type="number"
+                  step="0.0001"
+                  value={layerUnitCost}
+                  onChange={(e) => setLayerUnitCost(e.target.value)}
+                  placeholder="12.50"
+                />
               </div>
             </div>
             <div>
               <Label>Reference (optional)</Label>
-              <Input value={layerReference} onChange={(e) => setLayerReference(e.target.value)} placeholder="PO #1234" />
+              <Input
+                value={layerReference}
+                onChange={(e) => setLayerReference(e.target.value)}
+                placeholder="PO #1234 or other reference"
+              />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setLayerDialogOpen(false)}>Cancel</Button>
-            <Button onClick={() => {
-              if (!layerProductId || !layerQuantity || !layerUnitCost) return;
-              createLayerMutation.mutate({ productId: parseInt(layerProductId), quantity: parseFloat(layerQuantity), unitCost: parseFloat(layerUnitCost), referenceType: layerReference ? "manual" : undefined, notes: layerReference || undefined });
-            }} disabled={!layerProductId || !layerQuantity || !layerUnitCost || createLayerMutation.isPending}>
+            <Button
+              onClick={() => {
+                if (!layerProductId || !layerQuantity || !layerUnitCost) return;
+                createLayerMutation.mutate({
+                  productId: parseInt(layerProductId),
+                  quantity: parseFloat(layerQuantity),
+                  unitCost: parseFloat(layerUnitCost),
+                  referenceType: layerReference ? "manual" : undefined,
+                  notes: layerReference || undefined,
+                });
+              }}
+              disabled={!layerProductId || !layerQuantity || !layerUnitCost || createLayerMutation.isPending}
+            >
               {createLayerMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Add Layer
             </Button>
@@ -533,20 +628,27 @@ export default function InventoryCosting() {
         </DialogContent>
       </Dialog>
 
+      {/* Record COGS Dialog */}
       <Dialog open={cogsDialogOpen} onOpenChange={setCogsDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Record COGS</DialogTitle>
-            <DialogDescription>Calculate and record cost of goods sold for a sale.</DialogDescription>
+            <DialogDescription>
+              Calculate and record cost of goods sold for a sale. Uses the product's configured costing method.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
               <Label>Product</Label>
               <Select value={cogsProductId} onValueChange={setCogsProductId}>
-                <SelectTrigger><SelectValue placeholder="Select product" /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select product" />
+                </SelectTrigger>
                 <SelectContent>
                   {products?.map((p: any) => (
-                    <SelectItem key={p.id} value={p.id.toString()}>{p.name} ({p.sku})</SelectItem>
+                    <SelectItem key={p.id} value={p.id.toString()}>
+                      {p.name} ({p.sku})
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -554,20 +656,38 @@ export default function InventoryCosting() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label>Quantity Sold</Label>
-                <Input type="number" value={cogsQuantity} onChange={(e) => setCogsQuantity(e.target.value)} placeholder="50" />
+                <Input
+                  type="number"
+                  value={cogsQuantity}
+                  onChange={(e) => setCogsQuantity(e.target.value)}
+                  placeholder="50"
+                />
               </div>
               <div>
                 <Label>Unit Revenue ($, optional)</Label>
-                <Input type="number" step="0.01" value={cogsRevenue} onChange={(e) => setCogsRevenue(e.target.value)} placeholder="25.00" />
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={cogsRevenue}
+                  onChange={(e) => setCogsRevenue(e.target.value)}
+                  placeholder="25.00"
+                />
               </div>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCogsDialogOpen(false)}>Cancel</Button>
-            <Button onClick={() => {
-              if (!cogsProductId || !cogsQuantity) return;
-              recordCogsMutation.mutate({ productId: parseInt(cogsProductId), quantitySold: parseFloat(cogsQuantity), unitRevenue: cogsRevenue ? parseFloat(cogsRevenue) : undefined });
-            }} disabled={!cogsProductId || !cogsQuantity || recordCogsMutation.isPending}>
+            <Button
+              onClick={() => {
+                if (!cogsProductId || !cogsQuantity) return;
+                recordCogsMutation.mutate({
+                  productId: parseInt(cogsProductId),
+                  quantitySold: parseFloat(cogsQuantity),
+                  unitRevenue: cogsRevenue ? parseFloat(cogsRevenue) : undefined,
+                });
+              }}
+              disabled={!cogsProductId || !cogsQuantity || recordCogsMutation.isPending}
+            >
               {recordCogsMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Calculate & Record
             </Button>

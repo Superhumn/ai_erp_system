@@ -72,7 +72,6 @@ import {
   Plus,
   Calculator,
   Handshake,
-  ClipboardCheck,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
