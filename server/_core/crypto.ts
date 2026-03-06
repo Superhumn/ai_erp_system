@@ -57,3 +57,37 @@ export function decrypt(encryptedText: string, secret?: string): string {
   decrypted += decipher.final('utf8');
   return decrypted;
 }
+
+/**
+ * Create an HMAC-signed OAuth state parameter
+ * Format: "payload.signature" where payload is base64url-encoded JSON
+ */
+export function createSignedOAuthState(data: Record<string, unknown>): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET required for OAuth state signing');
+  const payload = Buffer.from(JSON.stringify({ ...data, ts: Date.now() })).toString('base64url');
+  const sig = crypto.createHmac('sha256', secret).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+/**
+ * Verify and decode an HMAC-signed OAuth state parameter
+ * Returns null if signature is invalid or state has expired
+ */
+export function verifySignedOAuthState(state: string, maxAgeMs = 10 * 60 * 1000): Record<string, unknown> | null {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) return null;
+  const dotIdx = state.lastIndexOf('.');
+  if (dotIdx === -1) return null;
+  const payload = state.slice(0, dotIdx);
+  const sig = state.slice(dotIdx + 1);
+  const expected = crypto.createHmac('sha256', secret).update(payload).digest('base64url');
+  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  try {
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    if (typeof data.ts === 'number' && Date.now() - data.ts > maxAgeMs) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}

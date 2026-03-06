@@ -134,6 +134,12 @@ export interface LocalAuthCredentials {
 /**
  * Register local authentication routes
  */
+async function logAuthEvent(action: "create" | "update" | "view", entityType: string, userId?: number, ip?: string, details?: string) {
+  try {
+    await db.createAuditLog({ action, entityType, userId, ipAddress: ip, entityName: details });
+  } catch { /* audit logging should never break auth flow */ }
+}
+
 export function registerLocalAuthRoutes(app: Express) {
   /**
    * POST /api/auth/signup
@@ -205,6 +211,9 @@ export function registerLocalAuthRoutes(app: Express) {
       // Reset rate limit on successful signup
       resetRateLimit(clientIp);
 
+      const newUser = await db.getUserByOpenId(openId);
+      await logAuthEvent("create", "auth_signup", newUser?.id, clientIp, email.toLowerCase());
+
       return res.status(201).json({
         success: true,
         message: "Account created successfully",
@@ -242,12 +251,15 @@ export function registerLocalAuthRoutes(app: Express) {
       if (!credentials) {
         // Run a dummy hash to prevent timing-based email enumeration
         hashPassword(password, "0".repeat(SALT_LENGTH * 2));
+        await logAuthEvent("view", "auth_login_failed", undefined, clientIp, email.toLowerCase());
         return res.status(401).json({ error: "Invalid email or password" });
       }
 
       // Verify password
       const isValid = verifyPassword(password, credentials.salt, credentials.passwordHash);
       if (!isValid) {
+        const failedUser = await db.getUserByOpenId(credentials.openId);
+        await logAuthEvent("view", "auth_login_failed", failedUser?.id, clientIp, email.toLowerCase());
         return res.status(401).json({ error: "Invalid email or password" });
       }
 
@@ -269,6 +281,8 @@ export function registerLocalAuthRoutes(app: Express) {
 
       // Reset rate limit on successful login
       resetRateLimit(clientIp);
+
+      await logAuthEvent("view", "auth_login_success", user?.id, clientIp, email.toLowerCase());
 
       return res.status(200).json({
         success: true,
@@ -305,7 +319,7 @@ export function registerLocalAuthRoutes(app: Express) {
       }
 
       if (!isValidPassword(newPassword)) {
-        return res.status(400).json({ error: "New password must be at least 8 characters" });
+        return res.status(400).json({ error: "Password must be at least 10 characters and include uppercase, lowercase, and a digit" });
       }
 
       // Get current credentials
@@ -332,6 +346,8 @@ export function registerLocalAuthRoutes(app: Express) {
 
       // Reset rate limit on successful password change
       resetRateLimit(clientIp);
+
+      await logAuthEvent("update", "auth_password_change", user.id, clientIp, user.email || user.openId);
 
       return res.status(200).json({
         success: true,

@@ -284,18 +284,17 @@ async function startServer() {
       let user: any;
       try { user = await sdk.authenticateRequest(req); } catch { return res.redirect('/settings/integrations?shopify_error=not_authenticated'); }
       if (!user) return res.redirect('/settings/integrations?shopify_error=not_authenticated');
-      const stateParts = (state as string).split(':');
-      if (stateParts.length < 4) return res.redirect('/settings/integrations?shopify_error=invalid_state');
-      const stateUserId = parseInt(stateParts[0]);
-      const stateCompanyId = stateParts[1] !== 'undefined' ? parseInt(stateParts[1]) : undefined;
-      const stateShop = stateParts[2];
-      const stateTimestamp = parseInt(stateParts[3]);
+      const { verifySignedOAuthState } = await import('./crypto');
+      const stateData = verifySignedOAuthState(state as string);
+      if (!stateData) return res.redirect('/settings/integrations?shopify_error=invalid_state');
+      const stateUserId = stateData.userId as number;
+      const stateCompanyId = stateData.companyId as number | undefined;
+      const stateShop = stateData.shop as string;
       if (stateUserId !== user.id) return res.redirect('/settings/integrations?shopify_error=user_mismatch');
       if (user.companyId && stateCompanyId !== user.companyId) return res.redirect('/settings/integrations?shopify_error=company_mismatch');
       let shopDomain = (shop as string).trim().toLowerCase();
       if (!shopDomain.endsWith('.myshopify.com')) return res.redirect('/settings/integrations?shopify_error=invalid_domain');
       if (stateShop !== shopDomain) return res.redirect('/settings/integrations?shopify_error=shop_mismatch');
-      if (Date.now() - stateTimestamp > 10 * 60 * 1000) return res.redirect('/settings/integrations?shopify_error=state_expired');
       const tokenResponse = await fetch(`https://${shopDomain}/admin/oauth/access_token`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code: code as string }) });
       if (!tokenResponse.ok) return res.redirect('/settings/integrations?shopify_error=token_exchange_failed');
       const tokenData = await tokenResponse.json();
