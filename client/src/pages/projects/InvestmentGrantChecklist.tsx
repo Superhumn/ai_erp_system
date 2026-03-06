@@ -68,7 +68,12 @@ const STATUS_CONFIG: Record<string, { icon: typeof CheckCircle2; color: string; 
 
 function formatCurrency(value: string | null | undefined, currency = "SAR") {
   const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-SA", { style: "currency", currency, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(num);
+  return new Intl.NumberFormat("en-SA", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(num);
 }
 
 type ChecklistItem = {
@@ -105,12 +110,20 @@ type Checklist = {
 function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack: () => void }) {
   const { data: checklist, isLoading, refetch } = trpc.investmentGrants.get.useQuery({ id: checklistId });
   const updateItem = trpc.investmentGrants.updateItem.useMutation({
-    onSuccess: () => { refetch(); },
-    onError: (error) => { toast.error(error.message); },
+    onSuccess: () => {
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
   });
 
   if (isLoading) {
-    return <div className="flex items-center justify-center py-12"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
   }
 
   if (!checklist) {
@@ -122,6 +135,7 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
   const totalCount = items.length;
   const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
+  // Group items by category
   const grouped = items.reduce<Record<string, ChecklistItem[]>>((acc, item) => {
     if (!acc[item.category]) acc[item.category] = [];
     acc[item.category].push(item);
@@ -129,74 +143,117 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
   }, {});
 
   const categoryOrder = [
-    "entity_entry_setup", "project_definition", "capex_financials", "land_infrastructure",
-    "jobs_localization", "incentive_application", "construction_equipment", "grant_disbursement",
+    "entity_entry_setup",
+    "project_definition",
+    "capex_financials",
+    "land_infrastructure",
+    "jobs_localization",
+    "incentive_application",
+    "construction_equipment",
+    "grant_disbursement",
   ];
 
   const handleStatusToggle = (item: ChecklistItem) => {
     const newStatus = item.status === "completed" ? "not_started" : "completed";
-    updateItem.mutate({ id: item.id, status: newStatus, completedDate: newStatus === "completed" ? new Date() : undefined });
+    updateItem.mutate({
+      id: item.id,
+      status: newStatus,
+      completedDate: newStatus === "completed" ? new Date() : undefined,
+    });
   };
 
   const handleStatusChange = (itemId: number, status: ChecklistItem["status"]) => {
-    updateItem.mutate({ id: itemId, status, completedDate: status === "completed" ? new Date() : undefined });
+    updateItem.mutate({
+      id: itemId,
+      status,
+      completedDate: status === "completed" ? new Date() : undefined,
+    });
   };
 
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="sm" onClick={onBack}>
-          <ArrowLeft className="h-4 w-4 mr-1" />Back
+          <ArrowLeft className="h-4 w-4 mr-1" />
+          Back
         </Button>
         <div className="flex-1">
           <h1 className="text-2xl font-bold tracking-tight">{checklist.name}</h1>
-          {checklist.description && <p className="text-muted-foreground text-sm mt-1">{checklist.description}</p>}
+          {checklist.description && (
+            <p className="text-muted-foreground text-sm mt-1">{checklist.description}</p>
+          )}
         </div>
         <Badge className={STATUS_CONFIG[checklist.status]?.color}>
           {STATUS_CONFIG[checklist.status]?.label || checklist.status}
         </Badge>
       </div>
 
+      {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-4">
-        <Card><CardContent className="pt-6">
-          <div className="text-2xl font-bold">{completedCount}/{totalCount}</div>
-          <p className="text-xs text-muted-foreground">Tasks Completed</p>
-          <Progress value={progressPercent} className="mt-2 h-2" />
-        </CardContent></Card>
-        <Card><CardContent className="pt-6">
-          <div className="text-2xl font-bold">{progressPercent}%</div>
-          <p className="text-xs text-muted-foreground">Overall Progress</p>
-        </CardContent></Card>
-        <Card><CardContent className="pt-6">
-          <div className="text-2xl font-bold">{checklist.totalCapex ? formatCurrency(checklist.totalCapex, checklist.currency || "SAR") : "-"}</div>
-          <p className="text-xs text-muted-foreground">Total Capex</p>
-        </CardContent></Card>
-        <Card><CardContent className="pt-6">
-          <div className="text-2xl font-bold text-green-600">
-            {checklist.estimatedGrant
-              ? formatCurrency(checklist.estimatedGrant, checklist.currency || "SAR")
-              : checklist.totalCapex
-                ? formatCurrency((parseFloat(checklist.totalCapex) * parseFloat(checklist.grantPercentage || "35") / 100).toString(), checklist.currency || "SAR")
-                : "-"}
-          </div>
-          <p className="text-xs text-muted-foreground">Estimated Grant ({checklist.grantPercentage || "35"}%)</p>
-        </CardContent></Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-2xl font-bold">{completedCount}/{totalCount}</div>
+            <p className="text-xs text-muted-foreground">Tasks Completed</p>
+            <Progress value={progressPercent} className="mt-2 h-2" />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-2xl font-bold">{progressPercent}%</div>
+            <p className="text-xs text-muted-foreground">Overall Progress</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-2xl font-bold">
+              {checklist.totalCapex ? formatCurrency(checklist.totalCapex, checklist.currency || "SAR") : "-"}
+            </div>
+            <p className="text-xs text-muted-foreground">Total Capex</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-2xl font-bold text-green-600">
+              {checklist.estimatedGrant
+                ? formatCurrency(checklist.estimatedGrant, checklist.currency || "SAR")
+                : checklist.totalCapex
+                  ? formatCurrency(
+                      (parseFloat(checklist.totalCapex) * parseFloat(checklist.grantPercentage || "35") / 100).toString(),
+                      checklist.currency || "SAR"
+                    )
+                  : "-"}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Estimated Grant ({checklist.grantPercentage || "35"}%)
+            </p>
+          </CardContent>
+        </Card>
       </div>
 
+      {/* Checklist Items Grouped by Category */}
       <div className="space-y-4">
         {categoryOrder.map((category) => {
           const categoryItems = grouped[category];
           if (!categoryItems || categoryItems.length === 0) return null;
+
           const categoryCompleted = categoryItems.filter((i) => i.status === "completed").length;
+
           return (
             <Card key={category}>
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <Badge variant="outline" className={CATEGORY_COLORS[category]}>{CATEGORY_LABELS[category]}</Badge>
-                    <span className="text-sm text-muted-foreground">{categoryCompleted}/{categoryItems.length} completed</span>
+                    <Badge variant="outline" className={CATEGORY_COLORS[category]}>
+                      {CATEGORY_LABELS[category]}
+                    </Badge>
+                    <span className="text-sm text-muted-foreground">
+                      {categoryCompleted}/{categoryItems.length} completed
+                    </span>
                   </div>
-                  <Progress value={categoryItems.length > 0 ? (categoryCompleted / categoryItems.length) * 100 : 0} className="w-24 h-2" />
+                  <Progress
+                    value={categoryItems.length > 0 ? (categoryCompleted / categoryItems.length) * 100 : 0}
+                    className="w-24 h-2"
+                  />
                 </div>
               </CardHeader>
               <CardContent>
@@ -204,17 +261,38 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
                   {categoryItems.map((item) => {
                     const StatusIcon = STATUS_CONFIG[item.status]?.icon || Circle;
                     return (
-                      <div key={item.id} className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${item.status === "completed" ? "bg-green-50/50 border-green-200/50" : "bg-background hover:bg-muted/50"}`}>
-                        <Checkbox checked={item.status === "completed"} onCheckedChange={() => handleStatusToggle(item)} className="h-5 w-5" />
+                      <div
+                        key={item.id}
+                        className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
+                          item.status === "completed"
+                            ? "bg-green-50/50 border-green-200/50"
+                            : "bg-background hover:bg-muted/50"
+                        }`}
+                      >
+                        <Checkbox
+                          checked={item.status === "completed"}
+                          onCheckedChange={() => handleStatusToggle(item)}
+                          className="h-5 w-5"
+                        />
                         <div className="flex-1 min-w-0">
-                          <p className={`font-medium ${item.status === "completed" ? "line-through text-muted-foreground" : ""}`}>{item.taskName}</p>
+                          <p
+                            className={`font-medium ${
+                              item.status === "completed" ? "line-through text-muted-foreground" : ""
+                            }`}
+                          >
+                            {item.taskName}
+                          </p>
                           {item.startMonth && (
                             <p className="text-xs text-muted-foreground mt-0.5">
-                              Month {item.startMonth}{item.durationMonths ? ` - Month ${item.startMonth + item.durationMonths - 1}` : ""}
+                              Month {item.startMonth}
+                              {item.durationMonths ? ` - Month ${item.startMonth + item.durationMonths - 1}` : ""}
                             </p>
                           )}
                         </div>
-                        <Select value={item.status} onValueChange={(value) => handleStatusChange(item.id, value as ChecklistItem["status"])}>
+                        <Select
+                          value={item.status}
+                          onValueChange={(value) => handleStatusChange(item.id, value)}
+                        >
                           <SelectTrigger className="w-[140px] h-8 text-xs">
                             <div className="flex items-center gap-1.5">
                               <StatusIcon className={`h-3.5 w-3.5 ${STATUS_CONFIG[item.status]?.color}`} />
@@ -245,7 +323,13 @@ export default function InvestmentGrantChecklist() {
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [isOpen, setIsOpen] = useState(false);
-  const [formData, setFormData] = useState({ name: "", description: "", totalCapex: "", grantPercentage: "35", notes: "" });
+  const [formData, setFormData] = useState({
+    name: "",
+    description: "",
+    totalCapex: "",
+    grantPercentage: "35",
+    notes: "",
+  });
 
   const { data: checklists, isLoading, refetch } = trpc.investmentGrants.list.useQuery();
   const createChecklist = trpc.investmentGrants.create.useMutation({
@@ -255,7 +339,9 @@ export default function InvestmentGrantChecklist() {
       setFormData({ name: "", description: "", totalCapex: "", grantPercentage: "35", notes: "" });
       refetch();
     },
-    onError: (error) => { toast.error(error.message); },
+    onError: (error) => {
+      toast.error(error.message);
+    },
   });
 
   if (selectedId) {
@@ -295,40 +381,85 @@ export default function InvestmentGrantChecklist() {
             <ClipboardCheck className="h-8 w-8" />
             Saudi Investment Grant Checklist
           </h1>
-          <p className="text-muted-foreground mt-1">Track your Saudi Arabia investment incentive grant application progress.</p>
+          <p className="text-muted-foreground mt-1">
+            Track your Saudi Arabia investment incentive grant application progress.
+          </p>
         </div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
-            <Button><Plus className="h-4 w-4 mr-2" />New Checklist</Button>
+            <Button>
+              <Plus className="h-4 w-4 mr-2" />
+              New Checklist
+            </Button>
           </DialogTrigger>
           <DialogContent className="max-w-lg">
             <form onSubmit={handleSubmit}>
               <DialogHeader>
                 <DialogTitle>New Investment Grant Checklist</DialogTitle>
-                <DialogDescription>Create a new Saudi investment incentive grant checklist. Default tasks will be auto-populated.</DialogDescription>
+                <DialogDescription>
+                  Create a new Saudi investment incentive grant checklist. Default tasks will be auto-populated.
+                </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4 max-h-[60vh] overflow-y-auto">
                 <div className="space-y-2">
                   <Label htmlFor="name">Project Name *</Label>
-                  <Input id="name" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder="e.g. Food Processing Factory - Riyadh" required />
+                  <Input
+                    id="name"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    placeholder="e.g. Food Processing Factory - Riyadh"
+                    required
+                  />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="totalCapex">Total Capex (SAR)</Label>
-                    <Input id="totalCapex" type="number" step="1" value={formData.totalCapex} onChange={(e) => setFormData({ ...formData, totalCapex: e.target.value })} placeholder="0" />
+                    <Input
+                      id="totalCapex"
+                      type="number"
+                      step="1"
+                      value={formData.totalCapex}
+                      onChange={(e) => setFormData({ ...formData, totalCapex: e.target.value })}
+                      placeholder="0"
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="grantPercentage">Grant %</Label>
-                    <Input id="grantPercentage" type="number" step="0.01" value={formData.grantPercentage} onChange={(e) => setFormData({ ...formData, grantPercentage: e.target.value })} placeholder="35" />
+                    <Input
+                      id="grantPercentage"
+                      type="number"
+                      step="0.01"
+                      value={formData.grantPercentage}
+                      onChange={(e) => setFormData({ ...formData, grantPercentage: e.target.value })}
+                      placeholder="35"
+                    />
                   </div>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="description">Description</Label>
-                  <Textarea id="description" value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} placeholder="Brief description..." rows={3} />
+                  <Textarea
+                    id="description"
+                    value={formData.description}
+                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                    placeholder="Brief description of the investment project..."
+                    rows={3}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="notes">Notes</Label>
+                  <Textarea
+                    id="notes"
+                    value={formData.notes}
+                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                    placeholder="Additional notes..."
+                    rows={2}
+                  />
                 </div>
               </div>
               <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setIsOpen(false)}>Cancel</Button>
+                <Button type="button" variant="outline" onClick={() => setIsOpen(false)}>
+                  Cancel
+                </Button>
                 <Button type="submit" disabled={createChecklist.isPending}>
                   {createChecklist.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                   Create Checklist
@@ -339,35 +470,56 @@ export default function InvestmentGrantChecklist() {
         </Dialog>
       </div>
 
+      {/* Summary */}
       <div className="grid gap-4 md:grid-cols-3">
-        <Card><CardContent className="pt-6">
-          <div className="text-2xl font-bold">{checklists?.length || 0}</div>
-          <p className="text-xs text-muted-foreground">Total Checklists</p>
-        </CardContent></Card>
-        <Card><CardContent className="pt-6">
-          <div className="text-2xl font-bold text-blue-600">{checklists?.filter((c: Checklist) => c.status === "in_progress").length || 0}</div>
-          <p className="text-xs text-muted-foreground">In Progress</p>
-        </CardContent></Card>
-        <Card><CardContent className="pt-6">
-          <div className="text-2xl font-bold text-green-600">{checklists?.filter((c: Checklist) => c.status === "completed").length || 0}</div>
-          <p className="text-xs text-muted-foreground">Completed</p>
-        </CardContent></Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-2xl font-bold">{checklists?.length || 0}</div>
+            <p className="text-xs text-muted-foreground">Total Checklists</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-2xl font-bold text-blue-600">
+              {checklists?.filter((c: Checklist) => c.status === "in_progress").length || 0}
+            </div>
+            <p className="text-xs text-muted-foreground">In Progress</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-2xl font-bold text-green-600">
+              {checklists?.filter((c: Checklist) => c.status === "completed").length || 0}
+            </div>
+            <p className="text-xs text-muted-foreground">Completed</p>
+          </CardContent>
+        </Card>
       </div>
 
       <Card>
         <CardHeader className="pb-3">
-          <div className="relative flex-1 min-w-[200px] max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Search checklists..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+          <div className="flex items-center gap-4 flex-wrap">
+            <div className="relative flex-1 min-w-[200px] max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search checklists..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9"
+              />
+            </div>
           </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="flex items-center justify-center py-12"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
           ) : !filteredChecklists || filteredChecklists.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               <ClipboardCheck className="h-12 w-12 mx-auto mb-4 opacity-20" />
               <p>No investment grant checklists found</p>
+              <p className="text-sm">Create your first checklist to track your Saudi investment grant application.</p>
             </div>
           ) : (
             <Table>
@@ -382,20 +534,39 @@ export default function InvestmentGrantChecklist() {
               </TableHeader>
               <TableBody>
                 {filteredChecklists.map((checklist: Checklist) => (
-                  <TableRow key={checklist.id} className="cursor-pointer" onClick={() => setSelectedId(checklist.id)}>
+                  <TableRow
+                    key={checklist.id}
+                    className="cursor-pointer"
+                    onClick={() => setSelectedId(checklist.id)}
+                  >
                     <TableCell className="font-medium">{checklist.name}</TableCell>
-                    <TableCell><Badge className={statusColors[checklist.status]}>{checklist.status.replace(/_/g, " ")}</Badge></TableCell>
+                    <TableCell>
+                      <Badge className={statusColors[checklist.status]}>
+                        {checklist.status.replace(/_/g, " ")}
+                      </Badge>
+                    </TableCell>
                     <TableCell className="text-right font-mono">
-                      {checklist.totalCapex ? formatCurrency(checklist.totalCapex, checklist.currency || "SAR") : "-"}
+                      {checklist.totalCapex
+                        ? formatCurrency(checklist.totalCapex, checklist.currency || "SAR")
+                        : "-"}
                     </TableCell>
                     <TableCell className="text-right font-mono text-green-600">
                       {checklist.estimatedGrant
                         ? formatCurrency(checklist.estimatedGrant, checklist.currency || "SAR")
                         : checklist.totalCapex
-                          ? formatCurrency((parseFloat(checklist.totalCapex) * parseFloat(checklist.grantPercentage || "35") / 100).toString(), checklist.currency || "SAR")
+                          ? formatCurrency(
+                              (
+                                parseFloat(checklist.totalCapex) *
+                                parseFloat(checklist.grantPercentage || "35") /
+                                100
+                              ).toString(),
+                              checklist.currency || "SAR"
+                            )
                           : "-"}
                     </TableCell>
-                    <TableCell>{format(new Date(checklist.createdAt), "MMM d, yyyy")}</TableCell>
+                    <TableCell>
+                      {format(new Date(checklist.createdAt), "MMM d, yyyy")}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

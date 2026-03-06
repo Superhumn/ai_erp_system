@@ -2189,7 +2189,7 @@ export const appRouter = router({
   }),
 
   // ============================================
-  // SAUDI INVESTMENT GRANT CHECKLISTS
+  // SAUDI INVESTMENT GRANT CHECKLIST
   // ============================================
   investmentGrants: router({
     list: protectedProcedure
