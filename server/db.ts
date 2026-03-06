@@ -925,6 +925,13 @@ export async function createShipment(data: typeof shipments.$inferInsert) {
   return { id: result[0].insertId };
 }
 
+export async function getShipmentById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(shipments).where(eq(shipments.id, id)).limit(1);
+  return result[0] || null;
+}
+
 export async function updateShipment(id: number, data: Partial<typeof shipments.$inferInsert>) {
   const db = await getDb();
   if (!db) return;
@@ -3119,6 +3126,13 @@ export async function getPurchaseOrderItems(purchaseOrderId: number) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
+}
+
+export async function updatePurchaseOrderItem(id: number, data: Partial<typeof purchaseOrderItems.$inferInsert>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(purchaseOrderItems).set(data as any).where(eq(purchaseOrderItems.id, id));
+  return { success: true };
 }
 
 
@@ -9025,4 +9039,57 @@ export async function getVendorSpendingHistory(vendorId: number) {
     orderCount: poData[0]?.orderCount || 0,
     avgOrderValue: parseFloat(poData[0]?.avgOrderValue || '0'),
   };
+}
+
+// ============================================
+// EDI TRADING PARTNERS
+// ============================================
+
+export async function getEdiTradingPartnerById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(ediTradingPartners).where(eq(ediTradingPartners.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function getEdiTradingPartnerByIsaId(isaId: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(ediTradingPartners).where(eq(ediTradingPartners.isaId, isaId)).limit(1);
+  return result[0] || null;
+}
+
+// ============================================
+// COGS PERIOD SUMMARIES (alias with array return)
+// ============================================
+
+export async function getCogsPeriodSummaries(params: {
+  companyId?: number;
+  productId?: number;
+  periodType: "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
+  periodStart: Date;
+  periodEnd: Date;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const conditions = [
+    eq(cogsPeriodSummary.periodType, params.periodType),
+    eq(cogsPeriodSummary.periodStart, params.periodStart),
+    eq(cogsPeriodSummary.periodEnd, params.periodEnd),
+  ];
+
+  if (params.companyId !== undefined) {
+    conditions.push(eq(cogsPeriodSummary.companyId, params.companyId));
+  } else {
+    conditions.push(isNull(cogsPeriodSummary.companyId));
+  }
+
+  if (params.productId !== undefined) {
+    conditions.push(eq(cogsPeriodSummary.productId, params.productId));
+  } else {
+    conditions.push(isNull(cogsPeriodSummary.productId));
+  }
+
+  return db.select().from(cogsPeriodSummary).where(and(...conditions));
 }
