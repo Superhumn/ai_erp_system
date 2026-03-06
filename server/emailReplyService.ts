@@ -363,3 +363,179 @@ Best regards,
 ${senderName}
   `.trim(),
 };
+
+// ============================================
+// EMAIL → WORKFLOW ROUTING
+// ============================================
+
+export interface EmailRoutingResult {
+  routed: boolean;
+  workflowType?: string;
+  taskCreated?: boolean;
+  actions: string[];
+}
+
+/**
+ * Route an analyzed email to the appropriate ERP workflow.
+ * Creates AI agent tasks for actions that need to be taken based on email content.
+ */
+export async function routeEmailToWorkflow(
+  email: { from: string; subject: string; body: string },
+  analysis: Awaited<ReturnType<typeof analyzeEmail>>
+): Promise<EmailRoutingResult> {
+  const actions: string[] = [];
+  let workflowType: string | undefined;
+  let taskCreated = false;
+
+  // Route based on category + extracted entities
+  switch (analysis.category) {
+    case "order": {
+      workflowType = "order_processing";
+      if (analysis.extractedEntities.poNumbers?.length) {
+        // Link to existing PO
+        const pos = await db.getPurchaseOrders();
+        for (const poNum of analysis.extractedEntities.poNumbers) {
+          const po = pos.find(p => p.poNumber === poNum);
+          if (po) {
+            actions.push(`Linked to PO ${poNum} (status: ${po.status})`);
+          }
+        }
+      }
+      // Create task for order processing
+      await db.createAiAgentTask({
+        taskType: "reply_email",
+        status: "pending_approval",
+        priority: analysis.suggestedPriority,
+        taskData: JSON.stringify({
+          title: `Process order email from ${email.from}`,
+          description: `${analysis.intent}`,
+          emailFrom: email.from,
+          emailSubject: email.subject,
+          category: "order",
+          extractedEntities: analysis.extractedEntities,
+        }),
+        aiReasoning: `Email categorized as order. Intent: ${analysis.intent}`,
+        aiConfidence: "0.85",
+        relatedEntityType: "order",
+        requiresApproval: true,
+      });
+      taskCreated = true;
+      actions.push("Created order processing task for review");
+      break;
+    }
+
+    case "quote_request": {
+      workflowType = "rfq_processing";
+      await db.createAiAgentTask({
+        taskType: "send_rfq",
+        status: "pending_approval",
+        priority: analysis.suggestedPriority,
+        taskData: JSON.stringify({
+          title: `Quote request from ${email.from}`,
+          description: analysis.intent,
+          emailFrom: email.from,
+          emailSubject: email.subject,
+          products: analysis.extractedEntities.productNames,
+          amounts: analysis.extractedEntities.amounts,
+        }),
+        aiReasoning: `Inbound quote request detected. Products: ${analysis.extractedEntities.productNames?.join(", ") || "unknown"}`,
+        aiConfidence: "0.85",
+        relatedEntityType: "freight_rfq",
+        requiresApproval: true,
+      });
+      taskCreated = true;
+      actions.push("Created RFQ task from email quote request");
+      break;
+    }
+
+    case "complaint": {
+      workflowType = "dispute_handling";
+      await db.createAiAgentTask({
+        taskType: "reply_email",
+        status: "pending_approval",
+        priority: "high",
+        taskData: JSON.stringify({
+          title: `Customer complaint from ${email.from}`,
+          description: analysis.intent,
+          emailFrom: email.from,
+          emailSubject: email.subject,
+          sentiment: analysis.sentiment,
+          extractedEntities: analysis.extractedEntities,
+        }),
+        aiReasoning: `Complaint received. Sentiment: ${analysis.sentiment}. Requires prompt attention.`,
+        aiConfidence: "0.9",
+        relatedEntityType: "customer",
+        requiresApproval: true,
+      });
+      taskCreated = true;
+      actions.push("Created high-priority complaint handling task");
+      break;
+    }
+
+    case "follow_up": {
+      workflowType = "follow_up_processing";
+      // Check if related to PO or invoice
+      if (analysis.extractedEntities.poNumbers?.length) {
+        actions.push(`Follow-up on PO(s): ${analysis.extractedEntities.poNumbers.join(", ")}`);
+      }
+      if (analysis.extractedEntities.invoiceNumbers?.length) {
+        actions.push(`Follow-up on Invoice(s): ${analysis.extractedEntities.invoiceNumbers.join(", ")}`);
+      }
+      await db.createAiAgentTask({
+        taskType: "reply_email",
+        status: "pending_approval",
+        priority: analysis.suggestedPriority,
+        taskData: JSON.stringify({
+          title: `Follow-up from ${email.from}`,
+          description: analysis.intent,
+          emailFrom: email.from,
+          emailSubject: email.subject,
+          extractedEntities: analysis.extractedEntities,
+        }),
+        aiReasoning: `Follow-up email requires response. ${analysis.intent}`,
+        aiConfidence: "0.8",
+        relatedEntityType: "general",
+        requiresApproval: true,
+      });
+      taskCreated = true;
+      actions.push("Created follow-up response task");
+      break;
+    }
+
+    case "inquiry":
+    case "general":
+    default: {
+      workflowType = "general_inquiry";
+      if (analysis.suggestedPriority === "high" || analysis.suggestedPriority === "urgent") {
+        await db.createAiAgentTask({
+          taskType: "reply_email",
+          status: "pending_approval",
+          priority: analysis.suggestedPriority,
+          taskData: JSON.stringify({
+            title: `${analysis.suggestedPriority === "urgent" ? "URGENT: " : ""}Email from ${email.from}`,
+            description: analysis.intent,
+            emailFrom: email.from,
+            emailSubject: email.subject,
+            extractedEntities: analysis.extractedEntities,
+          }),
+          aiReasoning: `Priority ${analysis.suggestedPriority} email needs attention. ${analysis.intent}`,
+          aiConfidence: "0.75",
+          relatedEntityType: "general",
+          requiresApproval: true,
+        });
+        taskCreated = true;
+        actions.push("Created priority response task");
+      } else {
+        actions.push("Logged as general inquiry — no immediate action required");
+      }
+      break;
+    }
+  }
+
+  return {
+    routed: true,
+    workflowType,
+    taskCreated,
+    actions,
+  };
+}

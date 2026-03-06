@@ -9,8 +9,14 @@ import {
   purchaseOrders,
   purchaseOrderItems,
   inventory,
+  invoices,
+  shipments,
   freightRfqs,
   freightCarriers,
+  workOrders,
+  workOrderMaterials,
+  rawMaterialInventory,
+  products,
 } from "../drizzle/schema";
 import { eq, and, lt, gte, desc, sql, isNull, or } from "drizzle-orm";
 import { sendEmail } from "./_core/email";
@@ -129,6 +135,10 @@ async function evaluateRuleCondition(rule: typeof aiAgentRules.$inferSelect): Pr
       return await checkPaymentReminderCondition(condition);
     case "shipment_tracking":
       return await checkShipmentTrackingCondition(condition);
+    case "price_alert":
+      return await checkPriceAlertCondition(condition);
+    case "quality_check":
+      return await checkQualityCheckCondition(condition);
     default:
       return false;
   }
@@ -197,12 +207,94 @@ async function checkVendorFollowupCondition(condition: RuleCondition): Promise<b
 }
 
 async function checkPaymentReminderCondition(condition: RuleCondition): Promise<boolean> {
-  // Placeholder - check for overdue invoices
-  return false;
+  const db = await getDb();
+  if (!db) return false;
+
+  const now = new Date();
+  const overdueInvoices = await db
+    .select()
+    .from(invoices)
+    .where(
+      and(
+        or(eq(invoices.status, "sent"), eq(invoices.status, "overdue")),
+        lt(invoices.dueDate, now)
+      )
+    );
+
+  return overdueInvoices.length > 0;
 }
 
 async function checkShipmentTrackingCondition(condition: RuleCondition): Promise<boolean> {
-  // Placeholder - check for shipments needing tracking updates
+  const db = await getDb();
+  if (!db) return false;
+
+  const activeShipments = await db
+    .select()
+    .from(shipments)
+    .where(
+      or(
+        eq(shipments.status, "in_transit"),
+        eq(shipments.status, "pending"),
+        eq(shipments.status, "pending")
+      )
+    );
+
+  return activeShipments.length > 0;
+}
+
+async function checkPriceAlertCondition(condition: RuleCondition): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+
+  // Check for raw materials whose unit cost has changed significantly
+  const mats = await db
+    .select()
+    .from(rawMaterials)
+    .where(eq(rawMaterials.status, "active"));
+
+  // Look for materials with recent PO prices significantly different from stored unit cost
+  for (const mat of mats) {
+    const recentPOItems = await db
+      .select({ unitPrice: purchaseOrderItems.unitPrice })
+      .from(purchaseOrderItems)
+      .innerJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+      .where(eq(purchaseOrderItems.productId, mat.id))
+      .orderBy(desc(purchaseOrders.createdAt))
+      .limit(1);
+
+    if (recentPOItems.length > 0) {
+      const lastPrice = parseFloat(recentPOItems[0].unitPrice || "0");
+      const storedCost = parseFloat(mat.unitCost || "0");
+      if (storedCost > 0 && Math.abs(lastPrice - storedCost) / storedCost > 0.15) {
+        return true; // >15% price change detected
+      }
+    }
+  }
+
+  return false;
+}
+
+async function checkQualityCheckCondition(condition: RuleCondition): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+
+  // Check for completed work orders with yield variance below threshold
+  const recentWOs = await db
+    .select()
+    .from(workOrders)
+    .where(eq(workOrders.status, "completed"))
+    .orderBy(desc(workOrders.updatedAt))
+    .limit(20);
+
+  for (const wo of recentWOs) {
+    const planned = parseFloat(wo.quantity?.toString() || "0");
+    const completed = parseFloat(wo.completedQuantity?.toString() || "0");
+    if (planned > 0 && completed > 0) {
+      const yieldPct = (completed / planned) * 100;
+      if (yieldPct < 90) return true; // Yield below 90% triggers quality check
+    }
+  }
+
   return false;
 }
 
@@ -221,6 +313,14 @@ async function createTaskFromRule(rule: typeof aiAgentRules.$inferSelect): Promi
       return await createRFQTask(rule, actionConfig);
     case "vendor_followup":
       return await createVendorFollowupTask(rule, actionConfig);
+    case "payment_reminder":
+      return await createPaymentReminderTask(rule, actionConfig);
+    case "shipment_tracking":
+      return await createShipmentTrackingTask(rule, actionConfig);
+    case "price_alert":
+      return await createPriceAlertTask(rule, actionConfig);
+    case "quality_check":
+      return await createQualityCheckTask(rule, actionConfig);
     default:
       return null;
   }
@@ -481,6 +581,298 @@ Respond with JSON: { "subject": "email subject", "body": "email body text" }`,
     .from(aiAgentTasks)
     .where(eq(aiAgentTasks.id, task.id));
 
+  return createdTask;
+}
+
+async function createPaymentReminderTask(
+  rule: typeof aiAgentRules.$inferSelect,
+  actionConfig: RuleAction
+): Promise<typeof aiAgentTasks.$inferSelect | null> {
+  const db = await getDb();
+  if (!db) return null;
+
+  const now = new Date();
+  const overdueInvoices = await db
+    .select()
+    .from(invoices)
+    .where(
+      and(
+        or(eq(invoices.status, "sent"), eq(invoices.status, "overdue")),
+        lt(invoices.dueDate, now)
+      )
+    )
+    .limit(5);
+
+  if (overdueInvoices.length === 0) return null;
+
+  const totalOverdue = overdueInvoices.reduce((s, i) => s + parseFloat(i.totalAmount || "0"), 0);
+
+  const aiResponse = await invokeLLM({
+    messages: [
+      { role: "system", content: "You are an ERP assistant generating payment reminder summaries." },
+      {
+        role: "user",
+        content: `Generate a payment reminder summary for ${overdueInvoices.length} overdue invoices totaling $${totalOverdue.toFixed(2)}:\n${overdueInvoices.map(i => `- ${i.invoiceNumber}: $${i.totalAmount} due ${i.dueDate ? new Date(i.dueDate).toLocaleDateString() : "unknown"}`).join("\n")}\n\nRespond with JSON: { "summary": "brief description", "urgency": "low|medium|high", "emailSubject": "subject line", "emailBody": "reminder email text" }`,
+      },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "payment_reminder",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            summary: { type: "string" },
+            urgency: { type: "string" },
+            emailSubject: { type: "string" },
+            emailBody: { type: "string" },
+          },
+          required: ["summary", "urgency", "emailSubject", "emailBody"],
+          additionalProperties: false,
+        },
+      },
+    },
+  });
+
+  const content = aiResponse.choices[0].message.content;
+  const aiSummary = JSON.parse(typeof content === "string" ? content : "{}");
+
+  const [task] = await db
+    .insert(aiAgentTasks)
+    .values({
+      taskType: "send_email",
+      status: "pending_approval",
+      priority: aiSummary.urgency === "high" ? "high" : "medium",
+      taskData: JSON.stringify({
+        title: `Payment reminders for ${overdueInvoices.length} overdue invoice(s)`,
+        description: aiSummary.summary,
+        invoiceIds: overdueInvoices.map(i => i.id),
+        totalOverdue,
+        emailSubject: aiSummary.emailSubject,
+        emailBody: aiSummary.emailBody,
+      }),
+      aiReasoning: aiSummary.summary,
+      aiConfidence: "0.9",
+      relatedEntityType: "invoice",
+      requiresApproval: true,
+    })
+    .$returningId();
+
+  const [createdTask] = await db.select().from(aiAgentTasks).where(eq(aiAgentTasks.id, task.id));
+  return createdTask;
+}
+
+async function createShipmentTrackingTask(
+  rule: typeof aiAgentRules.$inferSelect,
+  actionConfig: RuleAction
+): Promise<typeof aiAgentTasks.$inferSelect | null> {
+  const db = await getDb();
+  if (!db) return null;
+
+  const activeShipments = await db
+    .select()
+    .from(shipments)
+    .where(or(eq(shipments.status, "in_transit"), eq(shipments.status, "pending")))
+    .limit(10);
+
+  if (activeShipments.length === 0) return null;
+
+  const [task] = await db
+    .insert(aiAgentTasks)
+    .values({
+      taskType: "update_inventory",
+      status: rule.requiresApproval ? "pending_approval" : "approved",
+      priority: "medium",
+      taskData: JSON.stringify({
+        title: `Track ${activeShipments.length} active shipment(s)`,
+        description: `Update tracking status for in-transit shipments`,
+        shipmentIds: activeShipments.map(s => s.id),
+        shipments: activeShipments.map(s => ({
+          id: s.id,
+          trackingNumber: s.trackingNumber,
+          status: s.status,
+          carrier: s.carrier,
+        })),
+      }),
+      aiReasoning: `${activeShipments.length} shipments are in transit and need tracking updates`,
+      aiConfidence: "0.95",
+      relatedEntityType: "shipment",
+      requiresApproval: rule.requiresApproval,
+    })
+    .$returningId();
+
+  const [createdTask] = await db.select().from(aiAgentTasks).where(eq(aiAgentTasks.id, task.id));
+  return createdTask;
+}
+
+async function createPriceAlertTask(
+  rule: typeof aiAgentRules.$inferSelect,
+  actionConfig: RuleAction
+): Promise<typeof aiAgentTasks.$inferSelect | null> {
+  const db = await getDb();
+  if (!db) return null;
+
+  const priceChanges: { materialName: string; oldPrice: number; newPrice: number; changePct: number }[] = [];
+  const mats = await db.select().from(rawMaterials).where(eq(rawMaterials.status, "active"));
+
+  for (const mat of mats) {
+    const recentPOItems = await db
+      .select({ unitPrice: purchaseOrderItems.unitPrice })
+      .from(purchaseOrderItems)
+      .innerJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+      .where(eq(purchaseOrderItems.productId, mat.id))
+      .orderBy(desc(purchaseOrders.createdAt))
+      .limit(1);
+
+    if (recentPOItems.length > 0) {
+      const lastPrice = parseFloat(recentPOItems[0].unitPrice || "0");
+      const storedCost = parseFloat(mat.unitCost || "0");
+      if (storedCost > 0) {
+        const changePct = ((lastPrice - storedCost) / storedCost) * 100;
+        if (Math.abs(changePct) > 15) {
+          priceChanges.push({ materialName: mat.name, oldPrice: storedCost, newPrice: lastPrice, changePct });
+        }
+      }
+    }
+  }
+
+  if (priceChanges.length === 0) return null;
+
+  const aiResponse = await invokeLLM({
+    messages: [
+      { role: "system", content: "You are an ERP procurement analyst. Analyze price changes and provide recommendations." },
+      {
+        role: "user",
+        content: `Analyze these material price changes:\n${priceChanges.map(p => `- ${p.materialName}: $${p.oldPrice.toFixed(2)} → $${p.newPrice.toFixed(2)} (${p.changePct > 0 ? "+" : ""}${p.changePct.toFixed(1)}%)`).join("\n")}\n\nRespond with JSON: { "summary": "analysis", "recommendation": "what to do", "riskLevel": "low|medium|high" }`,
+      },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "price_alert",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            summary: { type: "string" },
+            recommendation: { type: "string" },
+            riskLevel: { type: "string" },
+          },
+          required: ["summary", "recommendation", "riskLevel"],
+          additionalProperties: false,
+        },
+      },
+    },
+  });
+
+  const content = aiResponse.choices[0].message.content;
+  const analysis = JSON.parse(typeof content === "string" ? content : "{}");
+
+  const [task] = await db
+    .insert(aiAgentTasks)
+    .values({
+      taskType: "send_email",
+      status: "pending_approval",
+      priority: analysis.riskLevel === "high" ? "high" : "medium",
+      taskData: JSON.stringify({
+        title: `Price alert: ${priceChanges.length} material(s) with significant price changes`,
+        description: analysis.summary,
+        priceChanges,
+        recommendation: analysis.recommendation,
+      }),
+      aiReasoning: analysis.recommendation,
+      aiConfidence: "0.85",
+      relatedEntityType: "raw_material",
+      requiresApproval: true,
+    })
+    .$returningId();
+
+  const [createdTask] = await db.select().from(aiAgentTasks).where(eq(aiAgentTasks.id, task.id));
+  return createdTask;
+}
+
+async function createQualityCheckTask(
+  rule: typeof aiAgentRules.$inferSelect,
+  actionConfig: RuleAction
+): Promise<typeof aiAgentTasks.$inferSelect | null> {
+  const db = await getDb();
+  if (!db) return null;
+
+  const recentWOs = await db
+    .select()
+    .from(workOrders)
+    .where(eq(workOrders.status, "completed"))
+    .orderBy(desc(workOrders.updatedAt))
+    .limit(20);
+
+  const lowYieldWOs: { id: number; workOrderNumber: string; planned: number; completed: number; yieldPct: number }[] = [];
+
+  for (const wo of recentWOs) {
+    const planned = parseFloat(wo.quantity?.toString() || "0");
+    const completed = parseFloat(wo.completedQuantity?.toString() || "0");
+    if (planned > 0 && completed > 0) {
+      const yieldPct = (completed / planned) * 100;
+      if (yieldPct < 90) {
+        lowYieldWOs.push({ id: wo.id, workOrderNumber: wo.workOrderNumber, planned, completed, yieldPct });
+      }
+    }
+  }
+
+  if (lowYieldWOs.length === 0) return null;
+
+  const aiResponse = await invokeLLM({
+    messages: [
+      { role: "system", content: "You are an ERP quality control analyst. Analyze production yield data and recommend corrective actions." },
+      {
+        role: "user",
+        content: `These work orders had below-target yield (<90%):\n${lowYieldWOs.map(w => `- ${w.workOrderNumber}: ${w.yieldPct.toFixed(1)}% yield (${w.completed}/${w.planned} units)`).join("\n")}\n\nRespond with JSON: { "summary": "quality analysis", "rootCauseHypotheses": ["possible cause 1", "possible cause 2"], "recommendations": ["action 1", "action 2"], "severity": "low|medium|high" }`,
+      },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "quality_check",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            summary: { type: "string" },
+            rootCauseHypotheses: { type: "array", items: { type: "string" } },
+            recommendations: { type: "array", items: { type: "string" } },
+            severity: { type: "string" },
+          },
+          required: ["summary", "rootCauseHypotheses", "recommendations", "severity"],
+          additionalProperties: false,
+        },
+      },
+    },
+  });
+
+  const content = aiResponse.choices[0].message.content;
+  const analysis = JSON.parse(typeof content === "string" ? content : "{}");
+
+  const [task] = await db
+    .insert(aiAgentTasks)
+    .values({
+      taskType: "send_email",
+      status: "pending_approval",
+      priority: analysis.severity === "high" ? "high" : "medium",
+      taskData: JSON.stringify({
+        title: `Quality alert: ${lowYieldWOs.length} work order(s) with low yield`,
+        description: analysis.summary,
+        affectedWorkOrders: lowYieldWOs,
+        rootCauseHypotheses: analysis.rootCauseHypotheses,
+        recommendations: analysis.recommendations,
+      }),
+      aiReasoning: `${analysis.summary}. Hypotheses: ${analysis.rootCauseHypotheses.join("; ")}`,
+      aiConfidence: "0.8",
+      relatedEntityType: "work_order",
+      requiresApproval: true,
+    })
+    .$returningId();
+
+  const [createdTask] = await db.select().from(aiAgentTasks).where(eq(aiAgentTasks.id, task.id));
   return createdTask;
 }
 

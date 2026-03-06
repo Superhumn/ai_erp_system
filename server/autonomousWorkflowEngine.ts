@@ -615,11 +615,12 @@ Always provide clear reasoning for your decision.`,
     // Send notification about resolution
     await this.sendNotification(
       approval.runId,
-      "approval_completed",
+      approved ? "success" : "warning",
       `${approved ? "Approved" : "Rejected"}: ${approval.title}`,
       `The approval request has been ${approved ? "approved" : "rejected"} by the reviewer.${notes ? ` Notes: ${notes}` : ""}`,
-      [],
-      false
+      ["admin", "ops", "exec"],
+      true,
+      `/approvals`
     );
 
     return { success: true, runResumed: approved };

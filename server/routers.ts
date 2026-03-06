@@ -14,6 +14,8 @@ import { detectMaterialShortages, detectAnomalies, runShortageCheckAndNotify, ru
 import { linkParsedEmailToEntities } from "./emailDocumentLinker";
 import { generateVendorEmail, sendVendorEmail, sendBulkEmail, checkAndSendPoFollowups } from "./vendorEmailAutomation";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
+import { generateHRInsights, generateLegalInsights, analyzeContract, generateFinancialInsights, generateProjectInsights, generateDataRoomInsights } from "./aiInsightsService";
+import { routeEmailToWorkflow } from "./emailReplyService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import * as db from "./db";
 import { storagePut } from "./storage";
@@ -4122,13 +4124,30 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
             message: `Task created by ${ctx.user.name}`,
             details: input.taskData,
           });
-          
+
+          // Notify admins about new task requiring approval
+          const allUsers = await db.getAllUsers();
+          const adminIds = allUsers.filter(u => ['admin', 'exec'].includes(u.role)).map(u => u.id);
+          if (adminIds.length > 0) {
+            const parsedData = JSON.parse(input.taskData);
+            await db.notifyUsersOfEvent({
+              type: 'ai_task_created' as any,
+              title: `AI Task Pending Approval: ${parsedData.title || input.taskType}`,
+              message: `A new ${input.taskType} task requires your review and approval. Priority: ${input.priority}.`,
+              entityType: 'ai_task',
+              entityId: task.id,
+              severity: input.priority === 'high' ? 'warning' : 'info',
+              link: '/ai/approvals',
+            }, adminIds);
+          }
+
           return task;
         }),
       
       approve: adminProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input, ctx }) => {
+          const task = await db.getAiAgentTaskById(input.id);
           await db.updateAiAgentTask(input.id, {
             status: 'approved',
             approvedBy: ctx.user.id,
@@ -4140,6 +4159,23 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
             status: 'success',
             message: `Task approved by ${ctx.user.name}`,
           });
+
+          // Notify relevant users about approval
+          const allUsers = await db.getAllUsers();
+          const opsIds = allUsers.filter(u => ['admin', 'ops', 'exec'].includes(u.role)).map(u => u.id);
+          if (task && opsIds.length > 0) {
+            const taskData = JSON.parse(task.taskData || '{}');
+            await db.notifyUsersOfEvent({
+              type: 'ai_task_created' as any,
+              title: `AI Task Approved: ${taskData.title || task.taskType}`,
+              message: `Task "${taskData.title || task.taskType}" was approved by ${ctx.user.name} and will be executed.`,
+              entityType: 'ai_task',
+              entityId: input.id,
+              severity: 'info',
+              link: '/ai/approvals',
+            }, opsIds);
+          }
+
           return { success: true };
         }),
       
@@ -14104,6 +14140,58 @@ Ask if they received the original request and if they can provide a quote.`;
       await createAuditLog(ctx.user.id, 'create', 'vendor_email', 0, `Auto follow-ups: ${result.followUpsSent} sent`);
       return result;
     }),
+  }),
+
+  // ============================================
+  // AI INSIGHTS - Cross-module AI analysis
+  // ============================================
+  aiInsights: router({
+    // HR & Payroll AI
+    hr: protectedProcedure.query(async () => {
+      return generateHRInsights();
+    }),
+
+    // Legal & Contracts AI
+    legal: protectedProcedure.query(async () => {
+      return generateLegalInsights();
+    }),
+
+    // Individual contract analysis
+    analyzeContract: protectedProcedure
+      .input(z.object({ contractId: z.number() }))
+      .mutation(async ({ input }) => {
+        return analyzeContract(input.contractId);
+      }),
+
+    // Financial reporting AI
+    financial: financeProcedure.query(async () => {
+      return generateFinancialInsights();
+    }),
+
+    // Projects AI
+    projects: protectedProcedure.query(async () => {
+      return generateProjectInsights();
+    }),
+
+    // Data Room AI
+    dataRoom: protectedProcedure
+      .input(z.object({ dataRoomId: z.number().optional() }).optional())
+      .query(async ({ input }) => {
+        return generateDataRoomInsights(input?.dataRoomId);
+      }),
+
+    // Email routing to workflows
+    routeEmail: protectedProcedure
+      .input(z.object({
+        from: z.string(),
+        subject: z.string(),
+        body: z.string(),
+      }))
+      .mutation(async ({ input }) => {
+        const analysis = await analyzeEmail(input);
+        const routing = await routeEmailToWorkflow(input, analysis);
+        return { analysis, routing };
+      }),
   }),
 });
 
