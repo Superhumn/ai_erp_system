@@ -23,7 +23,7 @@ const NegotiationAnalysisSchema = z.object({
     low: z.number(),
     average: z.number(),
     high: z.number(),
-  }).nullable(),
+  }).optional().nullable(),
   vendorDependency: z.enum(["low", "medium", "high"]),
   recommendedStrategy: z.string(),
   targetPriceReduction: z.number().min(0).max(100),
@@ -41,7 +41,7 @@ const NegotiationDraftSchema = z.object({
 
 interface NegotiationAnalysis {
   leveragePoints: string[];
-  marketBenchmark: { low: number; average: number; high: number } | null;
+  marketBenchmark?: { low: number; average: number; high: number } | null;
   vendorDependency: "low" | "medium" | "high";
   recommendedStrategy: string;
   targetPriceReduction: number;
@@ -179,11 +179,12 @@ Respond ONLY with valid JSON matching this schema:
       },
     });
 
-    const text = typeof aiResult.content === "string" ? aiResult.content : "";
+    const text = typeof aiResult.text === "string" ? aiResult.text : "";
     // Extract JSON from the response
     const jsonMatch = text.match(/\{[\s\S]*\}/);
+    let parsed: any;
     if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
+      parsed = JSON.parse(jsonMatch[0]);
       // Validate with Zod schema
       const validated = NegotiationAnalysisSchema.safeParse(parsed);
       if (validated.success) {
