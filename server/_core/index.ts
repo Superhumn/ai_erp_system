@@ -247,11 +247,15 @@ async function startServer() {
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
     if (!clientId || !clientSecret) return res.redirect('/import?error=not_configured');
     try {
-      // Authenticate the request to prevent OAuth CSRF — don't trust state param alone
+      // Verify HMAC-signed state and authenticate session
+      const { verifySignedOAuthState } = await import('./crypto');
+      const stateData = verifySignedOAuthState(state as string);
+      if (!stateData) return res.redirect('/import?error=invalid_state');
       const { sdk: authSdk } = await import('./sdk');
       let user: any;
       try { user = await authSdk.authenticateRequest(req); } catch { return res.redirect('/import?error=not_authenticated'); }
       if (!user) return res.redirect('/import?error=not_authenticated');
+      if (stateData.userId !== user.id) return res.redirect('/import?error=user_mismatch');
       const userId = user.id;
       const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',
