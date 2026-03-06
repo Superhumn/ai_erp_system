@@ -27,7 +27,6 @@ import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refresh
 import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
-import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -2492,6 +2491,42 @@ export const appRouter = router({
       await db.clearSyncHistory();
       return { success: true };
     }),
+
+    // Shopify OAuth sub-router (used by client Integrations page)
+    shopify: router({
+      initiateOAuth: protectedProcedure
+        .input(z.object({ shop: z.string() }))
+        .mutation(async ({ input, ctx }) => {
+          const clientId = process.env.SHOPIFY_CLIENT_ID;
+          const redirectUri = process.env.SHOPIFY_REDIRECT_URI || `${process.env.VITE_APP_URL || 'http://localhost:3000'}/api/shopify/callback`;
+          if (!clientId) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Shopify integration is not configured' });
+          let shopDomain = input.shop.trim().toLowerCase();
+          if (!shopDomain.includes('.')) shopDomain = `${shopDomain}.myshopify.com`;
+          if (!shopDomain.endsWith('.myshopify.com')) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid Shopify domain' });
+          const { createSignedOAuthState } = await import('./_core/crypto');
+          const state = createSignedOAuthState({ userId: ctx.user.id, companyId: (ctx.user as any).companyId, shop: shopDomain });
+          const scopes = 'read_products,read_orders,read_inventory,write_inventory,read_locations,read_fulfillments';
+          const authUrl = `https://${shopDomain}/admin/oauth/authorize?client_id=${clientId}&scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
+          return { authUrl };
+        }),
+      disconnect: protectedProcedure
+        .input(z.object({ storeId: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.updateShopifyStore(input.storeId, { isEnabled: false, accessToken: null });
+          return { success: true };
+        }),
+      testConnection: protectedProcedure
+        .input(z.object({ storeId: z.number() }))
+        .mutation(async ({ input }) => {
+          const store = await db.getShopifyStoreById(input.storeId);
+          if (!store || !store.accessToken) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Store not found or not connected' });
+          const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/shop.json`, {
+            headers: { 'X-Shopify-Access-Token': store.accessToken, 'Content-Type': 'application/json' },
+          });
+          if (!response.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Connection test failed' });
+          return { success: true, message: 'Connection is active' };
+        }),
+    }),
   }),
 
   // ============================================
@@ -2853,9 +2888,10 @@ export const appRouter = router({
       
       const redirectUri = `${process.env.VITE_APP_URL || 'http://localhost:3000'}/api/google/callback`;
       const scope = encodeURIComponent('https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly');
-      const state = ctx.user.id.toString();
-      
-      const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${state}`;
+      const { createSignedOAuthState } = await import('./_core/crypto');
+      const state = createSignedOAuthState({ userId: ctx.user.id, provider: 'google' });
+
+      const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${encodeURIComponent(state)}`;
       
       return { url, error: null };
     }),

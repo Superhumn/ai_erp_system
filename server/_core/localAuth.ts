@@ -3,7 +3,7 @@
  * Provides email/password authentication as a replacement for manus.ai OAuth
  */
 
-import { pbkdf2Sync, randomBytes } from "crypto";
+import { pbkdf2Sync, randomBytes, timingSafeEqual } from "crypto";
 import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import type { Express, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
@@ -12,7 +12,7 @@ import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
 
 const SALT_LENGTH = 32;
-const HASH_ITERATIONS = 100000;
+const HASH_ITERATIONS = 600000;
 const KEY_LENGTH = 64;
 const DIGEST = "sha512";
 
@@ -20,6 +20,14 @@ const DIGEST = "sha512";
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 const MAX_LOGIN_ATTEMPTS = 5;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+
+// Periodically clean up stale rate limit entries to prevent memory leaks
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of loginAttempts) {
+    if (now > entry.resetAt) loginAttempts.delete(ip);
+  }
+}, RATE_LIMIT_WINDOW_MS);
 
 /**
  * Check and update rate limit for an IP address
@@ -83,17 +91,14 @@ function generateSalt(): string {
  */
 function verifyPassword(password: string, salt: string, hash: string): boolean {
   const passwordHash = hashPassword(password, salt);
-  return passwordHash === hash;
+  if (passwordHash.length !== hash.length) return false;
+  return timingSafeEqual(Buffer.from(passwordHash), Buffer.from(hash));
 }
 
 /**
  * Generate a unique openId for local users
  * Format: local_{nanoid}
  */
-function verifyPassword(password: string, salt: string, hash: string): boolean {
-  return hashPassword(password, salt) === hash;
-}
-
 async function generateLocalOpenId(): Promise<string> {
   const { nanoid } = await import("nanoid");
   return `local_${nanoid(21)}`;
@@ -109,14 +114,15 @@ function isValidEmail(email: string): boolean {
 
 /**
  * Validate password strength
- * At least 8 characters
+ * At least 10 characters, must include uppercase, lowercase, and a digit
  */
-function isValidEmail(email: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
 function isValidPassword(password: string): boolean {
-  return password.length >= 8;
+  return (
+    password.length >= 10 &&
+    /[a-z]/.test(password) &&
+    /[A-Z]/.test(password) &&
+    /[0-9]/.test(password)
+  );
 }
 
 export interface LocalAuthCredentials {
@@ -128,6 +134,12 @@ export interface LocalAuthCredentials {
 /**
  * Register local authentication routes
  */
+async function logAuthEvent(action: "create" | "update" | "view", entityType: string, userId?: number, ip?: string, details?: string) {
+  try {
+    await db.createAuditLog({ action, entityType, userId, ipAddress: ip, entityName: details });
+  } catch { /* audit logging should never break auth flow */ }
+}
+
 export function registerLocalAuthRoutes(app: Express) {
   /**
    * POST /api/auth/signup
@@ -156,7 +168,7 @@ export function registerLocalAuthRoutes(app: Express) {
       }
 
       if (!isValidPassword(password)) {
-        return res.status(400).json({ error: "Password must be at least 8 characters" });
+        return res.status(400).json({ error: "Password must be at least 10 characters and include uppercase, lowercase, and a digit" });
       }
 
       // Check if user already exists
@@ -199,6 +211,9 @@ export function registerLocalAuthRoutes(app: Express) {
       // Reset rate limit on successful signup
       resetRateLimit(clientIp);
 
+      const newUser = await db.getUserByOpenId(openId);
+      await logAuthEvent("create", "auth_signup", newUser?.id, clientIp, email.toLowerCase());
+
       return res.status(201).json({
         success: true,
         message: "Account created successfully",
@@ -234,12 +249,17 @@ export function registerLocalAuthRoutes(app: Express) {
       // Get user credentials
       const credentials = await db.getLocalAuthCredentialByEmail(email.toLowerCase());
       if (!credentials) {
+        // Run a dummy hash to prevent timing-based email enumeration
+        hashPassword(password, "0".repeat(SALT_LENGTH * 2));
+        await logAuthEvent("view", "auth_login_failed", undefined, clientIp, email.toLowerCase());
         return res.status(401).json({ error: "Invalid email or password" });
       }
 
       // Verify password
       const isValid = verifyPassword(password, credentials.salt, credentials.passwordHash);
       if (!isValid) {
+        const failedUser = await db.getUserByOpenId(credentials.openId);
+        await logAuthEvent("view", "auth_login_failed", failedUser?.id, clientIp, email.toLowerCase());
         return res.status(401).json({ error: "Invalid email or password" });
       }
 
@@ -261,6 +281,8 @@ export function registerLocalAuthRoutes(app: Express) {
 
       // Reset rate limit on successful login
       resetRateLimit(clientIp);
+
+      await logAuthEvent("view", "auth_login_success", user?.id, clientIp, email.toLowerCase());
 
       return res.status(200).json({
         success: true,
@@ -297,7 +319,7 @@ export function registerLocalAuthRoutes(app: Express) {
       }
 
       if (!isValidPassword(newPassword)) {
-        return res.status(400).json({ error: "New password must be at least 8 characters" });
+        return res.status(400).json({ error: "Password must be at least 10 characters and include uppercase, lowercase, and a digit" });
       }
 
       // Get current credentials
@@ -324,6 +346,8 @@ export function registerLocalAuthRoutes(app: Express) {
 
       // Reset rate limit on successful password change
       resetRateLimit(clientIp);
+
+      await logAuthEvent("update", "auth_password_change", user.id, clientIp, user.email || user.openId);
 
       return res.status(200).json({
         success: true,

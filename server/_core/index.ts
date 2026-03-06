@@ -9,7 +9,7 @@ import { registerLocalAuthRoutes } from "./localAuth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { ENV, validateEmailConfig } from "./env";
+import { ENV, validateEmailConfig, validateCriticalConfig } from "./env";
 import * as sendgridProvider from "./sendgridProvider";
 import * as emailService from "./emailService";
 import * as db from "../db";
@@ -37,6 +37,8 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  validateCriticalConfig();
+
   const emailConfigValidation = validateEmailConfig();
   if (!emailConfigValidation.valid) {
     console.warn("[Email Config] Warning: Some email configuration is missing:");
@@ -47,7 +49,8 @@ async function startServer() {
   const app = express();
   const server = createServer(app);
 
-  // =====================================  // SECURITY HEADERS
+  // ============================================
+  // SECURITY HEADERS
   // ============================================
   app.use((_req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -55,6 +58,10 @@ async function startServer() {
     res.setHeader("X-XSS-Protection", "1; mode=block");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    res.setHeader(
+      "Content-Security-Policy",
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"
+    );
     if (process.env.NODE_ENV === "production") {
       res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
     }
@@ -195,13 +202,8 @@ async function startServer() {
     }
   };
 
-  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), (req, res) => 
-    handleShopifyWebhook(req, res, 'orders')
-  );
-
-  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), (req, res) =>
-    handleShopifyWebhook(req, res, 'inventory')
-  );
+  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), handleShopifyWebhook);
+  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), handleShopifyWebhook);
 
   // ============================================
   // EDI WEBHOOK ENDPOINT
@@ -237,21 +239,24 @@ async function startServer() {
     }
   });
 
-  // Google OAuth callback for Drive/Sheets integration
-  app.get('/api/google/callback', async (req, res) => {
-  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), handleShopifyWebhook);
-  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), handleShopifyWebhook);
-  
   // Google OAuth callback
   app.get('/api/google/callback', oauthCallbackLimiter, async (req, res) => {
     const { code, state } = req.query;
     if (!code || !state) return res.redirect('/import?error=missing_params');
-    const userId = parseInt(state as string, 10);
-    if (isNaN(userId) || userId <= 0) return res.redirect('/import?error=invalid_state');
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
     if (!clientId || !clientSecret) return res.redirect('/import?error=not_configured');
     try {
+      // Verify HMAC-signed state and authenticate session
+      const { verifySignedOAuthState } = await import('./crypto');
+      const stateData = verifySignedOAuthState(state as string);
+      if (!stateData) return res.redirect('/import?error=invalid_state');
+      const { sdk: authSdk } = await import('./sdk');
+      let user: any;
+      try { user = await authSdk.authenticateRequest(req); } catch { return res.redirect('/import?error=not_authenticated'); }
+      if (!user) return res.redirect('/import?error=not_authenticated');
+      if (stateData.userId !== user.id) return res.redirect('/import?error=user_mismatch');
+      const userId = user.id;
       const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -283,18 +288,17 @@ async function startServer() {
       let user: any;
       try { user = await sdk.authenticateRequest(req); } catch { return res.redirect('/settings/integrations?shopify_error=not_authenticated'); }
       if (!user) return res.redirect('/settings/integrations?shopify_error=not_authenticated');
-      const stateParts = (state as string).split(':');
-      if (stateParts.length < 4) return res.redirect('/settings/integrations?shopify_error=invalid_state');
-      const stateUserId = parseInt(stateParts[0]);
-      const stateCompanyId = stateParts[1] !== 'undefined' ? parseInt(stateParts[1]) : undefined;
-      const stateShop = stateParts[2];
-      const stateTimestamp = parseInt(stateParts[3]);
+      const { verifySignedOAuthState } = await import('./crypto');
+      const stateData = verifySignedOAuthState(state as string);
+      if (!stateData) return res.redirect('/settings/integrations?shopify_error=invalid_state');
+      const stateUserId = stateData.userId as number;
+      const stateCompanyId = stateData.companyId as number | undefined;
+      const stateShop = stateData.shop as string;
       if (stateUserId !== user.id) return res.redirect('/settings/integrations?shopify_error=user_mismatch');
       if (user.companyId && stateCompanyId !== user.companyId) return res.redirect('/settings/integrations?shopify_error=company_mismatch');
       let shopDomain = (shop as string).trim().toLowerCase();
       if (!shopDomain.endsWith('.myshopify.com')) return res.redirect('/settings/integrations?shopify_error=invalid_domain');
       if (stateShop !== shopDomain) return res.redirect('/settings/integrations?shopify_error=shop_mismatch');
-      if (Date.now() - stateTimestamp > 10 * 60 * 1000) return res.redirect('/settings/integrations?shopify_error=state_expired');
       const tokenResponse = await fetch(`https://${shopDomain}/admin/oauth/access_token`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code: code as string }) });
       if (!tokenResponse.ok) return res.redirect('/settings/integrations?shopify_error=token_exchange_failed');
       const tokenData = await tokenResponse.json();
