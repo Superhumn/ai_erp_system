@@ -1135,7 +1135,7 @@ export async function importCustomsDocument(
     for (const item of doc.lineItems) {
       if (item.hsCode) {
         // Try to find existing material by HS code or description
-        const materials = await db.getAllRawMaterials();
+        const materials = await db.getRawMaterials();
         const existingMaterial = materials.find(m =>
           m.sku === item.hsCode ||
           m.name.toLowerCase().includes(item.description.toLowerCase().substring(0, 20))
@@ -1219,7 +1219,7 @@ export async function bulkImportDocuments(
   let failed = 0;
 
   for (const doc of documents) {
-    const parseResult = await parseUploadedDocument(doc.content, doc.filename, doc.hint);
+    const parseResult = await parseUploadedDocument(doc.content, doc.filename, doc.hint as "purchase_order" | "freight_invoice" | undefined);
 
     if (!parseResult.success) {
       results.push({
