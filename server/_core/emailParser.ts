@@ -1,12 +1,15 @@
 import { invokeLLM } from "./llm";
+import type { ParsedLineItem } from "../../shared/types/lineItems";
+
+export type { ParsedLineItem };
 
 // Email category types
-export type EmailCategory = 
-  | "receipt" 
-  | "purchase_order" 
-  | "invoice" 
-  | "shipping_confirmation" 
-  | "freight_quote" 
+export type EmailCategory =
+  | "receipt"
+  | "purchase_order"
+  | "invoice"
+  | "shipping_confirmation"
+  | "freight_quote"
   | "delivery_notification"
   | "order_confirmation"
   | "payment_confirmation"
@@ -19,16 +22,6 @@ export interface EmailCategorization {
   keywords: string[];
   suggestedAction?: string;
   priority: "high" | "medium" | "low";
-}
-
-// Types for parsed document data
-export interface ParsedLineItem {
-  description: string;
-  quantity?: number;
-  unit?: string;
-  unitPrice?: number;
-  totalPrice?: number;
-  sku?: string;
 }
 
 export interface ParsedDocumentData {

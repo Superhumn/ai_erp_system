@@ -11,6 +11,14 @@
  */
 
 import * as db from "./db";
+import type {
+  Edi850LineItem,
+  Edi855LineItem,
+  Edi810LineItem,
+  Edi856LineItem,
+} from "../shared/types/lineItems";
+
+export type { Edi850LineItem, Edi855LineItem, Edi810LineItem, Edi856LineItem };
 
 // ============================================
 // X12 SEGMENT/ELEMENT SEPARATORS
@@ -52,35 +60,10 @@ export interface Edi850PurchaseOrder {
   items: Edi850LineItem[];
 }
 
-export interface Edi850LineItem {
-  lineNumber: number;
-  quantity: number;
-  unitOfMeasure: string;
-  unitPrice: number;
-  buyerPartNumber?: string;
-  vendorPartNumber?: string;
-  upc?: string;
-  description?: string;
-  requestedShipDate?: string;
-  requestedDeliveryDate?: string;
-  shipToLocationCode?: string;
-}
-
 export interface Edi855Acknowledgment {
   poNumber: string;
   ackDate: string;
   items: Edi855LineItem[];
-}
-
-export interface Edi855LineItem {
-  lineNumber: number;
-  statusCode: string; // IA=accepted, IB=backordered, IC=changes, IR=rejected
-  quantity: number;
-  unitOfMeasure: string;
-  unitPrice: number;
-  buyerPartNumber?: string;
-  vendorPartNumber?: string;
-  upc?: string;
 }
 
 export interface Edi810Invoice {
@@ -90,17 +73,6 @@ export interface Edi810Invoice {
   terms?: string;
   totalAmount: number;
   items: Edi810LineItem[];
-}
-
-export interface Edi810LineItem {
-  lineNumber: number;
-  quantity: number;
-  unitOfMeasure: string;
-  unitPrice: number;
-  productId?: string;
-  upc?: string;
-  description?: string;
-  totalAmount: number;
 }
 
 export interface Edi856ShipNotice {
@@ -116,18 +88,6 @@ export interface Edi856ShipNotice {
   weightUnit?: string;
   totalCartons?: number;
   items: Edi856LineItem[];
-}
-
-export interface Edi856LineItem {
-  lineNumber: number;
-  quantity: number;
-  unitOfMeasure: string;
-  buyerPartNumber?: string;
-  vendorPartNumber?: string;
-  upc?: string;
-  lotNumber?: string;
-  expirationDate?: string;
-  cartonCount?: number;
 }
 
 // ============================================

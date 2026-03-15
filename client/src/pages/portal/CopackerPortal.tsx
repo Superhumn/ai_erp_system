@@ -34,12 +34,9 @@ interface InventoryUpdateItem {
   notes: string;
 }
 
-interface InvoiceLineItem {
-  description: string;
-  quantity: string;
-  unitPrice: string;
-  totalAmount: string;
-}
+import type { FinanceFormLineItem } from "@shared/types/lineItems";
+
+type InvoiceLineItem = FinanceFormLineItem;
 
 // ---- Status badge colors ----
 function statusVariant(status: string): "default" | "secondary" | "outline" | "destructive" {

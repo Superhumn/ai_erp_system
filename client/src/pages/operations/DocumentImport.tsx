@@ -14,17 +14,9 @@ import { toast } from "sonner";
 import { Upload, FileText, Truck, Package, AlertCircle, CheckCircle, Clock, Edit2, X, ChevronRight, History, Loader2, FolderOpen, Cloud, ChevronLeft, File, RefreshCw } from "lucide-react";
 import { useDropzone } from "react-dropzone";
 
-interface ParsedLineItem {
-  description: string;
-  sku?: string;
-  quantity: number;
-  unit?: string;
-  unitPrice: number;
-  totalPrice: number;
-  matchedMaterialId?: number;
-  matchedMaterialName?: string;
-  confidence?: number;
-}
+import type { ParsedLineItemWithMatch } from "@shared/types/lineItems";
+
+type ParsedLineItem = ParsedLineItemWithMatch;
 
 interface ParsedPO {
   poNumber: string;

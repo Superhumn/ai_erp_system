@@ -12,16 +12,9 @@ import { randomBytes } from "crypto";
 // Configuration constants
 const MIN_TEXT_LENGTH_FOR_SCANNED_DETECTION = 100; // Minimum text length to consider PDF as text-based
 
-// Types for document import
-export interface ImportedLineItem {
-  description: string;
-  quantity: number;
-  unit?: string;
-  unitPrice: number;
-  totalPrice: number;
-  sku?: string;
-  rawMaterialId?: number;
-}
+import type { ImportedLineItem } from "../shared/types/lineItems";
+
+export type { ImportedLineItem };
 
 export interface ImportedPurchaseOrder {
   poNumber: string;

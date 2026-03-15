@@ -54,15 +54,9 @@ function formatCurrency(value: string | null | undefined) {
   }).format(num);
 }
 
-type LineItem = {
-  productId?: number;
-  description: string;
-  quantity: string;
-  unitPrice: string;
-  taxRate: string;
-  taxAmount: string;
-  totalAmount: string;
-};
+import type { InvoiceFormLineItem } from "@shared/types/lineItems";
+
+type LineItem = InvoiceFormLineItem;
 
 export default function Invoices() {
   const [search, setSearch] = useState("");

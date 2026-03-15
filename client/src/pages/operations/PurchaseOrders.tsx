@@ -43,13 +43,9 @@ function formatCurrency(value: string | null | undefined) {
   }).format(num);
 }
 
-type LineItem = {
-  productId?: number;
-  description: string;
-  quantity: string;
-  unitPrice: string;
-  totalAmount: string;
-};
+import type { FinanceFormLineItem } from "@shared/types/lineItems";
+
+type LineItem = FinanceFormLineItem;
 
 export default function PurchaseOrders() {
   const [search, setSearch] = useState("");

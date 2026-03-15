@@ -5,18 +5,9 @@
 
 // Invoice PDF generation service
 
-interface InvoiceLineItem {
-  description: string;
-  quantity: string;
-  unitPrice: string;
-  taxRate?: string | null;
-  taxAmount?: string | null;
-  totalAmount: string;
-  hsCode?: string | null;
-  countryOfOrigin?: string | null;
-  weight?: string | null;
-  volume?: string | null;
-}
+import type { InvoicePdfLineItem } from "../../shared/types/lineItems";
+
+type InvoiceLineItem = InvoicePdfLineItem;
 
 interface InvoiceData {
   invoiceNumber: string;
