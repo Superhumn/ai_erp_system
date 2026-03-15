@@ -33,14 +33,7 @@ import { ShoppingCart, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { Link } from "wouter";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
 
 export default function Orders() {
   const [search, setSearch] = useState("");
@@ -53,14 +46,15 @@ export default function Orders() {
     total: "",
   });
 
-  const { data: orders, isLoading, refetch } = trpc.orders.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: orders, isLoading } = trpc.orders.list.useQuery();
   const { data: customers } = trpc.customers.list.useQuery();
   const createOrder = trpc.orders.create.useMutation({
     onSuccess: () => {
       toast.success("Order created successfully");
       setIsOpen(false);
       setFormData({ customerId: 0, subtotal: "", tax: "", total: "" });
-      refetch();
+      utils.orders.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);

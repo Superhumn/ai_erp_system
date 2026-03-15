@@ -33,17 +33,18 @@ export default function Locations() {
     notes: "",
   });
 
-  const { data: warehouses, isLoading, refetch } = trpc.warehouses.list.useQuery(
+  const utils = trpc.useUtils();
+  const { data: warehouses, isLoading } = trpc.warehouses.list.useQuery(
     typeFilter !== "all" ? { type: typeFilter } : undefined
   );
   const { data: summary } = trpc.warehouses.summary.useQuery();
-  
+
   const createMutation = trpc.warehouses.create.useMutation({
     onSuccess: () => {
       toast.success("Location created successfully");
       setIsOpen(false);
       resetForm();
-      refetch();
+      utils.warehouses.list.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -54,7 +55,7 @@ export default function Locations() {
       setIsOpen(false);
       setEditingId(null);
       resetForm();
-      refetch();
+      utils.warehouses.list.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -62,7 +63,7 @@ export default function Locations() {
   const deleteMutation = trpc.warehouses.delete.useMutation({
     onSuccess: () => {
       toast.success("Location deleted successfully");
-      refetch();
+      utils.warehouses.list.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });

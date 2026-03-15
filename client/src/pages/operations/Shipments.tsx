@@ -60,7 +60,8 @@ export default function Shipments() {
     notes: "",
   });
 
-  const { data: shipments, isLoading, refetch } = trpc.shipments.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: shipments, isLoading } = trpc.shipments.list.useQuery();
   const createShipment = trpc.shipments.create.useMutation({
     onSuccess: () => {
       toast.success("Shipment created successfully");
@@ -69,7 +70,7 @@ export default function Shipments() {
         type: "outbound", carrier: "", trackingNumber: "",
         shipDate: "", deliveryDate: "", notes: "",
       });
-      refetch();
+      utils.shipments.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);

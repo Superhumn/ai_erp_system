@@ -45,14 +45,7 @@ import {
 } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { format } from "date-fns";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
 
 type LineItem = {
   productId?: number;
@@ -103,23 +96,24 @@ export default function Invoices() {
   const [draftInvoiceId, setDraftInvoiceId] = useState<number | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
-  const { data: invoices, isLoading, refetch } = trpc.invoices.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: invoices, isLoading } = trpc.invoices.list.useQuery();
   const { data: customers } = trpc.customers.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
-  
+
   const createInvoice = trpc.invoices.create.useMutation({
     onSuccess: () => {
       toast.success("Invoice created successfully");
       setIsOpen(false);
       resetForm();
-      refetch();
+      utils.invoices.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
     },
   });
 
-  const { data: recurringInvoices, refetch: refetchRecurring } = trpc.recurringInvoices.list.useQuery();
+  const { data: recurringInvoices } = trpc.recurringInvoices.list.useQuery();
 
   const generatePdf = trpc.invoices.generatePdf.useMutation({
     onSuccess: (data) => {
@@ -141,7 +135,7 @@ export default function Invoices() {
       setIsPaymentDialogOpen(false);
       setPaymentData({ amount: "", paymentMethod: "bank_transfer", notes: "" });
       setSelectedInvoiceId(null);
-      refetch();
+      utils.invoices.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -162,7 +156,7 @@ export default function Invoices() {
         daysUntilDue: 30,
       });
       setRecurringLineItems([]);
-      refetchRecurring();
+      utils.recurringInvoices.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -172,8 +166,8 @@ export default function Invoices() {
   const generateNow = trpc.recurringInvoices.generateNow.useMutation({
     onSuccess: (data) => {
       toast.success(`Invoice ${data.invoiceNumber} generated`);
-      refetch();
-      refetchRecurring();
+      utils.invoices.list.invalidate();
+      utils.recurringInvoices.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -183,7 +177,7 @@ export default function Invoices() {
   const toggleRecurringActive = trpc.recurringInvoices.toggleActive.useMutation({
     onSuccess: () => {
       toast.success("Recurring invoice updated");
-      refetchRecurring();
+      utils.recurringInvoices.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -195,7 +189,7 @@ export default function Invoices() {
       toast.success("Invoice sent to customer");
       setIsEmailDialogOpen(false);
       setEmailMessage("");
-      refetch();
+      utils.invoices.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -222,7 +216,7 @@ export default function Invoices() {
       setParsedInvoiceData(null);
       setDraftInvoiceId(null);
       setInvoiceText("");
-      refetch();
+      utils.invoices.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);

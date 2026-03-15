@@ -33,14 +33,7 @@ import {
 import { Scale, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
 
 export default function Disputes() {
   const [search, setSearch] = useState("");
@@ -55,7 +48,8 @@ export default function Disputes() {
     description: "",
   });
 
-  const { data: disputes, isLoading, refetch } = trpc.disputes.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: disputes, isLoading } = trpc.disputes.list.useQuery();
   const createDispute = trpc.disputes.create.useMutation({
     onSuccess: () => {
       toast.success("Dispute created successfully");
@@ -64,7 +58,7 @@ export default function Disputes() {
         title: "", type: "customer", partyName: "",
         filedDate: "", estimatedValue: "", description: "",
       });
-      refetch();
+      utils.disputes.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);

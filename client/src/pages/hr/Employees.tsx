@@ -50,7 +50,8 @@ export default function People() {
     notes: "",
   });
 
-  const { data: people, isLoading, refetch } = trpc.employees.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: people, isLoading } = trpc.employees.list.useQuery();
   const createPerson = trpc.employees.create.useMutation({
     onSuccess: () => {
       toast.success("Person added successfully");
@@ -59,7 +60,7 @@ export default function People() {
         firstName: "", lastName: "", email: "", phone: "",
         employmentType: "full_time", departmentId: 0, jobTitle: "", hireDate: "", notes: "",
       });
-      refetch();
+      utils.employees.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);

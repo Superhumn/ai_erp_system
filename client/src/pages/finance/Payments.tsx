@@ -33,14 +33,7 @@ import {
 import { CreditCard, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
 
 export default function Payments() {
   const [search, setSearch] = useState("");
@@ -54,13 +47,14 @@ export default function Payments() {
     notes: "",
   });
 
-  const { data: payments, isLoading, refetch } = trpc.payments.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: payments, isLoading } = trpc.payments.list.useQuery();
   const createPayment = trpc.payments.create.useMutation({
     onSuccess: () => {
       toast.success("Payment recorded successfully");
       setIsOpen(false);
       setFormData({ type: "received", amount: "", paymentMethod: "bank_transfer", referenceNumber: "", notes: "" });
-      refetch();
+      utils.payments.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);

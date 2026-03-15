@@ -33,14 +33,7 @@ import {
 import { FileText, Plus, Search, Loader2, Calendar } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
 
 export default function Contracts() {
   const [search, setSearch] = useState("");
@@ -56,7 +49,8 @@ export default function Contracts() {
     description: "",
   });
 
-  const { data: contracts, isLoading, refetch } = trpc.contracts.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: contracts, isLoading } = trpc.contracts.list.useQuery();
   const createContract = trpc.contracts.create.useMutation({
     onSuccess: () => {
       toast.success("Contract created successfully");
@@ -65,7 +59,7 @@ export default function Contracts() {
         title: "", type: "customer", partyName: "",
         startDate: "", endDate: "", value: "", description: "",
       });
-      refetch();
+      utils.contracts.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);

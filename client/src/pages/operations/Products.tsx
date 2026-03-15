@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -33,14 +33,7 @@ import {
 import { Package, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "wouter";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
 
 export default function Products() {
   const [search, setSearch] = useState("");
@@ -57,7 +50,8 @@ export default function Products() {
     unit: "each",
   });
 
-  const { data: products, isLoading, refetch } = trpc.products.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: products, isLoading } = trpc.products.list.useQuery();
   const createProduct = trpc.products.create.useMutation({
     onSuccess: () => {
       toast.success("Product created successfully");
@@ -66,20 +60,20 @@ export default function Products() {
         sku: "", name: "", description: "", category: "",
         type: "physical", unitPrice: "", costPrice: "", unit: "each",
       });
-      refetch();
+      utils.products.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
     },
   });
 
-  const filteredProducts = products?.filter((product) => {
+  const filteredProducts = useMemo(() => products?.filter((product) => {
     const matchesSearch =
       product.name.toLowerCase().includes(search.toLowerCase()) ||
       product.sku.toLowerCase().includes(search.toLowerCase());
     const matchesStatus = statusFilter === "all" || product.status === statusFilter;
     return matchesSearch && matchesStatus;
-  });
+  }), [products, search, statusFilter]);
 
   const statusColors: Record<string, string> = {
     active: "bg-green-500/10 text-green-600",

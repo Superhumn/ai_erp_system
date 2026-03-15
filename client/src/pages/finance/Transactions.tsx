@@ -20,14 +20,7 @@ import {
 } from "@/components/ui/table";
 import { TrendingUp, Search, Loader2 } from "lucide-react";
 import { format } from "date-fns";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
 
 export default function Transactions() {
   const [search, setSearch] = useState("");

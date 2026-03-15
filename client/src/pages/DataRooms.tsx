@@ -32,7 +32,8 @@ export default function DataRooms() {
     allowPrint: true,
   });
 
-  const { data: dataRooms, isLoading, refetch } = trpc.dataRoom.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: dataRooms, isLoading } = trpc.dataRoom.list.useQuery();
   const createMutation = trpc.dataRoom.create.useMutation({
     onSuccess: (data) => {
       toast.success("Data room created successfully");
@@ -47,7 +48,7 @@ export default function DataRooms() {
         allowDownload: true,
         allowPrint: true,
       });
-      refetch();
+      utils.dataRoom.list.invalidate();
       // Navigate to the new data room
       setLocation(`/dataroom/${data.id}`);
     },
@@ -59,7 +60,7 @@ export default function DataRooms() {
   const deleteMutation = trpc.dataRoom.delete.useMutation({
     onSuccess: () => {
       toast.success("Data room deleted");
-      refetch();
+      utils.dataRoom.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);

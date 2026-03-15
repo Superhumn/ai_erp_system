@@ -1,4 +1,5 @@
 import { trpc } from "@/lib/trpc";
+import { formatCurrency } from "@/lib/format";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -14,16 +15,6 @@ import {
   UserCog,
 } from "lucide-react";
 import { useLocation } from "wouter";
-
-function formatCurrency(value: number | string | null | undefined) {
-  const num = typeof value === 'string' ? parseFloat(value) : (value || 0);
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(num);
-}
 
 function KPICard({
   title,
@@ -87,7 +78,7 @@ export default function Home() {
       <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
         <KPICard
           title="Revenue This Month"
-          value={formatCurrency(metrics?.revenueThisMonth)}
+          value={formatCurrency(metrics?.revenueThisMonth, { whole: true })}
           icon={DollarSign}
           description="From all sales orders"
           onClick={() => setLocation('/sales/orders')}
@@ -95,7 +86,7 @@ export default function Home() {
         />
         <KPICard
           title="Invoices Paid"
-          value={formatCurrency(metrics?.invoicesPaid)}
+          value={formatCurrency(metrics?.invoicesPaid, { whole: true })}
           icon={TrendingUp}
           description="Total collected"
           onClick={() => setLocation('/finance/invoices')}

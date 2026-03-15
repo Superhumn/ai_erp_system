@@ -34,6 +34,7 @@ import {
 import { FolderKanban, Plus, Search, Loader2, Calendar } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { formatCurrency } from "@/lib/format";
 
 type Project = {
   id: number;
@@ -49,14 +50,6 @@ type Project = {
   createdAt: Date;
 };
 
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
-
 export default function Projects() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -70,7 +63,8 @@ export default function Projects() {
     description: "",
   });
 
-  const { data: projects, isLoading, refetch } = trpc.projects.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: projects, isLoading } = trpc.projects.list.useQuery();
   const createProject = trpc.projects.create.useMutation({
     onSuccess: () => {
       toast.success("Project created successfully");
@@ -78,7 +72,7 @@ export default function Projects() {
       setFormData({
         name: "", priority: "medium", startDate: "", endDate: "", budget: "", description: "",
       });
-      refetch();
+      utils.projects.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);

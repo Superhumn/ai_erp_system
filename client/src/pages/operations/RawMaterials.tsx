@@ -19,17 +19,17 @@ export default function RawMaterials() {
   const [editingMaterial, setEditingMaterial] = useState<any>(null);
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   
-  const { data: materials, isLoading, refetch } = trpc.rawMaterials.list.useQuery(
+  const utils = trpc.useUtils();
+  const { data: materials, isLoading } = trpc.rawMaterials.list.useQuery(
     categoryFilter !== "all" ? { category: categoryFilter } : undefined
   );
   const { data: vendors } = trpc.vendors.list.useQuery();
-  const utils = trpc.useUtils();
-  
+
   const createMaterial = trpc.rawMaterials.create.useMutation({
     onSuccess: () => {
       toast.success("Raw material created");
       setIsCreateOpen(false);
-      refetch();
+      utils.rawMaterials.list.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -38,7 +38,7 @@ export default function RawMaterials() {
     onSuccess: () => {
       toast.success("Raw material updated");
       setEditingMaterial(null);
-      refetch();
+      utils.rawMaterials.list.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -46,7 +46,7 @@ export default function RawMaterials() {
   const deleteMaterial = trpc.rawMaterials.delete.useMutation({
     onSuccess: () => {
       toast.success("Raw material deleted");
-      refetch();
+      utils.rawMaterials.list.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });

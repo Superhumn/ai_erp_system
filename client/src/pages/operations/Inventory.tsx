@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -42,10 +42,55 @@ type InventoryItem = {
 
 type BulkActionType = 'adjust_quantity' | 'change_location' | 'update_reorder_point' | null;
 
+function InventorySummaryCards({ inventory }: { inventory: InventoryItem[] | undefined }) {
+  const { total, inStock, lowStock, outOfStock } = useMemo(() => {
+    if (!inventory) return { total: 0, inStock: 0, lowStock: 0, outOfStock: 0 };
+    let inStock = 0, lowStock = 0, outOfStock = 0;
+    for (const item of inventory) {
+      const qty = parseFloat(item.quantity || "0");
+      const reorder = parseFloat(item.reorderLevel || "0");
+      if (qty <= 0) outOfStock++;
+      else if (qty <= reorder) lowStock++;
+      else inStock++;
+    }
+    return { total: inventory.length, inStock, lowStock, outOfStock };
+  }, [inventory]);
+
+  return (
+    <div className="grid gap-4 md:grid-cols-4">
+      <Card>
+        <CardContent className="pt-6">
+          <div className="text-2xl font-bold">{total}</div>
+          <p className="text-xs text-muted-foreground">Total SKUs</p>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="pt-6">
+          <div className="text-2xl font-bold text-green-600">{inStock}</div>
+          <p className="text-xs text-muted-foreground">In Stock</p>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="pt-6">
+          <div className="text-2xl font-bold text-amber-600">{lowStock}</div>
+          <p className="text-xs text-muted-foreground">Low Stock</p>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="pt-6">
+          <div className="text-2xl font-bold text-red-600">{outOfStock}</div>
+          <p className="text-xs text-muted-foreground">Out of Stock</p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function Inventory() {
   const [selectedRows, setSelectedRows] = useState<Set<number | string>>(new Set());
   const [bulkActionDialogOpen, setBulkActionDialogOpen] = useState(false);
   const [currentBulkAction, setCurrentBulkAction] = useState<BulkActionType>(null);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   // Form states for bulk actions
   const [quantityAdjustment, setQuantityAdjustment] = useState<string>("0");
@@ -362,43 +407,8 @@ export default function Inventory() {
         </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold">{inventory?.length || 0}</div>
-            <p className="text-xs text-muted-foreground">Total SKUs</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-green-600">
-              {inventory?.filter(i => parseFloat(i.quantity || "0") > parseFloat(i.reorderLevel || "0")).length || 0}
-            </div>
-            <p className="text-xs text-muted-foreground">In Stock</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-amber-600">
-              {inventory?.filter(i => {
-                const qty = parseFloat(i.quantity || "0");
-                const reorder = parseFloat(i.reorderLevel || "0");
-                return qty > 0 && qty <= reorder;
-              }).length || 0}
-            </div>
-            <p className="text-xs text-muted-foreground">Low Stock</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-red-600">
-              {inventory?.filter(i => parseFloat(i.quantity || "0") <= 0).length || 0}
-            </div>
-            <p className="text-xs text-muted-foreground">Out of Stock</p>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Summary Cards — memoized to avoid recalculation on every render */}
+      <InventorySummaryCards inventory={inventory} />
 
       <Card>
         <CardHeader className="pb-3">

@@ -34,14 +34,7 @@ import { SelectWithCreate } from "@/components/ui/select-with-create";
 import { ClipboardList, Plus, Search, Loader2, Sparkles, Send } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
 
 type LineItem = {
   productId?: number;
@@ -83,7 +76,7 @@ export default function PurchaseOrders() {
   });
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
 
-  const { data: purchaseOrders, isLoading, refetch } = trpc.purchaseOrders.list.useQuery();
+  const { data: purchaseOrders, isLoading } = trpc.purchaseOrders.list.useQuery();
   const { data: vendors } = trpc.vendors.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
   const utils = trpc.useUtils();
@@ -93,7 +86,7 @@ export default function PurchaseOrders() {
       toast.success("Purchase order created successfully");
       setIsOpen(false);
       resetForm();
-      refetch();
+      utils.purchaseOrders.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -123,7 +116,7 @@ export default function PurchaseOrders() {
       setTextInput("");
       setPoPreview(null);
       setActiveAction(null);
-      refetch();
+      utils.purchaseOrders.list.invalidate();
     },
     onError: (error) => {
       toast.error(`Failed to create PO: ${error.message}`);
