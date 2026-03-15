@@ -78,9 +78,8 @@ export async function analyzeNegotiationOpportunity(params: {
     productDetails = products.filter((product) => product);
   }
 
-  // Get recent POs for price trend analysis
-  const recentPOs = await db.getPurchaseOrders({ vendorId: params.vendorId });
-  const last10POs = recentPOs.slice(0, 10);
+  // Get recent POs for price trend analysis (limit at DB level)
+  const last10POs = await db.getPurchaseOrders({ vendorId: params.vendorId, limit: 10 });
 
   // Use AI to analyze and generate strategy
   const analysisPrompt = `Analyze this vendor relationship and generate a negotiation strategy.

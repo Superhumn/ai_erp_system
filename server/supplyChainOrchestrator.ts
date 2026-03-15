@@ -40,9 +40,20 @@ class SupplyChainOrchestrator {
   private escalationInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
   private activeWorkflows = 0;
+  // Cache parsed JSON configs to avoid repeated JSON.parse on every check cycle
+  private parsedConfigCache = new Map<string, { value: any; raw: string }>();
 
   constructor(config: Partial<OrchestratorConfig> = {}) {
     this.config = { ...defaultConfig, ...config };
+  }
+
+  private parseJsonCached(raw: string | null | undefined): any {
+    if (!raw) return null;
+    const cached = this.parsedConfigCache.get(raw);
+    if (cached && cached.raw === raw) return cached.value;
+    const parsed = JSON.parse(raw);
+    this.parsedConfigCache.set(raw, { value: parsed, raw });
+    return parsed;
   }
 
   // ============================================
@@ -239,7 +250,7 @@ class SupplyChainOrchestrator {
         );
 
       for (const workflow of triggeredWorkflows) {
-        const triggerEvents = workflow.triggerEvents ? JSON.parse(workflow.triggerEvents) : [];
+        const triggerEvents = this.parseJsonCached(workflow.triggerEvents) || [];
 
         if (triggerEvents.includes(event.eventType)) {
           // Trigger the workflow
@@ -280,7 +291,7 @@ class SupplyChainOrchestrator {
       );
 
     for (const workflow of thresholdWorkflows) {
-      const thresholdConfig = workflow.thresholdConfig ? JSON.parse(workflow.thresholdConfig) : null;
+      const thresholdConfig = this.parseJsonCached(workflow.thresholdConfig);
       if (!thresholdConfig) continue;
 
       const shouldTrigger = await this.evaluateThreshold(thresholdConfig);
@@ -375,7 +386,7 @@ class SupplyChainOrchestrator {
       .where(eq(supplyChainWorkflows.isActive, true));
 
     for (const workflow of dependentWorkflows) {
-      const dependencies = workflow.dependsOnWorkflows ? JSON.parse(workflow.dependsOnWorkflows) : [];
+      const dependencies = this.parseJsonCached(workflow.dependsOnWorkflows) || [];
 
       if (dependencies.includes(completedWorkflowId)) {
         console.log(`[Orchestrator] Triggering dependent workflow: ${workflow.name}`);
@@ -518,14 +529,14 @@ class SupplyChainOrchestrator {
       actionLabel: "Review Now",
     });
 
-    // Send escalation email
-    for (const user of escalationUsers) {
-      if (user.email) {
-        try {
-          await sendEmail({
-            to: user.email,
-            subject: `[ESCALATED] Approval Required: ${approval.title}`,
-            text: `An approval request has been escalated to you and requires immediate attention.
+    // Send escalation emails in parallel
+    await Promise.allSettled(
+      escalationUsers
+        .filter(user => user.email)
+        .map(user => sendEmail({
+          to: user.email!,
+          subject: `[ESCALATED] Approval Required: ${approval.title}`,
+          text: `An approval request has been escalated to you and requires immediate attention.
 
 Title: ${approval.title}
 Description: ${approval.description || "N/A"}
@@ -533,12 +544,8 @@ Value: $${approval.monetaryValue}
 Escalation Level: ${newLevel}
 
 Please review and approve/reject at your earliest convenience.`,
-          });
-        } catch (err) {
-          console.error(`Failed to send escalation email to ${user.email}:`, err);
-        }
-      }
-    }
+        }).catch(err => console.error(`Failed to send escalation email to ${user.email}:`, err)))
+    );
 
     console.log(`[Orchestrator] Escalated approval ${approval.id} to level ${newLevel}`);
   }

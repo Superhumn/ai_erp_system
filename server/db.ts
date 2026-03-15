@@ -215,6 +215,12 @@ export async function getAllUsers() {
   return db.select().from(users).orderBy(desc(users.createdAt));
 }
 
+export async function getUsersByRoles(roles: string[]) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(users).where(inArray(users.role, roles)).orderBy(desc(users.createdAt));
+}
+
 export async function updateUserRole(userId: number, role: InsertUser['role']) {
   const db = await getDb();
   if (!db) return;
@@ -329,6 +335,13 @@ export async function getVendorById(id: number) {
   if (!db) return undefined;
   const result = await db.select().from(vendors).where(eq(vendors.id, id)).limit(1);
   return result[0];
+}
+
+export async function getVendorsByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db) return [];
+  if (ids.length === 0) return [];
+  return db.select().from(vendors).where(inArray(vendors.id, ids));
 }
 
 export async function createVendor(data: InsertVendor) {
@@ -705,13 +718,19 @@ export async function bulkUpdateInventory(
 
   const results: { id: number; success: boolean; error?: string }[] = [];
 
+  // Batch fetch all current inventory items if quantity adjustment is needed
+  const currentItems = data.quantityAdjustment !== undefined
+    ? await db.select().from(inventory).where(inArray(inventory.id, ids))
+    : [];
+  const currentMap = new Map(currentItems.map(item => [item.id, item]));
+
   for (const id of ids) {
     try {
       const updateData: Partial<InsertInventory> = {};
 
-      // Handle quantity adjustment (add/subtract from current quantity)
+      // Handle quantity adjustment using pre-fetched data
       if (data.quantityAdjustment !== undefined) {
-        const [current] = await db.select().from(inventory).where(eq(inventory.id, id)).limit(1);
+        const current = currentMap.get(id);
         if (current) {
           const currentQty = parseFloat(current.quantity || '0');
           const newQty = Math.max(0, currentQty + data.quantityAdjustment);
@@ -719,17 +738,12 @@ export async function bulkUpdateInventory(
         }
       }
 
-      // Handle warehouse change
       if (data.warehouseId !== undefined) {
         updateData.warehouseId = data.warehouseId;
       }
-
-      // Handle reorder level update
       if (data.reorderLevel !== undefined) {
         updateData.reorderLevel = data.reorderLevel;
       }
-
-      // Handle reorder quantity update
       if (data.reorderQuantity !== undefined) {
         updateData.reorderQuantity = data.reorderQuantity;
       }
@@ -846,19 +860,23 @@ export async function updateProductionBatch(id: number, data: Partial<typeof pro
 // OPERATIONS - PURCHASE ORDERS
 // ============================================
 
-export async function getPurchaseOrders(filters?: { companyId?: number; status?: string; vendorId?: number }) {
+export async function getPurchaseOrders(filters?: { companyId?: number; status?: string; vendorId?: number; limit?: number }) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const conditions = [];
   if (filters?.companyId) conditions.push(eq(purchaseOrders.companyId, filters.companyId));
   if (filters?.status) conditions.push(eq(purchaseOrders.status, filters.status as any));
   if (filters?.vendorId) conditions.push(eq(purchaseOrders.vendorId, filters.vendorId));
-  
-  if (conditions.length > 0) {
-    return db.select().from(purchaseOrders).where(and(...conditions)).orderBy(desc(purchaseOrders.createdAt));
+
+  let query = conditions.length > 0
+    ? db.select().from(purchaseOrders).where(and(...conditions)).orderBy(desc(purchaseOrders.createdAt))
+    : db.select().from(purchaseOrders).orderBy(desc(purchaseOrders.createdAt));
+
+  if (filters?.limit) {
+    query = query.limit(filters.limit) as typeof query;
   }
-  return db.select().from(purchaseOrders).orderBy(desc(purchaseOrders.createdAt));
+  return query;
 }
 
 export async function getPurchaseOrderById(id: number) {
@@ -890,6 +908,12 @@ export async function updatePurchaseOrder(id: number, data: Partial<InsertPurcha
   const db = await getDb();
   if (!db) return;
   await db.update(purchaseOrders).set(data).where(eq(purchaseOrders.id, id));
+}
+
+export async function getAllPurchaseOrderItems() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(purchaseOrderItems);
 }
 
 export async function createPurchaseOrderItem(data: typeof purchaseOrderItems.$inferInsert) {
@@ -1441,27 +1465,19 @@ export async function getGoogleOAuthToken(userId: number) {
 export async function upsertGoogleOAuthToken(data: InsertGoogleOAuthToken) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
-  // Check if token exists for this user
-  const existing = await getGoogleOAuthToken(data.userId);
-  
-  if (existing) {
-    // Update existing token
-    await db.update(googleOAuthTokens)
-      .set({
+
+  // Use INSERT ... ON DUPLICATE KEY UPDATE to avoid select-then-upsert
+  const result = await db.insert(googleOAuthTokens).values(data)
+    .onDuplicateKeyUpdate({
+      set: {
         accessToken: data.accessToken,
-        refreshToken: data.refreshToken || existing.refreshToken,
+        refreshToken: sql`COALESCE(${data.refreshToken}, ${googleOAuthTokens.refreshToken})`,
         expiresAt: data.expiresAt,
         scope: data.scope,
         googleEmail: data.googleEmail,
-      })
-      .where(eq(googleOAuthTokens.userId, data.userId));
-    return { id: existing.id };
-  } else {
-    // Insert new token
-    const result = await db.insert(googleOAuthTokens).values(data);
-    return { id: result[0].insertId };
-  }
+      },
+    });
+  return { id: result[0].insertId };
 }
 
 export async function deleteGoogleOAuthToken(userId: number) {
@@ -1481,28 +1497,19 @@ export async function getQuickBooksOAuthToken(userId: number) {
 export async function upsertQuickBooksOAuthToken(data: InsertQuickBooksOAuthToken) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
-  // Check if token exists for this user
-  const existing = await getQuickBooksOAuthToken(data.userId);
-  
-  if (existing) {
-    // Update existing token
-    // Note: QuickBooks always returns a new refresh token on token refresh
-    await db.update(quickbooksOAuthTokens)
-      .set({
+
+  // Use INSERT ... ON DUPLICATE KEY UPDATE to avoid select-then-upsert
+  const result = await db.insert(quickbooksOAuthTokens).values(data)
+    .onDuplicateKeyUpdate({
+      set: {
         accessToken: data.accessToken,
-        refreshToken: data.refreshToken ?? existing.refreshToken, // Use existing only if new one not provided
+        refreshToken: sql`COALESCE(${data.refreshToken}, ${quickbooksOAuthTokens.refreshToken})`,
         expiresAt: data.expiresAt,
         scope: data.scope,
         realmId: data.realmId,
-      })
-      .where(eq(quickbooksOAuthTokens.userId, data.userId));
-    return { id: existing.id };
-  } else {
-    // Insert new token
-    const result = await db.insert(quickbooksOAuthTokens).values(data);
-    return { id: result[0].insertId };
-  }
+      },
+    });
+  return { id: result[0].insertId };
 }
 
 export async function deleteQuickBooksOAuthToken(userId: number) {
@@ -2063,25 +2070,24 @@ export async function processTransferReceipt(transferId: number, receivedItems: 
 export async function getLocationInventorySummary() {
   const db = await getDb();
   if (!db) return [];
-  
-  // Get all warehouses with their inventory counts
+
+  // Get all active warehouses
   const warehouseList = await db.select().from(warehouses).where(eq(warehouses.status, 'active'));
-  
-  const summaries = [];
-  for (const wh of warehouseList) {
-    const invItems = await db.select({
-      totalProducts: count(),
-      totalQuantity: sum(inventory.quantity),
-    }).from(inventory).where(eq(inventory.warehouseId, wh.id));
-    
-    summaries.push({
-      warehouse: wh,
-      totalProducts: invItems[0]?.totalProducts || 0,
-      totalQuantity: parseFloat(invItems[0]?.totalQuantity as string || '0'),
-    });
-  }
-  
-  return summaries;
+
+  // Single GROUP BY query instead of N+1 per-warehouse queries
+  const inventorySummaries = await db.select({
+    warehouseId: inventory.warehouseId,
+    totalProducts: count(),
+    totalQuantity: sum(inventory.quantity),
+  }).from(inventory).groupBy(inventory.warehouseId);
+
+  const summaryMap = new Map(inventorySummaries.map(s => [s.warehouseId, s]));
+
+  return warehouseList.map(wh => ({
+    warehouse: wh,
+    totalProducts: summaryMap.get(wh.id)?.totalProducts || 0,
+    totalQuantity: parseFloat(summaryMap.get(wh.id)?.totalQuantity as string || '0'),
+  }));
 }
 
 
@@ -2278,15 +2284,17 @@ export async function acceptTeamInvitation(inviteCode: string, userId: number) {
     updatedAt: new Date(),
   }).where(eq(users.id, userId));
   
-  // Add custom permissions if specified
+  // Add custom permissions if specified (batch insert)
   if (invitation.customPermissions) {
     const permissions = JSON.parse(invitation.customPermissions) as string[];
-    for (const permission of permissions) {
-      await db.insert(userPermissions).values({
-        userId,
-        permission,
-        grantedBy: invitation.invitedBy,
-      });
+    if (permissions.length > 0) {
+      await db.insert(userPermissions).values(
+        permissions.map(permission => ({
+          userId,
+          permission,
+          grantedBy: invitation.invitedBy,
+        }))
+      );
     }
   }
   
@@ -2345,14 +2353,16 @@ export async function setUserPermissions(userId: number, permissions: string[], 
   
   // Remove all existing permissions
   await db.delete(userPermissions).where(eq(userPermissions.userId, userId));
-  
-  // Add new permissions
-  for (const permission of permissions) {
-    await db.insert(userPermissions).values({
-      userId,
-      permission,
-      grantedBy,
-    });
+
+  // Batch insert new permissions
+  if (permissions.length > 0) {
+    await db.insert(userPermissions).values(
+      permissions.map(permission => ({
+        userId,
+        permission,
+        grantedBy,
+      }))
+    );
   }
 }
 
@@ -2982,17 +2992,12 @@ export async function receivePurchaseOrderItems(
       });
     }
     
-    // Update PO item received quantity
-    const poItem = await db.select().from(purchaseOrderItems)
-      .where(eq(purchaseOrderItems.id, item.purchaseOrderItemId)).limit(1);
-    if (poItem[0]) {
-      const prevReceived = parseFloat(poItem[0].receivedQuantity?.toString() || '0');
-      await db.update(purchaseOrderItems)
-        .set({ receivedQuantity: (prevReceived + item.quantity).toFixed(4) })
-        .where(eq(purchaseOrderItems.id, item.purchaseOrderItemId));
-    }
+    // Update PO item received quantity using SQL increment to avoid extra SELECT
+    await db.update(purchaseOrderItems)
+      .set({ receivedQuantity: sql`CAST(COALESCE(${purchaseOrderItems.receivedQuantity}, '0') + ${item.quantity.toFixed(4)} AS CHAR)` })
+      .where(eq(purchaseOrderItems.id, item.purchaseOrderItemId));
   }
-  
+
   // Check if PO is fully received and update status
   const poItems = await db.select().from(purchaseOrderItems)
     .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
@@ -3449,53 +3454,70 @@ export async function getPendingInventoryFromPOs() {
     )
   );
 
-  // Enhance with raw material info if linked
-  const enhancedItems = [];
-  for (const item of pendingItems) {
+  // Filter to only pending items
+  const filteredItems = pendingItems.filter(item => {
+    const orderedQty = parseFloat(item.orderedQuantity?.toString() || '0');
+    const receivedQty = parseFloat(item.receivedQuantity?.toString() || '0');
+    return orderedQty - receivedQty > 0;
+  });
+
+  if (filteredItems.length === 0) return [];
+
+  // Batch load all raw material links in one query
+  const poItemIds = filteredItems.map(item => item.poItemId);
+  const allRmLinks = await db.select()
+    .from(purchaseOrderRawMaterials)
+    .where(inArray(purchaseOrderRawMaterials.purchaseOrderItemId, poItemIds));
+  const rmLinkMap = new Map(allRmLinks.map(link => [link.purchaseOrderItemId, link]));
+
+  // Batch load all products that might be needed
+  const productIds = filteredItems.map(item => item.productId).filter((id): id is number => id != null);
+  const productsData = productIds.length > 0
+    ? await db.select().from(products).where(inArray(products.id, productIds))
+    : [];
+  const productMap = new Map(productsData.map(p => [p.id, p]));
+
+  // Batch load all raw materials for name lookups
+  const rmIds = allRmLinks.map(link => link.rawMaterialId).filter((id): id is number => id != null);
+  const allRawMaterials = await db.select().from(rawMaterials);
+  const rmByIdMap = new Map(allRawMaterials.map(rm => [rm.id, rm]));
+  const rmByNameMap = new Map(allRawMaterials.map(rm => [rm.name?.toLowerCase(), rm]));
+  const rmBySkuMap = new Map(allRawMaterials.map(rm => [rm.sku?.toLowerCase(), rm]));
+
+  // Enhance items using pre-fetched data
+  const enhancedItems = filteredItems.map(item => {
     const orderedQty = parseFloat(item.orderedQuantity?.toString() || '0');
     const receivedQty = parseFloat(item.receivedQuantity?.toString() || '0');
     const pendingQty = orderedQty - receivedQty;
 
-    if (pendingQty <= 0) continue;
+    const rmLink = rmLinkMap.get(item.poItemId);
+    let rawMaterialId = rmLink?.rawMaterialId ?? null;
+    let rawMaterialName: string | null = null;
 
-    // Check for raw material link
-    const rmLink = await db.select()
-      .from(purchaseOrderRawMaterials)
-      .where(eq(purchaseOrderRawMaterials.purchaseOrderItemId, item.poItemId))
-      .limit(1);
-
-    let rawMaterialId = rmLink[0]?.rawMaterialId;
-    let rawMaterialName = null;
-
-    // If no explicit link, try matching by product
     if (!rawMaterialId && item.productId) {
-      const product = await getProductById(item.productId);
+      const product = productMap.get(item.productId);
       if (product) {
-        const rm = await db.select().from(rawMaterials)
-          .where(or(
-            eq(rawMaterials.name, product.name),
-            eq(rawMaterials.sku, product.sku || '')
-          ))
-          .limit(1);
-        if (rm[0]) {
-          rawMaterialId = rm[0].id;
-          rawMaterialName = rm[0].name;
+        const rmByName = rmByNameMap.get(product.name?.toLowerCase());
+        const rmBySku = product.sku ? rmBySkuMap.get(product.sku.toLowerCase()) : undefined;
+        const matchedRm = rmByName || rmBySku;
+        if (matchedRm) {
+          rawMaterialId = matchedRm.id;
+          rawMaterialName = matchedRm.name;
         }
       }
     } else if (rawMaterialId) {
-      const rm = await getRawMaterialById(rawMaterialId);
-      rawMaterialName = rm?.name;
+      rawMaterialName = rmByIdMap.get(rawMaterialId)?.name ?? null;
     }
 
-    enhancedItems.push({
+    return {
       ...item,
       rawMaterialId,
       rawMaterialName,
       pendingQuantity: pendingQty,
       status: item.shipmentStatus === 'in_transit' ? 'in_transit' :
               item.shipmentStatus === 'delivered' ? 'arrived' : 'on_order',
-    });
-  }
+    };
+  });
 
   return enhancedItems;
 }
@@ -4439,14 +4461,21 @@ export async function runInventoryReconciliation(channel: 'shopify' | 'amazon' |
     let warningSkus = 0;
     let criticalSkus = 0;
     
+    // Batch load all products for SKU lookups instead of N+1
+    const allocationProductIds = [...new Set(allocations.map(a => a.productId).filter((id): id is number => id != null))];
+    const allocationProducts = allocationProductIds.length > 0
+      ? await db.select().from(products).where(inArray(products.id, allocationProductIds))
+      : [];
+    const productSkuMap = new Map(allocationProducts.map(p => [p.id, p.sku]));
+
     for (const allocation of allocations) {
       totalSkus++;
-      
+
       const erpQty = parseFloat(allocation.remainingQuantity);
       const channelQty = allocation.channelReportedQuantity ? parseFloat(allocation.channelReportedQuantity) : 0;
       const delta = erpQty - channelQty;
       const variancePercent = erpQty > 0 ? Math.abs(delta / erpQty * 100) : (channelQty > 0 ? 100 : 0);
-      
+
       // Determine status based on thresholds
       let status: 'pass' | 'warning' | 'critical' = 'pass';
       if (Math.abs(delta) <= 1 || variancePercent <= 0.5) {
@@ -4459,14 +4488,11 @@ export async function runInventoryReconciliation(channel: 'shopify' | 'amazon' |
         status = 'warning';
         warningSkus++;
       }
-      
-      // Get product SKU
-      const product = await getProductById(allocation.productId);
-      
+
       await createReconciliationLine({
         runId,
         productId: allocation.productId,
-        sku: product?.sku,
+        sku: productSkuMap.get(allocation.productId) ?? undefined,
         warehouseId: allocation.warehouseId,
         erpQuantity: erpQty.toString(),
         channelQuantity: channelQty.toString(),
@@ -4753,33 +4779,22 @@ export async function updateNotificationPreference(
 ) {
   const db = await getDb();
   if (!db) return false;
-  
-  // Check if preference exists
-  const existing = await db.select()
-    .from(notificationPreferences)
-    .where(and(
-      eq(notificationPreferences.userId, userId),
-      eq(notificationPreferences.notificationType, notificationType)
-    ))
-    .limit(1);
-  
-  if (existing.length > 0) {
-    await db.update(notificationPreferences)
-      .set(settings)
-      .where(and(
-        eq(notificationPreferences.userId, userId),
-        eq(notificationPreferences.notificationType, notificationType)
-      ));
-  } else {
-    await db.insert(notificationPreferences).values({
-      userId,
-      notificationType,
-      inApp: settings.inApp ?? true,
-      email: settings.email ?? false,
-      push: settings.push ?? false,
-    });
-  }
-  
+
+  // Use INSERT ... ON DUPLICATE KEY UPDATE to avoid select-then-upsert
+  await db.insert(notificationPreferences).values({
+    userId,
+    notificationType,
+    inApp: settings.inApp ?? true,
+    email: settings.email ?? false,
+    push: settings.push ?? false,
+  }).onDuplicateKeyUpdate({
+    set: {
+      ...(settings.inApp !== undefined && { inApp: settings.inApp }),
+      ...(settings.email !== undefined && { email: settings.email }),
+      ...(settings.push !== undefined && { push: settings.push }),
+    },
+  });
+
   return true;
 }
 
@@ -4817,25 +4832,42 @@ export async function notifyUsersOfEvent(
 ) {
   const db = await getDb();
   if (!db || userIds.length === 0) return { inApp: 0, email: 0 };
-  
+
+  // Batch load all notification preferences for these users in one query
+  const allPrefs = await db.select()
+    .from(notificationPreferences)
+    .where(and(
+      inArray(notificationPreferences.userId, userIds),
+      eq(notificationPreferences.notificationType, event.type)
+    ));
+  const prefMap = new Map(allPrefs.map(p => [p.userId, p]));
+
+  // Batch load all user data for email sending
+  const usersData = await db.select().from(users).where(inArray(users.id, userIds));
+  const userMap = new Map(usersData.map(u => [u.id, u]));
+
   let inAppCount = 0;
   let emailCount = 0;
-  
+
+  // Import email utilities once outside the loop
+  const { sendEmail, isEmailConfigured, formatEmailHtml } = await import("./_core/email");
+  const emailConfigured = isEmailConfigured();
+
   for (const userId of userIds) {
-    const shouldInApp = await shouldNotifyUser(userId, event.type, "inApp");
-    const shouldEmail = await shouldNotifyUser(userId, event.type, "email");
-    
+    const pref = prefMap.get(userId);
+    const shouldInApp = pref ? (pref.inApp ?? false) : true; // Default to in-app
+    const shouldEmail = pref ? (pref.email ?? false) : false;
+
     if (shouldInApp) {
       await createNotification({ ...event, userId });
       inAppCount++;
     }
-    
+
     if (shouldEmail) {
       emailCount++;
       try {
-        const { sendEmail, isEmailConfigured, formatEmailHtml } = await import("./_core/email");
-        if (isEmailConfigured()) {
-          const user = await getUserById(userId);
+        if (emailConfigured) {
+          const user = userMap.get(userId);
           if (user?.email) {
             await sendEmail({
               to: user.email,

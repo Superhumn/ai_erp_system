@@ -24,7 +24,7 @@ import {
   aiAgentLogs,
   sentEmails,
 } from "../drizzle/schema";
-import { eq, and, like, desc, sql, gte, lte, or, isNull, isNotNull } from "drizzle-orm";
+import { eq, and, like, desc, sql, gte, lte, or, isNull, isNotNull, count, sum, lt, inArray } from "drizzle-orm";
 
 // ============================================
 // AI AGENT SERVICE - Comprehensive ERP Integration
@@ -658,69 +658,70 @@ async function executeTrackItems(params: any, ctx: AIAgentContext): Promise<any>
 
   switch (trackingType) {
     case "inventory": {
-      const items = await db.select().from(inventory);
       if (identifier) {
-        const filtered = items.filter(i =>
-          i.id.toString() === identifier ||
-          i.productId?.toString() === identifier
+        // Query only matching items instead of loading entire table
+        const filtered = await db.select().from(inventory).where(
+          or(eq(inventory.id, parseInt(identifier) || 0), eq(inventory.productId, parseInt(identifier) || 0))
         );
         return { type: "inventory", items: filtered, action };
       }
-      return { type: "inventory", totalItems: items.length, items: items.slice(0, 20), action };
+      const [totalCount] = await db.select({ count: count() }).from(inventory);
+      const items = await db.select().from(inventory).limit(20);
+      return { type: "inventory", totalItems: totalCount?.count || 0, items, action };
     }
 
     case "order": {
-      const allOrders = await db.select().from(orders);
       if (identifier) {
-        const order = allOrders.find(o =>
-          o.id.toString() === identifier ||
-          o.orderNumber === identifier
-        );
+        const [order] = await db.select().from(orders).where(
+          or(eq(orders.id, parseInt(identifier) || 0), eq(orders.orderNumber, identifier))
+        ).limit(1);
         if (order) {
           const items = await db.select().from(orderItems).where(eq(orderItems.orderId, order.id));
           return { type: "order", order, items, action };
         }
       }
-      return { type: "orders", totalOrders: allOrders.length, orders: allOrders.slice(0, 20), action };
+      const [totalCount] = await db.select({ count: count() }).from(orders);
+      const recentOrders = await db.select().from(orders).orderBy(desc(orders.createdAt)).limit(20);
+      return { type: "orders", totalOrders: totalCount?.count || 0, orders: recentOrders, action };
     }
 
     case "shipment": {
-      const allShipments = await db.select().from(shipments);
       if (identifier) {
-        const shipment = allShipments.find(s =>
-          s.id.toString() === identifier ||
-          s.trackingNumber === identifier
-        );
+        const [shipment] = await db.select().from(shipments).where(
+          or(eq(shipments.id, parseInt(identifier) || 0), eq(shipments.trackingNumber, identifier))
+        ).limit(1);
         return { type: "shipment", shipment, action };
       }
-      return { type: "shipments", totalShipments: allShipments.length, shipments: allShipments.slice(0, 20), action };
+      const [totalCount] = await db.select({ count: count() }).from(shipments);
+      const recentShipments = await db.select().from(shipments).limit(20);
+      return { type: "shipments", totalShipments: totalCount?.count || 0, shipments: recentShipments, action };
     }
 
     case "purchase_order": {
-      const allPOs = await db.select().from(purchaseOrders);
       if (identifier) {
-        const po = allPOs.find(p =>
-          p.id.toString() === identifier ||
-          p.poNumber === identifier
-        );
+        const [po] = await db.select().from(purchaseOrders).where(
+          or(eq(purchaseOrders.id, parseInt(identifier) || 0), eq(purchaseOrders.poNumber, identifier))
+        ).limit(1);
         if (po) {
           const items = await db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, po.id));
           return { type: "purchase_order", purchaseOrder: po, items, action };
         }
       }
-      return { type: "purchase_orders", totalPOs: allPOs.length, purchaseOrders: allPOs.slice(0, 20), action };
+      const [totalCount] = await db.select({ count: count() }).from(purchaseOrders);
+      const recentPOs = await db.select().from(purchaseOrders).limit(20);
+      return { type: "purchase_orders", totalPOs: totalCount?.count || 0, purchaseOrders: recentPOs, action };
     }
 
     case "work_order": {
-      const allWOs = await db.select().from(workOrders);
       if (identifier) {
-        const wo = allWOs.find(w =>
-          w.id.toString() === identifier ||
-          w.workOrderNumber === identifier
-        );
+        const [wo] = await db.select().from(workOrders).where(
+          or(eq(workOrders.id, parseInt(identifier) || 0), eq(workOrders.workOrderNumber, identifier))
+        ).limit(1);
         return { type: "work_order", workOrder: wo, action };
       }
-      return { type: "work_orders", totalWOs: allWOs.length, workOrders: allWOs.slice(0, 20), action };
+      const [totalCount] = await db.select({ count: count() }).from(workOrders);
+      const recentWOs = await db.select().from(workOrders).limit(20);
+      return { type: "work_orders", totalWOs: totalCount?.count || 0, workOrders: recentWOs, action };
     }
 
     default:
@@ -1093,11 +1094,9 @@ async function executeGenerateReport(params: any, ctx: AIAgentContext): Promise<
 
   switch (reportType) {
     case "sales_summary": {
-      const salesOrders = await db.select().from(orders);
-      const filteredOrders = salesOrders.filter(o => {
-        const orderDate = new Date(o.createdAt || 0);
-        return orderDate >= startDate && orderDate <= endDate;
-      });
+      // Use database WHERE clause instead of loading all orders into memory
+      const filteredOrders = await db.select().from(orders)
+        .where(and(gte(orders.createdAt, startDate), lte(orders.createdAt, endDate)));
 
       const totalRevenue = filteredOrders.reduce((sum, o) => sum + parseFloat(o.totalAmount || "0"), 0);
 
@@ -1111,49 +1110,74 @@ async function executeGenerateReport(params: any, ctx: AIAgentContext): Promise<
     }
 
     case "inventory_status": {
-      const allInventory = await db.select().from(inventory);
-      const lowStock = allInventory.filter(i => parseFloat(i.quantity?.toString() || "0") < 10);
+      // Use DB aggregation instead of loading entire table
+      const [totalCount] = await db.select({ count: count() }).from(inventory);
+      const [lowStockCount] = await db.select({ count: count() }).from(inventory)
+        .where(lt(sql`CAST(${inventory.quantity} AS DECIMAL)`, 10));
+      const items = format === "detailed"
+        ? await db.select().from(inventory)
+        : await db.select().from(inventory).limit(10);
 
       return {
         reportType: "inventory_status",
-        totalItems: allInventory.length,
-        lowStockItems: lowStock.length,
-        items: format === "detailed" ? allInventory : allInventory.slice(0, 10),
+        totalItems: totalCount?.count || 0,
+        lowStockItems: lowStockCount?.count || 0,
+        items,
       };
     }
 
     case "vendor_performance": {
-      const allVendors = await db.select().from(vendors);
-      const allPOs = await db.select().from(purchaseOrders);
+      // Use GROUP BY at DB level instead of loading all POs into memory
+      const vendorPOStats = await db.select({
+        vendorId: purchaseOrders.vendorId,
+        totalPOs: count(),
+        totalSpent: sum(purchaseOrders.totalAmount),
+      }).from(purchaseOrders)
+        .groupBy(purchaseOrders.vendorId);
 
-      const vendorStats = allVendors.map(v => {
-        const vendorPOs = allPOs.filter(po => po.vendorId === v.id);
-        return {
-          vendorId: v.id,
-          vendorName: v.name,
-          totalPOs: vendorPOs.length,
-          totalSpent: vendorPOs.reduce((sum, po) => sum + parseFloat(po.totalAmount || "0"), 0).toFixed(2),
-        };
-      });
+      const vendorIds = vendorPOStats.map(s => s.vendorId).filter((id): id is number => id != null);
+      const vendorList = vendorIds.length > 0
+        ? await db.select().from(vendors).where(inArray(vendors.id, vendorIds))
+        : [];
+      const vendorMap = new Map(vendorList.map(v => [v.id, v]));
+
+      const vendorStats = vendorPOStats
+        .filter(s => s.vendorId != null)
+        .map(s => ({
+          vendorId: s.vendorId!,
+          vendorName: vendorMap.get(s.vendorId!)?.name || 'Unknown',
+          totalPOs: s.totalPOs,
+          totalSpent: parseFloat(s.totalSpent || "0").toFixed(2),
+        }))
+        .sort((a, b) => parseFloat(b.totalSpent) - parseFloat(a.totalSpent));
 
       return {
         reportType: "vendor_performance",
-        vendors: vendorStats.sort((a, b) => parseFloat(b.totalSpent) - parseFloat(a.totalSpent)),
+        vendors: vendorStats,
       };
     }
 
     case "financial_overview": {
-      const allInvoices = await db.select().from(invoices);
-      const paidInvoices = allInvoices.filter(i => i.status === "paid");
-      const pendingInvoices = allInvoices.filter(i => i.status === "pending" || i.status === "sent");
+      // Use DB aggregation instead of loading all invoices into memory
+      const [totals] = await db.select({
+        totalInvoices: count(),
+        totalBilled: sum(invoices.totalAmount),
+      }).from(invoices);
+      const [paidTotals] = await db.select({
+        count: count(),
+        totalCollected: sum(invoices.totalAmount),
+      }).from(invoices).where(eq(invoices.status, "paid"));
+      const [pendingTotals] = await db.select({
+        count: count(),
+      }).from(invoices).where(or(eq(invoices.status, "pending"), eq(invoices.status, "sent")));
 
       return {
         reportType: "financial_overview",
-        totalInvoices: allInvoices.length,
-        paidInvoices: paidInvoices.length,
-        pendingInvoices: pendingInvoices.length,
-        totalBilled: allInvoices.reduce((sum, i) => sum + parseFloat(i.totalAmount || "0"), 0).toFixed(2),
-        totalCollected: paidInvoices.reduce((sum, i) => sum + parseFloat(i.totalAmount || "0"), 0).toFixed(2),
+        totalInvoices: totals?.totalInvoices || 0,
+        paidInvoices: paidTotals?.count || 0,
+        pendingInvoices: pendingTotals?.count || 0,
+        totalBilled: parseFloat(totals?.totalBilled || "0").toFixed(2),
+        totalCollected: parseFloat(paidTotals?.totalCollected || "0").toFixed(2),
       };
     }
 

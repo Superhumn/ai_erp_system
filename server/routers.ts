@@ -27,7 +27,6 @@ import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refresh
 import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
-import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -966,8 +965,7 @@ export const appRouter = router({
           const reorderLevel = parseFloat(oldInventory.reorderLevel || '0');
 
           if (newQty <= reorderLevel && newQty > 0) {
-            const allUsers = await db.getAllUsers();
-            const opsUsers = allUsers.filter(u => ['admin', 'ops', 'exec'].includes(u.role));
+            const opsUsers = await db.getUsersByRoles(['admin', 'ops', 'exec']);
             const product = await db.getProductById(oldInventory.productId);
 
             await db.notifyUsersOfEvent({
@@ -1036,8 +1034,7 @@ export const appRouter = router({
         // Check for low stock alerts on quantity adjustments
         if (action === 'adjust_quantity' && data.quantityAdjustment !== undefined) {
           const updatedItems = await db.getInventoryByIds(ids);
-          const allUsers = await db.getAllUsers();
-          const opsUsers = allUsers.filter(u => ['admin', 'ops', 'exec'].includes(u.role));
+          const opsUsers = await db.getUsersByRoles(['admin', 'ops', 'exec']);
 
           for (const item of updatedItems) {
             const qty = parseFloat(item.quantity || '0');
@@ -1062,8 +1059,8 @@ export const appRouter = router({
         return {
           success: true,
           results,
-          totalUpdated: results.filter(r => r.success).length,
-          totalFailed: results.filter(r => !r.success).length,
+          totalUpdated: results.reduce((n, r) => n + (r.success ? 1 : 0), 0),
+          totalFailed: results.reduce((n, r) => n + (r.success ? 0 : 1), 0),
         };
       }),
     // Get pending inventory from POs (on order or in transit)
@@ -1468,9 +1465,8 @@ export const appRouter = router({
             data.status === 'confirmed' ? 'po_approved' as const :
             data.status === 'partial' ? 'po_received' as const : 'system' as const;
           
-          const allUsers = await db.getAllUsers();
-          const opsUsers = allUsers.filter(u => ['admin', 'ops', 'exec'].includes(u.role));
-          
+          const opsUsers = await db.getUsersByRoles(['admin', 'ops', 'exec']);
+
           await db.notifyUsersOfEvent({
             type: notificationType,
             title: `PO ${oldPO?.poNumber} ${data.status}`,
@@ -1700,9 +1696,8 @@ export const appRouter = router({
         
         // Create notification for shipment status changes
         if (data.status && oldShipment?.status !== data.status) {
-          const allUsers = await db.getAllUsers();
-          const opsUsers = allUsers.filter(u => ['admin', 'ops', 'exec'].includes(u.role));
-          
+          const opsUsers = await db.getUsersByRoles(['admin', 'ops', 'exec']);
+
           await db.notifyUsersOfEvent({
             type: 'shipping_update',
             title: `Shipment ${oldShipment?.shipmentNumber} ${data.status}`,
@@ -4266,32 +4261,35 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
                 const material = taskData.rawMaterialId ? await db.getRawMaterialById(taskData.rawMaterialId) : null;
                 const vendorIds = taskData.vendorIds || [];
                 const emailsSent: string[] = [];
-                
-                for (const vendorId of vendorIds) {
-                  const vendor = await db.getVendorById(vendorId);
-                  if (vendor && vendor.email) {
-                    const emailResult = await sendEmail({
-                      to: vendor.email,
-                      subject: `Request for Quote: ${material?.name || 'Materials'}`,
-                      html: `
-                        <p>Dear ${vendor.contactName || vendor.name},</p>
-                        <p>We are requesting a quote for the following:</p>
-                        <ul>
-                          <li><strong>Material:</strong> ${material?.name || 'Various materials'}</li>
-                          <li><strong>SKU:</strong> ${material?.sku || 'N/A'}</li>
-                          <li><strong>Quantity:</strong> ${taskData.quantity} ${material?.unit || 'units'}</li>
-                          <li><strong>Required By:</strong> ${taskData.requiredDate || 'ASAP'}</li>
-                        </ul>
-                        <p>Please reply with your best price and lead time.</p>
-                        <p>Best regards,<br/>Procurement Team</p>
-                      `,
-                    });
-                    if (emailResult.success) {
-                      emailsSent.push(vendor.email);
-                    }
-                  }
-                }
-                
+
+                // Batch load all vendors instead of N+1
+                const vendorsForRfq = vendorIds.length > 0
+                  ? await db.getVendorsByIds(vendorIds)
+                  : [];
+
+                // Send emails in parallel
+                const emailPromises = vendorsForRfq
+                  .filter(vendor => vendor.email)
+                  .map(vendor => sendEmail({
+                    to: vendor.email!,
+                    subject: `Request for Quote: ${material?.name || 'Materials'}`,
+                    html: `
+                      <p>Dear ${vendor.contactName || vendor.name},</p>
+                      <p>We are requesting a quote for the following:</p>
+                      <ul>
+                        <li><strong>Material:</strong> ${material?.name || 'Various materials'}</li>
+                        <li><strong>SKU:</strong> ${material?.sku || 'N/A'}</li>
+                        <li><strong>Quantity:</strong> ${taskData.quantity} ${material?.unit || 'units'}</li>
+                        <li><strong>Required By:</strong> ${taskData.requiredDate || 'ASAP'}</li>
+                      </ul>
+                      <p>Please reply with your best price and lead time.</p>
+                      <p>Best regards,<br/>Procurement Team</p>
+                    `,
+                  }).then(r => r.success ? vendor.email! : null));
+
+                const results = await Promise.all(emailPromises);
+                emailsSent.push(...results.filter((e): e is string => e !== null));
+
                 result = { rfqSent: true, vendorCount: vendorIds.length, emailsSent };
                 break;
               }
@@ -6258,23 +6256,12 @@ Provide a brief status summary, any missing documents, and next steps.`;
         
         // Get recent POs for this material to find most used vendor
         const allPOs = await db.getPurchaseOrders({});
-        
-        // Get all PO items by fetching items for each PO
-        const allPOItems: Array<{
-          id: number;
-          purchaseOrderId: number;
-          description: string;
-          unitPrice: string;
-          totalAmount: string;
-        }> = [];
-        
-        for (const po of allPOs) {
-          const items = await db.getPurchaseOrderItems(po.id);
-          allPOItems.push(...items);
-        }
-        
-        // Find PO items that reference this material (using purchaseOrderId and description)
-        const materialPOItems = allPOItems.filter(item => 
+
+        // Single query to get all PO items with matching description (avoids N+1 per-PO loop)
+        const allPOItems = await db.getAllPurchaseOrderItems();
+
+        // Find PO items that reference this material (using description match)
+        const materialPOItems = allPOItems.filter(item =>
           item.description?.toLowerCase().includes(material!.name?.toLowerCase() || '')
         );
         
@@ -6481,9 +6468,8 @@ Provide a brief status summary, any missing documents, and next steps.`;
         });
         
         // Create notification for work order completion
-        const allUsers = await db.getAllUsers();
-        const opsUsers = allUsers.filter(u => ['admin', 'ops', 'exec'].includes(u.role));
-        
+        const opsUsers = await db.getUsersByRoles(['admin', 'ops', 'exec']);
+
         await db.notifyUsersOfEvent({
           type: 'work_order_completed',
           title: `Work Order ${workOrder.workOrderNumber} Completed`,
