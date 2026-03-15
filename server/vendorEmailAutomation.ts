@@ -179,29 +179,32 @@ export async function sendBulkEmail(request: BulkEmailRequest): Promise<EmailAut
   let sent = 0;
   let failed = 0;
 
-  for (const recipientId of request.recipientIds) {
-    let name = "";
-    let email = "";
-
-    if (request.recipientType === "vendor") {
-      const vendor = await db.getVendorById(recipientId);
-      if (!vendor?.email) {
-        details.push({ recipientId, recipientName: vendor?.name || "Unknown", email: "", success: false, error: "No email" });
-        failed++;
-        continue;
+  // Batch-load all recipients upfront to avoid N+1 queries
+  const recipientMap = new Map<number, { name: string; email: string }>();
+  if (request.recipientType === "vendor") {
+    const allVendors = await db.getVendors();
+    for (const v of allVendors) {
+      if (request.recipientIds.includes(v.id)) {
+        recipientMap.set(v.id, { name: v.contactName || v.name, email: v.email || "" });
       }
-      name = vendor.contactName || vendor.name;
-      email = vendor.email;
-    } else {
-      const customer = await db.getCustomerById(recipientId);
-      if (!customer?.email) {
-        details.push({ recipientId, recipientName: customer?.name || "Unknown", email: "", success: false, error: "No email" });
-        failed++;
-        continue;
-      }
-      name = customer.name;
-      email = customer.email;
     }
+  } else {
+    const allCustomers = await db.getCustomers();
+    for (const c of allCustomers) {
+      if (request.recipientIds.includes(c.id)) {
+        recipientMap.set(c.id, { name: c.name, email: c.email || "" });
+      }
+    }
+  }
+
+  for (const recipientId of request.recipientIds) {
+    const recipient = recipientMap.get(recipientId);
+    if (!recipient?.email) {
+      details.push({ recipientId, recipientName: recipient?.name || "Unknown", email: "", success: false, error: "No email" });
+      failed++;
+      continue;
+    }
+    const { name, email } = recipient;
 
     // Personalize body with recipient name
     const personalizedBody = request.body.replace(/\{name\}/gi, name);
@@ -247,8 +250,10 @@ export async function checkAndSendPoFollowups(triggeredBy?: number): Promise<{
   let followUpsSent = 0;
 
   // Get POs that are sent or confirmed but past expected date
-  const sentPOs = await db.getPurchaseOrders({ status: "sent" });
-  const confirmedPOs = await db.getPurchaseOrders({ status: "confirmed" });
+  const [sentPOs, confirmedPOs] = await Promise.all([
+    db.getPurchaseOrders({ status: "sent" }),
+    db.getPurchaseOrders({ status: "confirmed" }),
+  ]);
   const allOpenPOs = [...sentPOs, ...confirmedPOs];
   const now = new Date();
 

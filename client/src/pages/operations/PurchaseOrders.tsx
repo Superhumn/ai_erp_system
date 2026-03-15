@@ -31,7 +31,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SelectWithCreate } from "@/components/ui/select-with-create";
-import { ClipboardList, Plus, Search, Loader2, Sparkles, Send } from "lucide-react";
+import { ClipboardList, Plus, Search, Loader2, Sparkles, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -130,6 +130,53 @@ export default function PurchaseOrders() {
       setActiveAction(null);
     },
   });
+
+  function addLineItem() {
+    setLineItems([...lineItems, { description: "", quantity: "", unitPrice: "", totalAmount: "" }]);
+  }
+
+  function removeLineItem(index: number) {
+    setLineItems(lineItems.filter((_, i) => i !== index));
+  }
+
+  function updateLineItem(index: number, field: keyof LineItem, value: string) {
+    const updated = [...lineItems];
+    updated[index] = { ...updated[index], [field]: value };
+    if (field === "quantity" || field === "unitPrice") {
+      const qty = parseFloat(updated[index].quantity || "0");
+      const price = parseFloat(updated[index].unitPrice || "0");
+      updated[index].totalAmount = (qty * price).toFixed(2);
+    }
+    setLineItems(updated);
+  }
+
+  function selectProduct(index: number, productIdStr: string) {
+    const productId = parseInt(productIdStr);
+    const product = products?.find((p) => p.id === productId);
+    if (product) {
+      const updated = [...lineItems];
+      updated[index] = {
+        ...updated[index],
+        productId,
+        description: product.name,
+        unitPrice: product.unitPrice || "0",
+        totalAmount: (parseFloat(updated[index].quantity || "0") * parseFloat(product.unitPrice || "0")).toFixed(2),
+      };
+      setLineItems(updated);
+    }
+  }
+
+  function calculateTotals() {
+    const subtotal = lineItems.reduce((sum, item) => sum + parseFloat(item.totalAmount || "0"), 0);
+    return { subtotal, total: subtotal };
+  }
+
+  function resetForm() {
+    setFormData({ vendorId: 0, expectedDeliveryDate: "", notes: "" });
+    setLineItems([]);
+  }
+
+  const totals = calculateTotals();
 
   const filteredPOs = purchaseOrders?.filter((po) => {
     const matchesSearch = po.poNumber.toLowerCase().includes(search.toLowerCase());
@@ -366,9 +413,9 @@ export default function PurchaseOrders() {
           <DialogContent>
             <form onSubmit={handleSubmit}>
               <DialogHeader>
-                <DialogTitle>Create PO from Text</DialogTitle>
+                <DialogTitle>Create Purchase Order</DialogTitle>
                 <DialogDescription>
-                  Describe what you want to order in plain text, and we'll create a PO for you.
+                  Fill in the details below to create a new purchase order.
                 </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">

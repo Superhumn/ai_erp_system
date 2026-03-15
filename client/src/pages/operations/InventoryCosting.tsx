@@ -144,8 +144,10 @@ export default function InventoryCosting() {
     setCogsRevenue("");
   }
 
+  const productMap = new Map(products?.map((p: any) => [p.id, p]) ?? []);
+
   function getProductName(productId: number): string {
-    const product = products?.find((p: any) => p.id === productId);
+    const product = productMap.get(productId);
     return product ? `${product.name} (${product.sku})` : `Product #${productId}`;
   }
 

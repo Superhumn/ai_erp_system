@@ -118,9 +118,17 @@ export async function findVendorForMaterial(materialName: string) {
   // Try fuzzy match using a DB LIKE query to avoid loading all materials into memory
   const matchedMaterials = await db.getRawMaterials({ searchTerm: materialName, limit: 10 });
 
+  // Batch-load all preferred vendors to avoid N+1 queries
+  const vendorIds = [...new Set(matchedMaterials.filter(m => m.preferredVendorId).map(m => m.preferredVendorId!))];
+  const vendorMap = new Map<number, Awaited<ReturnType<typeof db.getVendorById>>>();
+  await Promise.all(vendorIds.map(async (id) => {
+    const v = await db.getVendorById(id);
+    if (v) vendorMap.set(id, v);
+  }));
+
   for (const material of matchedMaterials) {
     if (material.preferredVendorId) {
-      const vendor = await db.getVendorById(material.preferredVendorId);
+      const vendor = vendorMap.get(material.preferredVendorId);
       if (vendor) {
         return {
           vendorId: vendor.id,
@@ -230,18 +238,18 @@ export async function createPOFromPreview(
     status: "draft",
   });
 
-  // Create PO items
+  // Create PO items concurrently
   if (preview.items && preview.items.length > 0) {
-    for (const item of preview.items) {
-      await db.createPurchaseOrderItem({
+    await Promise.all(preview.items.map((item) =>
+      db.createPurchaseOrderItem({
         purchaseOrderId: result.id,
         description: item.description,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
         totalAmount: item.totalAmount,
         productId: item.rawMaterialId || undefined,
-      });
-    }
+      })
+    ));
   }
 
   return { ...result, poNumber, status: "draft" as const };
