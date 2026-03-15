@@ -5074,3 +5074,339 @@ export type EdiSettings = typeof ediSettings.$inferSelect;
 export type InsertEdiSettings = typeof ediSettings.$inferInsert;
 export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
 export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
+
+// ============================================
+// TIME & ATTENDANCE
+// ============================================
+
+// Timesheets - weekly/biweekly timesheet records per employee
+export const timesheets = mysqlTable("timesheets", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  employeeId: int("employeeId").notNull(),
+  periodStart: timestamp("periodStart").notNull(),
+  periodEnd: timestamp("periodEnd").notNull(),
+  status: mysqlEnum("status", ["draft", "submitted", "approved", "rejected"]).default("draft").notNull(),
+  totalRegularHours: decimal("totalRegularHours", { precision: 8, scale: 2 }).default("0"),
+  totalOvertimeHours: decimal("totalOvertimeHours", { precision: 8, scale: 2 }).default("0"),
+  submittedAt: timestamp("submittedAt"),
+  approvedBy: int("approvedBy"),
+  approvedAt: timestamp("approvedAt"),
+  rejectionReason: text("rejectionReason"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Timesheet = typeof timesheets.$inferSelect;
+export type InsertTimesheet = typeof timesheets.$inferInsert;
+
+// Time entries - individual clock-in/out records
+export const timeEntries = mysqlTable("time_entries", {
+  id: int("id").autoincrement().primaryKey(),
+  timesheetId: int("timesheetId"),
+  employeeId: int("employeeId").notNull(),
+  companyId: int("companyId"),
+  date: timestamp("date").notNull(),
+  clockIn: timestamp("clockIn").notNull(),
+  clockOut: timestamp("clockOut"),
+  breakMinutes: int("breakMinutes").default(0),
+  regularHours: decimal("regularHours", { precision: 8, scale: 2 }),
+  overtimeHours: decimal("overtimeHours", { precision: 8, scale: 2 }).default("0"),
+  entryType: mysqlEnum("entryType", ["regular", "overtime", "holiday", "sick", "vacation", "unpaid"]).default("regular").notNull(),
+  departmentId: int("departmentId"),
+  projectId: int("projectId"),
+  description: text("description"),
+  isManualEntry: boolean("isManualEntry").default(false),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type TimeEntry = typeof timeEntries.$inferSelect;
+export type InsertTimeEntry = typeof timeEntries.$inferInsert;
+
+// Overtime rules - configurable overtime calculation rules
+export const overtimeRules = mysqlTable("overtime_rules", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  dailyThresholdHours: decimal("dailyThresholdHours", { precision: 4, scale: 2 }).default("8"),
+  weeklyThresholdHours: decimal("weeklyThresholdHours", { precision: 5, scale: 2 }).default("40"),
+  overtimeMultiplier: decimal("overtimeMultiplier", { precision: 4, scale: 2 }).default("1.5"),
+  doubleOvertimeThresholdHours: decimal("doubleOvertimeThresholdHours", { precision: 4, scale: 2 }),
+  doubleOvertimeMultiplier: decimal("doubleOvertimeMultiplier", { precision: 4, scale: 2 }).default("2.0"),
+  isActive: boolean("isActive").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type OvertimeRule = typeof overtimeRules.$inferSelect;
+export type InsertOvertimeRule = typeof overtimeRules.$inferInsert;
+
+// ============================================
+// CUSTOMER SUPPORT / TICKETING
+// ============================================
+
+// Support tickets
+export const supportTickets = mysqlTable("support_tickets", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  ticketNumber: varchar("ticketNumber", { length: 64 }).notNull(),
+  customerId: int("customerId"),
+  contactEmail: varchar("contactEmail", { length: 320 }),
+  contactName: varchar("contactName", { length: 255 }),
+  subject: varchar("subject", { length: 500 }).notNull(),
+  description: text("description").notNull(),
+  category: mysqlEnum("category", ["general", "billing", "technical", "shipping", "returns", "product", "other"]).default("general").notNull(),
+  priority: mysqlEnum("priority", ["low", "medium", "high", "urgent"]).default("medium").notNull(),
+  status: mysqlEnum("status", ["open", "in_progress", "waiting_on_customer", "waiting_on_internal", "resolved", "closed"]).default("open").notNull(),
+  assignedTo: int("assignedTo"),
+  assignedTeam: varchar("assignedTeam", { length: 128 }),
+  relatedOrderId: int("relatedOrderId"),
+  relatedInvoiceId: int("relatedInvoiceId"),
+  slaDeadline: timestamp("slaDeadline"),
+  firstResponseAt: timestamp("firstResponseAt"),
+  resolvedAt: timestamp("resolvedAt"),
+  closedAt: timestamp("closedAt"),
+  satisfactionRating: int("satisfactionRating"),
+  satisfactionComment: text("satisfactionComment"),
+  tags: text("tags"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SupportTicket = typeof supportTickets.$inferSelect;
+export type InsertSupportTicket = typeof supportTickets.$inferInsert;
+
+// Ticket comments / replies
+export const ticketComments = mysqlTable("ticket_comments", {
+  id: int("id").autoincrement().primaryKey(),
+  ticketId: int("ticketId").notNull(),
+  authorId: int("authorId"),
+  authorType: mysqlEnum("authorType", ["agent", "customer", "system"]).default("agent").notNull(),
+  content: text("content").notNull(),
+  isInternal: boolean("isInternal").default(false),
+  attachments: text("attachments"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type TicketComment = typeof ticketComments.$inferSelect;
+export type InsertTicketComment = typeof ticketComments.$inferInsert;
+
+// SLA policies
+export const slaPolicies = mysqlTable("sla_policies", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  priority: mysqlEnum("priority", ["low", "medium", "high", "urgent"]).notNull(),
+  firstResponseMinutes: int("firstResponseMinutes").notNull(),
+  resolutionMinutes: int("resolutionMinutes").notNull(),
+  escalationMinutes: int("escalationMinutes"),
+  escalateTo: int("escalateTo"),
+  isActive: boolean("isActive").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SlaPolicy = typeof slaPolicies.$inferSelect;
+export type InsertSlaPolicy = typeof slaPolicies.$inferInsert;
+
+// ============================================
+// MULTI-CURRENCY EXCHANGE RATES
+// ============================================
+
+// Currencies - supported currencies
+export const currencies = mysqlTable("currencies", {
+  id: int("id").autoincrement().primaryKey(),
+  code: varchar("code", { length: 3 }).notNull().unique(),
+  name: varchar("name", { length: 128 }).notNull(),
+  symbol: varchar("symbol", { length: 8 }),
+  decimalPlaces: int("decimalPlaces").default(2),
+  isActive: boolean("isActive").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type Currency = typeof currencies.$inferSelect;
+export type InsertCurrency = typeof currencies.$inferInsert;
+
+// Exchange rates - historical and current rates
+export const exchangeRates = mysqlTable("exchange_rates", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  fromCurrency: varchar("fromCurrency", { length: 3 }).notNull(),
+  toCurrency: varchar("toCurrency", { length: 3 }).notNull(),
+  rate: decimal("rate", { precision: 18, scale: 8 }).notNull(),
+  effectiveDate: timestamp("effectiveDate").notNull(),
+  expiresDate: timestamp("expiresDate"),
+  source: mysqlEnum("source", ["manual", "api", "bank"]).default("manual").notNull(),
+  isActive: boolean("isActive").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ExchangeRate = typeof exchangeRates.$inferSelect;
+export type InsertExchangeRate = typeof exchangeRates.$inferInsert;
+
+// Currency conversion log - audit trail of conversions
+export const currencyConversions = mysqlTable("currency_conversions", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  fromCurrency: varchar("fromCurrency", { length: 3 }).notNull(),
+  toCurrency: varchar("toCurrency", { length: 3 }).notNull(),
+  fromAmount: decimal("fromAmount", { precision: 15, scale: 2 }).notNull(),
+  toAmount: decimal("toAmount", { precision: 15, scale: 2 }).notNull(),
+  rateUsed: decimal("rateUsed", { precision: 18, scale: 8 }).notNull(),
+  entityType: varchar("entityType", { length: 64 }),
+  entityId: int("entityId"),
+  convertedAt: timestamp("convertedAt").defaultNow().notNull(),
+});
+
+export type CurrencyConversion = typeof currencyConversions.$inferSelect;
+export type InsertCurrencyConversion = typeof currencyConversions.$inferInsert;
+
+// ============================================
+// CUSTOM REPORT BUILDER
+// ============================================
+
+// Report definitions - user-created report templates
+export const reportDefinitions = mysqlTable("report_definitions", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  createdBy: int("createdBy").notNull(),
+  dataSource: mysqlEnum("dataSource", [
+    "customers", "vendors", "orders", "invoices", "payments",
+    "inventory", "purchase_orders", "employees", "tickets",
+    "time_entries", "products", "shipments"
+  ]).notNull(),
+  columns: text("columns").notNull(),
+  filters: text("filters"),
+  groupBy: text("groupBy"),
+  sortBy: text("sortBy"),
+  chartType: mysqlEnum("chartType", ["none", "bar", "line", "pie", "area", "table"]).default("table"),
+  isPublic: boolean("isPublic").default(false),
+  isFavorite: boolean("isFavorite").default(false),
+  lastRunAt: timestamp("lastRunAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ReportDefinition = typeof reportDefinitions.$inferSelect;
+export type InsertReportDefinition = typeof reportDefinitions.$inferInsert;
+
+// Report schedules - automated report delivery
+export const reportSchedules = mysqlTable("report_schedules", {
+  id: int("id").autoincrement().primaryKey(),
+  reportId: int("reportId").notNull(),
+  frequency: mysqlEnum("frequency", ["daily", "weekly", "monthly", "quarterly"]).notNull(),
+  dayOfWeek: int("dayOfWeek"),
+  dayOfMonth: int("dayOfMonth"),
+  recipients: text("recipients").notNull(),
+  format: mysqlEnum("format", ["csv", "pdf", "xlsx"]).default("csv").notNull(),
+  isActive: boolean("isActive").default(true),
+  lastSentAt: timestamp("lastSentAt"),
+  nextSendAt: timestamp("nextSendAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ReportSchedule = typeof reportSchedules.$inferSelect;
+export type InsertReportSchedule = typeof reportSchedules.$inferInsert;
+
+// Report execution history
+export const reportExecutions = mysqlTable("report_executions", {
+  id: int("id").autoincrement().primaryKey(),
+  reportId: int("reportId").notNull(),
+  executedBy: int("executedBy"),
+  status: mysqlEnum("status", ["running", "completed", "failed"]).default("running").notNull(),
+  rowCount: int("rowCount"),
+  executionTimeMs: int("executionTimeMs"),
+  resultData: text("resultData"),
+  errorMessage: text("errorMessage"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ReportExecution = typeof reportExecutions.$inferSelect;
+export type InsertReportExecution = typeof reportExecutions.$inferInsert;
+
+// ============================================
+// APPROVAL WORKFLOW BUILDER
+// ============================================
+
+// Approval workflow templates - configurable workflow definitions
+export const approvalWorkflows = mysqlTable("approval_workflows", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  entityType: mysqlEnum("entityType", [
+    "purchase_order", "invoice", "expense", "contract",
+    "timesheet", "leave_request", "vendor", "customer",
+    "price_change", "budget", "custom"
+  ]).notNull(),
+  triggerConditions: text("triggerConditions"),
+  isActive: boolean("isActive").default(true),
+  createdBy: int("createdBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ApprovalWorkflow = typeof approvalWorkflows.$inferSelect;
+export type InsertApprovalWorkflow = typeof approvalWorkflows.$inferInsert;
+
+// Approval workflow steps - ordered steps within a workflow
+export const approvalWorkflowSteps = mysqlTable("approval_workflow_steps", {
+  id: int("id").autoincrement().primaryKey(),
+  workflowId: int("workflowId").notNull(),
+  stepOrder: int("stepOrder").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  approverType: mysqlEnum("approverType", ["user", "role", "department_head", "manager"]).notNull(),
+  approverId: int("approverId"),
+  approverRole: varchar("approverRole", { length: 64 }),
+  approvalType: mysqlEnum("approvalType", ["any_one", "all", "majority"]).default("any_one").notNull(),
+  autoApproveBelow: decimal("autoApproveBelow", { precision: 15, scale: 2 }),
+  autoRejectAbove: decimal("autoRejectAbove", { precision: 15, scale: 2 }),
+  timeoutHours: int("timeoutHours"),
+  timeoutAction: mysqlEnum("timeoutAction", ["escalate", "auto_approve", "auto_reject"]).default("escalate"),
+  conditions: text("conditions"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ApprovalWorkflowStep = typeof approvalWorkflowSteps.$inferSelect;
+export type InsertApprovalWorkflowStep = typeof approvalWorkflowSteps.$inferInsert;
+
+// Approval requests - instances of approval workflows
+export const approvalRequests = mysqlTable("approval_requests", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  workflowId: int("workflowId").notNull(),
+  entityType: varchar("entityType", { length: 64 }).notNull(),
+  entityId: int("entityId").notNull(),
+  requestedBy: int("requestedBy").notNull(),
+  currentStepId: int("currentStepId"),
+  status: mysqlEnum("status", ["pending", "in_progress", "approved", "rejected", "cancelled", "escalated"]).default("pending").notNull(),
+  totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }),
+  notes: text("notes"),
+  completedAt: timestamp("completedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ApprovalRequest = typeof approvalRequests.$inferSelect;
+export type InsertApprovalRequest = typeof approvalRequests.$inferInsert;
+
+// Approval decisions - individual approver decisions per step
+export const approvalDecisions = mysqlTable("approval_decisions", {
+  id: int("id").autoincrement().primaryKey(),
+  requestId: int("requestId").notNull(),
+  stepId: int("stepId").notNull(),
+  decidedBy: int("decidedBy").notNull(),
+  decision: mysqlEnum("decision", ["approved", "rejected", "delegated", "abstained"]).notNull(),
+  delegatedTo: int("delegatedTo"),
+  comments: text("comments"),
+  decidedAt: timestamp("decidedAt").defaultNow().notNull(),
+});
+
+export type ApprovalDecision = typeof approvalDecisions.$inferSelect;
+export type InsertApprovalDecision = typeof approvalDecisions.$inferInsert;

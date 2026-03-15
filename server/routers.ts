@@ -13657,6 +13657,724 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
     }),
   }),
+
+  // ============================================
+  // TIME & ATTENDANCE
+  // ============================================
+  timeAttendance: router({
+    timesheets: router({
+      list: protectedProcedure
+        .input(z.object({ companyId: z.number().optional(), employeeId: z.number().optional() }).optional())
+        .query(({ input }) => db.getTimesheets(input?.companyId, input?.employeeId)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getTimesheetById(input.id)),
+
+      create: protectedProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          employeeId: z.number(),
+          periodStart: z.date(),
+          periodEnd: z.date(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createTimesheet(input);
+          await createAuditLog(ctx.user.id, 'create', 'timesheet', result.id);
+          return result;
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(["draft", "submitted", "approved", "rejected"]).optional(),
+          totalRegularHours: z.string().optional(),
+          totalOvertimeHours: z.string().optional(),
+          rejectionReason: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          if (data.status === "submitted") (data as any).submittedAt = new Date();
+          if (data.status === "approved") { (data as any).approvedBy = ctx.user.id; (data as any).approvedAt = new Date(); }
+          await db.updateTimesheet(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'timesheet', id);
+          return { success: true };
+        }),
+
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteTimesheet(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'timesheet', input.id);
+          return { success: true };
+        }),
+    }),
+
+    entries: router({
+      list: protectedProcedure
+        .input(z.object({ employeeId: z.number().optional(), timesheetId: z.number().optional() }).optional())
+        .query(({ input }) => db.getTimeEntries(input?.employeeId, input?.timesheetId)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getTimeEntryById(input.id)),
+
+      create: protectedProcedure
+        .input(z.object({
+          timesheetId: z.number().optional(),
+          employeeId: z.number(),
+          companyId: z.number().optional(),
+          date: z.date(),
+          clockIn: z.date(),
+          clockOut: z.date().optional(),
+          breakMinutes: z.number().optional(),
+          regularHours: z.string().optional(),
+          overtimeHours: z.string().optional(),
+          entryType: z.enum(["regular", "overtime", "holiday", "sick", "vacation", "unpaid"]).optional(),
+          departmentId: z.number().optional(),
+          projectId: z.number().optional(),
+          description: z.string().optional(),
+          isManualEntry: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createTimeEntry({ ...input, isManualEntry: true });
+          await createAuditLog(ctx.user.id, 'create', 'time_entry', result.id);
+          return result;
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          clockOut: z.date().optional(),
+          breakMinutes: z.number().optional(),
+          regularHours: z.string().optional(),
+          overtimeHours: z.string().optional(),
+          entryType: z.enum(["regular", "overtime", "holiday", "sick", "vacation", "unpaid"]).optional(),
+          description: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateTimeEntry(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'time_entry', id);
+          return { success: true };
+        }),
+
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteTimeEntry(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'time_entry', input.id);
+          return { success: true };
+        }),
+
+      clockIn: protectedProcedure
+        .input(z.object({ employeeId: z.number(), companyId: z.number().optional() }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.clockIn(input.employeeId, input.companyId);
+          await createAuditLog(ctx.user.id, 'create', 'clock_in', result.id);
+          return result;
+        }),
+
+      clockOut: protectedProcedure
+        .input(z.object({ entryId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.clockOut(input.entryId);
+          await createAuditLog(ctx.user.id, 'update', 'clock_out', input.entryId);
+          return result;
+        }),
+    }),
+
+    overtimeRules: router({
+      list: protectedProcedure
+        .input(z.object({ companyId: z.number().optional() }).optional())
+        .query(({ input }) => db.getOvertimeRules(input?.companyId)),
+
+      create: adminProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          name: z.string().min(1),
+          dailyThresholdHours: z.string().optional(),
+          weeklyThresholdHours: z.string().optional(),
+          overtimeMultiplier: z.string().optional(),
+          doubleOvertimeThresholdHours: z.string().optional(),
+          doubleOvertimeMultiplier: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createOvertimeRule(input);
+          await createAuditLog(ctx.user.id, 'create', 'overtime_rule', result.id);
+          return result;
+        }),
+
+      update: adminProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          dailyThresholdHours: z.string().optional(),
+          weeklyThresholdHours: z.string().optional(),
+          overtimeMultiplier: z.string().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateOvertimeRule(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'overtime_rule', id);
+          return { success: true };
+        }),
+
+      delete: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteOvertimeRule(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'overtime_rule', input.id);
+          return { success: true };
+        }),
+    }),
+  }),
+
+  // ============================================
+  // CUSTOMER SUPPORT / TICKETING
+  // ============================================
+  support: router({
+    tickets: router({
+      list: protectedProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          status: z.string().optional(),
+          priority: z.string().optional(),
+          assignedTo: z.number().optional(),
+          customerId: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getSupportTickets(input?.companyId, input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getSupportTicketById(input.id)),
+
+      create: protectedProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          ticketNumber: z.string(),
+          customerId: z.number().optional(),
+          contactEmail: z.string().optional(),
+          contactName: z.string().optional(),
+          subject: z.string().min(1),
+          description: z.string().min(1),
+          category: z.enum(["general", "billing", "technical", "shipping", "returns", "product", "other"]).optional(),
+          priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
+          assignedTo: z.number().optional(),
+          assignedTeam: z.string().optional(),
+          relatedOrderId: z.number().optional(),
+          relatedInvoiceId: z.number().optional(),
+          slaDeadline: z.date().optional(),
+          tags: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createSupportTicket(input);
+          await createAuditLog(ctx.user.id, 'create', 'support_ticket', result.id, input.subject);
+          return result;
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(["open", "in_progress", "waiting_on_customer", "waiting_on_internal", "resolved", "closed"]).optional(),
+          priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
+          assignedTo: z.number().optional(),
+          assignedTeam: z.string().optional(),
+          category: z.enum(["general", "billing", "technical", "shipping", "returns", "product", "other"]).optional(),
+          satisfactionRating: z.number().optional(),
+          satisfactionComment: z.string().optional(),
+          tags: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          if (data.status === "resolved") (data as any).resolvedAt = new Date();
+          if (data.status === "closed") (data as any).closedAt = new Date();
+          await db.updateSupportTicket(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'support_ticket', id);
+          return { success: true };
+        }),
+
+      delete: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteSupportTicket(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'support_ticket', input.id);
+          return { success: true };
+        }),
+
+      metrics: protectedProcedure
+        .input(z.object({ companyId: z.number().optional() }).optional())
+        .query(({ input }) => db.getTicketMetrics(input?.companyId)),
+    }),
+
+    comments: router({
+      list: protectedProcedure
+        .input(z.object({ ticketId: z.number(), includeInternal: z.boolean().optional() }))
+        .query(({ input }) => db.getTicketComments(input.ticketId, input.includeInternal)),
+
+      create: protectedProcedure
+        .input(z.object({
+          ticketId: z.number(),
+          content: z.string().min(1),
+          authorType: z.enum(["agent", "customer", "system"]).optional(),
+          isInternal: z.boolean().optional(),
+          attachments: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createTicketComment({ ...input, authorId: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'ticket_comment', result.id);
+          return result;
+        }),
+    }),
+
+    slaPolicies: router({
+      list: protectedProcedure
+        .input(z.object({ companyId: z.number().optional() }).optional())
+        .query(({ input }) => db.getSlaPolicies(input?.companyId)),
+
+      create: adminProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          name: z.string().min(1),
+          priority: z.enum(["low", "medium", "high", "urgent"]),
+          firstResponseMinutes: z.number(),
+          resolutionMinutes: z.number(),
+          escalationMinutes: z.number().optional(),
+          escalateTo: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createSlaPolicy(input);
+          await createAuditLog(ctx.user.id, 'create', 'sla_policy', result.id, input.name);
+          return result;
+        }),
+
+      update: adminProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          firstResponseMinutes: z.number().optional(),
+          resolutionMinutes: z.number().optional(),
+          escalationMinutes: z.number().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateSlaPolicy(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'sla_policy', id);
+          return { success: true };
+        }),
+
+      delete: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteSlaPolicy(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'sla_policy', input.id);
+          return { success: true };
+        }),
+    }),
+  }),
+
+  // ============================================
+  // MULTI-CURRENCY EXCHANGE RATES
+  // ============================================
+  currency: router({
+    currencies: router({
+      list: protectedProcedure
+        .input(z.object({ activeOnly: z.boolean().optional() }).optional())
+        .query(({ input }) => db.getCurrencies(input?.activeOnly)),
+
+      create: adminProcedure
+        .input(z.object({
+          code: z.string().length(3),
+          name: z.string().min(1),
+          symbol: z.string().optional(),
+          decimalPlaces: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createCurrency(input);
+          await createAuditLog(ctx.user.id, 'create', 'currency', result.id, input.code);
+          return result;
+        }),
+
+      update: adminProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          symbol: z.string().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateCurrency(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'currency', id);
+          return { success: true };
+        }),
+    }),
+
+    exchangeRates: router({
+      list: protectedProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          fromCurrency: z.string().optional(),
+          toCurrency: z.string().optional(),
+        }).optional())
+        .query(({ input }) => db.getExchangeRates(input?.companyId, input?.fromCurrency, input?.toCurrency)),
+
+      getLatest: protectedProcedure
+        .input(z.object({ fromCurrency: z.string(), toCurrency: z.string() }))
+        .query(({ input }) => db.getLatestExchangeRate(input.fromCurrency, input.toCurrency)),
+
+      create: financeProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          fromCurrency: z.string().length(3),
+          toCurrency: z.string().length(3),
+          rate: z.string(),
+          effectiveDate: z.date(),
+          expiresDate: z.date().optional(),
+          source: z.enum(["manual", "api", "bank"]).optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createExchangeRate(input);
+          await createAuditLog(ctx.user.id, 'create', 'exchange_rate', result.id, `${input.fromCurrency}/${input.toCurrency}`);
+          return result;
+        }),
+
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          rate: z.string().optional(),
+          isActive: z.boolean().optional(),
+          expiresDate: z.date().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateExchangeRate(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'exchange_rate', id);
+          return { success: true };
+        }),
+    }),
+
+    convert: protectedProcedure
+      .input(z.object({
+        fromCurrency: z.string().length(3),
+        toCurrency: z.string().length(3),
+        amount: z.number(),
+        companyId: z.number().optional(),
+        entityType: z.string().optional(),
+        entityId: z.number().optional(),
+      }))
+      .mutation(({ input }) => db.convertCurrency(input.fromCurrency, input.toCurrency, input.amount, input.companyId, input.entityType, input.entityId)),
+
+    conversions: router({
+      list: protectedProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          entityType: z.string().optional(),
+          entityId: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getCurrencyConversions(input?.companyId, input?.entityType, input?.entityId)),
+    }),
+  }),
+
+  // ============================================
+  // CUSTOM REPORT BUILDER
+  // ============================================
+  reports: router({
+    definitions: router({
+      list: protectedProcedure
+        .input(z.object({ companyId: z.number().optional(), createdBy: z.number().optional() }).optional())
+        .query(({ input }) => db.getReportDefinitions(input?.companyId, input?.createdBy)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getReportDefinitionById(input.id)),
+
+      create: protectedProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          name: z.string().min(1),
+          description: z.string().optional(),
+          dataSource: z.enum([
+            "customers", "vendors", "orders", "invoices", "payments",
+            "inventory", "purchase_orders", "employees", "tickets",
+            "time_entries", "products", "shipments",
+          ]),
+          columns: z.string(),
+          filters: z.string().optional(),
+          groupBy: z.string().optional(),
+          sortBy: z.string().optional(),
+          chartType: z.enum(["none", "bar", "line", "pie", "area", "table"]).optional(),
+          isPublic: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createReportDefinition({ ...input, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'report_definition', result.id, input.name);
+          return result;
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          description: z.string().optional(),
+          columns: z.string().optional(),
+          filters: z.string().optional(),
+          groupBy: z.string().optional(),
+          sortBy: z.string().optional(),
+          chartType: z.enum(["none", "bar", "line", "pie", "area", "table"]).optional(),
+          isPublic: z.boolean().optional(),
+          isFavorite: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateReportDefinition(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'report_definition', id);
+          return { success: true };
+        }),
+
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteReportDefinition(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'report_definition', input.id);
+          return { success: true };
+        }),
+    }),
+
+    execute: protectedProcedure
+      .input(z.object({ reportId: z.number() }))
+      .mutation(({ input, ctx }) => db.executeReport(input.reportId, ctx.user.id)),
+
+    executions: router({
+      list: protectedProcedure
+        .input(z.object({ reportId: z.number() }))
+        .query(({ input }) => db.getReportExecutions(input.reportId)),
+    }),
+
+    schedules: router({
+      list: protectedProcedure
+        .input(z.object({ reportId: z.number().optional() }).optional())
+        .query(({ input }) => db.getReportSchedules(input?.reportId)),
+
+      create: protectedProcedure
+        .input(z.object({
+          reportId: z.number(),
+          frequency: z.enum(["daily", "weekly", "monthly", "quarterly"]),
+          dayOfWeek: z.number().optional(),
+          dayOfMonth: z.number().optional(),
+          recipients: z.string(),
+          format: z.enum(["csv", "pdf", "xlsx"]).optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createReportSchedule(input);
+          await createAuditLog(ctx.user.id, 'create', 'report_schedule', result.id);
+          return result;
+        }),
+
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          frequency: z.enum(["daily", "weekly", "monthly", "quarterly"]).optional(),
+          dayOfWeek: z.number().optional(),
+          dayOfMonth: z.number().optional(),
+          recipients: z.string().optional(),
+          format: z.enum(["csv", "pdf", "xlsx"]).optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateReportSchedule(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'report_schedule', id);
+          return { success: true };
+        }),
+
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteReportSchedule(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'report_schedule', input.id);
+          return { success: true };
+        }),
+    }),
+  }),
+
+  // ============================================
+  // APPROVAL WORKFLOW BUILDER
+  // ============================================
+  approvals: router({
+    workflows: router({
+      list: protectedProcedure
+        .input(z.object({ companyId: z.number().optional() }).optional())
+        .query(({ input }) => db.getApprovalWorkflows(input?.companyId)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getApprovalWorkflowById(input.id)),
+
+      create: adminProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          name: z.string().min(1),
+          description: z.string().optional(),
+          entityType: z.enum([
+            "purchase_order", "invoice", "expense", "contract",
+            "timesheet", "leave_request", "vendor", "customer",
+            "price_change", "budget", "custom",
+          ]),
+          triggerConditions: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createApprovalWorkflow({ ...input, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'approval_workflow', result.id, input.name);
+          return result;
+        }),
+
+      update: adminProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          description: z.string().optional(),
+          triggerConditions: z.string().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateApprovalWorkflow(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'approval_workflow', id);
+          return { success: true };
+        }),
+
+      delete: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteApprovalWorkflow(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'approval_workflow', input.id);
+          return { success: true };
+        }),
+    }),
+
+    steps: router({
+      list: protectedProcedure
+        .input(z.object({ workflowId: z.number() }))
+        .query(({ input }) => db.getApprovalWorkflowSteps(input.workflowId)),
+
+      create: adminProcedure
+        .input(z.object({
+          workflowId: z.number(),
+          stepOrder: z.number(),
+          name: z.string().min(1),
+          approverType: z.enum(["user", "role", "department_head", "manager"]),
+          approverId: z.number().optional(),
+          approverRole: z.string().optional(),
+          approvalType: z.enum(["any_one", "all", "majority"]).optional(),
+          autoApproveBelow: z.string().optional(),
+          autoRejectAbove: z.string().optional(),
+          timeoutHours: z.number().optional(),
+          timeoutAction: z.enum(["escalate", "auto_approve", "auto_reject"]).optional(),
+          conditions: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createApprovalWorkflowStep(input);
+          await createAuditLog(ctx.user.id, 'create', 'approval_workflow_step', result.id, input.name);
+          return result;
+        }),
+
+      update: adminProcedure
+        .input(z.object({
+          id: z.number(),
+          stepOrder: z.number().optional(),
+          name: z.string().optional(),
+          approverType: z.enum(["user", "role", "department_head", "manager"]).optional(),
+          approverId: z.number().optional(),
+          approverRole: z.string().optional(),
+          approvalType: z.enum(["any_one", "all", "majority"]).optional(),
+          autoApproveBelow: z.string().optional(),
+          autoRejectAbove: z.string().optional(),
+          timeoutHours: z.number().optional(),
+          timeoutAction: z.enum(["escalate", "auto_approve", "auto_reject"]).optional(),
+          conditions: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateApprovalWorkflowStep(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'approval_workflow_step', id);
+          return { success: true };
+        }),
+
+      delete: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteApprovalWorkflowStep(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'approval_workflow_step', input.id);
+          return { success: true };
+        }),
+    }),
+
+    requests: router({
+      list: protectedProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          status: z.string().optional(),
+          requestedBy: z.number().optional(),
+          entityType: z.string().optional(),
+        }).optional())
+        .query(({ input }) => db.getApprovalRequests(input?.companyId, input)),
+
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getApprovalRequestById(input.id)),
+
+      create: protectedProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          workflowId: z.number(),
+          entityType: z.string(),
+          entityId: z.number(),
+          totalAmount: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createApprovalRequest({ ...input, requestedBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'approval_request', result.id);
+          return result;
+        }),
+
+      cancel: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.updateApprovalRequest(input.id, { status: "cancelled", completedAt: new Date() });
+          await createAuditLog(ctx.user.id, 'update', 'approval_request', input.id);
+          return { success: true };
+        }),
+
+      pending: protectedProcedure
+        .query(({ ctx }) => db.getPendingApprovalsForUser(ctx.user.id, ctx.user.role)),
+    }),
+
+    decisions: router({
+      list: protectedProcedure
+        .input(z.object({ requestId: z.number() }))
+        .query(({ input }) => db.getApprovalDecisions(input.requestId)),
+
+      create: protectedProcedure
+        .input(z.object({
+          requestId: z.number(),
+          stepId: z.number(),
+          decision: z.enum(["approved", "rejected", "delegated", "abstained"]),
+          delegatedTo: z.number().optional(),
+          comments: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createApprovalDecision({ ...input, decidedBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'approval_decision', result.id);
+          return result;
+        }),
+    }),
+  }),
 });
 
 // Helper function to calculate next generation date for recurring invoices

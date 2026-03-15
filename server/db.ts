@@ -118,6 +118,21 @@ import {
   // Investment grant checklists
   investmentGrantChecklists, investmentGrantItems,
   InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
+  // Time & Attendance
+  timesheets, timeEntries, overtimeRules,
+  InsertTimesheet, InsertTimeEntry, InsertOvertimeRule,
+  // Customer Support / Ticketing
+  supportTickets, ticketComments, slaPolicies,
+  InsertSupportTicket, InsertTicketComment, InsertSlaPolicy,
+  // Multi-currency Exchange Rates
+  currencies, exchangeRates, currencyConversions,
+  InsertCurrency, InsertExchangeRate, InsertCurrencyConversion,
+  // Custom Report Builder
+  reportDefinitions, reportSchedules, reportExecutions,
+  InsertReportDefinition, InsertReportSchedule, InsertReportExecution,
+  // Approval Workflow Builder
+  approvalWorkflows, approvalWorkflowSteps, approvalRequests, approvalDecisions,
+  InsertApprovalWorkflow, InsertApprovalWorkflowStep, InsertApprovalRequest, InsertApprovalDecision,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -9025,4 +9040,652 @@ export async function getVendorSpendingHistory(vendorId: number) {
     orderCount: poData[0]?.orderCount || 0,
     avgOrderValue: parseFloat(poData[0]?.avgOrderValue || '0'),
   };
+}
+
+// ============================================
+// TIME & ATTENDANCE
+// ============================================
+
+export async function getTimesheets(companyId?: number, employeeId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (companyId) conditions.push(eq(timesheets.companyId, companyId));
+  if (employeeId) conditions.push(eq(timesheets.employeeId, employeeId));
+  return db.select().from(timesheets)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(timesheets.periodStart));
+}
+
+export async function getTimesheetById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select().from(timesheets).where(eq(timesheets.id, id));
+  return row;
+}
+
+export async function createTimesheet(data: InsertTimesheet) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(timesheets).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateTimesheet(id: number, data: Partial<InsertTimesheet>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(timesheets).set(data).where(eq(timesheets.id, id));
+}
+
+export async function deleteTimesheet(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(timesheets).where(eq(timesheets.id, id));
+}
+
+export async function getTimeEntries(employeeId?: number, timesheetId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (employeeId) conditions.push(eq(timeEntries.employeeId, employeeId));
+  if (timesheetId) conditions.push(eq(timeEntries.timesheetId, timesheetId));
+  return db.select().from(timeEntries)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(timeEntries.date));
+}
+
+export async function getTimeEntryById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select().from(timeEntries).where(eq(timeEntries.id, id));
+  return row;
+}
+
+export async function createTimeEntry(data: InsertTimeEntry) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(timeEntries).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateTimeEntry(id: number, data: Partial<InsertTimeEntry>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(timeEntries).set(data).where(eq(timeEntries.id, id));
+}
+
+export async function deleteTimeEntry(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(timeEntries).where(eq(timeEntries.id, id));
+}
+
+export async function clockIn(employeeId: number, companyId?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const now = new Date();
+  const result = await db.insert(timeEntries).values({
+    employeeId,
+    companyId,
+    date: now,
+    clockIn: now,
+    entryType: "regular",
+    isManualEntry: false,
+  });
+  return { id: result[0].insertId, clockIn: now };
+}
+
+export async function clockOut(entryId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [entry] = await db.select().from(timeEntries).where(eq(timeEntries.id, entryId));
+  if (!entry || entry.clockOut) throw new Error("Invalid time entry or already clocked out");
+  const now = new Date();
+  const diffMs = now.getTime() - new Date(entry.clockIn).getTime();
+  const totalMinutes = diffMs / 60000 - (entry.breakMinutes || 0);
+  const hours = Math.round(totalMinutes / 60 * 100) / 100;
+  await db.update(timeEntries).set({
+    clockOut: now,
+    regularHours: String(Math.min(hours, 8)),
+    overtimeHours: String(Math.max(0, hours - 8)),
+  }).where(eq(timeEntries.id, entryId));
+  return { clockOut: now, totalHours: hours };
+}
+
+export async function getOvertimeRules(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) {
+    return db.select().from(overtimeRules).where(eq(overtimeRules.companyId, companyId));
+  }
+  return db.select().from(overtimeRules);
+}
+
+export async function createOvertimeRule(data: InsertOvertimeRule) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(overtimeRules).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateOvertimeRule(id: number, data: Partial<InsertOvertimeRule>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(overtimeRules).set(data).where(eq(overtimeRules.id, id));
+}
+
+export async function deleteOvertimeRule(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(overtimeRules).where(eq(overtimeRules.id, id));
+}
+
+// ============================================
+// CUSTOMER SUPPORT / TICKETING
+// ============================================
+
+export async function getSupportTickets(companyId?: number, filters?: { status?: string; priority?: string; assignedTo?: number; customerId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (companyId) conditions.push(eq(supportTickets.companyId, companyId));
+  if (filters?.status) conditions.push(eq(supportTickets.status, filters.status as any));
+  if (filters?.priority) conditions.push(eq(supportTickets.priority, filters.priority as any));
+  if (filters?.assignedTo) conditions.push(eq(supportTickets.assignedTo, filters.assignedTo));
+  if (filters?.customerId) conditions.push(eq(supportTickets.customerId, filters.customerId));
+  return db.select().from(supportTickets)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(supportTickets.createdAt));
+}
+
+export async function getSupportTicketById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select().from(supportTickets).where(eq(supportTickets.id, id));
+  return row;
+}
+
+export async function createSupportTicket(data: InsertSupportTicket) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(supportTickets).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateSupportTicket(id: number, data: Partial<InsertSupportTicket>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(supportTickets).set(data).where(eq(supportTickets.id, id));
+}
+
+export async function deleteSupportTicket(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(supportTickets).where(eq(supportTickets.id, id));
+}
+
+export async function getTicketComments(ticketId: number, includeInternal: boolean = true) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(ticketComments.ticketId, ticketId)];
+  if (!includeInternal) conditions.push(eq(ticketComments.isInternal, false));
+  return db.select().from(ticketComments)
+    .where(and(...conditions))
+    .orderBy(asc(ticketComments.createdAt));
+}
+
+export async function createTicketComment(data: InsertTicketComment) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ticketComments).values(data);
+  // Update first response time if this is the first agent reply
+  if (data.authorType === "agent") {
+    const [ticket] = await db.select().from(supportTickets).where(eq(supportTickets.id, data.ticketId));
+    if (ticket && !ticket.firstResponseAt) {
+      await db.update(supportTickets).set({ firstResponseAt: new Date() }).where(eq(supportTickets.id, data.ticketId));
+    }
+  }
+  return { id: result[0].insertId };
+}
+
+export async function getSlaPolicies(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) {
+    return db.select().from(slaPolicies).where(eq(slaPolicies.companyId, companyId));
+  }
+  return db.select().from(slaPolicies);
+}
+
+export async function createSlaPolicy(data: InsertSlaPolicy) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(slaPolicies).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateSlaPolicy(id: number, data: Partial<InsertSlaPolicy>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(slaPolicies).set(data).where(eq(slaPolicies.id, id));
+}
+
+export async function deleteSlaPolicy(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(slaPolicies).where(eq(slaPolicies.id, id));
+}
+
+export async function getTicketMetrics(companyId?: number) {
+  const db = await getDb();
+  if (!db) return { total: 0, open: 0, inProgress: 0, resolved: 0, avgResolutionMinutes: 0 };
+  const whereClause = companyId ? eq(supportTickets.companyId, companyId) : undefined;
+  const stats = await db.select({
+    total: sql<number>`COUNT(*)`,
+    open: sql<number>`SUM(CASE WHEN ${supportTickets.status} = 'open' THEN 1 ELSE 0 END)`,
+    inProgress: sql<number>`SUM(CASE WHEN ${supportTickets.status} = 'in_progress' THEN 1 ELSE 0 END)`,
+    resolved: sql<number>`SUM(CASE WHEN ${supportTickets.status} = 'resolved' THEN 1 ELSE 0 END)`,
+    avgResolutionMinutes: sql<number>`AVG(CASE WHEN ${supportTickets.resolvedAt} IS NOT NULL THEN TIMESTAMPDIFF(MINUTE, ${supportTickets.createdAt}, ${supportTickets.resolvedAt}) END)`,
+  }).from(supportTickets).where(whereClause);
+  const row = stats[0];
+  return {
+    total: Number(row?.total) || 0,
+    open: Number(row?.open) || 0,
+    inProgress: Number(row?.inProgress) || 0,
+    resolved: Number(row?.resolved) || 0,
+    avgResolutionMinutes: Number(row?.avgResolutionMinutes) || 0,
+  };
+}
+
+// ============================================
+// MULTI-CURRENCY EXCHANGE RATES
+// ============================================
+
+export async function getCurrencies(activeOnly: boolean = true) {
+  const db = await getDb();
+  if (!db) return [];
+  if (activeOnly) {
+    return db.select().from(currencies).where(eq(currencies.isActive, true));
+  }
+  return db.select().from(currencies);
+}
+
+export async function createCurrency(data: InsertCurrency) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(currencies).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateCurrency(id: number, data: Partial<InsertCurrency>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(currencies).set(data).where(eq(currencies.id, id));
+}
+
+export async function getExchangeRates(companyId?: number, fromCurrency?: string, toCurrency?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (companyId) conditions.push(eq(exchangeRates.companyId, companyId));
+  if (fromCurrency) conditions.push(eq(exchangeRates.fromCurrency, fromCurrency));
+  if (toCurrency) conditions.push(eq(exchangeRates.toCurrency, toCurrency));
+  conditions.push(eq(exchangeRates.isActive, true));
+  return db.select().from(exchangeRates)
+    .where(and(...conditions))
+    .orderBy(desc(exchangeRates.effectiveDate));
+}
+
+export async function getLatestExchangeRate(fromCurrency: string, toCurrency: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const [rate] = await db.select().from(exchangeRates)
+    .where(and(
+      eq(exchangeRates.fromCurrency, fromCurrency),
+      eq(exchangeRates.toCurrency, toCurrency),
+      eq(exchangeRates.isActive, true),
+      lte(exchangeRates.effectiveDate, new Date()),
+    ))
+    .orderBy(desc(exchangeRates.effectiveDate))
+    .limit(1);
+  return rate;
+}
+
+export async function createExchangeRate(data: InsertExchangeRate) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(exchangeRates).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateExchangeRate(id: number, data: Partial<InsertExchangeRate>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(exchangeRates).set(data).where(eq(exchangeRates.id, id));
+}
+
+export async function convertCurrency(fromCurrency: string, toCurrency: string, amount: number, companyId?: number, entityType?: string, entityId?: number) {
+  const rate = await getLatestExchangeRate(fromCurrency, toCurrency);
+  if (!rate) throw new Error(`No exchange rate found for ${fromCurrency} to ${toCurrency}`);
+  const rateValue = parseFloat(String(rate.rate));
+  const convertedAmount = Math.round(amount * rateValue * 100) / 100;
+  const db = await getDb();
+  if (db) {
+    await db.insert(currencyConversions).values({
+      companyId,
+      fromCurrency,
+      toCurrency,
+      fromAmount: String(amount),
+      toAmount: String(convertedAmount),
+      rateUsed: String(rateValue),
+      entityType,
+      entityId,
+    });
+  }
+  return { convertedAmount, rateUsed: rateValue };
+}
+
+export async function getCurrencyConversions(companyId?: number, entityType?: string, entityId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (companyId) conditions.push(eq(currencyConversions.companyId, companyId));
+  if (entityType) conditions.push(eq(currencyConversions.entityType, entityType));
+  if (entityId) conditions.push(eq(currencyConversions.entityId, entityId));
+  return db.select().from(currencyConversions)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(currencyConversions.convertedAt));
+}
+
+// ============================================
+// CUSTOM REPORT BUILDER
+// ============================================
+
+export async function getReportDefinitions(companyId?: number, createdBy?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (companyId) conditions.push(eq(reportDefinitions.companyId, companyId));
+  if (createdBy) conditions.push(eq(reportDefinitions.createdBy, createdBy));
+  return db.select().from(reportDefinitions)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(reportDefinitions.updatedAt));
+}
+
+export async function getReportDefinitionById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select().from(reportDefinitions).where(eq(reportDefinitions.id, id));
+  return row;
+}
+
+export async function createReportDefinition(data: InsertReportDefinition) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(reportDefinitions).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateReportDefinition(id: number, data: Partial<InsertReportDefinition>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(reportDefinitions).set(data).where(eq(reportDefinitions.id, id));
+}
+
+export async function deleteReportDefinition(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(reportDefinitions).where(eq(reportDefinitions.id, id));
+}
+
+export async function getReportSchedules(reportId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (reportId) {
+    return db.select().from(reportSchedules).where(eq(reportSchedules.reportId, reportId));
+  }
+  return db.select().from(reportSchedules);
+}
+
+export async function createReportSchedule(data: InsertReportSchedule) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(reportSchedules).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateReportSchedule(id: number, data: Partial<InsertReportSchedule>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(reportSchedules).set(data).where(eq(reportSchedules.id, id));
+}
+
+export async function deleteReportSchedule(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(reportSchedules).where(eq(reportSchedules.id, id));
+}
+
+export async function createReportExecution(data: InsertReportExecution) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(reportExecutions).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateReportExecution(id: number, data: Partial<InsertReportExecution>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(reportExecutions).set(data).where(eq(reportExecutions.id, id));
+}
+
+export async function getReportExecutions(reportId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(reportExecutions)
+    .where(eq(reportExecutions.reportId, reportId))
+    .orderBy(desc(reportExecutions.createdAt))
+    .limit(50);
+}
+
+export async function executeReport(reportId: number, executedBy: number) {
+  const report = await getReportDefinitionById(reportId);
+  if (!report) throw new Error("Report not found");
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const startTime = Date.now();
+  const execution = await createReportExecution({ reportId, executedBy, status: "running" });
+
+  try {
+    const columns = JSON.parse(report.columns);
+    const filters = report.filters ? JSON.parse(report.filters) : [];
+    const dataSourceMap: Record<string, any> = {
+      customers, vendors, orders, invoices, payments,
+      inventory, purchase_orders: purchaseOrders, employees,
+      tickets: supportTickets, time_entries: timeEntries,
+      products, shipments,
+    };
+    const table = dataSourceMap[report.dataSource];
+    if (!table) throw new Error(`Unknown data source: ${report.dataSource}`);
+
+    const rows = await db.select().from(table).limit(10000);
+    const executionTimeMs = Date.now() - startTime;
+    await updateReportExecution(execution.id, {
+      status: "completed",
+      rowCount: rows.length,
+      executionTimeMs,
+      resultData: JSON.stringify(rows),
+    });
+    await updateReportDefinition(reportId, { lastRunAt: new Date() });
+    return { executionId: execution.id, rowCount: rows.length, executionTimeMs };
+  } catch (error: any) {
+    await updateReportExecution(execution.id, {
+      status: "failed",
+      executionTimeMs: Date.now() - startTime,
+      errorMessage: error.message,
+    });
+    throw error;
+  }
+}
+
+// ============================================
+// APPROVAL WORKFLOW BUILDER
+// ============================================
+
+export async function getApprovalWorkflows(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) {
+    return db.select().from(approvalWorkflows).where(eq(approvalWorkflows.companyId, companyId));
+  }
+  return db.select().from(approvalWorkflows);
+}
+
+export async function getApprovalWorkflowById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select().from(approvalWorkflows).where(eq(approvalWorkflows.id, id));
+  return row;
+}
+
+export async function createApprovalWorkflow(data: InsertApprovalWorkflow) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(approvalWorkflows).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateApprovalWorkflow(id: number, data: Partial<InsertApprovalWorkflow>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(approvalWorkflows).set(data).where(eq(approvalWorkflows.id, id));
+}
+
+export async function deleteApprovalWorkflow(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(approvalWorkflows).where(eq(approvalWorkflows.id, id));
+}
+
+export async function getApprovalWorkflowSteps(workflowId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(approvalWorkflowSteps)
+    .where(eq(approvalWorkflowSteps.workflowId, workflowId))
+    .orderBy(asc(approvalWorkflowSteps.stepOrder));
+}
+
+export async function createApprovalWorkflowStep(data: InsertApprovalWorkflowStep) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(approvalWorkflowSteps).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateApprovalWorkflowStep(id: number, data: Partial<InsertApprovalWorkflowStep>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(approvalWorkflowSteps).set(data).where(eq(approvalWorkflowSteps.id, id));
+}
+
+export async function deleteApprovalWorkflowStep(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(approvalWorkflowSteps).where(eq(approvalWorkflowSteps.id, id));
+}
+
+export async function getApprovalRequests(companyId?: number, filters?: { status?: string; requestedBy?: number; entityType?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (companyId) conditions.push(eq(approvalRequests.companyId, companyId));
+  if (filters?.status) conditions.push(eq(approvalRequests.status, filters.status as any));
+  if (filters?.requestedBy) conditions.push(eq(approvalRequests.requestedBy, filters.requestedBy));
+  if (filters?.entityType) conditions.push(eq(approvalRequests.entityType, filters.entityType));
+  return db.select().from(approvalRequests)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(approvalRequests.createdAt));
+}
+
+export async function getApprovalRequestById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, id));
+  return row;
+}
+
+export async function createApprovalRequest(data: InsertApprovalRequest) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // Find the first step in the workflow
+  const steps = await getApprovalWorkflowSteps(data.workflowId);
+  const firstStep = steps[0];
+  const result = await db.insert(approvalRequests).values({
+    ...data,
+    currentStepId: firstStep?.id,
+    status: "in_progress",
+  });
+  return { id: result[0].insertId };
+}
+
+export async function updateApprovalRequest(id: number, data: Partial<InsertApprovalRequest>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(approvalRequests).set(data).where(eq(approvalRequests.id, id));
+}
+
+export async function getApprovalDecisions(requestId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(approvalDecisions)
+    .where(eq(approvalDecisions.requestId, requestId))
+    .orderBy(asc(approvalDecisions.decidedAt));
+}
+
+export async function createApprovalDecision(data: InsertApprovalDecision) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(approvalDecisions).values(data);
+
+  // Advance workflow based on decision
+  const request = await getApprovalRequestById(data.requestId);
+  if (request && data.decision === "approved") {
+    const steps = await getApprovalWorkflowSteps(request.workflowId);
+    const currentStepIndex = steps.findIndex(s => s.id === request.currentStepId);
+    const nextStep = steps[currentStepIndex + 1];
+    if (nextStep) {
+      await updateApprovalRequest(data.requestId, { currentStepId: nextStep.id });
+    } else {
+      await updateApprovalRequest(data.requestId, { status: "approved", completedAt: new Date() });
+    }
+  } else if (data.decision === "rejected") {
+    await updateApprovalRequest(data.requestId, { status: "rejected", completedAt: new Date() });
+  }
+
+  return { id: result[0].insertId };
+}
+
+export async function getPendingApprovalsForUser(userId: number, userRole: string) {
+  const db = await getDb();
+  if (!db) return [];
+  // Get all in-progress requests
+  const requests = await db.select().from(approvalRequests)
+    .where(eq(approvalRequests.status, "in_progress"));
+
+  const pending = [];
+  for (const request of requests) {
+    if (!request.currentStepId) continue;
+    const [step] = await db.select().from(approvalWorkflowSteps)
+      .where(eq(approvalWorkflowSteps.id, request.currentStepId));
+    if (!step) continue;
+    // Check if user matches the step approver criteria
+    if (
+      (step.approverType === "user" && step.approverId === userId) ||
+      (step.approverType === "role" && step.approverRole === userRole)
+    ) {
+      pending.push({ request, step });
+    }
+  }
+  return pending;
 }
