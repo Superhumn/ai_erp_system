@@ -5,14 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { ArrowLeft, Package, Tag, DollarSign, Barcode, Layers } from "lucide-react";
 import { Link, useParams } from "wouter";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/utils";
 
 export default function ProductDetail() {
   const params = useParams<{ id: string }>();

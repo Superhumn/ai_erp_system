@@ -17,6 +17,7 @@ import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSumm
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
+import { generatePONumber } from "./_core/poNumberGenerator";
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
@@ -7562,7 +7563,7 @@ Ask if they received the original request and if they can provide a quote.`;
           
           // Create PO if requested
           if (input.createPO && rfq) {
-            const poNumber = `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+            const poNumber = generatePONumber();
             const poResult = await db.createPurchaseOrder({
               poNumber,
               vendorId: quote.vendorId,

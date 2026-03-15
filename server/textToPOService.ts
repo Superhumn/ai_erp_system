@@ -1,4 +1,5 @@
 import { invokeLLM } from "./_core/llm";
+import { generatePONumber } from "./_core/poNumberGenerator";
 import * as db from "./db";
 
 /**
@@ -253,16 +254,4 @@ export async function createPOFromPreview(
   }
 
   return { ...result, poNumber, status: "draft" as const };
-}
-
-/**
- * Generate a PO number using the standard format used elsewhere:
- * PO-YYMM-XXXX where XXXX is a 4-digit random number.
- */
-function generatePONumber(): string {
-  const date = new Date();
-  const year = date.getFullYear().toString().slice(-2);
-  const month = (date.getMonth() + 1).toString().padStart(2, "0");
-  const random = Math.floor(1000 + Math.random() * 9000); // 4-digit random number
-  return `PO-${year}${month}-${random}`;
 }

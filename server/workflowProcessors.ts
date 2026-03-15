@@ -1,4 +1,5 @@
 import { invokeLLM } from "./_core/llm";
+import { generatePONumber } from "./_core/poNumberGenerator";
 import {
   demandForecasts,
   productionPlans,
@@ -619,7 +620,7 @@ const procurementProcessor: WorkflowProcessor = {
           const subtotal = items.reduce((sum, item) => sum + parseFloat(item.totalPrice || "0"), 0);
 
           // Create PO
-          const poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;
+          const poNumber = generatePONumber();
           const expectedDate = new Date();
           expectedDate.setDate(expectedDate.getDate() + (vendor?.defaultLeadTimeDays || 14));
 

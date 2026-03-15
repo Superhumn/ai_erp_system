@@ -14,16 +14,7 @@ import {
   UserCog,
 } from "lucide-react";
 import { useLocation } from "wouter";
-
-function formatCurrency(value: number | string | null | undefined) {
-  const num = typeof value === 'string' ? parseFloat(value) : (value || 0);
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/utils";
 
 function KPICard({
   title,

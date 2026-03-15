@@ -29,7 +29,7 @@ import {
   X,
   CheckCircle,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatCurrency, formatDate } from "@/lib/utils";
 
 export type ColumnType = "text" | "number" | "currency" | "date" | "status" | "badge" | "actions" | "checkbox";
 
@@ -85,25 +85,6 @@ export interface SpreadsheetTableProps<T extends { id: number | string }> {
   enableInlineCreate?: boolean;
   onInlineCreate?: (rowData: Partial<T>) => void | Promise<void>;
   inlineCreatePlaceholder?: string;
-}
-
-function formatCurrency(value: number | string | null | undefined): string {
-  const num = typeof value === "string" ? parseFloat(value) : value;
-  if (num === null || num === undefined || isNaN(num)) return "-";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
-
-function formatDate(value: string | Date | null | undefined): string {
-  if (!value) return "-";
-  const date = typeof value === "string" ? new Date(value) : value;
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
 }
 
 export function SpreadsheetTable<T extends { id: number | string }>({

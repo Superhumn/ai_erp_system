@@ -34,6 +34,7 @@ import {
 import { FolderKanban, Plus, Search, Loader2, Calendar } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { formatCurrency } from "@/lib/utils";
 
 type Project = {
   id: number;
@@ -48,14 +49,6 @@ type Project = {
   description: string | null;
   createdAt: Date;
 };
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
 
 export default function Projects() {
   const [search, setSearch] = useState("");

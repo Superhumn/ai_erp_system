@@ -64,18 +64,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Link } from "wouter";
 import { toast } from "sonner";
-
-function formatCurrency(value: string | number | null | undefined) {
-  const num = typeof value === "string" ? parseFloat(value) : value;
-  if (!num) return "-";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(num);
-}
-
-function formatDate(value: string | Date | null | undefined) {
-  if (!value) return "-";
-  const date = typeof value === "string" ? new Date(value) : value;
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
+import { formatCurrency, formatDate } from "@/lib/utils";
 
 const poStatusOptions = [
   { value: "draft", label: "Draft", color: "bg-gray-100 text-gray-800" },

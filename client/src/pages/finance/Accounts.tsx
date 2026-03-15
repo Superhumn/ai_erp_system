@@ -31,14 +31,7 @@ import {
 } from "@/components/ui/table";
 import { DollarSign, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/utils";
 
 export default function Accounts() {
   const [search, setSearch] = useState("");

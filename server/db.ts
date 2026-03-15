@@ -1,5 +1,6 @@
 import { eq, and, or, desc, asc, sql, count, lte, gte, lt, like, isNull, inArray, ne, sum, max, min, gt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
+import { generatePONumber } from "./_core/poNumberGenerator";
 import {
   InsertUser, users, localAuthCredentials, InsertLocalAuthCredential, companies, customers, vendors, products,
   accounts, invoices, invoiceItems, payments, transactions, transactionLines,
@@ -3548,7 +3549,7 @@ export async function convertSuggestedPoToActualPo(suggestedPoId: number, approv
   }
   
   // Create actual PO
-  const poNumber = `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+  const poNumber = generatePONumber();
   const poResult = await db.insert(purchaseOrders).values({
     poNumber,
     vendorId: suggestedPo.vendorId,
@@ -8566,11 +8567,7 @@ export async function checkAndTriggerLowStockPurchaseOrder(
   const totalAmount = orderQty * unitPrice;
 
   // Generate PO number
-  const date = new Date();
-  const year = date.getFullYear().toString().slice(-2);
-  const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-  const poNumber = `PO-${year}${month}-${random}`;
+  const poNumber = generatePONumber();
 
   // Create the purchase order
   const poResult = await createPurchaseOrder({

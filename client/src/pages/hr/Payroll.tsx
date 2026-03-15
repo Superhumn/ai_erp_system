@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/table";
 import { Wallet, Search, Loader2, DollarSign, Users, TrendingUp } from "lucide-react";
 import { format } from "date-fns";
+import { formatCurrency } from "@/lib/utils";
 
 type Employee = {
   id: number;
@@ -33,14 +34,6 @@ type Employee = {
   currency: string | null;
   hireDate: Date | null;
 };
-
-function formatCurrency(value: string | null | undefined, currency: string = "USD") {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currency,
-  }).format(num);
-}
 
 export default function Payroll() {
   const [search, setSearch] = useState("");

@@ -7,14 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ArrowLeft, User, Mail, Phone, Building2, MapPin, Calendar } from "lucide-react";
 import { Link, useParams } from "wouter";
 import { format } from "date-fns";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/utils";
 
 export default function CustomerDetail() {
   const params = useParams<{ id: string }>();

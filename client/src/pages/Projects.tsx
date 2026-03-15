@@ -46,7 +46,7 @@ import {
   GripVertical,
 } from "lucide-react";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { cn, formatDate } from "@/lib/utils";
 
 const taskStatusOptions = [
   { value: "backlog", label: "Backlog", color: "bg-gray-100 text-gray-800" },
@@ -62,12 +62,6 @@ const priorityOptions = [
   { value: "high", label: "High", color: "text-orange-500" },
   { value: "urgent", label: "Urgent", color: "text-red-500" },
 ];
-
-function formatDate(value: string | Date | null | undefined) {
-  if (!value) return "-";
-  const date = typeof value === "string" ? new Date(value) : value;
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
 
 // Kanban Column Component
 function KanbanColumn({ 

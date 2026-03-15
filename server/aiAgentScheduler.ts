@@ -1,4 +1,5 @@
 import { invokeLLM } from "./_core/llm";
+import { generatePONumber } from "./_core/poNumberGenerator";
 import { getDb } from "./db";
 import {
   aiAgentTasks,
@@ -595,7 +596,7 @@ async function executePOGeneration(task: typeof aiAgentTasks.$inferSelect): Prom
     const { vendorId, materials, totalValue } = inputData;
 
     // Generate PO number
-    const poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;
+    const poNumber = generatePONumber();
 
     // Create purchase order
     const [po] = await db

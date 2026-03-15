@@ -1,4 +1,5 @@
 import { invokeLLM, Tool, Message } from "./_core/llm";
+import { generatePONumber } from "./_core/poNumberGenerator";
 import { getDb } from "./db";
 import { sendEmail, formatEmailHtml } from "./_core/email";
 import {
@@ -854,7 +855,7 @@ async function executeCreatePurchaseOrder(params: any, ctx: AIAgentContext): Pro
   }, 0);
 
   // Generate PO number
-  const poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;
+  const poNumber = generatePONumber();
 
   // Create task for approval
   const task = await db.insert(aiAgentTasks).values({

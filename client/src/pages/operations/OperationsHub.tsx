@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
+import { formatCurrency, formatDate } from "@/lib/utils";
 import SpreadsheetTable, { Column } from "@/components/SpreadsheetTable";
 import { QuickCreateButton, QuickCreateDialog } from "@/components/QuickCreateDialog";
 import { 
@@ -32,18 +33,6 @@ const poStatusOptions = [
   { value: "received", label: "Received", color: "bg-emerald-100 text-emerald-800" },
   { value: "cancelled", label: "Cancelled", color: "bg-red-100 text-red-800" },
 ];
-
-function formatCurrency(value: string | number | null | undefined) {
-  const num = typeof value === "string" ? parseFloat(value) : value;
-  if (!num) return "-";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(num);
-}
-
-function formatDate(value: string | Date | null | undefined) {
-  if (!value) return "-";
-  const date = typeof value === "string" ? new Date(value) : value;
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
 
 // Detail Panel Components
 function WorkOrderDetailPanel({ workOrder, onStatusChange, onStartProduction, onCompleteProduction }: { 
