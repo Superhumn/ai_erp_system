@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -98,6 +98,17 @@ export default function VendorNegotiations() {
     { id: selectedNegotiationId! },
     { enabled: !!selectedNegotiationId }
   );
+
+  // Pre-parse AI analysis JSON once per data change instead of on every render
+  const parsedAiAnalysis = useMemo(() => {
+    const map = new Map<number, any>();
+    negotiations?.forEach((neg: any) => {
+      if (neg.aiAnalysis) {
+        try { map.set(neg.id, JSON.parse(neg.aiAnalysis)); } catch { /* skip */ }
+      }
+    });
+    return map;
+  }, [negotiations]);
 
   // Mutations
   const createMutation = trpc.vendorNegotiations.create.useMutation({
@@ -370,7 +381,7 @@ export default function VendorNegotiations() {
               {negotiations
                 ?.filter((n: any) => ["in_progress", "counter_offered", "ready", "analyzing"].includes(n.status))
                 .map((neg: any) => {
-                  const aiAnalysis = neg.aiAnalysis ? (() => { try { return JSON.parse(neg.aiAnalysis); } catch { return null; }})() : null;
+                  const aiAnalysis = parsedAiAnalysis.get(neg.id) || null;
                   return (
                     <Card key={neg.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => openDetail(neg.id)}>
                       <CardHeader className="pb-3">

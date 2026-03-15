@@ -76,10 +76,11 @@ Items:\n${itemList}`;
       break;
     }
     case "payment_reminder": {
-      const invoices = await db.getInvoices();
-      const vendorInvoices = invoices.filter(
-        i => i.customerId === request.vendorId && ["sent", "overdue"].includes(i.status)
-      );
+      const [sentInvoices, overdueInvoices] = await Promise.all([
+        db.getInvoices({ customerId: request.vendorId, status: "sent" }),
+        db.getInvoices({ customerId: request.vendorId, status: "overdue" }),
+      ]);
+      const vendorInvoices = [...sentInvoices, ...overdueInvoices];
       if (vendorInvoices.length > 0) {
         const invList = vendorInvoices.map(
           i => `- ${i.invoiceNumber}: $${i.totalAmount} (due: ${i.dueDate ? new Date(i.dueDate).toLocaleDateString() : 'N/A'})`
