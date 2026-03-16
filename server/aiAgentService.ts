@@ -398,6 +398,33 @@ const AI_TOOLS: Tool[] = [
       },
     },
   },
+  // AI-Powered Analytics Tools
+  {
+    type: "function",
+    function: {
+      name: "run_ai_analytics",
+      description: "Run AI-powered analytics including financial anomaly detection, revenue forecasting, HR attrition prediction, manufacturing yield prediction, legal contract analysis, project risk assessment, EDI anomaly detection, and supplier performance scoring",
+      parameters: {
+        type: "object",
+        properties: {
+          analysisType: {
+            type: "string",
+            enum: [
+              "finance_anomalies", "revenue_forecast", "cash_flow_prediction",
+              "hr_attrition", "compensation_benchmark", "performance_analysis", "workforce_plan",
+              "manufacturing_yield", "quality_forecast", "production_optimization", "predictive_maintenance",
+              "contract_analysis", "dispute_prediction", "compliance_check",
+              "project_risks", "effort_estimation", "resource_allocation",
+              "edi_anomalies", "supplier_scoring"
+            ],
+            description: "Type of AI analysis to run",
+          },
+          entityId: { type: "number", description: "Optional entity ID (contract ID, project ID, etc.)" },
+        },
+        required: ["analysisType"],
+      },
+    },
+  },
 ];
 
 // ============================================
@@ -1227,8 +1254,98 @@ async function executeTool(toolName: string, params: any, ctx: AIAgentContext): 
       return executeGenerateReport(params, ctx);
     case "create_task":
       return executeCreateTask(params, ctx);
+    case "run_ai_analytics":
+      return executeRunAiAnalytics(params, ctx);
     default:
       throw new Error(`Unknown tool: ${toolName}`);
+  }
+}
+
+async function executeRunAiAnalytics(params: any, _ctx: AIAgentContext): Promise<any> {
+  const { analysisType, entityId } = params;
+
+  // Dynamic imports to avoid circular dependencies
+  switch (analysisType) {
+    case "finance_anomalies": {
+      const { detectFinancialAnomalies } = await import("./financeAiService");
+      return detectFinancialAnomalies();
+    }
+    case "revenue_forecast": {
+      const { forecastRevenue } = await import("./financeAiService");
+      return forecastRevenue();
+    }
+    case "cash_flow_prediction": {
+      const { predictCashFlow } = await import("./financeAiService");
+      return predictCashFlow();
+    }
+    case "hr_attrition": {
+      const { predictAttrition } = await import("./hrAiService");
+      return predictAttrition();
+    }
+    case "compensation_benchmark": {
+      const { benchmarkCompensation } = await import("./hrAiService");
+      return benchmarkCompensation();
+    }
+    case "performance_analysis": {
+      const { analyzePerformance } = await import("./hrAiService");
+      return analyzePerformance();
+    }
+    case "workforce_plan": {
+      const { planWorkforce } = await import("./hrAiService");
+      return planWorkforce();
+    }
+    case "manufacturing_yield": {
+      const { predictYield } = await import("./manufacturingAiService");
+      return predictYield();
+    }
+    case "quality_forecast": {
+      const { forecastQuality } = await import("./manufacturingAiService");
+      return forecastQuality();
+    }
+    case "production_optimization": {
+      const { optimizeProduction } = await import("./manufacturingAiService");
+      return optimizeProduction();
+    }
+    case "predictive_maintenance": {
+      const { predictMaintenance } = await import("./manufacturingAiService");
+      return predictMaintenance();
+    }
+    case "contract_analysis": {
+      if (!entityId) return { error: "contractId required for contract analysis" };
+      const { analyzeContract } = await import("./legalAiService");
+      return analyzeContract({ contractId: entityId });
+    }
+    case "dispute_prediction": {
+      const { predictDisputes } = await import("./legalAiService");
+      return predictDisputes();
+    }
+    case "compliance_check": {
+      const { checkCompliance } = await import("./legalAiService");
+      return checkCompliance();
+    }
+    case "project_risks": {
+      const { predictProjectRisks } = await import("./projectsAiService");
+      return predictProjectRisks(entityId ? { projectId: entityId } : undefined);
+    }
+    case "effort_estimation": {
+      if (!entityId) return { error: "projectId required for effort estimation" };
+      const { estimateEffort } = await import("./projectsAiService");
+      return estimateEffort({ projectId: entityId });
+    }
+    case "resource_allocation": {
+      const { optimizeResourceAllocation } = await import("./projectsAiService");
+      return optimizeResourceAllocation();
+    }
+    case "edi_anomalies": {
+      const { detectEdiAnomalies } = await import("./ediAiService");
+      return detectEdiAnomalies();
+    }
+    case "supplier_scoring": {
+      const { scoreSuppliers } = await import("./supplierScoringService");
+      return scoreSuppliers();
+    }
+    default:
+      return { error: `Unknown analysis type: ${analysisType}` };
   }
 }
 
