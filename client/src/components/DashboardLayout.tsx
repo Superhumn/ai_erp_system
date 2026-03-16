@@ -3,7 +3,7 @@ import { NotificationCenter } from "@/components/NotificationCenter";
 import { AutonomousAgentBar } from "@/components/AutonomousAgentBar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import {
+import 
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -59,7 +59,7 @@ import {
   Send,
   MapPin,
   ArrowRightLeft,
-  ClipboardList,
+  ClipboardCheck,  ClipboardList,
   PackageCheck,
   Brain,
   Plug,
