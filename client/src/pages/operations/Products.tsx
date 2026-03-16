@@ -34,6 +34,7 @@ import { Package, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "wouter";
 import { formatCurrency } from "@/lib/format";
+import { getStatusColor } from "@/lib/statusColors";
 
 export default function Products() {
   const [search, setSearch] = useState("");
@@ -74,12 +75,6 @@ export default function Products() {
     const matchesStatus = statusFilter === "all" || product.status === statusFilter;
     return matchesSearch && matchesStatus;
   }), [products, search, statusFilter]);
-
-  const statusColors: Record<string, string> = {
-    active: "bg-green-500/10 text-green-600",
-    inactive: "bg-gray-500/10 text-gray-600",
-    discontinued: "bg-red-500/10 text-red-600",
-  };
 
   const typeColors: Record<string, string> = {
     physical: "bg-blue-500/10 text-blue-600",
@@ -300,7 +295,7 @@ export default function Products() {
                       {formatCurrency(product.unitPrice)}
                     </TableCell>
                     <TableCell>
-                      <Badge className={statusColors[product.status]}>{product.status}</Badge>
+                      <Badge className={getStatusColor(product.status)}>{product.status}</Badge>
                     </TableCell>
                   </TableRow>
                 ))}

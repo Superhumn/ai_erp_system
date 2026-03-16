@@ -33,6 +33,7 @@ import {
 import { Truck, Plus, Search, Loader2, Package } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { getStatusColor } from "@/lib/statusColors";
 
 type Shipment = {
   id: number;
@@ -85,14 +86,6 @@ export default function Shipments() {
     const matchesStatus = statusFilter === "all" || shipment.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-
-  const statusColors: Record<string, string> = {
-    pending: "bg-gray-500/10 text-gray-600",
-    in_transit: "bg-amber-500/10 text-amber-600",
-    delivered: "bg-green-500/10 text-green-600",
-    returned: "bg-purple-500/10 text-purple-600",
-    cancelled: "bg-red-500/10 text-red-600",
-  };
 
   const typeColors: Record<string, string> = {
     inbound: "bg-blue-500/10 text-blue-600",
@@ -323,7 +316,7 @@ export default function Shipments() {
                         : "-"}
                     </TableCell>
                     <TableCell>
-                      <Badge className={statusColors[shipment.status]}>{shipment.status.replace("_", " ")}</Badge>
+                      <Badge className={getStatusColor(shipment.status)}>{shipment.status.replace("_", " ")}</Badge>
                     </TableCell>
                   </TableRow>
                 ))}

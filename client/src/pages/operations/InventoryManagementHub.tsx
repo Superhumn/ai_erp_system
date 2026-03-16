@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { getStatusColor } from "@/lib/statusColors";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -88,22 +89,9 @@ export default function InventoryManagementHub() {
 
   const getStatusBadge = (status: string | null) => {
     if (!status) return null;
-    
-    const statusColors: Record<string, string> = {
-      draft: "bg-gray-500/10 text-gray-600",
-      sent: "bg-blue-500/10 text-blue-600",
-      confirmed: "bg-green-500/10 text-green-600",
-      partial: "bg-yellow-500/10 text-yellow-600",
-      received: "bg-green-500/10 text-green-600",
-      cancelled: "bg-red-500/10 text-red-600",
-      pending: "bg-yellow-500/10 text-yellow-600",
-      in_transit: "bg-blue-500/10 text-blue-600",
-      arrived: "bg-green-500/10 text-green-600",
-      delivered: "bg-green-500/10 text-green-600",
-    };
-    
+
     return (
-      <Badge className={statusColors[status] || "bg-gray-500/10 text-gray-600"}>
+      <Badge className={getStatusColor(status)}>
         {status.replace(/_/g, " ")}
       </Badge>
     );

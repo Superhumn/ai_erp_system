@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/table";
 import { Building2, Plus, Search, Loader2, Ship, Star, Truck } from "lucide-react";
 import { toast } from "sonner";
+import { getStatusColor } from "@/lib/statusColors";
 
 export default function Vendors() {
   const [activeTab, setActiveTab] = useState("suppliers");
@@ -130,12 +131,6 @@ export default function Vendors() {
     return carrier.name.toLowerCase().includes(search.toLowerCase()) ||
       carrier.contactName?.toLowerCase().includes(search.toLowerCase());
   });
-
-  const statusColors: Record<string, string> = {
-    active: "bg-green-500/10 text-green-600",
-    inactive: "bg-gray-500/10 text-gray-600",
-    pending: "bg-amber-500/10 text-amber-600",
-  };
 
   const typeColors: Record<string, string> = {
     supplier: "bg-blue-500/10 text-blue-600",
@@ -561,7 +556,7 @@ export default function Vendors() {
                           {[vendor.city, vendor.country].filter(Boolean).join(", ") || "-"}
                         </TableCell>
                         <TableCell>
-                          <Badge className={statusColors[vendor.status] || ""}>
+                          <Badge className={getStatusColor(vendor.status)}>
                             {vendor.status}
                           </Badge>
                         </TableCell>

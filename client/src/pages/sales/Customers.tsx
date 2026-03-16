@@ -34,6 +34,7 @@ import {
 import { Users, Plus, Search, Loader2, RefreshCw, ShoppingBag } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "wouter";
+import { getStatusColor } from "@/lib/statusColors";
 
 export default function Customers() {
   const [search, setSearch] = useState("");
@@ -98,12 +99,6 @@ export default function Customers() {
       (sourceFilter === "manual" && !customer.shopifyCustomerId);
     return matchesSearch && matchesStatus && matchesSource;
   }), [customers, search, statusFilter, sourceFilter]);
-
-  const statusColors: Record<string, string> = {
-    active: "bg-green-500/10 text-green-600",
-    inactive: "bg-gray-500/10 text-gray-600",
-    prospect: "bg-blue-500/10 text-blue-600",
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -451,7 +446,7 @@ export default function Customers() {
                     <TableCell>{customer.phone || "-"}</TableCell>
                     <TableCell className="capitalize">{customer.type}</TableCell>
                     <TableCell>
-                      <Badge className={statusColors[customer.status] || ""}>
+                      <Badge className={getStatusColor(customer.status)}>
                         {customer.status}
                       </Badge>
                     </TableCell>

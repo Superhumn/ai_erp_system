@@ -14,11 +14,22 @@ export const commonStatusColors: Record<string, string> = {
   received: "bg-green-500/10 text-green-600",
   approved: "bg-green-500/10 text-green-600",
   resolved: "bg-green-500/10 text-green-600",
+  cleared: "bg-green-500/10 text-green-600",
+  renewed: "bg-green-500/10 text-green-600",
+  closed: "bg-green-500/10 text-green-600",
+  posted: "bg-green-500/10 text-green-600",
+  arrived: "bg-green-500/10 text-green-600",
 
   // Ambers (pending/warning)
   pending: "bg-amber-500/10 text-amber-600",
   in_progress: "bg-amber-500/10 text-amber-600",
   partial: "bg-amber-500/10 text-amber-600",
+  on_hold: "bg-amber-500/10 text-amber-600",
+  on_leave: "bg-amber-500/10 text-amber-600",
+  investigating: "bg-amber-500/10 text-amber-600",
+  negotiating: "bg-amber-500/10 text-amber-600",
+  pending_review: "bg-amber-500/10 text-amber-600",
+  ordered: "bg-amber-500/10 text-amber-600",
 
   // Blues (informational/processing)
   confirmed: "bg-blue-500/10 text-blue-600",
@@ -26,17 +37,26 @@ export const commonStatusColors: Record<string, string> = {
   processing: "bg-purple-500/10 text-purple-600",
   shipped: "bg-indigo-500/10 text-indigo-600",
   in_transit: "bg-indigo-500/10 text-indigo-600",
+  planning: "bg-blue-500/10 text-blue-600",
+  open: "bg-blue-500/10 text-blue-600",
 
   // Reds (negative/error)
   cancelled: "bg-red-500/10 text-red-600",
   failed: "bg-red-500/10 text-red-600",
   overdue: "bg-red-500/10 text-red-600",
   rejected: "bg-red-500/10 text-red-600",
+  terminated: "bg-red-500/10 text-red-600",
+  escalated: "bg-red-500/10 text-red-600",
+  expired: "bg-red-500/10 text-red-600",
+  returned: "bg-red-500/10 text-red-600",
+  void: "bg-red-500/10 text-red-600",
 
   // Grays (neutral/draft)
   draft: "bg-gray-500/10 text-gray-600",
   inactive: "bg-gray-500/10 text-gray-500",
   prospect: "bg-gray-500/10 text-gray-500",
+  not_started: "bg-gray-500/10 text-gray-500",
+  discontinued: "bg-gray-500/10 text-gray-500",
 };
 
 /**

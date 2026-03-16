@@ -33,6 +33,7 @@ import {
 import { UserCircle, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { getStatusColor } from "@/lib/statusColors";
 
 export default function People() {
   const [search, setSearch] = useState("");
@@ -75,13 +76,6 @@ export default function People() {
     const matchesStatus = statusFilter === "all" || person.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-
-  const statusColors: Record<string, string> = {
-    active: "bg-green-500/10 text-green-600",
-    inactive: "bg-gray-500/10 text-gray-600",
-    terminated: "bg-red-500/10 text-red-600",
-    on_leave: "bg-amber-500/10 text-amber-600",
-  };
 
   const typeColors: Record<string, string> = {
     full_time: "bg-blue-500/10 text-blue-600",
@@ -318,7 +312,7 @@ export default function People() {
                         : "-"}
                     </TableCell>
                     <TableCell>
-                      <Badge className={statusColors[person.status]}>{person.status.replace("_", " ")}</Badge>
+                      <Badge className={getStatusColor(person.status)}>{person.status.replace("_", " ")}</Badge>
                     </TableCell>
                   </TableRow>
                 ))}

@@ -34,6 +34,7 @@ import { Scale, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
+import { getStatusColor } from "@/lib/statusColors";
 
 export default function Disputes() {
   const [search, setSearch] = useState("");
@@ -72,15 +73,6 @@ export default function Disputes() {
     const matchesStatus = statusFilter === "all" || dispute.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-
-  const statusColors: Record<string, string> = {
-    open: "bg-amber-500/10 text-amber-600",
-    investigating: "bg-blue-500/10 text-blue-600",
-    negotiating: "bg-purple-500/10 text-purple-600",
-    resolved: "bg-green-500/10 text-green-600",
-    escalated: "bg-red-500/10 text-red-600",
-    closed: "bg-gray-500/10 text-gray-600",
-  };
 
   const typeColors: Record<string, string> = {
     customer: "bg-blue-500/10 text-blue-600",
@@ -284,7 +276,7 @@ export default function Disputes() {
                       {dispute.estimatedValue ? formatCurrency(dispute.estimatedValue) : "-"}
                     </TableCell>
                     <TableCell>
-                      <Badge className={statusColors[dispute.status]}>{dispute.status.replace("_", " ")}</Badge>
+                      <Badge className={getStatusColor(dispute.status)}>{dispute.status.replace("_", " ")}</Badge>
                     </TableCell>
                   </TableRow>
                 ))}

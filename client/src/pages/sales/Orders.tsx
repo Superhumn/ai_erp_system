@@ -34,6 +34,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { Link } from "wouter";
 import { formatCurrency } from "@/lib/format";
+import { getStatusColor } from "@/lib/statusColors";
 
 export default function Orders() {
   const [search, setSearch] = useState("");
@@ -66,16 +67,6 @@ export default function Orders() {
     const matchesStatus = statusFilter === "all" || order.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-
-  const statusColors: Record<string, string> = {
-    draft: "bg-gray-500/10 text-gray-600",
-    pending: "bg-amber-500/10 text-amber-600",
-    confirmed: "bg-blue-500/10 text-blue-600",
-    processing: "bg-purple-500/10 text-purple-600",
-    shipped: "bg-indigo-500/10 text-indigo-600",
-    delivered: "bg-green-500/10 text-green-600",
-    cancelled: "bg-red-500/10 text-red-600",
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -265,7 +256,7 @@ export default function Orders() {
                       {formatCurrency(order.totalAmount)}
                     </TableCell>
                     <TableCell>
-                      <Badge className={statusColors[order.status]}>{order.status}</Badge>
+                      <Badge className={getStatusColor(order.status)}>{order.status}</Badge>
                     </TableCell>
                   </TableRow>
                 ))}

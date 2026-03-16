@@ -34,6 +34,7 @@ import { FileText, Plus, Search, Loader2, Calendar } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
+import { getStatusColor } from "@/lib/statusColors";
 
 export default function Contracts() {
   const [search, setSearch] = useState("");
@@ -74,15 +75,6 @@ export default function Contracts() {
     const matchesStatus = statusFilter === "all" || contract.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-
-  const statusColors: Record<string, string> = {
-    draft: "bg-gray-500/10 text-gray-600",
-    pending_review: "bg-amber-500/10 text-amber-600",
-    active: "bg-green-500/10 text-green-600",
-    expired: "bg-red-500/10 text-red-600",
-    terminated: "bg-red-500/10 text-red-600",
-    renewed: "bg-blue-500/10 text-blue-600",
-  };
 
   const typeColors: Record<string, string> = {
     customer: "bg-blue-500/10 text-blue-600",
@@ -308,7 +300,7 @@ export default function Contracts() {
                       {contract.value ? formatCurrency(contract.value) : "-"}
                     </TableCell>
                     <TableCell>
-                      <Badge className={statusColors[contract.status]}>{contract.status.replace("_", " ")}</Badge>
+                      <Badge className={getStatusColor(contract.status)}>{contract.status.replace("_", " ")}</Badge>
                     </TableCell>
                   </TableRow>
                 ))}

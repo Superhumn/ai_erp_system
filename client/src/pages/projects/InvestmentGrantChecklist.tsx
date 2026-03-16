@@ -35,6 +35,7 @@ import {
 import { ClipboardCheck, Plus, Search, Loader2, ArrowLeft, CheckCircle2, Circle, Clock, Ban } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { getStatusColor } from "@/lib/statusColors";
 
 const CATEGORY_LABELS: Record<string, string> = {
   entity_entry_setup: "Entity & Entry Setup",
@@ -280,13 +281,6 @@ export default function InvestmentGrantChecklist() {
     });
   };
 
-  const statusColors: Record<string, string> = {
-    not_started: "bg-gray-500/10 text-gray-600",
-    in_progress: "bg-blue-500/10 text-blue-600",
-    completed: "bg-green-500/10 text-green-600",
-    on_hold: "bg-amber-500/10 text-amber-600",
-  };
-
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
@@ -384,7 +378,7 @@ export default function InvestmentGrantChecklist() {
                 {filteredChecklists.map((checklist: Checklist) => (
                   <TableRow key={checklist.id} className="cursor-pointer" onClick={() => setSelectedId(checklist.id)}>
                     <TableCell className="font-medium">{checklist.name}</TableCell>
-                    <TableCell><Badge className={statusColors[checklist.status]}>{checklist.status.replace(/_/g, " ")}</Badge></TableCell>
+                    <TableCell><Badge className={getStatusColor(checklist.status)}>{checklist.status.replace(/_/g, " ")}</Badge></TableCell>
                     <TableCell className="text-right font-mono">
                       {checklist.totalCapex ? formatCurrency(checklist.totalCapex, checklist.currency || "SAR") : "-"}
                     </TableCell>

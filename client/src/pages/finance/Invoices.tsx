@@ -46,6 +46,7 @@ import {
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
+import { getStatusColor } from "@/lib/statusColors";
 
 type LineItem = {
   productId?: number;
@@ -299,14 +300,6 @@ export default function Invoices() {
     const matchesStatus = statusFilter === "all" || invoice.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-
-  const statusColors: Record<string, string> = {
-    draft: "bg-gray-500/10 text-gray-600",
-    sent: "bg-blue-500/10 text-blue-600",
-    paid: "bg-green-500/10 text-green-600",
-    overdue: "bg-red-500/10 text-red-600",
-    cancelled: "bg-gray-500/10 text-gray-500",
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -954,7 +947,7 @@ export default function Invoices() {
                     </TableCell>
                     <TableCell>{formatCurrency(invoice.totalAmount)}</TableCell>
                     <TableCell>
-                      <Badge className={statusColors[invoice.status] || ""}>
+                      <Badge className={getStatusColor(invoice.status) || ""}>
                         {invoice.status}
                       </Badge>
                     </TableCell>

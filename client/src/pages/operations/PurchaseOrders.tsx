@@ -35,6 +35,7 @@ import { ClipboardList, Plus, Search, Loader2, Sparkles, Send } from "lucide-rea
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
+import { getStatusColor } from "@/lib/statusColors";
 
 type LineItem = {
   productId?: number;
@@ -129,16 +130,6 @@ export default function PurchaseOrders() {
     const matchesStatus = statusFilter === "all" || po.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-
-  const statusColors: Record<string, string> = {
-    draft: "bg-gray-500/10 text-gray-600",
-    pending: "bg-amber-500/10 text-amber-600",
-    approved: "bg-blue-500/10 text-blue-600",
-    ordered: "bg-purple-500/10 text-purple-600",
-    partial: "bg-indigo-500/10 text-indigo-600",
-    received: "bg-green-500/10 text-green-600",
-    cancelled: "bg-red-500/10 text-red-600",
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -595,7 +586,7 @@ export default function PurchaseOrders() {
                       {formatCurrency(po.totalAmount)}
                     </TableCell>
                     <TableCell>
-                      <Badge className={statusColors[po.status]}>{po.status}</Badge>
+                      <Badge className={getStatusColor(po.status)}>{po.status}</Badge>
                     </TableCell>
                   </TableRow>
                 ))}

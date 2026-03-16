@@ -21,6 +21,7 @@ import {
 import { TrendingUp, Search, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
+import { getStatusColor } from "@/lib/statusColors";
 
 export default function Transactions() {
   const [search, setSearch] = useState("");
@@ -43,12 +44,6 @@ export default function Transactions() {
     expense: "bg-red-500/10 text-red-600",
     transfer: "bg-amber-500/10 text-amber-600",
     adjustment: "bg-gray-500/10 text-gray-600",
-  };
-
-  const statusColors: Record<string, string> = {
-    draft: "bg-amber-500/10 text-amber-600",
-    posted: "bg-green-500/10 text-green-600",
-    void: "bg-gray-500/10 text-gray-500",
   };
 
   return (
@@ -130,7 +125,7 @@ export default function Transactions() {
                       {formatCurrency(tx.totalAmount)}
                     </TableCell>
                     <TableCell>
-                      <Badge className={statusColors[tx.status]}>{tx.status}</Badge>
+                      <Badge className={getStatusColor(tx.status)}>{tx.status}</Badge>
                     </TableCell>
                   </TableRow>
                 ))}
