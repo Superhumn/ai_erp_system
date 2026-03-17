@@ -207,7 +207,7 @@ export default function TransactionalEmailsPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Bounced</CardDescription>
-            <CardTitle className="text-2xl text-orange-500">{stats?.bounced || 0}</CardTitle>
+            <CardTitle className="text-2xl text-orange-500">{0}</CardTitle>
           </CardHeader>
         </Card>
       </div>
@@ -561,13 +561,13 @@ export default function TransactionalEmailsPage() {
                     events?.map((event) => (
                       <TableRow key={event.id}>
                         <TableCell>
-                          <Badge variant="outline">{event.providerEventType}</Badge>
+                          <Badge variant="outline">{event.event}</Badge>
                         </TableCell>
-                        <TableCell>{event.email}</TableCell>
+                        <TableCell>{event.recipientEmail}</TableCell>
                         <TableCell className="font-mono text-xs">{event.providerMessageId}</TableCell>
-                        <TableCell className="max-w-xs truncate text-sm">{event.reason || "-"}</TableCell>
+                        <TableCell className="max-w-xs truncate text-sm">-</TableCell>
                         <TableCell className="text-sm">
-                          {event.providerTimestamp ? new Date(event.providerTimestamp).toLocaleString() : "-"}
+                          {event.timestamp ? new Date(event.timestamp).toLocaleString() : "-"}
                         </TableCell>
                       </TableRow>
                     ))

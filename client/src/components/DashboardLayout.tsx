@@ -60,6 +60,7 @@ import {
   MapPin,
   ArrowRightLeft,
   ClipboardList,
+  ClipboardCheck,
   PackageCheck,
   Brain,
   Plug,

@@ -153,7 +153,7 @@ export default function CopackerPortal() {
     onError: (error) => toast.error("Failed to submit invoice", { description: error.message }),
   });
 
-  const uploadShippingDoc = trpc.copackerPortal.uploadShippingDocument.useMutation({
+  const uploadShippingDoc = trpc.copackerPortal.uploadShipmentDocument.useMutation({
     onSuccess: () => {
       toast.success("Shipping document uploaded");
       setShowShipDocUpload(false);

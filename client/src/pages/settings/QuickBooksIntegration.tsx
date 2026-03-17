@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { trpc } from "../../lib/trpc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
@@ -23,39 +22,33 @@ const MAPPING_TYPE_LABELS: Record<string, string> = {
 
 export default function QuickBooksIntegration() {
   const { toast } = useToast();
-  const queryClient = useQueryClient();
+  const utils = trpc.useUtils();
   const [selectedMappingType, setSelectedMappingType] = useState<string>("");
   const [selectedAccountId, setSelectedAccountId] = useState<string>("");
 
   // Check connection status
-  const { data: connectionStatus, isLoading: connectionLoading } = useQuery({
-    queryKey: ['quickbooks-connection'],
-    queryFn: () => trpc.quickbooks.getConnectionStatus.query(),
-  });
+  const { data: connectionStatus, isLoading: connectionLoading } = trpc.quickbooks.getConnectionStatus.useQuery();
 
   // Get QuickBooks accounts
-  const { data: qbAccounts, isLoading: accountsLoading } = useQuery({
-    queryKey: ['quickbooks-accounts'],
-    queryFn: () => trpc.quickbooks.getAccounts.query(),
-    enabled: connectionStatus?.connected ?? false,
-  });
+  const { data: qbAccounts, isLoading: accountsLoading } = trpc.quickbooks.getAccounts.useQuery(
+    undefined,
+    { enabled: connectionStatus?.connected ?? false }
+  );
 
   // Get current account mappings
-  const { data: accountMappings, isLoading: mappingsLoading } = useQuery({
-    queryKey: ['quickbooks-mappings'],
-    queryFn: () => trpc.quickbooks.getAccountMappings.query({}),
-    enabled: connectionStatus?.connected ?? false,
-  });
+  const { data: accountMappings, isLoading: mappingsLoading } = trpc.quickbooks.getAccountMappings.useQuery(
+    {},
+    { enabled: connectionStatus?.connected ?? false }
+  );
 
   // Sync accounts mutation
-  const syncAccountsMutation = useMutation({
-    mutationFn: () => trpc.quickbooks.syncAccounts.mutate({}),
+  const syncAccountsMutation = trpc.quickbooks.syncAccounts.useMutation({
     onSuccess: (data) => {
       toast({
         title: "Accounts Synced",
-        description: data.message,
+        description: (data as any).message,
       });
-      queryClient.invalidateQueries({ queryKey: ['quickbooks-accounts'] });
+      utils.quickbooks.getAccounts.invalidate();
     },
     onError: (error: any) => {
       toast({
@@ -67,12 +60,11 @@ export default function QuickBooksIntegration() {
   });
 
   // Sync items mutation
-  const syncItemsMutation = useMutation({
-    mutationFn: () => trpc.quickbooks.syncItems.mutate({ type: 'Inventory' }),
+  const syncItemsMutation = trpc.quickbooks.syncItems.useMutation({
     onSuccess: (data) => {
       toast({
         title: "Items Synced",
-        description: data.message,
+        description: (data as any).message,
       });
     },
     onError: (error: any) => {
@@ -85,19 +77,13 @@ export default function QuickBooksIntegration() {
   });
 
   // Save mapping mutation
-  const saveMappingMutation = useMutation({
-    mutationFn: (data: { mappingType: string; quickbooksAccountId: string }) =>
-      trpc.quickbooks.upsertAccountMapping.mutate({
-        mappingType: data.mappingType as any,
-        quickbooksAccountId: data.quickbooksAccountId,
-        isDefault: true,
-      }),
+  const saveMappingMutation = trpc.quickbooks.upsertAccountMapping.useMutation({
     onSuccess: () => {
       toast({
         title: "Mapping Saved",
         description: "Account mapping has been updated",
       });
-      queryClient.invalidateQueries({ queryKey: ['quickbooks-mappings'] });
+      utils.quickbooks.getAccountMappings.invalidate();
       setSelectedMappingType("");
       setSelectedAccountId("");
     },
@@ -121,8 +107,9 @@ export default function QuickBooksIntegration() {
     }
 
     saveMappingMutation.mutate({
-      mappingType: selectedMappingType,
+      mappingType: selectedMappingType as any,
       quickbooksAccountId: selectedAccountId,
+      isDefault: true,
     });
   };
 
@@ -232,7 +219,7 @@ export default function QuickBooksIntegration() {
                           </TableCell>
                           <TableCell>
                             {account ? (
-                              <Badge variant="success" className="gap-1">
+                              <Badge variant="default" className="gap-1">
                                 <Check className="h-3 w-3" />
                                 Configured
                               </Badge>
@@ -320,7 +307,7 @@ export default function QuickBooksIntegration() {
                       </p>
                     </div>
                   </div>
-                  <Badge variant="success">Active</Badge>
+                  <Badge variant="default">Active</Badge>
                 </div>
 
                 <div className="flex items-center justify-between p-4 border rounded-lg">
@@ -333,7 +320,7 @@ export default function QuickBooksIntegration() {
                       </p>
                     </div>
                   </div>
-                  <Badge variant={accountMappings?.length ? "success" : "secondary"}>
+                  <Badge variant={accountMappings?.length ? "default" : "secondary"}>
                     {accountMappings?.length ? "Configured" : "Pending"}
                   </Badge>
                 </div>

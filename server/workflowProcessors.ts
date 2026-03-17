@@ -1272,8 +1272,8 @@ const productionSchedulingProcessor: WorkflowProcessor = {
       const orders = await db
         .select()
         .from(workOrders)
-        .where(eq(workOrders.status, "planned"))
-        .orderBy(asc(workOrders.plannedStartDate));
+        .where(eq(workOrders.status, "scheduled"))
+        .orderBy(asc(workOrders.scheduledStartDate));
 
       return { success: true, data: { workOrders: orders } };
     });
@@ -2386,7 +2386,7 @@ const vendorQuoteAnalysisProcessor: WorkflowProcessor = {
         .from(vendors)
         .where(inArray(vendors.id, vendorIds));
 
-      const vendorMap = new Map(vendorDetails.map((v: any) => [v.id, v]));
+      const vendorMap = new Map<number, { name?: string }>(vendorDetails.map((v: any) => [v.id, v]));
 
       // Prepare quote data for AI analysis
       const quoteData = quotes.map((q: any) => {

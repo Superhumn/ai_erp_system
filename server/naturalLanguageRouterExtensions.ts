@@ -277,16 +277,15 @@ export const workOrderTextEndpoints = {
         const workOrderNumber = generateNumber('WO');
         const workOrder = await db.createWorkOrder({
           productId,
-          productName: parsed.productName,
           quantity: parsed.quantity.toString(),
-          unit: parsed.unit || 'units',
+          unit: parsed.unit || 'EA',
           status: 'draft',
-          priority: parsed.priority || 'medium',
-          dueDate: parsed.dueDate ? new Date(parsed.dueDate) : undefined,
-          batchSize: parsed.batchSize ? parsed.batchSize.toString() : undefined,
+          priority: parsed.priority === 'medium' ? 'normal' : (parsed.priority || 'normal'),
+          scheduledEndDate: parsed.dueDate ? new Date(parsed.dueDate) : undefined,
           notes: parsed.notes || undefined,
           createdBy: ctx.user.id,
-        });
+          bomId: 0,
+        } as any);
         
         await createAuditLog(ctx.user.id, 'create', 'workOrder', workOrder.id, workOrderNumber, null, { source: 'text', originalText: input.text });
         
@@ -328,14 +327,12 @@ export const inventoryTextEndpoints = {
         // Create inventory transfer
         const transferNumber = generateNumber('TRF');
         const transfer = await db.createTransfer({
-          transferNumber,
           fromWarehouseId: fromWarehouse.id,
           toWarehouseId: toWarehouse.id,
-          transferDate: parsed.transferDate ? new Date(parsed.transferDate) : new Date(),
+          requestedDate: parsed.transferDate ? new Date(parsed.transferDate) : new Date(),
           status: 'pending',
-          reason: parsed.reason || undefined,
           notes: parsed.notes || undefined,
-          createdBy: ctx.user.id,
+          requestedBy: ctx.user.id,
         });
         
         // Create transfer items
@@ -350,10 +347,8 @@ export const inventoryTextEndpoints = {
           
           await db.addTransferItem({
             transferId: transfer.id,
-            productId,
-            productName: item.materialName,
-            quantity: item.quantity.toString(),
-            unit: item.unit || 'units',
+            productId: productId!,
+            requestedQuantity: item.quantity.toString(),
           });
         }
         

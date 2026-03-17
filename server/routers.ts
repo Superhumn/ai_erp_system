@@ -6006,7 +6006,21 @@ Provide a brief status summary, any missing documents, and next steps.`;
         }
         return db.getCustomsDocuments(input.clearanceId);
       }),
-    getCurrentPeriod: copackerProcedure.query(async () => ({ period: new Date().toISOString().slice(0, 7) })),
+    getCurrentPeriod: copackerProcedure.query(async () => {
+      const now = new Date();
+      const periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      const daysLeft = Math.ceil((periodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      const periodLabel = periodStart.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      return {
+        period: now.toISOString().slice(0, 7),
+        periodStart: periodStart.toISOString(),
+        periodEnd: periodEnd.toISOString(),
+        periodLabel,
+        daysLeft,
+        isDue: daysLeft <= 5,
+      };
+    }),
     getInventoryUpdates: copackerProcedure.query(() => [] as any[]),
     getInvoices: copackerProcedure.query(() => [] as any[]),
     getShippingDocuments: copackerProcedure.query(() => [] as any[]),

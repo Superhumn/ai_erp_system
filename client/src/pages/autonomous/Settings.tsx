@@ -305,8 +305,7 @@ export default function AutonomousSettings() {
                               checked={workflow.isActive}
                               onCheckedChange={() =>
                                 toggleWorkflowMutation.mutate({
-                                  workflowId: workflow.id,
-                                  isActive: !workflow.isActive
+                                  id: workflow.id,
                                 })
                               }
                             />

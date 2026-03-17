@@ -9672,7 +9672,31 @@ export async function getEdiDashboardStats(companyId?: number) {
     accepted: sql<number>`SUM(CASE WHEN ${ediTransactions.status} = 'accepted' THEN 1 ELSE 0 END)`,
     rejected: sql<number>`SUM(CASE WHEN ${ediTransactions.status} = 'rejected' THEN 1 ELSE 0 END)`,
   }).from(ediTransactions);
-  return stats[0] || null;
+
+  const partnerStats = await db.select({
+    totalPartners: sql<number>`COUNT(*)`,
+    activePartners: sql<number>`SUM(CASE WHEN ${ediTradingPartners.status} = 'active' THEN 1 ELSE 0 END)`,
+  }).from(ediTradingPartners);
+
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const recentStats = await db.select({
+    recentTransactions: sql<number>`COUNT(*)`,
+  }).from(ediTransactions).where(sql`${ediTransactions.createdAt} >= ${sevenDaysAgo}`);
+
+  const base = stats[0] || { total: 0, pending: 0, accepted: 0, rejected: 0 };
+  const partners = partnerStats[0] || { totalPartners: 0, activePartners: 0 };
+  const recent = recentStats[0] || { recentTransactions: 0 };
+
+  return {
+    ...base,
+    totalTransactions: base.total,
+    pendingAcks: base.pending,
+    errorTransactions: base.rejected,
+    totalPartners: partners.totalPartners,
+    activePartners: partners.activePartners,
+    recentTransactions: recent.recentTransactions,
+  };
 }
 
 export async function getNextControlNumber(tradingPartnerId: number, type: 'isa' | 'gs' | 'st') {

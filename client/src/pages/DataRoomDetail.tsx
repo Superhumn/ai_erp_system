@@ -2392,7 +2392,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
           {/* Category progress chips */}
           <div className="flex flex-wrap gap-2">
             {Object.entries(summary.byCategory).map(([name, stats]) => {
-              const pct = Math.round((stats.complete / stats.total) * 100);
+              const pct = Math.round(((stats as any).complete / (stats as any).total) * 100);
               return (
                 <Badge
                   key={name}
@@ -2406,7 +2406,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                     setExpandedCategories(newSet);
                   }}
                 >
-                  {name}: {stats.complete}/{stats.total}
+                  {name}: {(stats as any).complete}/{(stats as any).total}
                 </Badge>
               );
             })}
