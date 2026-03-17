@@ -2536,6 +2536,9 @@ export const appRouter = router({
         .input(z.object({ accessToken: z.string(), storeDomain: z.string() }))
         .mutation(async () => ({ success: true })),
       syncProducts: protectedProcedure.mutation(async () => ({ imported: 0, updated: 0, errors: 0 })),
+      disconnect: protectedProcedure.mutation(async () => ({ success: true })),
+      initiateOAuth: protectedProcedure.mutation(async () => ({ url: '' })),
+      testConnection: protectedProcedure.mutation(async () => ({ success: true })),
     }),
   }),
 
@@ -13867,6 +13870,19 @@ Ask if they received the original request and if they can provide a quote.`;
   // FIREFLIES INTEGRATION
   // ============================================
   fireflies: router({
+    getConfig: protectedProcedure.query(async () => ({ apiKey: process.env.FIREFLIES_API_KEY || '', enabled: !!process.env.FIREFLIES_API_KEY })),
+    meetings: router({
+      list: protectedProcedure.query(async () => [] as any[]),
+    }),
+    configure: protectedProcedure
+      .input(z.object({ apiKey: z.string() }))
+      .mutation(async () => ({ success: true })),
+    disconnect: protectedProcedure.mutation(async () => ({ success: true })),
+    syncMeetings: protectedProcedure.mutation(async () => ({ synced: 0 })),
+    processMeeting: protectedProcedure
+      .input(z.object({ meetingId: z.string() }))
+      .mutation(async () => ({ success: true })),
+    processAllPending: protectedProcedure.mutation(async () => ({ processed: 0 })),
     listTranscripts: protectedProcedure.query(async () => {
       const apiKey = process.env.FIREFLIES_API_KEY || '';
       if (!apiKey) return [] as any[];
@@ -13906,6 +13922,10 @@ Ask if they received the original request and if they can provide a quote.`;
   inventoryManagement: router({
     getOverview: protectedProcedure.query(async () => ({ totalItems: 0, lowStock: 0, outOfStock: 0 })),
     getLowStock: protectedProcedure.query(async () => [] as any[]),
+    list: protectedProcedure.query(async () => [] as any[]),
+    update: protectedProcedure
+      .input(z.object({ id: z.number(), data: z.any() }))
+      .mutation(async () => ({ success: true })),
   }),
 });
 

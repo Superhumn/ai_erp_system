@@ -204,7 +204,7 @@ export default function QuickBooksIntegration() {
                   <TableBody>
                     {Object.entries(MAPPING_TYPE_LABELS).map(([type, label]) => {
                       const mapping = getMappingForType(type);
-                      const account = mapping?.quickbooksAccounts;
+                      const account = (mapping as any)?.quickbooksAccounts;
                       
                       return (
                         <TableRow key={type}>

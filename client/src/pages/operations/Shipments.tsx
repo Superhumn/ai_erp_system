@@ -35,7 +35,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 
 type Shipment = {
-  id: number;
+  id?: number;
   shipmentNumber: string;
   type: "inbound" | "outbound";
   status: "pending" | "in_transit" | "delivered" | "returned" | "cancelled";

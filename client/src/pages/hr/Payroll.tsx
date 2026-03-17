@@ -22,7 +22,7 @@ import { Wallet, Search, Loader2, DollarSign, Users, TrendingUp } from "lucide-r
 import { format } from "date-fns";
 
 type Employee = {
-  id: number;
+  id?: number;
   firstName: string;
   lastName: string;
   email: string | null;
