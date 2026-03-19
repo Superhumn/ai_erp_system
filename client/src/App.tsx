@@ -123,6 +123,15 @@ import DataRooms from "./pages/DataRooms";
 import DataRoomDetail from "./pages/DataRoomDetail";
 import DataRoomPublic from "./pages/DataRoomPublic";
 
+// FP&A
+import BudgetManagement from "./pages/fpa/BudgetManagement";
+import ScenarioPlanning from "./pages/fpa/ScenarioPlanning";
+import CashFlowForecast from "./pages/fpa/CashFlowForecast";
+import RollingForecasts from "./pages/fpa/RollingForecasts";
+import PerformancePacing from "./pages/fpa/PerformancePacing";
+import InventoryAging from "./pages/fpa/InventoryAging";
+import ChannelAnalytics from "./pages/fpa/ChannelAnalytics";
+
 // AI Agent
 import ApprovalQueue from "./pages/ai/ApprovalQueue";
 
@@ -208,6 +217,15 @@ function Router() {
         <Route path="/operations/reconciliation" component={ReconciliationReport} />
         <Route path="/operations/inventory-costing" component={InventoryCosting} />
         <Route path="/operations/vendor-negotiations" component={VendorNegotiations} />
+
+        {/* FP&A */}
+        <Route path="/fpa/budgets" component={BudgetManagement} />
+        <Route path="/fpa/scenarios" component={ScenarioPlanning} />
+        <Route path="/fpa/cash-flow" component={CashFlowForecast} />
+        <Route path="/fpa/rolling-forecasts" component={RollingForecasts} />
+        <Route path="/fpa/pacing" component={PerformancePacing} />
+        <Route path="/fpa/inventory-aging" component={InventoryAging} />
+        <Route path="/fpa/channels" component={ChannelAnalytics} />
 
         {/* EDI */}
         <Route path="/edi" component={EDIDashboard} />

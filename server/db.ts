@@ -118,6 +118,13 @@ import {
   // Investment grant checklists
   investmentGrantChecklists, investmentGrantItems,
   InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
+  // FP&A module
+  budgets, budgetLineItems, financialScenarios, cashFlowForecasts,
+  rollingForecasts, performancePacing, inventoryAgingSnapshots,
+  cashConversionMetrics, marketingSpend, channelPerformance,
+  InsertBudget, InsertBudgetLineItem, InsertFinancialScenario, InsertCashFlowForecast,
+  InsertRollingForecast, InsertPerformancePacing, InsertInventoryAgingSnapshot,
+  InsertCashConversionMetric, InsertMarketingSpend, InsertChannelPerformance,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -9024,5 +9031,336 @@ export async function getVendorSpendingHistory(vendorId: number) {
     totalSpend: parseFloat(poData[0]?.totalSpend || '0'),
     orderCount: poData[0]?.orderCount || 0,
     avgOrderValue: parseFloat(poData[0]?.avgOrderValue || '0'),
+  };
+}
+
+// ============================================
+// FP&A: BUDGET MANAGEMENT
+// ============================================
+
+export async function getBudgets(filters?: { status?: string; fiscalYear?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(budgets.status, filters.status as any));
+  if (filters?.fiscalYear) conditions.push(eq(budgets.fiscalYear, filters.fiscalYear));
+  return db.select().from(budgets).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(budgets.createdAt));
+}
+
+export async function getBudgetById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(budgets).where(eq(budgets.id, id));
+  return rows[0] || null;
+}
+
+export async function createBudget(data: InsertBudget) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(budgets).values(data);
+  return { id: result.insertId, ...data };
+}
+
+export async function updateBudget(id: number, data: Partial<InsertBudget>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(budgets).set(data).where(eq(budgets.id, id));
+  return getBudgetById(id);
+}
+
+export async function getBudgetLineItems(budgetId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(budgetLineItems).where(eq(budgetLineItems.budgetId, budgetId)).orderBy(budgetLineItems.category, budgetLineItems.periodMonth);
+}
+
+export async function createBudgetLineItem(data: InsertBudgetLineItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(budgetLineItems).values(data);
+  return { id: result.insertId, ...data };
+}
+
+export async function updateBudgetLineItem(id: number, data: Partial<InsertBudgetLineItem>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(budgetLineItems).set(data).where(eq(budgetLineItems.id, id));
+}
+
+// ============================================
+// FP&A: FINANCIAL SCENARIOS
+// ============================================
+
+export async function getFinancialScenarios(filters?: { status?: string; scenarioType?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(financialScenarios.status, filters.status as any));
+  if (filters?.scenarioType) conditions.push(eq(financialScenarios.scenarioType, filters.scenarioType as any));
+  return db.select().from(financialScenarios).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(financialScenarios.createdAt));
+}
+
+export async function getFinancialScenarioById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(financialScenarios).where(eq(financialScenarios.id, id));
+  return rows[0] || null;
+}
+
+export async function createFinancialScenario(data: InsertFinancialScenario) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(financialScenarios).values(data);
+  return { id: result.insertId, ...data };
+}
+
+export async function updateFinancialScenario(id: number, data: Partial<InsertFinancialScenario>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(financialScenarios).set(data).where(eq(financialScenarios.id, id));
+  return getFinancialScenarioById(id);
+}
+
+// ============================================
+// FP&A: CASH FLOW FORECASTS
+// ============================================
+
+export async function getCashFlowForecasts(filters?: { status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(cashFlowForecasts.status, filters.status as any));
+  return db.select().from(cashFlowForecasts).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(cashFlowForecasts.createdAt));
+}
+
+export async function createCashFlowForecast(data: InsertCashFlowForecast) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(cashFlowForecasts).values(data);
+  return { id: result.insertId, ...data };
+}
+
+// ============================================
+// FP&A: ROLLING FORECASTS
+// ============================================
+
+export async function getRollingForecasts(filters?: { status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(rollingForecasts.status, filters.status as any));
+  return db.select().from(rollingForecasts).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(rollingForecasts.createdAt));
+}
+
+export async function createRollingForecast(data: InsertRollingForecast) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(rollingForecasts).values(data);
+  return { id: result.insertId, ...data };
+}
+
+// ============================================
+// FP&A: PERFORMANCE PACING
+// ============================================
+
+export async function getPerformancePacingHistory(filters?: { budgetId?: number; periodYear?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.budgetId) conditions.push(eq(performancePacing.budgetId, filters.budgetId));
+  if (filters?.periodYear) conditions.push(eq(performancePacing.periodYear, filters.periodYear));
+  return db.select().from(performancePacing).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(performancePacing.snapshotDate));
+}
+
+export async function createPerformancePacing(data: InsertPerformancePacing) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(performancePacing).values(data);
+  return { id: result.insertId, ...data };
+}
+
+// ============================================
+// FP&A: INVENTORY AGING
+// ============================================
+
+export async function getInventoryAgingSnapshots(filters?: { snapshotDate?: Date }) {
+  const db = await getDb();
+  if (!db) return [];
+  if (filters?.snapshotDate) {
+    return db.select().from(inventoryAgingSnapshots).where(eq(inventoryAgingSnapshots.snapshotDate, filters.snapshotDate)).orderBy(desc(inventoryAgingSnapshots.totalValue));
+  }
+  // Get latest snapshot date
+  const latest = await db.select({ maxDate: sql<Date>`MAX(${inventoryAgingSnapshots.snapshotDate})` }).from(inventoryAgingSnapshots);
+  if (!latest[0]?.maxDate) return [];
+  return db.select().from(inventoryAgingSnapshots).where(eq(inventoryAgingSnapshots.snapshotDate, latest[0].maxDate)).orderBy(desc(inventoryAgingSnapshots.totalValue));
+}
+
+export async function createInventoryAgingSnapshot(data: InsertInventoryAgingSnapshot) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(inventoryAgingSnapshots).values(data);
+  return { id: result.insertId, ...data };
+}
+
+// ============================================
+// FP&A: CASH CONVERSION CYCLE
+// ============================================
+
+export async function getCashConversionMetrics(filters?: { periodYear?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.periodYear) conditions.push(eq(cashConversionMetrics.periodYear, filters.periodYear));
+  return db.select().from(cashConversionMetrics).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(cashConversionMetrics.periodYear), desc(cashConversionMetrics.periodMonth));
+}
+
+export async function createCashConversionMetric(data: InsertCashConversionMetric) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(cashConversionMetrics).values(data);
+  return { id: result.insertId, ...data };
+}
+
+// ============================================
+// FP&A: MARKETING SPEND & CAC
+// ============================================
+
+export async function getMarketingSpend(filters?: { channel?: string; periodYear?: number; periodMonth?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.channel) conditions.push(eq(marketingSpend.channel, filters.channel as any));
+  if (filters?.periodYear) conditions.push(eq(marketingSpend.periodYear, filters.periodYear));
+  if (filters?.periodMonth) conditions.push(eq(marketingSpend.periodMonth, filters.periodMonth));
+  return db.select().from(marketingSpend).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(marketingSpend.periodYear), desc(marketingSpend.periodMonth));
+}
+
+export async function createMarketingSpend(data: InsertMarketingSpend) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(marketingSpend).values(data);
+  return { id: result.insertId, ...data };
+}
+
+export async function getMarketingSpendSummary(periodYear: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    channel: marketingSpend.channel,
+    totalSpend: sql<string>`COALESCE(SUM(CAST(${marketingSpend.spend} AS DECIMAL(15,2))), 0)`,
+    totalConversions: sql<number>`COALESCE(SUM(${marketingSpend.conversions}), 0)`,
+    totalNewCustomers: sql<number>`COALESCE(SUM(${marketingSpend.newCustomers}), 0)`,
+    totalRevenue: sql<string>`COALESCE(SUM(CAST(${marketingSpend.revenue} AS DECIMAL(15,2))), 0)`,
+    avgCac: sql<string>`CASE WHEN SUM(${marketingSpend.newCustomers}) > 0 THEN CAST(SUM(CAST(${marketingSpend.spend} AS DECIMAL(15,2))) / SUM(${marketingSpend.newCustomers}) AS DECIMAL(10,2)) ELSE '0' END`,
+    avgRoas: sql<string>`CASE WHEN SUM(CAST(${marketingSpend.spend} AS DECIMAL(15,2))) > 0 THEN CAST(SUM(CAST(${marketingSpend.revenue} AS DECIMAL(15,2))) / SUM(CAST(${marketingSpend.spend} AS DECIMAL(15,2))) AS DECIMAL(8,2)) ELSE '0' END`,
+  }).from(marketingSpend).where(eq(marketingSpend.periodYear, periodYear)).groupBy(marketingSpend.channel);
+}
+
+// ============================================
+// FP&A: CHANNEL ANALYTICS
+// ============================================
+
+export async function getChannelPerformance(filters?: { channel?: string; periodYear?: number; periodMonth?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.channel) conditions.push(eq(channelPerformance.channel, filters.channel as any));
+  if (filters?.periodYear) conditions.push(eq(channelPerformance.periodYear, filters.periodYear));
+  if (filters?.periodMonth) conditions.push(eq(channelPerformance.periodMonth, filters.periodMonth));
+  return db.select().from(channelPerformance).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(channelPerformance.periodYear), desc(channelPerformance.periodMonth));
+}
+
+export async function createChannelPerformance(data: InsertChannelPerformance) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(channelPerformance).values(data);
+  return { id: result.insertId, ...data };
+}
+
+export async function getChannelSummary(periodYear: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    channel: channelPerformance.channel,
+    totalNetRevenue: sql<string>`COALESCE(SUM(CAST(${channelPerformance.netRevenue} AS DECIMAL(15,2))), 0)`,
+    totalGrossProfit: sql<string>`COALESCE(SUM(CAST(${channelPerformance.grossProfit} AS DECIMAL(15,2))), 0)`,
+    totalContributionProfit: sql<string>`COALESCE(SUM(CAST(${channelPerformance.contributionProfit} AS DECIMAL(15,2))), 0)`,
+    totalOrders: sql<number>`COALESCE(SUM(${channelPerformance.orderCount}), 0)`,
+    totalUnits: sql<number>`COALESCE(SUM(${channelPerformance.unitsSold}), 0)`,
+    avgGrossMargin: sql<string>`COALESCE(AVG(CAST(${channelPerformance.grossMargin} AS DECIMAL(8,2))), 0)`,
+    avgContributionMargin: sql<string>`COALESCE(AVG(CAST(${channelPerformance.contributionMargin} AS DECIMAL(8,2))), 0)`,
+    avgAov: sql<string>`COALESCE(AVG(CAST(${channelPerformance.averageOrderValue} AS DECIMAL(10,2))), 0)`,
+    totalNewCustomers: sql<number>`COALESCE(SUM(${channelPerformance.newCustomers}), 0)`,
+    totalReturningCustomers: sql<number>`COALESCE(SUM(${channelPerformance.returningCustomers}), 0)`,
+  }).from(channelPerformance).where(eq(channelPerformance.periodYear, periodYear)).groupBy(channelPerformance.channel);
+}
+
+// ============================================
+// FP&A: FINANCIAL DATA AGGREGATIONS (for AI analysis)
+// ============================================
+
+export async function getFinancialSummaryForPeriod(startDate: Date, endDate: Date) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  // Revenue from orders
+  const revenueData = await db.select({
+    totalRevenue: sql<string>`COALESCE(SUM(CAST(${orders.totalAmount} AS DECIMAL(15,2))), 0)`,
+    orderCount: sql<number>`COUNT(*)`,
+  }).from(orders).where(and(
+    gte(orders.orderDate, startDate),
+    lte(orders.orderDate, endDate),
+    ne(orders.status, 'cancelled'),
+  ));
+
+  // COGS from cogsRecords
+  const cogsData = await db.select({
+    totalCOGS: sql<string>`COALESCE(SUM(CAST(${cogsRecords.totalCogs} AS DECIMAL(15,2))), 0)`,
+  }).from(cogsRecords).where(and(
+    gte(cogsRecords.recordDate, startDate),
+    lte(cogsRecords.recordDate, endDate),
+  ));
+
+  // Expenses from transactions
+  const expenseData = await db.select({
+    totalExpenses: sql<string>`COALESCE(SUM(CAST(${transactions.amount} AS DECIMAL(15,2))), 0)`,
+  }).from(transactions).where(and(
+    gte(transactions.date, startDate),
+    lte(transactions.date, endDate),
+    eq(transactions.type, 'expense'),
+  ));
+
+  // Outstanding receivables
+  const arData = await db.select({
+    totalAR: sql<string>`COALESCE(SUM(CAST(${invoices.totalAmount} AS DECIMAL(15,2))), 0)`,
+  }).from(invoices).where(and(
+    or(eq(invoices.status, 'sent'), eq(invoices.status, 'partial')),
+  ));
+
+  // Outstanding payables (POs confirmed but not fully paid)
+  const apData = await db.select({
+    totalAP: sql<string>`COALESCE(SUM(CAST(${purchaseOrders.totalAmount} AS DECIMAL(15,2))), 0)`,
+  }).from(purchaseOrders).where(and(
+    or(eq(purchaseOrders.status, 'confirmed'), eq(purchaseOrders.status, 'sent')),
+  ));
+
+  const totalRevenue = parseFloat(revenueData[0]?.totalRevenue || '0');
+  const totalCOGS = parseFloat(cogsData[0]?.totalCOGS || '0');
+  const totalExpenses = parseFloat(expenseData[0]?.totalExpenses || '0');
+  const grossProfit = totalRevenue - totalCOGS;
+  const ebitda = grossProfit - totalExpenses;
+
+  return {
+    totalRevenue,
+    totalCOGS,
+    grossProfit,
+    grossMargin: totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0,
+    totalExpenses,
+    ebitda,
+    ebitdaMargin: totalRevenue > 0 ? (ebitda / totalRevenue) * 100 : 0,
+    netIncome: ebitda, // Simplified - before interest & taxes
+    orderCount: revenueData[0]?.orderCount || 0,
+    accountsReceivable: parseFloat(arData[0]?.totalAR || '0'),
+    accountsPayable: parseFloat(apData[0]?.totalAP || '0'),
   };
 }

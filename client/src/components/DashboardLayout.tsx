@@ -131,6 +131,18 @@ const menuGroups = [
     ],
   },
   {
+    label: "FP&A",
+    items: [
+      { icon: DollarSign, label: "Budgets", path: "/fpa/budgets" },
+      { icon: TrendingUp, label: "Scenarios", path: "/fpa/scenarios" },
+      { icon: CreditCard, label: "Cash Flow", path: "/fpa/cash-flow" },
+      { icon: FileSpreadsheet, label: "Rolling Forecasts", path: "/fpa/rolling-forecasts" },
+      { icon: Target, label: "Pacing", path: "/fpa/pacing" },
+      { icon: Package, label: "Inventory Aging", path: "/fpa/inventory-aging" },
+      { icon: ShoppingCart, label: "Channel Analytics", path: "/fpa/channels" },
+    ],
+  },
+  {
     label: "EDI & Retail",
     items: [
       { icon: ArrowRightLeft, label: "EDI Hub", path: "/edi" },

@@ -13657,6 +13657,393 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
     }),
   }),
+
+  // ============================================
+  // FP&A MODULE
+  // ============================================
+  fpa: router({
+    // ---------- Budgets ----------
+    budgets: router({
+      list: financeProcedure
+        .input(z.object({ status: z.string().optional(), fiscalYear: z.number().optional() }).optional())
+        .query(({ input }) => db.getBudgets(input ?? {})),
+      get: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getBudgetById(input.id)),
+      create: financeProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          fiscalYear: z.number(),
+          periodType: z.enum(["monthly", "quarterly", "annual"]).optional(),
+          status: z.enum(["draft", "active", "closed", "archived"]).optional(),
+          startDate: z.string(),
+          endDate: z.string(),
+          totalRevenue: z.string().optional(),
+          totalExpenses: z.string().optional(),
+          totalCOGS: z.string().optional(),
+          targetEbitda: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createBudget({
+            ...input,
+            startDate: new Date(input.startDate),
+            endDate: new Date(input.endDate),
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'budget', result.id, input.name);
+          return result;
+        }),
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          data: z.object({
+            name: z.string().optional(),
+            status: z.enum(["draft", "active", "closed", "archived"]).optional(),
+            totalRevenue: z.string().optional(),
+            totalExpenses: z.string().optional(),
+            totalCOGS: z.string().optional(),
+            targetEbitda: z.string().optional(),
+            notes: z.string().optional(),
+          }),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.updateBudget(input.id, input.data);
+          await createAuditLog(ctx.user.id, 'update', 'budget', input.id);
+          return result;
+        }),
+      getLineItems: financeProcedure
+        .input(z.object({ budgetId: z.number() }))
+        .query(({ input }) => db.getBudgetLineItems(input.budgetId)),
+      createLineItem: financeProcedure
+        .input(z.object({
+          budgetId: z.number(),
+          category: z.enum([
+            "revenue", "cogs", "gross_profit",
+            "marketing", "payroll", "rent", "utilities", "software",
+            "shipping", "packaging", "insurance", "professional_fees",
+            "depreciation", "other_opex", "interest", "taxes", "other"
+          ]),
+          subcategory: z.string().optional(),
+          accountId: z.number().optional(),
+          periodMonth: z.number().optional(),
+          periodQuarter: z.number().optional(),
+          budgetedAmount: z.string(),
+          actualAmount: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createBudgetLineItem(input);
+          await createAuditLog(ctx.user.id, 'create', 'budget_line_item', result.id);
+          return result;
+        }),
+    }),
+
+    // ---------- Scenarios ----------
+    scenarios: router({
+      list: financeProcedure
+        .input(z.object({ status: z.string().optional(), scenarioType: z.string().optional() }).optional())
+        .query(({ input }) => db.getFinancialScenarios(input ?? {})),
+      get: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getFinancialScenarioById(input.id)),
+      create: financeProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          description: z.string().optional(),
+          scenarioType: z.enum(["base", "optimistic", "pessimistic", "custom", "ai_generated"]).optional(),
+          status: z.enum(["draft", "active", "archived"]).optional(),
+          baseBudgetId: z.number().optional(),
+          assumptions: z.any().optional(),
+          projectedRevenue: z.string().optional(),
+          projectedCOGS: z.string().optional(),
+          projectedGrossProfit: z.string().optional(),
+          projectedGrossMargin: z.string().optional(),
+          projectedOpex: z.string().optional(),
+          projectedEbitda: z.string().optional(),
+          projectedEbitdaMargin: z.string().optional(),
+          projectedNetIncome: z.string().optional(),
+          projectedCashBalance: z.string().optional(),
+          monthlyProjections: z.any().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createFinancialScenario({ ...input, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'financial_scenario', result.id, input.name);
+          return result;
+        }),
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          data: z.object({
+            name: z.string().optional(),
+            status: z.enum(["draft", "active", "archived"]).optional(),
+            aiAnalysis: z.string().optional(),
+            aiRiskAssessment: z.string().optional(),
+          }),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.updateFinancialScenario(input.id, input.data);
+          await createAuditLog(ctx.user.id, 'update', 'financial_scenario', input.id);
+          return result;
+        }),
+      generateAI: financeProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          baseBudgetId: z.number().optional(),
+          assumptions: z.any().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createFinancialScenario({
+            ...input,
+            scenarioType: "ai_generated",
+            status: "draft",
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'financial_scenario', result.id, input.name);
+          return result;
+        }),
+    }),
+
+    // ---------- Cash Flow Forecasts ----------
+    cashFlow: router({
+      list: financeProcedure
+        .input(z.object({ status: z.string().optional() }).optional())
+        .query(({ input }) => db.getCashFlowForecasts(input ?? {})),
+      create: financeProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          forecastDate: z.string(),
+          periodStart: z.string(),
+          periodEnd: z.string(),
+          status: z.enum(["draft", "active", "expired"]).optional(),
+          openingCashBalance: z.string().optional(),
+          projectedCollections: z.string().optional(),
+          projectedOtherInflows: z.string().optional(),
+          projectedSupplierPayments: z.string().optional(),
+          projectedPayroll: z.string().optional(),
+          projectedRent: z.string().optional(),
+          projectedMarketingSpend: z.string().optional(),
+          projectedOtherOutflows: z.string().optional(),
+          projectedNetCashFlow: z.string().optional(),
+          projectedClosingBalance: z.string().optional(),
+          weeklyBreakdown: z.any().optional(),
+          aiRecommendations: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createCashFlowForecast({
+            ...input,
+            forecastDate: new Date(input.forecastDate),
+            periodStart: new Date(input.periodStart),
+            periodEnd: new Date(input.periodEnd),
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'cash_flow_forecast', result.id, input.name);
+          return result;
+        }),
+      generate: financeProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          periodStart: z.string(),
+          periodEnd: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createCashFlowForecast({
+            ...input,
+            forecastDate: new Date(),
+            periodStart: new Date(input.periodStart),
+            periodEnd: new Date(input.periodEnd),
+            status: "draft",
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'cash_flow_forecast', result.id, input.name);
+          return result;
+        }),
+    }),
+
+    // ---------- Rolling Forecasts ----------
+    rollingForecasts: router({
+      list: financeProcedure
+        .input(z.object({ status: z.string().optional() }).optional())
+        .query(({ input }) => db.getRollingForecasts(input ?? {})),
+      create: financeProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          forecastDate: z.string(),
+          horizonMonths: z.number().optional(),
+          status: z.enum(["draft", "active", "superseded"]).optional(),
+          totalRevenue: z.string().optional(),
+          totalCOGS: z.string().optional(),
+          totalGrossProfit: z.string().optional(),
+          totalOpex: z.string().optional(),
+          totalEbitda: z.string().optional(),
+          totalNetIncome: z.string().optional(),
+          averageGrossMargin: z.string().optional(),
+          averageEbitdaMargin: z.string().optional(),
+          monthlyPnl: z.any().optional(),
+          monthlyBalanceSheet: z.any().optional(),
+          monthlyCashFlow: z.any().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createRollingForecast({
+            ...input,
+            forecastDate: new Date(input.forecastDate),
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'rolling_forecast', result.id, input.name);
+          return result;
+        }),
+      generate: financeProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          horizonMonths: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createRollingForecast({
+            ...input,
+            forecastDate: new Date(),
+            status: "draft",
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'rolling_forecast', result.id, input.name);
+          return result;
+        }),
+    }),
+
+    // ---------- Performance Pacing ----------
+    pacing: router({
+      getCurrent: financeProcedure.query(async () => {
+        const now = new Date();
+        const records = await db.getPerformancePacingHistory({
+          periodYear: now.getFullYear(),
+        });
+        // Return latest record for current month
+        const currentMonth = records.filter((r: any) => r.periodMonth === now.getMonth() + 1);
+        return currentMonth.length > 0 ? currentMonth[currentMonth.length - 1] : null;
+      }),
+      getHistory: financeProcedure
+        .input(z.object({ budgetId: z.number().optional(), periodYear: z.number().optional() }).optional())
+        .query(({ input }) => db.getPerformancePacingHistory(input ?? {})),
+      refresh: financeProcedure
+        .input(z.object({
+          budgetId: z.number(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const now = new Date();
+          const result = await db.createPerformancePacing({
+            budgetId: input.budgetId,
+            periodMonth: now.getMonth() + 1,
+            periodYear: now.getFullYear(),
+            snapshotDate: now,
+            dayOfMonth: now.getDate(),
+            daysInMonth: new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate(),
+          });
+          await createAuditLog(ctx.user.id, 'create', 'performance_pacing', result.id);
+          return result;
+        }),
+    }),
+
+    // ---------- Inventory Aging ----------
+    inventoryAging: router({
+      list: financeProcedure
+        .input(z.object({ snapshotDate: z.string().optional() }).optional())
+        .query(({ input }) => {
+          const filters = input?.snapshotDate ? { snapshotDate: new Date(input.snapshotDate) } : {};
+          return db.getInventoryAgingSnapshots(filters);
+        }),
+      generate: financeProcedure
+        .mutation(async ({ ctx }) => {
+          // Create a snapshot for current date (products will be populated by a background job)
+          const result = await db.createInventoryAgingSnapshot({
+            snapshotDate: new Date(),
+            productId: 0, // placeholder - real implementation would iterate products
+          });
+          await createAuditLog(ctx.user.id, 'create', 'inventory_aging_snapshot', result.id);
+          return result;
+        }),
+    }),
+
+    // ---------- Channel Performance ----------
+    channels: router({
+      list: financeProcedure
+        .input(z.object({
+          channel: z.string().optional(),
+          periodYear: z.number().optional(),
+          periodMonth: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getChannelPerformance(input ?? {})),
+      getSummary: financeProcedure.query(async () => {
+        const now = new Date();
+        return db.getChannelPerformance({
+          periodYear: now.getFullYear(),
+          periodMonth: now.getMonth() + 1,
+        });
+      }),
+      create: financeProcedure
+        .input(z.object({
+          channel: z.enum(["dtc_shopify", "amazon", "wholesale", "retail", "marketplace_other"]),
+          periodMonth: z.number(),
+          periodYear: z.number(),
+          grossRevenue: z.string().optional(),
+          returns: z.string().optional(),
+          discounts: z.string().optional(),
+          netRevenue: z.string().optional(),
+          cogs: z.string().optional(),
+          shippingCost: z.string().optional(),
+          platformFees: z.string().optional(),
+          marketingCost: z.string().optional(),
+          grossProfit: z.string().optional(),
+          grossMargin: z.string().optional(),
+          contributionProfit: z.string().optional(),
+          contributionMargin: z.string().optional(),
+          orderCount: z.number().optional(),
+          unitsSold: z.number().optional(),
+          averageOrderValue: z.string().optional(),
+          newCustomers: z.number().optional(),
+          returningCustomers: z.number().optional(),
+          chargebacks: z.string().optional(),
+          fillRate: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createChannelPerformance(input);
+          await createAuditLog(ctx.user.id, 'create', 'channel_performance', result.id);
+          return result;
+        }),
+    }),
+
+    // ---------- Marketing Spend ----------
+    marketing: router({
+      list: financeProcedure
+        .input(z.object({
+          channel: z.string().optional(),
+          periodYear: z.number().optional(),
+          periodMonth: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getMarketingSpend(input ?? {})),
+      create: financeProcedure
+        .input(z.object({
+          channel: z.enum(["google_ads", "meta_ads", "tiktok_ads", "amazon_ads", "influencer", "email", "seo", "affiliate", "retail_media", "other"]),
+          campaignName: z.string().optional(),
+          periodMonth: z.number(),
+          periodYear: z.number(),
+          spend: z.string(),
+          impressions: z.number().optional(),
+          clicks: z.number().optional(),
+          conversions: z.number().optional(),
+          revenue: z.string().optional(),
+          newCustomers: z.number().optional(),
+          cpc: z.string().optional(),
+          cpa: z.string().optional(),
+          roas: z.string().optional(),
+          cac: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createMarketingSpend(input);
+          await createAuditLog(ctx.user.id, 'create', 'marketing_spend', result.id);
+          return result;
+        }),
+    }),
+  }),
 });
 
 // Helper function to calculate next generation date for recurring invoices

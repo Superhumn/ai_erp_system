@@ -5074,3 +5074,340 @@ export type EdiSettings = typeof ediSettings.$inferSelect;
 export type InsertEdiSettings = typeof ediSettings.$inferInsert;
 export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
 export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
+
+// ============================================
+// FP&A: BUDGETS
+// ============================================
+
+export const budgets = mysqlTable("budgets", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  fiscalYear: int("fiscalYear").notNull(),
+  periodType: mysqlEnum("periodType", ["monthly", "quarterly", "annual"]).default("monthly").notNull(),
+  status: mysqlEnum("status", ["draft", "active", "closed", "archived"]).default("draft").notNull(),
+  startDate: timestamp("startDate").notNull(),
+  endDate: timestamp("endDate").notNull(),
+  totalRevenue: decimal("totalRevenue", { precision: 14, scale: 2 }).default("0"),
+  totalExpenses: decimal("totalExpenses", { precision: 14, scale: 2 }).default("0"),
+  totalCOGS: decimal("totalCOGS", { precision: 14, scale: 2 }).default("0"),
+  targetEbitda: decimal("targetEbitda", { precision: 14, scale: 2 }).default("0"),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  approvedBy: int("approvedBy"),
+  approvedAt: timestamp("approvedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Budget = typeof budgets.$inferSelect;
+export type InsertBudget = typeof budgets.$inferInsert;
+
+export const budgetLineItems = mysqlTable("budgetLineItems", {
+  id: int("id").autoincrement().primaryKey(),
+  budgetId: int("budgetId").notNull(),
+  category: mysqlEnum("category", [
+    "revenue", "cogs", "gross_profit",
+    "marketing", "payroll", "rent", "utilities", "software",
+    "shipping", "packaging", "insurance", "professional_fees",
+    "depreciation", "other_opex", "interest", "taxes", "other"
+  ]).notNull(),
+  subcategory: varchar("subcategory", { length: 255 }),
+  accountId: int("accountId"),
+  periodMonth: int("periodMonth"), // 1-12 for monthly budgets
+  periodQuarter: int("periodQuarter"), // 1-4 for quarterly budgets
+  budgetedAmount: decimal("budgetedAmount", { precision: 14, scale: 2 }).default("0").notNull(),
+  actualAmount: decimal("actualAmount", { precision: 14, scale: 2 }).default("0"),
+  varianceAmount: decimal("varianceAmount", { precision: 14, scale: 2 }).default("0"),
+  variancePercent: decimal("variancePercent", { precision: 8, scale: 2 }).default("0"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type BudgetLineItem = typeof budgetLineItems.$inferSelect;
+export type InsertBudgetLineItem = typeof budgetLineItems.$inferInsert;
+
+// ============================================
+// FP&A: FINANCIAL SCENARIOS
+// ============================================
+
+export const financialScenarios = mysqlTable("financialScenarios", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  scenarioType: mysqlEnum("scenarioType", ["base", "optimistic", "pessimistic", "custom", "ai_generated"]).default("custom").notNull(),
+  status: mysqlEnum("status", ["draft", "active", "archived"]).default("draft").notNull(),
+  baseBudgetId: int("baseBudgetId"),
+  // Assumption overrides as JSON
+  assumptions: json("assumptions"), // { revenueGrowthPct, cogsChangePct, marketingSpendPct, headcountChange, etc. }
+  // Computed P&L outputs
+  projectedRevenue: decimal("projectedRevenue", { precision: 14, scale: 2 }),
+  projectedCOGS: decimal("projectedCOGS", { precision: 14, scale: 2 }),
+  projectedGrossProfit: decimal("projectedGrossProfit", { precision: 14, scale: 2 }),
+  projectedGrossMargin: decimal("projectedGrossMargin", { precision: 8, scale: 2 }),
+  projectedOpex: decimal("projectedOpex", { precision: 14, scale: 2 }),
+  projectedEbitda: decimal("projectedEbitda", { precision: 14, scale: 2 }),
+  projectedEbitdaMargin: decimal("projectedEbitdaMargin", { precision: 8, scale: 2 }),
+  projectedNetIncome: decimal("projectedNetIncome", { precision: 14, scale: 2 }),
+  projectedCashBalance: decimal("projectedCashBalance", { precision: 14, scale: 2 }),
+  // AI analysis
+  aiAnalysis: text("aiAnalysis"),
+  aiRiskAssessment: text("aiRiskAssessment"),
+  // Monthly breakdown stored as JSON
+  monthlyProjections: json("monthlyProjections"), // Array of monthly P&L snapshots
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FinancialScenario = typeof financialScenarios.$inferSelect;
+export type InsertFinancialScenario = typeof financialScenarios.$inferInsert;
+
+// ============================================
+// FP&A: CASH FLOW FORECASTS
+// ============================================
+
+export const cashFlowForecasts = mysqlTable("cashFlowForecasts", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  forecastDate: timestamp("forecastDate").notNull(),
+  periodStart: timestamp("periodStart").notNull(),
+  periodEnd: timestamp("periodEnd").notNull(),
+  status: mysqlEnum("status", ["draft", "active", "expired"]).default("draft").notNull(),
+  // Opening balance
+  openingCashBalance: decimal("openingCashBalance", { precision: 14, scale: 2 }).default("0"),
+  // Cash inflows
+  projectedCollections: decimal("projectedCollections", { precision: 14, scale: 2 }).default("0"),
+  projectedOtherInflows: decimal("projectedOtherInflows", { precision: 14, scale: 2 }).default("0"),
+  // Cash outflows
+  projectedSupplierPayments: decimal("projectedSupplierPayments", { precision: 14, scale: 2 }).default("0"),
+  projectedPayroll: decimal("projectedPayroll", { precision: 14, scale: 2 }).default("0"),
+  projectedRent: decimal("projectedRent", { precision: 14, scale: 2 }).default("0"),
+  projectedMarketingSpend: decimal("projectedMarketingSpend", { precision: 14, scale: 2 }).default("0"),
+  projectedOtherOutflows: decimal("projectedOtherOutflows", { precision: 14, scale: 2 }).default("0"),
+  // Net cash
+  projectedNetCashFlow: decimal("projectedNetCashFlow", { precision: 14, scale: 2 }).default("0"),
+  projectedClosingBalance: decimal("projectedClosingBalance", { precision: 14, scale: 2 }).default("0"),
+  // Weekly breakdown
+  weeklyBreakdown: json("weeklyBreakdown"), // Array of weekly cash positions
+  // AI
+  aiAnalysis: text("aiAnalysis"),
+  aiRecommendations: text("aiRecommendations"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CashFlowForecast = typeof cashFlowForecasts.$inferSelect;
+export type InsertCashFlowForecast = typeof cashFlowForecasts.$inferInsert;
+
+// ============================================
+// FP&A: ROLLING FINANCIAL FORECASTS (P&L)
+// ============================================
+
+export const rollingForecasts = mysqlTable("rollingForecasts", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  forecastDate: timestamp("forecastDate").notNull(),
+  horizonMonths: int("horizonMonths").default(12).notNull(),
+  status: mysqlEnum("status", ["draft", "active", "superseded"]).default("draft").notNull(),
+  // Summary totals for the horizon
+  totalRevenue: decimal("totalRevenue", { precision: 14, scale: 2 }),
+  totalCOGS: decimal("totalCOGS", { precision: 14, scale: 2 }),
+  totalGrossProfit: decimal("totalGrossProfit", { precision: 14, scale: 2 }),
+  totalOpex: decimal("totalOpex", { precision: 14, scale: 2 }),
+  totalEbitda: decimal("totalEbitda", { precision: 14, scale: 2 }),
+  totalNetIncome: decimal("totalNetIncome", { precision: 14, scale: 2 }),
+  averageGrossMargin: decimal("averageGrossMargin", { precision: 8, scale: 2 }),
+  averageEbitdaMargin: decimal("averageEbitdaMargin", { precision: 8, scale: 2 }),
+  // Monthly P&L snapshots
+  monthlyPnl: json("monthlyPnl"), // [{month, revenue, cogs, grossProfit, opex, ebitda, netIncome}]
+  // Monthly balance sheet snapshots
+  monthlyBalanceSheet: json("monthlyBalanceSheet"), // [{month, cash, receivables, inventory, payables, equity}]
+  // Monthly cash flow
+  monthlyCashFlow: json("monthlyCashFlow"), // [{month, operatingCF, investingCF, financingCF, netCF, endingCash}]
+  aiAnalysis: text("aiAnalysis"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type RollingForecast = typeof rollingForecasts.$inferSelect;
+export type InsertRollingForecast = typeof rollingForecasts.$inferInsert;
+
+// ============================================
+// FP&A: PERFORMANCE PACING
+// ============================================
+
+export const performancePacing = mysqlTable("performancePacing", {
+  id: int("id").autoincrement().primaryKey(),
+  budgetId: int("budgetId").notNull(),
+  periodMonth: int("periodMonth").notNull(), // 1-12
+  periodYear: int("periodYear").notNull(),
+  // Pacing snapshot date
+  snapshotDate: timestamp("snapshotDate").notNull(),
+  dayOfMonth: int("dayOfMonth").notNull(),
+  daysInMonth: int("daysInMonth").notNull(),
+  daysElapsedPct: decimal("daysElapsedPct", { precision: 6, scale: 2 }),
+  // Revenue pacing
+  budgetedRevenue: decimal("budgetedRevenue", { precision: 14, scale: 2 }),
+  actualRevenue: decimal("actualRevenue", { precision: 14, scale: 2 }),
+  pacedRevenue: decimal("pacedRevenue", { precision: 14, scale: 2 }), // pro-rated budget
+  revenuePacePercent: decimal("revenuePacePercent", { precision: 8, scale: 2 }), // actual / paced * 100
+  projectedMonthEndRevenue: decimal("projectedMonthEndRevenue", { precision: 14, scale: 2 }),
+  // Expense pacing
+  budgetedExpenses: decimal("budgetedExpenses", { precision: 14, scale: 2 }),
+  actualExpenses: decimal("actualExpenses", { precision: 14, scale: 2 }),
+  pacedExpenses: decimal("pacedExpenses", { precision: 14, scale: 2 }),
+  expensePacePercent: decimal("expensePacePercent", { precision: 8, scale: 2 }),
+  // EBITDA pacing
+  budgetedEbitda: decimal("budgetedEbitda", { precision: 14, scale: 2 }),
+  actualEbitda: decimal("actualEbitda", { precision: 14, scale: 2 }),
+  projectedMonthEndEbitda: decimal("projectedMonthEndEbitda", { precision: 14, scale: 2 }),
+  // Marketing efficiency
+  budgetedMarketingSpend: decimal("budgetedMarketingSpend", { precision: 14, scale: 2 }),
+  actualMarketingSpend: decimal("actualMarketingSpend", { precision: 14, scale: 2 }),
+  // Status
+  overallStatus: mysqlEnum("overallStatus", ["on_track", "ahead", "behind", "at_risk"]).default("on_track"),
+  aiInsights: text("aiInsights"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type PerformancePacing = typeof performancePacing.$inferSelect;
+export type InsertPerformancePacing = typeof performancePacing.$inferInsert;
+
+// ============================================
+// FP&A: INVENTORY AGING
+// ============================================
+
+export const inventoryAgingSnapshots = mysqlTable("inventoryAgingSnapshots", {
+  id: int("id").autoincrement().primaryKey(),
+  snapshotDate: timestamp("snapshotDate").notNull(),
+  productId: int("productId").notNull(),
+  warehouseId: int("warehouseId"),
+  sku: varchar("sku", { length: 100 }),
+  totalQuantity: decimal("totalQuantity", { precision: 12, scale: 2 }).default("0"),
+  totalValue: decimal("totalValue", { precision: 14, scale: 2 }).default("0"),
+  // Aging buckets
+  qty0to30: decimal("qty0to30", { precision: 12, scale: 2 }).default("0"),
+  qty31to60: decimal("qty31to60", { precision: 12, scale: 2 }).default("0"),
+  qty61to90: decimal("qty61to90", { precision: 12, scale: 2 }).default("0"),
+  qty91to120: decimal("qty91to120", { precision: 12, scale: 2 }).default("0"),
+  qty121to180: decimal("qty121to180", { precision: 12, scale: 2 }).default("0"),
+  qty181plus: decimal("qty181plus", { precision: 12, scale: 2 }).default("0"),
+  val0to30: decimal("val0to30", { precision: 14, scale: 2 }).default("0"),
+  val31to60: decimal("val31to60", { precision: 14, scale: 2 }).default("0"),
+  val61to90: decimal("val61to90", { precision: 14, scale: 2 }).default("0"),
+  val91to120: decimal("val91to120", { precision: 14, scale: 2 }).default("0"),
+  val121to180: decimal("val121to180", { precision: 14, scale: 2 }).default("0"),
+  val181plus: decimal("val181plus", { precision: 14, scale: 2 }).default("0"),
+  // Metrics
+  averageAgeDays: decimal("averageAgeDays", { precision: 8, scale: 1 }),
+  daysOfSupply: decimal("daysOfSupply", { precision: 8, scale: 1 }),
+  riskLevel: mysqlEnum("riskLevel", ["low", "medium", "high", "critical"]).default("low"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type InventoryAgingSnapshot = typeof inventoryAgingSnapshots.$inferSelect;
+export type InsertInventoryAgingSnapshot = typeof inventoryAgingSnapshots.$inferInsert;
+
+// ============================================
+// FP&A: CASH CONVERSION CYCLE
+// ============================================
+
+export const cashConversionMetrics = mysqlTable("cashConversionMetrics", {
+  id: int("id").autoincrement().primaryKey(),
+  periodMonth: int("periodMonth").notNull(),
+  periodYear: int("periodYear").notNull(),
+  // DSO - Days Sales Outstanding (how quickly you collect from customers)
+  daysRecSalesOutstanding: decimal("daysRecSalesOutstanding", { precision: 8, scale: 1 }),
+  // DIO - Days Inventory Outstanding (how long inventory sits)
+  daysInventoryOutstanding: decimal("daysInventoryOutstanding", { precision: 8, scale: 1 }),
+  // DPO - Days Payable Outstanding (how quickly you pay suppliers)
+  daysPayableOutstanding: decimal("daysPayableOutstanding", { precision: 8, scale: 1 }),
+  // CCC = DSO + DIO - DPO
+  cashConversionCycleDays: decimal("cashConversionCycleDays", { precision: 8, scale: 1 }),
+  // Underlying data
+  avgAccountsReceivable: decimal("avgAccountsReceivable", { precision: 14, scale: 2 }),
+  totalRevenue: decimal("totalRevenue", { precision: 14, scale: 2 }),
+  avgInventoryValue: decimal("avgInventoryValue", { precision: 14, scale: 2 }),
+  totalCOGS: decimal("totalCOGS", { precision: 14, scale: 2 }),
+  avgAccountsPayable: decimal("avgAccountsPayable", { precision: 14, scale: 2 }),
+  totalPurchases: decimal("totalPurchases", { precision: 14, scale: 2 }),
+  // Trend
+  cccTrend: mysqlEnum("cccTrend", ["improving", "stable", "worsening"]).default("stable"),
+  aiAnalysis: text("aiAnalysis"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CashConversionMetric = typeof cashConversionMetrics.$inferSelect;
+export type InsertCashConversionMetric = typeof cashConversionMetrics.$inferInsert;
+
+// ============================================
+// FP&A: MARKETING SPEND & CAC
+// ============================================
+
+export const marketingSpend = mysqlTable("marketingSpend", {
+  id: int("id").autoincrement().primaryKey(),
+  channel: mysqlEnum("channel", ["google_ads", "meta_ads", "tiktok_ads", "amazon_ads", "influencer", "email", "seo", "affiliate", "retail_media", "other"]).notNull(),
+  campaignName: varchar("campaignName", { length: 255 }),
+  periodMonth: int("periodMonth").notNull(),
+  periodYear: int("periodYear").notNull(),
+  spend: decimal("spend", { precision: 14, scale: 2 }).default("0").notNull(),
+  impressions: int("impressions").default(0),
+  clicks: int("clicks").default(0),
+  conversions: int("conversions").default(0),
+  revenue: decimal("revenue", { precision: 14, scale: 2 }).default("0"),
+  newCustomers: int("newCustomers").default(0),
+  // Calculated metrics
+  cpc: decimal("cpc", { precision: 10, scale: 2 }), // cost per click
+  cpa: decimal("cpa", { precision: 10, scale: 2 }), // cost per acquisition
+  roas: decimal("roas", { precision: 8, scale: 2 }), // return on ad spend
+  cac: decimal("cac", { precision: 10, scale: 2 }), // customer acquisition cost
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type MarketingSpend = typeof marketingSpend.$inferSelect;
+export type InsertMarketingSpend = typeof marketingSpend.$inferInsert;
+
+// ============================================
+// FP&A: CHANNEL ANALYTICS
+// ============================================
+
+export const channelPerformance = mysqlTable("channelPerformance", {
+  id: int("id").autoincrement().primaryKey(),
+  channel: mysqlEnum("channel", ["dtc_shopify", "amazon", "wholesale", "retail", "marketplace_other"]).notNull(),
+  periodMonth: int("periodMonth").notNull(),
+  periodYear: int("periodYear").notNull(),
+  // Revenue metrics
+  grossRevenue: decimal("grossRevenue", { precision: 14, scale: 2 }).default("0"),
+  returns: decimal("returns", { precision: 14, scale: 2 }).default("0"),
+  discounts: decimal("discounts", { precision: 14, scale: 2 }).default("0"),
+  netRevenue: decimal("netRevenue", { precision: 14, scale: 2 }).default("0"),
+  // Cost metrics
+  cogs: decimal("cogs", { precision: 14, scale: 2 }).default("0"),
+  shippingCost: decimal("shippingCost", { precision: 14, scale: 2 }).default("0"),
+  platformFees: decimal("platformFees", { precision: 14, scale: 2 }).default("0"), // Amazon fees, Shopify fees, chargebacks
+  marketingCost: decimal("marketingCost", { precision: 14, scale: 2 }).default("0"),
+  // Profitability
+  grossProfit: decimal("grossProfit", { precision: 14, scale: 2 }).default("0"),
+  grossMargin: decimal("grossMargin", { precision: 8, scale: 2 }),
+  contributionProfit: decimal("contributionProfit", { precision: 14, scale: 2 }).default("0"),
+  contributionMargin: decimal("contributionMargin", { precision: 8, scale: 2 }),
+  // Volume metrics
+  orderCount: int("orderCount").default(0),
+  unitsSold: int("unitsSold").default(0),
+  averageOrderValue: decimal("averageOrderValue", { precision: 10, scale: 2 }),
+  newCustomers: int("newCustomers").default(0),
+  returningCustomers: int("returningCustomers").default(0),
+  // Wholesale-specific
+  chargebacks: decimal("chargebacks", { precision: 14, scale: 2 }).default("0"),
+  fillRate: decimal("fillRate", { precision: 6, scale: 2 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ChannelPerformance = typeof channelPerformance.$inferSelect;
+export type InsertChannelPerformance = typeof channelPerformance.$inferInsert;
