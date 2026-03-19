@@ -120,7 +120,9 @@ import {
   InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
   // Grant & Bid submitter
   grantBidTemplates, grantBidApplications, grantBidDocuments, grantBidFieldMappings, grantBidSubmissionLogs,
+  grantBidOpportunities,
   InsertGrantBidTemplate, InsertGrantBidApplication, InsertGrantBidDocument, InsertGrantBidFieldMapping, InsertGrantBidSubmissionLog,
+  InsertGrantBidOpportunity,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -9239,5 +9241,81 @@ export async function getGrantBidApplicationStats() {
     submitted: stats[0]?.submitted || 0,
     awarded: stats[0]?.awarded || 0,
     totalRequested: stats[0]?.totalRequested || '0',
+  };
+}
+
+// ============================================
+// GRANT & BID OPPORTUNITIES (DISCOVERY)
+// ============================================
+
+export async function getGrantBidOpportunities(filters?: { type?: string; status?: string; search?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.type) conditions.push(eq(grantBidOpportunities.type, filters.type as any));
+  if (filters?.status) conditions.push(eq(grantBidOpportunities.status, filters.status as any));
+  if (filters?.search) conditions.push(like(grantBidOpportunities.title, `%${filters.search}%`));
+
+  if (conditions.length > 0) {
+    return db.select().from(grantBidOpportunities).where(and(...conditions)).orderBy(desc(grantBidOpportunities.matchScore), desc(grantBidOpportunities.updatedAt));
+  }
+  return db.select().from(grantBidOpportunities).orderBy(desc(grantBidOpportunities.matchScore), desc(grantBidOpportunities.updatedAt));
+}
+
+export async function getGrantBidOpportunityById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(grantBidOpportunities).where(eq(grantBidOpportunities.id, id));
+  return rows[0] || null;
+}
+
+export async function createGrantBidOpportunity(data: InsertGrantBidOpportunity) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(grantBidOpportunities).values(data);
+  return { id: result.insertId };
+}
+
+export async function createGrantBidOpportunities(data: InsertGrantBidOpportunity[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (data.length === 0) return [];
+  const results = [];
+  for (const item of data) {
+    const [result] = await db.insert(grantBidOpportunities).values(item);
+    results.push({ id: result.insertId });
+  }
+  return results;
+}
+
+export async function updateGrantBidOpportunity(id: number, data: Partial<InsertGrantBidOpportunity>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(grantBidOpportunities).set(data).where(eq(grantBidOpportunities.id, id));
+}
+
+export async function deleteGrantBidOpportunity(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(grantBidOpportunities).where(eq(grantBidOpportunities.id, id));
+}
+
+export async function getGrantBidOpportunityStats() {
+  const db = await getDb();
+  if (!db) return { total: 0, saved: 0, applying: 0, avgMatchScore: 0 };
+
+  const stats = await db.select({
+    total: sql<number>`COUNT(*)`,
+    saved: sql<number>`SUM(CASE WHEN ${grantBidOpportunities.status} = 'saved' THEN 1 ELSE 0 END)`,
+    applying: sql<number>`SUM(CASE WHEN ${grantBidOpportunities.status} = 'applying' THEN 1 ELSE 0 END)`,
+    avgMatchScore: sql<number>`COALESCE(AVG(${grantBidOpportunities.matchScore}), 0)`,
+  }).from(grantBidOpportunities)
+    .where(ne(grantBidOpportunities.status, 'dismissed'));
+
+  return {
+    total: stats[0]?.total || 0,
+    saved: stats[0]?.saved || 0,
+    applying: stats[0]?.applying || 0,
+    avgMatchScore: Math.round(stats[0]?.avgMatchScore || 0),
   };
 }

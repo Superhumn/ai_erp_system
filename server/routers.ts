@@ -26,7 +26,7 @@ import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolde
 import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems } from "./_core/quickbooks";
 import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
-import { collectERPData, autoPopulateFields, generateApplicationNarrative, reviewApplication, generateApplicationDocument, DEFAULT_SECTIONS } from "./grantBidService";
+import { collectERPData, autoPopulateFields, generateApplicationNarrative, reviewApplication, generateApplicationDocument, DEFAULT_SECTIONS, searchOpportunities, evaluateOpportunityFit } from "./grantBidService";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 
@@ -13996,6 +13996,196 @@ Ask if they received the original request and if they can provide a quote.`;
         },
         data: erpData,
       };
+    }),
+
+    // ============================================
+    // OPPORTUNITY DISCOVERY & SEARCH
+    // ============================================
+    opportunities: router({
+      list: protectedProcedure
+        .input(z.object({ type: z.string().optional(), status: z.string().optional(), search: z.string().optional() }).optional())
+        .query(({ input }) => db.getGrantBidOpportunities(input || undefined)),
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getGrantBidOpportunityById(input.id)),
+      stats: protectedProcedure.query(() => db.getGrantBidOpportunityStats()),
+
+      // AI-powered opportunity search
+      search: protectedProcedure
+        .input(z.object({
+          query: z.string().min(1),
+          type: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          // Get company profile for context
+          const erpData = await collectERPData();
+          const companyProfile = erpData.companies;
+
+          // Search using AI
+          const results = await searchOpportunities(input.query, companyProfile, input.type);
+
+          // Save discovered opportunities to database
+          const savedIds = [];
+          for (const opp of results) {
+            const result = await db.createGrantBidOpportunity({
+              title: opp.title,
+              type: opp.type as any,
+              organization: opp.organization,
+              programName: opp.programName,
+              description: opp.description,
+              eligibilityCriteria: opp.eligibilityCriteria,
+              fundingAmountMin: opp.fundingAmountMin ? String(opp.fundingAmountMin) : undefined,
+              fundingAmountMax: opp.fundingAmountMax ? String(opp.fundingAmountMax) : undefined,
+              matchingRequired: opp.matchingRequired,
+              deadline: opp.deadline ? new Date(opp.deadline) : undefined,
+              sourceUrl: opp.sourceUrl,
+              sourceType: 'ai_recommended',
+              matchScore: opp.matchScore,
+              matchReason: opp.matchReason,
+              categories: JSON.stringify(opp.categories),
+              status: 'discovered',
+            });
+            savedIds.push(result.id);
+          }
+
+          await createAuditLog(ctx.user.id, 'create', 'grant_bid_opportunity_search', 0, `Search: ${input.query}`);
+          return { count: results.length, opportunities: results, savedIds };
+        }),
+
+      // Evaluate fit for a specific opportunity
+      evaluate: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const opportunity = await db.getGrantBidOpportunityById(input.id);
+          if (!opportunity) throw new TRPCError({ code: 'NOT_FOUND', message: 'Opportunity not found' });
+
+          const erpData = await collectERPData();
+          const evaluation = await evaluateOpportunityFit(
+            {
+              title: opportunity.title,
+              description: opportunity.description || '',
+              eligibilityCriteria: opportunity.eligibilityCriteria || '',
+              type: opportunity.type,
+            },
+            {
+              company: erpData.companies,
+              employees: erpData.employees,
+              financials: erpData.financials,
+            },
+          );
+
+          // Update the opportunity with the fit score
+          await db.updateGrantBidOpportunity(input.id, {
+            matchScore: evaluation.fitScore,
+            matchReason: evaluation.recommendation,
+            status: 'evaluating',
+          });
+
+          return evaluation;
+        }),
+
+      // Save/bookmark an opportunity
+      save: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.updateGrantBidOpportunity(input.id, { status: 'saved', savedBy: ctx.user.id });
+          return { success: true };
+        }),
+
+      // Dismiss an opportunity
+      dismiss: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.updateGrantBidOpportunity(input.id, { status: 'dismissed' });
+          return { success: true };
+        }),
+
+      // Update opportunity status/notes
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(["discovered", "saved", "evaluating", "applying", "applied", "not_eligible", "expired", "dismissed"]).optional(),
+          notes: z.string().optional(),
+          applicationId: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateGrantBidOpportunity(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'grant_bid_opportunity', id);
+          return { success: true };
+        }),
+
+      // Delete an opportunity
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteGrantBidOpportunity(input.id);
+          return { success: true };
+        }),
+
+      // Start application from an opportunity
+      startApplication: protectedProcedure
+        .input(z.object({ opportunityId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const opp = await db.getGrantBidOpportunityById(input.opportunityId);
+          if (!opp) throw new TRPCError({ code: 'NOT_FOUND', message: 'Opportunity not found' });
+
+          const applicationNumber = generateNumber('GBA');
+          const appResult = await db.createGrantBidApplication({
+            applicationNumber,
+            title: opp.title,
+            type: opp.type as any,
+            grantingOrganization: opp.organization,
+            programName: opp.programName,
+            requestedAmount: opp.fundingAmountMax || opp.fundingAmountMin || undefined,
+            submissionDeadline: opp.deadline || undefined,
+            createdBy: ctx.user.id,
+            status: 'draft',
+          });
+
+          // Link the opportunity to the application
+          await db.updateGrantBidOpportunity(input.opportunityId, {
+            status: 'applying',
+            applicationId: appResult.id,
+          });
+
+          await db.createGrantBidSubmissionLog({
+            applicationId: appResult.id,
+            action: 'created',
+            details: `Application created from opportunity: ${opp.title}`,
+            performedBy: ctx.user.id,
+          });
+
+          return { applicationId: appResult.id, applicationNumber };
+        }),
+
+      // Add a manual opportunity
+      create: protectedProcedure
+        .input(z.object({
+          title: z.string().min(1),
+          type: z.enum(["grant", "procurement_bid", "rfp_response", "subsidy", "tax_incentive"]),
+          organization: z.string().optional(),
+          programName: z.string().optional(),
+          description: z.string().optional(),
+          eligibilityCriteria: z.string().optional(),
+          fundingAmountMin: z.string().optional(),
+          fundingAmountMax: z.string().optional(),
+          matchingRequired: z.boolean().optional(),
+          deadline: z.string().optional(),
+          sourceUrl: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createGrantBidOpportunity({
+            ...input,
+            deadline: input.deadline ? new Date(input.deadline) : undefined,
+            sourceType: 'manual',
+            status: 'saved',
+            savedBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'grant_bid_opportunity', result.id, input.title);
+          return result;
+        }),
     }),
   }),
 });

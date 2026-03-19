@@ -87,6 +87,7 @@ export default function GrantBidSubmitter() {
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [mainTab, setMainTab] = useState<string>("applications");
 
   // Queries
   const { data: applications, refetch: refetchApps, isLoading } = trpc.grantBid.applications.list.useQuery(
@@ -116,7 +117,7 @@ export default function GrantBidSubmitter() {
             Grant & Bid Submitter
           </h1>
           <p className="text-muted-foreground mt-1">
-            Automated grant applications and procurement bids powered by AI
+            Discover opportunities, then auto-generate applications powered by AI
           </p>
         </div>
         <Dialog open={showCreate} onOpenChange={setShowCreate}>
@@ -127,161 +128,186 @@ export default function GrantBidSubmitter() {
         </Dialog>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-blue-500/10"><FileText className="h-5 w-5 text-blue-600" /></div>
-              <div>
-                <p className="text-sm text-muted-foreground">Total</p>
-                <p className="text-2xl font-bold">{stats?.total || 0}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-amber-500/10"><Edit className="h-5 w-5 text-amber-600" /></div>
-              <div>
-                <p className="text-sm text-muted-foreground">In Progress</p>
-                <p className="text-2xl font-bold">{stats?.draft || 0}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-indigo-500/10"><Send className="h-5 w-5 text-indigo-600" /></div>
-              <div>
-                <p className="text-sm text-muted-foreground">Submitted</p>
-                <p className="text-2xl font-bold">{stats?.submitted || 0}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-green-500/10"><CheckCircle2 className="h-5 w-5 text-green-600" /></div>
-              <div>
-                <p className="text-sm text-muted-foreground">Awarded</p>
-                <p className="text-2xl font-bold">{stats?.awarded || 0}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-emerald-500/10"><DollarSign className="h-5 w-5 text-emerald-600" /></div>
-              <div>
-                <p className="text-sm text-muted-foreground">Total Requested</p>
-                <p className="text-lg font-bold">{formatCurrency(stats?.totalRequested)}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Main Tabs: Discover vs Applications */}
+      <Tabs value={mainTab} onValueChange={setMainTab}>
+        <TabsList className="grid w-full max-w-md grid-cols-2">
+          <TabsTrigger value="discover" className="flex items-center gap-2">
+            <Search className="h-4 w-4" /> Discover Opportunities
+          </TabsTrigger>
+          <TabsTrigger value="applications" className="flex items-center gap-2">
+            <FileText className="h-4 w-4" /> My Applications
+          </TabsTrigger>
+        </TabsList>
 
-      {/* Filters */}
-      <div className="flex gap-3 items-center">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Search applications..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
-        </div>
-        <Select value={filterType} onValueChange={setFilterType}>
-          <SelectTrigger className="w-[180px]"><SelectValue placeholder="All Types" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Types</SelectItem>
-            {Object.entries(TYPE_LABELS).map(([key, label]) => (
-              <SelectItem key={key} value={key}>{label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={filterStatus} onValueChange={setFilterStatus}>
-          <SelectTrigger className="w-[180px]"><SelectValue placeholder="All Statuses" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Statuses</SelectItem>
-            {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
-              <SelectItem key={key} value={key}>{cfg.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+        {/* Discover Tab */}
+        <TabsContent value="discover">
+          <OpportunityDiscovery onStartApplication={(id) => { setSelectedApp(id); setMainTab("applications"); }} />
+        </TabsContent>
 
-      {/* Applications Table */}
-      <Card>
-        <CardContent className="p-0">
-          {isLoading ? (
-            <div className="flex items-center justify-center p-12">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        {/* Applications Tab */}
+        <TabsContent value="applications" className="space-y-6">
+          {/* Stats Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-blue-500/10"><FileText className="h-5 w-5 text-blue-600" /></div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Total</p>
+                    <p className="text-2xl font-bold">{stats?.total || 0}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-amber-500/10"><Edit className="h-5 w-5 text-amber-600" /></div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">In Progress</p>
+                    <p className="text-2xl font-bold">{stats?.draft || 0}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-indigo-500/10"><Send className="h-5 w-5 text-indigo-600" /></div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Submitted</p>
+                    <p className="text-2xl font-bold">{stats?.submitted || 0}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-green-500/10"><CheckCircle2 className="h-5 w-5 text-green-600" /></div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Awarded</p>
+                    <p className="text-2xl font-bold">{stats?.awarded || 0}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-emerald-500/10"><DollarSign className="h-5 w-5 text-emerald-600" /></div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Total Requested</p>
+                    <p className="text-lg font-bold">{formatCurrency(stats?.totalRequested)}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Filters */}
+          <div className="flex gap-3 items-center">
+            <div className="relative flex-1 max-w-sm">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input placeholder="Search applications..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
             </div>
-          ) : filteredApps.length === 0 ? (
-            <div className="flex flex-col items-center justify-center p-12 text-center">
-              <FileText className="h-12 w-12 text-muted-foreground/30 mb-4" />
-              <p className="text-lg font-medium text-muted-foreground">No applications yet</p>
-              <p className="text-sm text-muted-foreground mt-1">Create your first grant application or procurement bid</p>
-              <Button className="mt-4" onClick={() => setShowCreate(true)}>
-                <Plus className="h-4 w-4 mr-2" /> Create Application
-              </Button>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Application</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Organization</TableHead>
-                  <TableHead>Amount</TableHead>
-                  <TableHead>Deadline</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Updated</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredApps.map((app: any) => {
-                  const status = STATUS_CONFIG[app.status] || STATUS_CONFIG.draft;
-                  const StatusIcon = status.icon;
-                  return (
-                    <TableRow key={app.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setSelectedApp(app.id)}>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{app.title}</p>
-                          <p className="text-xs text-muted-foreground">{app.applicationNumber}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className={TYPE_COLORS[app.type]}>{TYPE_LABELS[app.type]}</Badge>
-                      </TableCell>
-                      <TableCell className="text-sm">{app.grantingOrganization || '-'}</TableCell>
-                      <TableCell className="font-medium">{app.requestedAmount ? formatCurrency(app.requestedAmount, app.currency || 'USD') : '-'}</TableCell>
-                      <TableCell className="text-sm">
-                        {app.submissionDeadline ? (
-                          <span className={new Date(app.submissionDeadline) < new Date() ? "text-red-500" : ""}>
-                            {format(new Date(app.submissionDeadline), "MMM d, yyyy")}
-                          </span>
-                        ) : '-'}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1.5">
-                          <StatusIcon className={`h-4 w-4 ${status.color}`} />
-                          <span className="text-sm">{status.label}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {format(new Date(app.updatedAt), "MMM d, yyyy")}
-                      </TableCell>
+            <Select value={filterType} onValueChange={setFilterType}>
+              <SelectTrigger className="w-[180px]"><SelectValue placeholder="All Types" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Types</SelectItem>
+                {Object.entries(TYPE_LABELS).map(([key, label]) => (
+                  <SelectItem key={key} value={key}>{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={filterStatus} onValueChange={setFilterStatus}>
+              <SelectTrigger className="w-[180px]"><SelectValue placeholder="All Statuses" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Statuses</SelectItem>
+                {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
+                  <SelectItem key={key} value={key}>{cfg.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Applications Table */}
+          <Card>
+            <CardContent className="p-0">
+              {isLoading ? (
+                <div className="flex items-center justify-center p-12">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : filteredApps.length === 0 ? (
+                <div className="flex flex-col items-center justify-center p-12 text-center">
+                  <FileText className="h-12 w-12 text-muted-foreground/30 mb-4" />
+                  <p className="text-lg font-medium text-muted-foreground">No applications yet</p>
+                  <p className="text-sm text-muted-foreground mt-1">Search for opportunities or create an application manually</p>
+                  <div className="flex gap-2 mt-4">
+                    <Button variant="outline" onClick={() => setMainTab("discover")}>
+                      <Search className="h-4 w-4 mr-2" /> Discover Opportunities
+                    </Button>
+                    <Button onClick={() => setShowCreate(true)}>
+                      <Plus className="h-4 w-4 mr-2" /> Create Application
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Application</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Organization</TableHead>
+                      <TableHead>Amount</TableHead>
+                      <TableHead>Deadline</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Updated</TableHead>
                     </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredApps.map((app: any) => {
+                      const status = STATUS_CONFIG[app.status] || STATUS_CONFIG.draft;
+                      const StatusIcon = status.icon;
+                      return (
+                        <TableRow key={app.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setSelectedApp(app.id)}>
+                          <TableCell>
+                            <div>
+                              <p className="font-medium">{app.title}</p>
+                              <p className="text-xs text-muted-foreground">{app.applicationNumber}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className={TYPE_COLORS[app.type]}>{TYPE_LABELS[app.type]}</Badge>
+                          </TableCell>
+                          <TableCell className="text-sm">{app.grantingOrganization || '-'}</TableCell>
+                          <TableCell className="font-medium">{app.requestedAmount ? formatCurrency(app.requestedAmount, app.currency || 'USD') : '-'}</TableCell>
+                          <TableCell className="text-sm">
+                            {app.submissionDeadline ? (
+                              <span className={new Date(app.submissionDeadline) < new Date() ? "text-red-500" : ""}>
+                                {format(new Date(app.submissionDeadline), "MMM d, yyyy")}
+                              </span>
+                            ) : '-'}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1.5">
+                              <StatusIcon className={`h-4 w-4 ${status.color}`} />
+                              <span className="text-sm">{status.label}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {format(new Date(app.updatedAt), "MMM d, yyyy")}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -797,5 +823,406 @@ function ApplicationDetail({ id, onBack }: { id: number; onBack: () => void }) {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+// Opportunity Discovery Component
+const OPP_STATUS_CONFIG: Record<string, { color: string; label: string }> = {
+  discovered: { color: "bg-blue-500/10 text-blue-700 border-blue-200", label: "Discovered" },
+  saved: { color: "bg-amber-500/10 text-amber-700 border-amber-200", label: "Saved" },
+  evaluating: { color: "bg-purple-500/10 text-purple-700 border-purple-200", label: "Evaluating" },
+  applying: { color: "bg-indigo-500/10 text-indigo-700 border-indigo-200", label: "Applying" },
+  applied: { color: "bg-green-500/10 text-green-700 border-green-200", label: "Applied" },
+  not_eligible: { color: "bg-gray-500/10 text-gray-700 border-gray-200", label: "Not Eligible" },
+  expired: { color: "bg-red-500/10 text-red-700 border-red-200", label: "Expired" },
+  dismissed: { color: "bg-gray-500/10 text-gray-500 border-gray-200", label: "Dismissed" },
+};
+
+function OpportunityDiscovery({ onStartApplication }: { onStartApplication: (appId: number) => void }) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchType, setSearchType] = useState<string>("all");
+  const [oppFilter, setOppFilter] = useState<string>("all");
+  const [showAddManual, setShowAddManual] = useState(false);
+  const [evaluatingId, setEvaluatingId] = useState<number | null>(null);
+  const [evaluationResult, setEvaluationResult] = useState<{ fitScore: number; strengths: string[]; gaps: string[]; recommendation: string } | null>(null);
+
+  const { data: opportunities, refetch: refetchOpps } = trpc.grantBid.opportunities.list.useQuery(
+    oppFilter !== "all" ? { status: oppFilter } : undefined
+  );
+  const { data: oppStats } = trpc.grantBid.opportunities.stats.useQuery();
+
+  const searchMutation = trpc.grantBid.opportunities.search.useMutation({
+    onSuccess: (result) => {
+      toast.success(`Found ${result.count} opportunities`);
+      refetchOpps();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const evaluateMutation = trpc.grantBid.opportunities.evaluate.useMutation({
+    onSuccess: (result) => {
+      setEvaluationResult(result);
+      toast.success(`Fit score: ${result.fitScore}/100`);
+      refetchOpps();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const saveMutation = trpc.grantBid.opportunities.save.useMutation({
+    onSuccess: () => { toast.success("Opportunity saved"); refetchOpps(); },
+  });
+
+  const dismissMutation = trpc.grantBid.opportunities.dismiss.useMutation({
+    onSuccess: () => { toast.success("Opportunity dismissed"); refetchOpps(); },
+  });
+
+  const startAppMutation = trpc.grantBid.opportunities.startApplication.useMutation({
+    onSuccess: (result) => {
+      toast.success("Application created from opportunity");
+      onStartApplication(result.applicationId);
+      refetchOpps();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const createManualMutation = trpc.grantBid.opportunities.create.useMutation({
+    onSuccess: () => {
+      toast.success("Opportunity added");
+      setShowAddManual(false);
+      refetchOpps();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  return (
+    <div className="space-y-6">
+      {/* Search Bar */}
+      <Card>
+        <CardContent className="p-6">
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-purple-500" />
+              <h3 className="font-semibold">AI-Powered Opportunity Search</h3>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Describe what you're looking for and AI will find matching grant programs, procurement bids, RFPs, and funding opportunities based on your company profile.
+            </p>
+            <div className="flex gap-3">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="e.g., Manufacturing grants for clean energy, Government procurement bids for IT services..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10"
+                  onKeyDown={(e) => { if (e.key === 'Enter' && searchQuery.trim()) searchMutation.mutate({ query: searchQuery, type: searchType !== 'all' ? searchType : undefined }); }}
+                />
+              </div>
+              <Select value={searchType} onValueChange={setSearchType}>
+                <SelectTrigger className="w-[180px]"><SelectValue placeholder="All Types" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  {Object.entries(TYPE_LABELS).map(([key, label]) => (
+                    <SelectItem key={key} value={key}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                disabled={!searchQuery.trim() || searchMutation.isPending}
+                onClick={() => searchMutation.mutate({ query: searchQuery, type: searchType !== 'all' ? searchType : undefined })}
+              >
+                {searchMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Search className="h-4 w-4 mr-2" />}
+                Search
+              </Button>
+            </div>
+            {/* Quick search suggestions */}
+            <div className="flex gap-2 flex-wrap">
+              <span className="text-xs text-muted-foreground">Try:</span>
+              {["Small business grants", "Federal procurement bids", "R&D tax credits", "State manufacturing incentives", "Green energy subsidies"].map((suggestion) => (
+                <button
+                  key={suggestion}
+                  className="text-xs px-2 py-1 rounded-full bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground transition-colors"
+                  onClick={() => { setSearchQuery(suggestion); searchMutation.mutate({ query: suggestion, type: searchType !== 'all' ? searchType : undefined }); }}
+                >
+                  {suggestion}
+                </button>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Stats & Filter */}
+      <div className="flex items-center justify-between">
+        <div className="flex gap-4 text-sm">
+          <span className="text-muted-foreground">Opportunities: <strong>{oppStats?.total || 0}</strong></span>
+          <span className="text-muted-foreground">Saved: <strong>{oppStats?.saved || 0}</strong></span>
+          <span className="text-muted-foreground">In Progress: <strong>{oppStats?.applying || 0}</strong></span>
+          {(oppStats?.avgMatchScore || 0) > 0 && <span className="text-muted-foreground">Avg Match: <strong>{oppStats?.avgMatchScore}%</strong></span>}
+        </div>
+        <div className="flex gap-2">
+          <Select value={oppFilter} onValueChange={setOppFilter}>
+            <SelectTrigger className="w-[160px]"><SelectValue placeholder="All" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              <SelectItem value="discovered">Discovered</SelectItem>
+              <SelectItem value="saved">Saved</SelectItem>
+              <SelectItem value="evaluating">Evaluating</SelectItem>
+              <SelectItem value="applying">Applying</SelectItem>
+            </SelectContent>
+          </Select>
+          <Dialog open={showAddManual} onOpenChange={setShowAddManual}>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="sm"><Plus className="h-4 w-4 mr-1" /> Add Manually</Button>
+            </DialogTrigger>
+            <AddManualOpportunityDialog onClose={() => setShowAddManual(false)} onCreate={createManualMutation} />
+          </Dialog>
+        </div>
+      </div>
+
+      {/* Evaluation Result */}
+      {evaluationResult && evaluatingId && (
+        <Card className={evaluationResult.fitScore >= 70 ? "border-green-200 bg-green-50/50" : evaluationResult.fitScore >= 40 ? "border-amber-200 bg-amber-50/50" : "border-red-200 bg-red-50/50"}>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-3">
+                <div className={`text-2xl font-bold ${evaluationResult.fitScore >= 70 ? "text-green-700" : evaluationResult.fitScore >= 40 ? "text-amber-700" : "text-red-700"}`}>
+                  {evaluationResult.fitScore}/100
+                </div>
+                <div>
+                  <p className="font-medium">Fit Assessment</p>
+                  <p className="text-sm text-muted-foreground">{evaluationResult.recommendation}</p>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => { setEvaluationResult(null); setEvaluatingId(null); }}>Dismiss</Button>
+                {evaluationResult.fitScore >= 50 && (
+                  <Button size="sm" onClick={() => { startAppMutation.mutate({ opportunityId: evaluatingId }); setEvaluationResult(null); setEvaluatingId(null); }}>
+                    Start Application
+                  </Button>
+                )}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              {evaluationResult.strengths.length > 0 && (
+                <div>
+                  <p className="text-sm font-medium text-green-700 mb-1">Strengths</p>
+                  <ul className="text-sm space-y-1">
+                    {evaluationResult.strengths.map((s, i) => (
+                      <li key={i} className="flex items-start gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 mt-0.5 text-green-500 shrink-0" />{s}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {evaluationResult.gaps.length > 0 && (
+                <div>
+                  <p className="text-sm font-medium text-amber-700 mb-1">Gaps</p>
+                  <ul className="text-sm space-y-1">
+                    {evaluationResult.gaps.map((g, i) => (
+                      <li key={i} className="flex items-start gap-1.5"><AlertTriangle className="h-3.5 w-3.5 mt-0.5 text-amber-500 shrink-0" />{g}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Opportunities Grid */}
+      {!opportunities || opportunities.length === 0 ? (
+        <Card>
+          <CardContent className="p-12 text-center">
+            <Search className="h-12 w-12 mx-auto text-muted-foreground/30 mb-4" />
+            <p className="text-lg font-medium text-muted-foreground">No opportunities found</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              Use the search bar above to discover grants, bids, and funding opportunities
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {opportunities.map((opp: any) => {
+            const statusCfg = OPP_STATUS_CONFIG[opp.status] || OPP_STATUS_CONFIG.discovered;
+            const categories = opp.categories ? (typeof opp.categories === 'string' ? JSON.parse(opp.categories) : opp.categories) : [];
+            return (
+              <Card key={opp.id} className="hover:shadow-md transition-shadow">
+                <CardContent className="p-5">
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex-1 mr-3">
+                      <h3 className="font-semibold leading-tight">{opp.title}</h3>
+                      <p className="text-sm text-muted-foreground mt-0.5">
+                        {opp.organization}{opp.programName ? ` - ${opp.programName}` : ''}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {opp.matchScore != null && (
+                        <div className={`text-xs font-bold px-2 py-0.5 rounded ${opp.matchScore >= 70 ? "bg-green-100 text-green-700" : opp.matchScore >= 40 ? "bg-amber-100 text-amber-700" : "bg-gray-100 text-gray-600"}`}>
+                          {opp.matchScore}% match
+                        </div>
+                      )}
+                      <Badge variant="outline" className={statusCfg.color}>{statusCfg.label}</Badge>
+                    </div>
+                  </div>
+
+                  <p className="text-sm text-muted-foreground mb-3 line-clamp-2">{opp.description}</p>
+
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    <Badge variant="outline" className={TYPE_COLORS[opp.type]}>{TYPE_LABELS[opp.type]}</Badge>
+                    {(opp.fundingAmountMin || opp.fundingAmountMax) && (
+                      <Badge variant="secondary">
+                        <DollarSign className="h-3 w-3 mr-0.5" />
+                        {opp.fundingAmountMin && opp.fundingAmountMax
+                          ? `${formatCurrency(opp.fundingAmountMin)} - ${formatCurrency(opp.fundingAmountMax)}`
+                          : formatCurrency(opp.fundingAmountMax || opp.fundingAmountMin)}
+                      </Badge>
+                    )}
+                    {opp.deadline && (
+                      <Badge variant="secondary" className={new Date(opp.deadline) < new Date() ? "bg-red-100 text-red-700" : ""}>
+                        <Clock className="h-3 w-3 mr-0.5" />
+                        {format(new Date(opp.deadline), "MMM d, yyyy")}
+                      </Badge>
+                    )}
+                    {opp.matchingRequired && <Badge variant="secondary">Matching Required</Badge>}
+                  </div>
+
+                  {categories.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mb-3">
+                      {categories.slice(0, 4).map((cat: string, i: number) => (
+                        <span key={i} className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{cat}</span>
+                      ))}
+                    </div>
+                  )}
+
+                  {opp.matchReason && (
+                    <p className="text-xs text-muted-foreground italic mb-3">{opp.matchReason}</p>
+                  )}
+
+                  {/* Action Buttons */}
+                  <div className="flex gap-2 pt-2 border-t">
+                    {opp.status === 'discovered' && (
+                      <>
+                        <Button size="sm" variant="outline" onClick={() => saveMutation.mutate({ id: opp.id })}>
+                          <Target className="h-3.5 w-3.5 mr-1" /> Save
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => { setEvaluatingId(opp.id); setEvaluationResult(null); evaluateMutation.mutate({ id: opp.id }); }}
+                          disabled={evaluateMutation.isPending && evaluatingId === opp.id}
+                        >
+                          {evaluateMutation.isPending && evaluatingId === opp.id ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Brain className="h-3.5 w-3.5 mr-1" />}
+                          Evaluate Fit
+                        </Button>
+                        <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => dismissMutation.mutate({ id: opp.id })}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </>
+                    )}
+                    {(opp.status === 'saved' || opp.status === 'evaluating') && (
+                      <>
+                        <Button size="sm" onClick={() => startAppMutation.mutate({ opportunityId: opp.id })} disabled={startAppMutation.isPending}>
+                          {startAppMutation.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Plus className="h-3.5 w-3.5 mr-1" />}
+                          Start Application
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => { setEvaluatingId(opp.id); setEvaluationResult(null); evaluateMutation.mutate({ id: opp.id }); }}
+                          disabled={evaluateMutation.isPending && evaluatingId === opp.id}
+                        >
+                          {evaluateMutation.isPending && evaluatingId === opp.id ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Brain className="h-3.5 w-3.5 mr-1" />}
+                          Evaluate
+                        </Button>
+                      </>
+                    )}
+                    {opp.status === 'applying' && (
+                      <Badge variant="secondary" className="bg-indigo-100 text-indigo-700">Application in progress</Badge>
+                    )}
+                    {opp.sourceUrl && (
+                      <Button size="sm" variant="ghost" className="ml-auto" asChild>
+                        <a href={opp.sourceUrl} target="_blank" rel="noopener noreferrer">
+                          <FileText className="h-3.5 w-3.5 mr-1" /> Source
+                        </a>
+                      </Button>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Add Manual Opportunity Dialog
+function AddManualOpportunityDialog({ onClose, onCreate }: { onClose: () => void; onCreate: any }) {
+  const [title, setTitle] = useState("");
+  const [type, setType] = useState<string>("grant");
+  const [organization, setOrganization] = useState("");
+  const [description, setDescription] = useState("");
+  const [fundingMax, setFundingMax] = useState("");
+  const [deadline, setDeadline] = useState("");
+  const [sourceUrl, setSourceUrl] = useState("");
+
+  return (
+    <DialogContent className="max-w-lg">
+      <DialogHeader>
+        <DialogTitle>Add Opportunity Manually</DialogTitle>
+        <DialogDescription>Add a grant, bid, or funding opportunity you've found</DialogDescription>
+      </DialogHeader>
+      <div className="space-y-4">
+        <div>
+          <Label>Title *</Label>
+          <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Program or opportunity name" />
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <Label>Type</Label>
+            <Select value={type} onValueChange={setType}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {Object.entries(TYPE_LABELS).map(([key, label]) => (
+                  <SelectItem key={key} value={key}>{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>Organization</Label>
+            <Input value={organization} onChange={(e) => setOrganization(e.target.value)} placeholder="Issuing organization" />
+          </div>
+        </div>
+        <div>
+          <Label>Description</Label>
+          <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Brief description of the opportunity" rows={3} />
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <Label>Funding Amount (Max)</Label>
+            <Input type="number" value={fundingMax} onChange={(e) => setFundingMax(e.target.value)} placeholder="500000" />
+          </div>
+          <div>
+            <Label>Deadline</Label>
+            <Input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+          </div>
+        </div>
+        <div>
+          <Label>Source URL</Label>
+          <Input value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} placeholder="https://..." />
+        </div>
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={onClose}>Cancel</Button>
+        <Button
+          disabled={!title || onCreate.isPending}
+          onClick={() => onCreate.mutate({
+            title, type: type as any, organization, description,
+            fundingAmountMax: fundingMax || undefined,
+            deadline: deadline || undefined,
+            sourceUrl: sourceUrl || undefined,
+          })}
+        >
+          {onCreate.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+          Add Opportunity
+        </Button>
+      </DialogFooter>
+    </DialogContent>
   );
 }

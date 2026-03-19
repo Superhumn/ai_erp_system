@@ -307,3 +307,124 @@ export async function generateApplicationDocument(
 
   return document;
 }
+
+/**
+ * Use AI to search for and discover relevant grant/bid opportunities
+ * based on the company profile and specified search criteria
+ */
+export async function searchOpportunities(
+  query: string,
+  companyProfile: Record<string, any> | null,
+  type?: string,
+): Promise<Array<{
+  title: string;
+  type: string;
+  organization: string;
+  programName: string;
+  description: string;
+  eligibilityCriteria: string;
+  fundingAmountMin: number | null;
+  fundingAmountMax: number | null;
+  matchingRequired: boolean;
+  deadline: string | null;
+  sourceUrl: string;
+  matchScore: number;
+  matchReason: string;
+  categories: string[];
+}>> {
+  const companyContext = companyProfile
+    ? `\nCompany Profile:\n- Name: ${companyProfile.name || companyProfile.legalName || 'Unknown'}\n- Industry: ${companyProfile.industry || 'Not specified'}\n- Location: ${[companyProfile.city, companyProfile.state, companyProfile.country].filter(Boolean).join(', ') || 'Not specified'}`
+    : '';
+
+  const typeFilter = type && type !== 'all' ? `\nFocus on ${type.replace(/_/g, ' ')} opportunities.` : '';
+
+  const prompt = `You are an expert grant researcher and procurement opportunity finder. Based on the following search query and company profile, generate a list of realistic, relevant grant programs, procurement bids, RFPs, subsidies, or tax incentive opportunities that a company like this could apply for.
+
+Search Query: "${query}"${companyContext}${typeFilter}
+
+Generate 5-8 relevant opportunities. For each opportunity, provide realistic details based on actual types of programs that exist (federal, state, local, private foundation, industry-specific). Make the opportunities specific and actionable.
+
+Respond in JSON format with an array of objects:
+[{
+  "title": "Specific program name",
+  "type": "grant" | "procurement_bid" | "rfp_response" | "subsidy" | "tax_incentive",
+  "organization": "Issuing organization name",
+  "programName": "Specific program/solicitation name",
+  "description": "2-3 sentence description of the opportunity",
+  "eligibilityCriteria": "Key eligibility requirements",
+  "fundingAmountMin": number or null,
+  "fundingAmountMax": number or null,
+  "matchingRequired": boolean,
+  "deadline": "YYYY-MM-DD" or null,
+  "sourceUrl": "Relevant website URL where one would find this type of program",
+  "matchScore": 0-100 relevance score,
+  "matchReason": "Why this is a good match for this company",
+  "categories": ["category tags"]
+}]`;
+
+  try {
+    const result = await invokeLLM({
+      messages: [
+        { role: "system", content: "You are an expert grant and procurement opportunity researcher. Return only valid JSON arrays." },
+        { role: "user", content: prompt },
+      ],
+      maxTokens: 4000,
+      responseFormat: { type: "json_object" },
+    });
+
+    const content = result.choices[0]?.message?.content;
+    const text = typeof content === 'string' ? content : Array.isArray(content) ? content.filter(c => c.type === 'text').map(c => (c as { text: string }).text).join('') : '[]';
+
+    const parsed = JSON.parse(text);
+    // Handle both { opportunities: [...] } and [...] formats
+    const opportunities = Array.isArray(parsed) ? parsed : (parsed.opportunities || parsed.results || []);
+    return opportunities;
+  } catch (error) {
+    console.error('[GrantBidService] Error searching opportunities:', error);
+    return [];
+  }
+}
+
+/**
+ * Use AI to evaluate how well a specific opportunity matches the company profile
+ */
+export async function evaluateOpportunityFit(
+  opportunity: { title: string; description: string; eligibilityCriteria: string; type: string },
+  companyData: Record<string, any>,
+): Promise<{ fitScore: number; strengths: string[]; gaps: string[]; recommendation: string }> {
+  const prompt = `Evaluate how well this company fits the following opportunity:
+
+Opportunity: ${opportunity.title}
+Type: ${opportunity.type}
+Description: ${opportunity.description}
+Eligibility: ${opportunity.eligibilityCriteria}
+
+Company Data:
+${JSON.stringify(companyData, null, 2)}
+
+Provide an assessment in JSON format:
+{
+  "fitScore": 0-100,
+  "strengths": ["What makes this company a strong candidate"],
+  "gaps": ["Areas where the company may fall short"],
+  "recommendation": "Brief recommendation on whether to pursue"
+}`;
+
+  try {
+    const result = await invokeLLM({
+      messages: [
+        { role: "system", content: "You are an expert grant/bid eligibility assessor. Provide honest, actionable assessments." },
+        { role: "user", content: prompt },
+      ],
+      maxTokens: 1500,
+      responseFormat: { type: "json_object" },
+    });
+
+    const content = result.choices[0]?.message?.content;
+    const text = typeof content === 'string' ? content : Array.isArray(content) ? content.filter(c => c.type === 'text').map(c => (c as { text: string }).text).join('') : '';
+    return JSON.parse(text);
+  } catch (error) {
+    console.error('[GrantBidService] Error evaluating opportunity:', error);
+    return { fitScore: 0, strengths: [], gaps: [], recommendation: 'Evaluation unavailable' };
+  }
+}

@@ -5216,3 +5216,46 @@ export const grantBidSubmissionLogs = mysqlTable("grant_bid_submission_logs", {
 
 export type GrantBidSubmissionLog = typeof grantBidSubmissionLogs.$inferSelect;
 export type InsertGrantBidSubmissionLog = typeof grantBidSubmissionLogs.$inferInsert;
+
+// Grant/Bid opportunities - discovered grant programs, RFPs, and procurement bids to apply for
+export const grantBidOpportunities = mysqlTable("grant_bid_opportunities", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  // Opportunity details
+  title: varchar("title", { length: 500 }).notNull(),
+  type: mysqlEnum("type", ["grant", "procurement_bid", "rfp_response", "subsidy", "tax_incentive"]).notNull(),
+  organization: varchar("organization", { length: 255 }),
+  programName: varchar("programName", { length: 255 }),
+  description: text("description"),
+  // Eligibility & requirements
+  eligibilityCriteria: text("eligibilityCriteria"),
+  requiredDocuments: text("requiredDocuments"), // JSON array
+  // Financials
+  fundingAmountMin: decimal("fundingAmountMin", { precision: 15, scale: 2 }),
+  fundingAmountMax: decimal("fundingAmountMax", { precision: 15, scale: 2 }),
+  matchingRequired: boolean("matchingRequired").default(false),
+  matchingPercentage: decimal("matchingPercentage", { precision: 5, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  // Dates
+  openDate: timestamp("openDate"),
+  deadline: timestamp("deadline"),
+  awardDate: timestamp("awardDate"),
+  // Source
+  sourceUrl: text("sourceUrl"),
+  sourceType: mysqlEnum("sourceType", ["web_search", "manual", "api_feed", "email", "ai_recommended"]).default("web_search").notNull(),
+  // Matching & relevance
+  matchScore: int("matchScore"), // AI-computed relevance score 0-100
+  matchReason: text("matchReason"), // Why this is a good match
+  categories: text("categories"), // JSON array of category tags
+  // Status
+  status: mysqlEnum("status", ["discovered", "saved", "evaluating", "applying", "applied", "not_eligible", "expired", "dismissed"]).default("discovered").notNull(),
+  applicationId: int("applicationId"), // Link to created application
+  // Notes
+  notes: text("notes"),
+  savedBy: int("savedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GrantBidOpportunity = typeof grantBidOpportunities.$inferSelect;
+export type InsertGrantBidOpportunity = typeof grantBidOpportunities.$inferInsert;
