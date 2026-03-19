@@ -1,4 +1,7 @@
 import { invokeLLM } from "./_core/llm";
+import { normalizeQuote, validateQuoteFields, generateClarificationRequest, type RawQuoteInput } from "./_core/quoteNormalizer";
+import { scoreQuotes, DEFAULT_WEIGHTS, type VendorReliabilityData } from "./_core/quoteScoringEngine";
+import { auditStore, auditRfqCreated, auditQuoteReceived, auditPoGenerated } from "./_core/quoteAuditService";
 import {
   demandForecasts,
   productionPlans,
@@ -3071,6 +3074,476 @@ Generate a professional, concise email requesting a quote.`;
 };
 
 // ============================================
+// ENHANCED VENDOR QUOTE ANALYSIS WITH NORMALIZATION + SCORING + AUDIT
+// ============================================
+
+const vendorQuoteFullPipelineProcessor: WorkflowProcessor = {
+  async execute(engine: WorkflowEngine, context: WorkflowContext): Promise<WorkflowResult> {
+    const db = engine.getDb();
+    let itemsProcessed = 0;
+    let itemsSucceeded = 0;
+    let itemsFailed = 0;
+
+    const {
+      rfqId,
+      targetCurrency = "USD",
+      targetUom,
+      autoApproveThreshold = 50000,
+      scoringWeights,
+      constraints,
+    } = context.inputData;
+
+    if (!rfqId) {
+      return {
+        success: false, runId: context.runId, status: "failed",
+        itemsProcessed: 0, itemsSucceeded: 0, itemsFailed: 0,
+        error: "Missing required field: rfqId",
+      };
+    }
+
+    // Step 1: Fetch RFQ and all received quotes
+    const step1 = await engine.recordStep(context, 1, "Fetch RFQ and Quotes", "data_fetch", async () => {
+      const [rfq] = await db.select().from(vendorRfqs).where(eq(vendorRfqs.id, rfqId));
+      if (!rfq) throw new Error(`RFQ ${rfqId} not found`);
+
+      const quotes = await db.select().from(vendorQuotes)
+        .where(and(eq(vendorQuotes.rfqId, rfqId), eq(vendorQuotes.status, "received")));
+
+      if (quotes.length === 0) throw new Error("No quotes received yet");
+
+      // Fetch vendor details
+      const vendorIds = quotes.map((q: any) => q.vendorId);
+      const vendorDetails = await db.select().from(vendors).where(inArray(vendors.id, vendorIds));
+
+      // Fetch supplier performance data
+      const perfData = await db.select().from(supplierPerformance)
+        .where(inArray(supplierPerformance.vendorId, vendorIds));
+
+      return { success: true, data: { rfq, quotes, vendorDetails, perfData } };
+    });
+
+    if (!step1.success) {
+      return { success: false, runId: context.runId, status: "failed",
+        itemsProcessed: 0, itemsSucceeded: 0, itemsFailed: 0, error: step1.error };
+    }
+
+    const rfq = step1.data.rfq;
+    const rawQuotes = step1.data.quotes;
+    const vendorMap = new Map(step1.data.vendorDetails.map((v: any) => [v.id, v]));
+    itemsProcessed = rawQuotes.length;
+
+    // Step 2: Normalize all quotes to canonical format
+    const step2 = await engine.recordStep(context, 2, "Normalize Quotes", "data_transform", async () => {
+      const normalized = [];
+      const validationIssues = [];
+
+      for (const q of rawQuotes) {
+        const vendor = vendorMap.get(q.vendorId);
+        const rawInput: RawQuoteInput = {
+          rfqId: rfq.rfqNumber,
+          vendorId: String(q.vendorId),
+          quoteId: q.id,
+          currency: q.currency || "USD",
+          unitPrice: q.unitPrice,
+          quantity: q.quantity || rfq.quantity,
+          uom: rfq.unit || "kg",
+          incoterm: rfq.incoterms || undefined,
+          leadTimeDays: q.leadTimeDays,
+          minOrderQty: q.minimumOrderQty,
+          validUntil: q.validUntil ? new Date(q.validUntil).toISOString() : undefined,
+          paymentTerms: q.paymentTerms,
+          shippingCost: q.shippingCost,
+          handlingFee: q.handlingFee,
+          taxAmount: q.taxAmount,
+          otherCharges: q.otherCharges,
+          totalPrice: q.totalPrice,
+          totalWithCharges: q.totalWithCharges,
+          sku: rfq.materialName || undefined,
+          spec: rfq.specifications || undefined,
+          notes: q.notes,
+        };
+
+        const canonical = normalizeQuote(rawInput, { targetCurrency, targetUom });
+
+        // Create audit snapshot
+        auditStore.createQuoteSnapshot({
+          rfqId: rfq.rfqNumber,
+          quoteId: q.id,
+          vendorId: String(q.vendorId),
+          canonicalQuote: canonical,
+          rawSource: {
+            type: (q.receivedVia as any) || "email",
+            emailThreadId: q.emailThreadId || undefined,
+            rawContent: q.rawEmailContent || undefined,
+          },
+        });
+
+        // Track validation issues for auto-clarification
+        if (canonical.extractionGaps.length > 0) {
+          const missingGaps = canonical.extractionGaps.filter((g: string) => g.startsWith("missing_"));
+          if (missingGaps.length > 0) {
+            validationIssues.push({
+              quoteId: q.id,
+              vendorId: q.vendorId,
+              vendorName: vendor?.name || "Unknown",
+              vendorEmail: vendor?.email,
+              gaps: missingGaps,
+            });
+          }
+        }
+
+        normalized.push(canonical);
+      }
+
+      return {
+        success: true,
+        data: { normalized, validationIssues },
+      };
+    });
+
+    if (!step2.success) {
+      return { success: false, runId: context.runId, status: "failed",
+        itemsProcessed, itemsSucceeded: 0, itemsFailed: itemsProcessed, error: step2.error };
+    }
+
+    const canonicalQuotes = step2.data.normalized;
+    const validationIssues = step2.data.validationIssues;
+
+    // Step 2b: Send clarification emails for quotes with missing fields
+    if (validationIssues.length > 0) {
+      await engine.recordStep(context, 2.5, "Send Clarification Requests", "communication", async () => {
+        let clarificationsSent = 0;
+        for (const issue of validationIssues) {
+          if (!issue.vendorEmail) continue;
+
+          const clarificationBody = generateClarificationRequest(
+            issue.gaps,
+            rfq.rfqNumber,
+            issue.vendorName,
+          );
+
+          if (clarificationBody) {
+            await db.insert(vendorRfqEmails).values({
+              rfqId,
+              vendorId: issue.vendorId,
+              quoteId: issue.quoteId,
+              direction: "outbound",
+              emailType: "clarification",
+              fromEmail: process.env.PROCUREMENT_EMAIL || "procurement@company.com",
+              toEmail: issue.vendorEmail,
+              subject: `Clarification Needed - ${rfq.rfqNumber}`,
+              body: clarificationBody,
+              aiGenerated: true,
+              sendStatus: "queued",
+            });
+            clarificationsSent++;
+
+            auditStore.recordEvent({
+              eventType: "clarification_requested",
+              rfqId: rfq.rfqNumber,
+              quoteId: issue.quoteId,
+              vendorId: String(issue.vendorId),
+              actorType: "system",
+              actorId: "normalization_agent",
+              data: { gaps: issue.gaps },
+            });
+          }
+        }
+        return { success: true, data: { clarificationsSent } };
+      });
+    }
+
+    // Step 3: Score and rank all quotes using weighted engine
+    const step3 = await engine.recordStep(context, 3, "Score and Rank Quotes", "ai_decision", async () => {
+      // Build reliability data from supplier performance
+      const reliabilityData: VendorReliabilityData[] = [];
+      const perfByVendor = new Map<number, any[]>();
+      for (const p of step1.data.perfData) {
+        if (!perfByVendor.has(p.vendorId)) perfByVendor.set(p.vendorId, []);
+        perfByVendor.get(p.vendorId)!.push(p);
+      }
+
+      for (const [vendorId, perfs] of perfByVendor) {
+        const latest = perfs.sort((a: any, b: any) =>
+          (b.metricMonth || "").localeCompare(a.metricMonth || "")
+        )[0];
+
+        if (latest) {
+          const totalOrders = latest.totalOrders || 0;
+          const onTime = totalOrders > 0
+            ? ((latest.onTimeDeliveries || 0) / totalOrders) * 100
+            : 50;
+          const complaintRate = totalOrders > 0
+            ? ((latest.issuesReported || 0) / totalOrders) * 100
+            : 0;
+
+          reliabilityData.push({
+            vendorId: String(vendorId),
+            onTimePercent: onTime,
+            complaintRate,
+            isIncumbent: totalOrders >= 5,
+            totalOrders,
+          });
+        }
+      }
+
+      const weights = scoringWeights || DEFAULT_WEIGHTS;
+      const scoringResult = scoreQuotes(canonicalQuotes, {
+        weights,
+        constraints: constraints || {},
+        reliabilityData,
+        autoApprovalRules: { maxAmount: autoApproveThreshold },
+      });
+
+      // Create scoring audit snapshot
+      auditStore.createScoringSnapshot({
+        rfqId: rfq.rfqNumber,
+        scoringResult,
+        weights,
+      });
+
+      // Update database with scores and ranks
+      for (const scored of scoringResult.quotes) {
+        await db.update(vendorQuotes).set({
+          aiScore: Math.round(scored.totalScore),
+          priceComparisonRank: scored.componentScores.netPrice,
+          leadTimeComparisonRank: scored.componentScores.leadTime,
+          overallRank: scored.rank,
+          aiAnalysis: JSON.stringify({
+            componentScores: scored.componentScores,
+            flags: scored.flags,
+            constraintFailures: scored.constraintFailures,
+            netPricePerUnit: scored.netPricePerUnit,
+          }),
+          aiRecommendation: scored.quoteId === scoringResult.bestQuoteId
+            ? scoringResult.recommendation
+            : null,
+        }).where(eq(vendorQuotes.id, scored.quoteId));
+      }
+
+      return {
+        success: true,
+        data: { scoringResult },
+        confidence: scoringResult.bestQuoteId
+          ? canonicalQuotes.find((q: any) => q.quoteId === scoringResult.bestQuoteId)?.confidence
+          : 0,
+      };
+    });
+
+    if (!step3.success) {
+      return { success: false, runId: context.runId, status: "failed",
+        itemsProcessed, itemsSucceeded: 0, itemsFailed: itemsProcessed, error: step3.error };
+    }
+
+    const scoringResult = step3.data.scoringResult;
+    itemsSucceeded = rawQuotes.length;
+
+    if (!scoringResult.bestQuoteId) {
+      return {
+        success: true, runId: context.runId, status: "completed_no_winner",
+        itemsProcessed, itemsSucceeded, itemsFailed: 0,
+        outputData: { rfqId, scoringResult, message: "No quote passed all constraints" },
+      };
+    }
+
+    const bestQuote = rawQuotes.find((q: any) => q.id === scoringResult.bestQuoteId);
+    const bestScored = scoringResult.quotes.find((q: any) => q.quoteId === scoringResult.bestQuoteId);
+    const bestCanonical = canonicalQuotes.find((q: any) => q.quoteId === scoringResult.bestQuoteId);
+    const bestQuoteTotal = (bestScored?.netPricePerUnit || 0) * (bestCanonical?.lineItems[0]?.qty || 0);
+
+    // Step 4: Approval decision
+    const step4 = await engine.recordStep(context, 4, "Approval Decision", "ai_decision", async () => {
+      if (scoringResult.autoApprovalEligible) {
+        // Auto-approve
+        await db.update(vendorQuotes).set({ status: "accepted" })
+          .where(eq(vendorQuotes.id, scoringResult.bestQuoteId!));
+
+        const otherIds = rawQuotes.filter((q: any) => q.id !== scoringResult.bestQuoteId).map((q: any) => q.id);
+        if (otherIds.length > 0) {
+          await db.update(vendorQuotes).set({ status: "rejected" })
+            .where(inArray(vendorQuotes.id, otherIds));
+        }
+
+        await db.update(vendorRfqs).set({ status: "awarded" })
+          .where(eq(vendorRfqs.id, rfqId));
+
+        // Record approval in audit
+        auditStore.recordApproval({
+          rfqId: rfq.rfqNumber,
+          quoteId: scoringResult.bestQuoteId!,
+          vendorId: String(bestQuote.vendorId),
+          approvalType: "auto",
+          decision: "approved",
+          decidedBy: "auto_approval_engine",
+          reason: scoringResult.autoApprovalReason,
+          amount: bestQuoteTotal,
+          currency: targetCurrency,
+          scoringSnapshotId: "",
+          quoteSnapshotId: "",
+        });
+
+        return {
+          success: true,
+          data: {
+            autoApproved: true,
+            approvalId: null,
+            message: scoringResult.autoApprovalReason,
+          },
+        };
+      } else {
+        // Route to human
+        const approval = await engine.requestApproval(
+          context,
+          "vendor_quote",
+          `Quote Approval - ${rfq.materialName} (${rfq.rfqNumber})`,
+          `Best: vendor ${bestQuote.vendorId}, $${bestQuoteTotal.toFixed(2)}. Review reasons: ${scoringResult.humanReviewReasons.join("; ")}`,
+          bestQuoteTotal,
+          "vendor_quote",
+          bestQuote.id,
+          scoringResult.recommendation,
+          bestCanonical?.confidence || 0,
+        );
+
+        auditStore.recordEvent({
+          eventType: "approval_requested",
+          rfqId: rfq.rfqNumber,
+          quoteId: scoringResult.bestQuoteId!,
+          vendorId: String(bestQuote.vendorId),
+          actorType: "system",
+          actorId: "approval_gate",
+          data: {
+            amount: bestQuoteTotal,
+            reasons: scoringResult.humanReviewReasons,
+          },
+        });
+
+        return {
+          success: true,
+          data: {
+            autoApproved: false,
+            approvalId: approval.approvalId,
+            message: `Human review required: ${scoringResult.humanReviewReasons.join("; ")}`,
+          },
+        };
+      }
+    });
+
+    // Step 5: PO generation (if auto-approved)
+    if (step4.data?.autoApproved) {
+      await engine.recordStep(context, 5, "Generate Purchase Order", "data_create", async () => {
+        const vendor = vendorMap.get(bestQuote.vendorId);
+        const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+        const randomPart = Math.random().toString(36).substring(2, 8).toUpperCase();
+        const poNumber = `PO-${timestamp}-${randomPart}`;
+
+        const [po] = await db.insert(purchaseOrders).values({
+          companyId: context.config.companyId || 1,
+          poNumber,
+          vendorId: bestQuote.vendorId,
+          status: "draft",
+          orderDate: new Date(),
+          expectedDate: bestCanonical?.leadTimeDays
+            ? new Date(Date.now() + bestCanonical.leadTimeDays * 86400000)
+            : null,
+          subtotal: String(bestQuoteTotal),
+          totalAmount: String(bestQuoteTotal),
+          currency: targetCurrency,
+          notes: `Auto-generated from ${rfq.rfqNumber}. Score: ${bestScored?.totalScore}/100.`,
+          shippingAddress: rfq.deliveryLocation || rfq.deliveryAddress || "",
+        }).$returningId();
+
+        // Create PO line items
+        await db.insert(purchaseOrderItems).values({
+          purchaseOrderId: po.id,
+          description: `${rfq.materialName} - ${rfq.specifications || ""}`.trim(),
+          quantity: String(rfq.quantity),
+          unitPrice: String(bestCanonical?.unitPrice || 0),
+          totalAmount: String(bestQuoteTotal),
+        });
+
+        // Update quote with PO reference
+        await db.update(vendorQuotes).set({
+          status: "converted_to_po",
+          convertedToPOId: po.id,
+          convertedAt: new Date(),
+        }).where(eq(vendorQuotes.id, scoringResult.bestQuoteId!));
+
+        // Audit
+        auditPoGenerated(rfq.rfqNumber, scoringResult.bestQuoteId!, String(bestQuote.vendorId), {
+          poId: po.id, poNumber, amount: bestQuoteTotal, currency: targetCurrency,
+        });
+
+        return {
+          success: true,
+          data: { poId: po.id, poNumber },
+          createdEntities: [{ type: "purchase_order", id: po.id }],
+        };
+      });
+    }
+
+    // Step 6: Send notifications
+    await engine.recordStep(context, 6, "Send Notifications", "communication", async () => {
+      if (step4.data?.autoApproved) {
+        const vendor = vendorMap.get(bestQuote.vendorId);
+        const procurementEmail = process.env.PROCUREMENT_EMAIL || "procurement@company.com";
+
+        await db.insert(vendorRfqEmails).values({
+          rfqId, vendorId: bestQuote.vendorId, quoteId: bestQuote.id,
+          direction: "outbound", emailType: "award_notification",
+          fromEmail: procurementEmail, toEmail: vendor?.email,
+          subject: `Award Notification - ${rfq.rfqNumber}`,
+          body: `Your quote has been selected for ${rfq.materialName}. A Purchase Order will follow.`,
+          aiGenerated: true, sendStatus: "queued",
+        });
+
+        for (const q of rawQuotes.filter((q: any) => q.id !== bestQuote.id)) {
+          const v = vendorMap.get(q.vendorId);
+          await db.insert(vendorRfqEmails).values({
+            rfqId, vendorId: q.vendorId, quoteId: q.id,
+            direction: "outbound", emailType: "rejection_notification",
+            fromEmail: procurementEmail, toEmail: v?.email,
+            subject: `Quote Response - ${rfq.rfqNumber}`,
+            body: `Thank you for your quote. We have selected another vendor for this RFQ.`,
+            aiGenerated: true, sendStatus: "queued",
+          });
+        }
+      }
+      return { success: true, data: { sent: step4.data?.autoApproved ? rawQuotes.length : 0 } };
+    });
+
+    return {
+      success: true,
+      runId: context.runId,
+      status: step4.data?.autoApproved ? "completed" : "awaiting_approval",
+      itemsProcessed,
+      itemsSucceeded,
+      itemsFailed: 0,
+      totalValue: bestQuoteTotal,
+      pendingApprovals: step4.data?.autoApproved ? 0 : 1,
+      outputData: {
+        rfqId,
+        rfqNumber: rfq.rfqNumber,
+        bestQuoteId: scoringResult.bestQuoteId,
+        scoringResult: {
+          recommendation: scoringResult.recommendation,
+          autoApprovalEligible: scoringResult.autoApprovalEligible,
+          autoApprovalReason: scoringResult.autoApprovalReason,
+          humanReviewReasons: scoringResult.humanReviewReasons,
+          quoteRankings: scoringResult.quotes.map((q: any) => ({
+            quoteId: q.quoteId, rank: q.rank, score: q.totalScore,
+            netPrice: q.netPricePerUnit, flags: q.flags.length,
+          })),
+        },
+        autoApproved: step4.data?.autoApproved,
+        totalValue: bestQuoteTotal,
+        clarificationsSent: validationIssues.length,
+        auditChainValid: auditStore.verifyChainIntegrity().valid,
+      },
+    };
+  },
+};
+
+// ============================================
 // EXPORT ALL PROCESSORS
 // ============================================
 
@@ -3094,4 +3567,5 @@ export const workflowProcessors = {
   exceptionHandling: exceptionHandlingProcessor,
   vendorQuoteAnalysis: vendorQuoteAnalysisProcessor,
   vendorQuoteProcurement: vendorQuoteProcurementProcessor,
+  vendorQuoteFullPipeline: vendorQuoteFullPipelineProcessor,
 };
