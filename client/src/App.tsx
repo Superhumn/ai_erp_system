@@ -84,6 +84,21 @@ import CustomsDetail from "./pages/freight/CustomsDetail";
 // HR
 import Employees from "./pages/hr/Employees";
 import Payroll from "./pages/hr/Payroll";
+import Recruiting from "./pages/hr/Recruiting";
+import Onboarding from "./pages/hr/Onboarding";
+import ContractorKPIs from "./pages/hr/ContractorKPIs";
+
+// Marketing & PR
+import ContentStudio from "./pages/marketing/ContentStudio";
+import Influencers from "./pages/marketing/Influencers";
+import MarketingCampaigns from "./pages/marketing/Campaigns";
+import PRHub from "./pages/marketing/PRHub";
+import InvestorComms from "./pages/marketing/InvestorComms";
+
+// Finance (extended)
+import FinancialDashboard from "./pages/finance/FinancialDashboard";
+import FraudDetection from "./pages/finance/FraudDetection";
+import Budgets from "./pages/finance/Budgets";
 
 // Legal
 import Contracts from "./pages/legal/Contracts";
@@ -226,6 +241,21 @@ function Router() {
         {/* HR */}
         <Route path="/hr/employees" component={Employees} />
         <Route path="/hr/payroll" component={Payroll} />
+        <Route path="/hr/recruiting" component={Recruiting} />
+        <Route path="/hr/onboarding" component={Onboarding} />
+        <Route path="/hr/contractor-kpis" component={ContractorKPIs} />
+
+        {/* Marketing & PR */}
+        <Route path="/marketing/content" component={ContentStudio} />
+        <Route path="/marketing/influencers" component={Influencers} />
+        <Route path="/marketing/campaigns" component={MarketingCampaigns} />
+        <Route path="/marketing/pr" component={PRHub} />
+        <Route path="/marketing/investor-comms" component={InvestorComms} />
+
+        {/* Finance (extended) */}
+        <Route path="/finance/dashboard" component={FinancialDashboard} />
+        <Route path="/finance/fraud-detection" component={FraudDetection} />
+        <Route path="/finance/budgets" component={Budgets} />
 
         {/* Legal */}
         <Route path="/legal/contracts" component={Contracts} />

@@ -5072,5 +5072,385 @@ export const ediSettings = mysqlTable("edi_settings", {
 
 export type EdiSettings = typeof ediSettings.$inferSelect;
 export type InsertEdiSettings = typeof ediSettings.$inferInsert;
+// ============================================
+// OPERATIONS - VENDOR EMAIL AUTOMATION
+// ============================================
+
+export const vendorEmailAutomationLogs = mysqlTable("vendorEmailAutomationLogs", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  vendorId: int("vendorId"),
+  purchaseOrderId: int("purchaseOrderId"),
+  emailType: mysqlEnum("emailType", ["quote_request", "follow_up", "po_confirmation", "shipping_reminder", "payment_notification", "general"]).notNull(),
+  subject: varchar("subject", { length: 500 }),
+  body: text("body"),
+  recipientEmail: varchar("recipientEmail", { length: 320 }),
+  status: mysqlEnum("status", ["queued", "sent", "delivered", "failed", "bounced"]).default("queued").notNull(),
+  sentAt: timestamp("sentAt"),
+  aiGenerated: boolean("aiGenerated").default(false),
+  errorMessage: text("errorMessage"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type VendorEmailAutomationLog = typeof vendorEmailAutomationLogs.$inferSelect;
+export type InsertVendorEmailAutomationLog = typeof vendorEmailAutomationLogs.$inferInsert;
+
+// ============================================
+// FINANCE - DASHBOARDS & FRAUD DETECTION
+// ============================================
+
+export const financialDashboards = mysqlTable("financialDashboards", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  dashboardType: mysqlEnum("dashboardType", ["pnl", "cash_flow", "balance_sheet", "kpi", "budget_vs_actual", "custom"]).notNull(),
+  config: json("config"), // layout, widgets, filters
+  isDefault: boolean("isDefault").default(false),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FinancialDashboard = typeof financialDashboards.$inferSelect;
+export type InsertFinancialDashboard = typeof financialDashboards.$inferInsert;
+
+export const financialSnapshots = mysqlTable("financialSnapshots", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  snapshotDate: timestamp("snapshotDate").notNull(),
+  periodType: mysqlEnum("periodType", ["daily", "weekly", "monthly", "quarterly", "yearly"]).notNull(),
+  totalRevenue: decimal("totalRevenue", { precision: 15, scale: 2 }),
+  totalExpenses: decimal("totalExpenses", { precision: 15, scale: 2 }),
+  grossProfit: decimal("grossProfit", { precision: 15, scale: 2 }),
+  netIncome: decimal("netIncome", { precision: 15, scale: 2 }),
+  totalAssets: decimal("totalAssets", { precision: 15, scale: 2 }),
+  totalLiabilities: decimal("totalLiabilities", { precision: 15, scale: 2 }),
+  cashBalance: decimal("cashBalance", { precision: 15, scale: 2 }),
+  accountsReceivable: decimal("accountsReceivable", { precision: 15, scale: 2 }),
+  accountsPayable: decimal("accountsPayable", { precision: 15, scale: 2 }),
+  burnRate: decimal("burnRate", { precision: 15, scale: 2 }),
+  runway: int("runway"), // months of runway
+  grossMargin: decimal("grossMargin", { precision: 5, scale: 2 }),
+  metadata: json("metadata"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type FinancialSnapshot = typeof financialSnapshots.$inferSelect;
+export type InsertFinancialSnapshot = typeof financialSnapshots.$inferInsert;
+
+export const fraudAlerts = mysqlTable("fraudAlerts", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  alertType: mysqlEnum("alertType", ["duplicate_invoice", "unusual_amount", "vendor_mismatch", "timing_anomaly", "pattern_deviation", "unauthorized_change"]).notNull(),
+  severity: mysqlEnum("severity", ["low", "medium", "high", "critical"]).default("medium").notNull(),
+  status: mysqlEnum("status", ["open", "investigating", "resolved", "dismissed"]).default("open").notNull(),
+  entityType: varchar("entityType", { length: 64 }), // invoice, payment, vendor, etc.
+  entityId: int("entityId"),
+  description: text("description"),
+  aiAnalysis: text("aiAnalysis"),
+  riskScore: decimal("riskScore", { precision: 5, scale: 2 }),
+  resolvedBy: int("resolvedBy"),
+  resolvedAt: timestamp("resolvedAt"),
+  resolution: text("resolution"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FraudAlert = typeof fraudAlerts.$inferSelect;
+export type InsertFraudAlert = typeof fraudAlerts.$inferInsert;
+
+export const budgets = mysqlTable("budgets", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  departmentId: int("departmentId"),
+  accountId: int("accountId"),
+  periodType: mysqlEnum("periodType", ["monthly", "quarterly", "yearly"]).notNull(),
+  periodStart: timestamp("periodStart").notNull(),
+  periodEnd: timestamp("periodEnd").notNull(),
+  budgetAmount: decimal("budgetAmount", { precision: 15, scale: 2 }).notNull(),
+  actualAmount: decimal("actualAmount", { precision: 15, scale: 2 }),
+  variance: decimal("variance", { precision: 15, scale: 2 }),
+  status: mysqlEnum("status", ["draft", "approved", "active", "closed"]).default("draft").notNull(),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Budget = typeof budgets.$inferSelect;
+export type InsertBudget = typeof budgets.$inferInsert;
+
+// ============================================
+// HR & RECRUITING
+// ============================================
+
+export const jobPostings = mysqlTable("jobPostings", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  title: varchar("title", { length: 255 }).notNull(),
+  departmentId: int("departmentId"),
+  description: text("description"),
+  requirements: text("requirements"),
+  location: varchar("location", { length: 255 }),
+  employmentType: mysqlEnum("employmentType", ["full_time", "part_time", "contract", "internship", "freelance"]).default("full_time").notNull(),
+  salaryMin: decimal("salaryMin", { precision: 15, scale: 2 }),
+  salaryMax: decimal("salaryMax", { precision: 15, scale: 2 }),
+  status: mysqlEnum("status", ["draft", "open", "paused", "closed", "filled"]).default("draft").notNull(),
+  hiringManagerId: int("hiringManagerId"),
+  aiScreeningEnabled: boolean("aiScreeningEnabled").default(true),
+  screeningCriteria: json("screeningCriteria"), // AI scoring weights
+  postedAt: timestamp("postedAt"),
+  closedAt: timestamp("closedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type JobPosting = typeof jobPostings.$inferSelect;
+export type InsertJobPosting = typeof jobPostings.$inferInsert;
+
+export const candidates = mysqlTable("candidates", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  jobPostingId: int("jobPostingId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  email: varchar("email", { length: 320 }),
+  phone: varchar("phone", { length: 32 }),
+  resumeUrl: text("resumeUrl"),
+  linkedinUrl: text("linkedinUrl"),
+  source: mysqlEnum("source", ["direct", "referral", "linkedin", "job_board", "recruiter", "website", "other"]).default("direct"),
+  status: mysqlEnum("status", ["applied", "screening", "shortlisted", "interview_scheduled", "interviewing", "offer_extended", "hired", "rejected", "withdrawn"]).default("applied").notNull(),
+  aiScore: decimal("aiScore", { precision: 5, scale: 2 }),
+  aiScreeningSummary: text("aiScreeningSummary"),
+  aiStrengths: json("aiStrengths"),
+  aiWeaknesses: json("aiWeaknesses"),
+  notes: text("notes"),
+  referredBy: varchar("referredBy", { length: 255 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Candidate = typeof candidates.$inferSelect;
+export type InsertCandidate = typeof candidates.$inferInsert;
+
+export const interviews = mysqlTable("interviews", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  candidateId: int("candidateId").notNull(),
+  jobPostingId: int("jobPostingId"),
+  interviewerId: int("interviewerId"),
+  interviewType: mysqlEnum("interviewType", ["phone_screen", "video", "in_person", "ai_screening", "technical", "panel", "final"]).notNull(),
+  scheduledAt: timestamp("scheduledAt"),
+  duration: int("duration"), // minutes
+  status: mysqlEnum("status", ["scheduled", "in_progress", "completed", "cancelled", "no_show"]).default("scheduled").notNull(),
+  meetingLink: text("meetingLink"),
+  aiQuestions: json("aiQuestions"), // AI-generated interview questions
+  aiEvaluation: text("aiEvaluation"),
+  aiOverallScore: decimal("aiOverallScore", { precision: 5, scale: 2 }),
+  interviewerNotes: text("interviewerNotes"),
+  interviewerRating: int("interviewerRating"), // 1-5
+  feedback: text("feedback"),
+  completedAt: timestamp("completedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Interview = typeof interviews.$inferSelect;
+export type InsertInterview = typeof interviews.$inferInsert;
+
+export const onboardingTemplates = mysqlTable("onboardingTemplates", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  departmentId: int("departmentId"),
+  description: text("description"),
+  tasks: json("tasks"), // array of onboarding task definitions
+  isActive: boolean("isActive").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type OnboardingTemplate = typeof onboardingTemplates.$inferSelect;
+export type InsertOnboardingTemplate = typeof onboardingTemplates.$inferInsert;
+
+export const onboardingProgress = mysqlTable("onboardingProgress", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  employeeId: int("employeeId").notNull(),
+  templateId: int("templateId"),
+  taskName: varchar("taskName", { length: 255 }).notNull(),
+  taskDescription: text("taskDescription"),
+  category: mysqlEnum("category", ["paperwork", "it_setup", "training", "introductions", "compliance", "equipment", "other"]).default("other"),
+  status: mysqlEnum("status", ["pending", "in_progress", "completed", "skipped"]).default("pending").notNull(),
+  dueDate: timestamp("dueDate"),
+  completedAt: timestamp("completedAt"),
+  assignedTo: int("assignedTo"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type OnboardingProgress = typeof onboardingProgress.$inferSelect;
+export type InsertOnboardingProgress = typeof onboardingProgress.$inferInsert;
+
+export const contractorKpis = mysqlTable("contractorKpis", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  employeeId: int("employeeId").notNull(),
+  kpiName: varchar("kpiName", { length: 255 }).notNull(),
+  target: decimal("target", { precision: 15, scale: 2 }),
+  actual: decimal("actual", { precision: 15, scale: 2 }),
+  unit: varchar("unit", { length: 32 }),
+  periodStart: timestamp("periodStart").notNull(),
+  periodEnd: timestamp("periodEnd").notNull(),
+  status: mysqlEnum("status", ["on_track", "at_risk", "behind", "exceeded"]).default("on_track"),
+  paymentLinked: boolean("paymentLinked").default(false),
+  paymentAmount: decimal("paymentAmount", { precision: 15, scale: 2 }),
+  paymentStatus: mysqlEnum("paymentStatus", ["pending", "approved", "paid", "withheld"]).default("pending"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ContractorKpi = typeof contractorKpis.$inferSelect;
+export type InsertContractorKpi = typeof contractorKpis.$inferInsert;
+
+// ============================================
+// MARKETING & PR
+// ============================================
+
+export const contentPieces = mysqlTable("contentPieces", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  title: varchar("title", { length: 500 }).notNull(),
+  contentType: mysqlEnum("contentType", ["blog_post", "social_media", "press_release", "newsletter", "email_copy", "ad_copy", "video_script", "whitepaper"]).notNull(),
+  platform: mysqlEnum("platform", ["website", "linkedin", "twitter", "instagram", "facebook", "tiktok", "youtube", "email", "other"]).default("website"),
+  body: text("body"),
+  aiGenerated: boolean("aiGenerated").default(false),
+  aiPrompt: text("aiPrompt"),
+  brandVoice: varchar("brandVoice", { length: 64 }),
+  status: mysqlEnum("status", ["draft", "review", "approved", "scheduled", "published", "archived"]).default("draft").notNull(),
+  scheduledAt: timestamp("scheduledAt"),
+  publishedAt: timestamp("publishedAt"),
+  authorId: int("authorId"),
+  tags: json("tags"),
+  metadata: json("metadata"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ContentPiece = typeof contentPieces.$inferSelect;
+export type InsertContentPiece = typeof contentPieces.$inferInsert;
+
+export const influencers = mysqlTable("influencers", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  email: varchar("email", { length: 320 }),
+  platform: mysqlEnum("platform", ["instagram", "tiktok", "youtube", "linkedin", "twitter", "blog", "podcast", "other"]).notNull(),
+  handle: varchar("handle", { length: 255 }),
+  followerCount: int("followerCount"),
+  engagementRate: decimal("engagementRate", { precision: 5, scale: 2 }),
+  niche: varchar("niche", { length: 128 }),
+  tier: mysqlEnum("tier", ["nano", "micro", "mid", "macro", "mega"]).default("micro"),
+  status: mysqlEnum("status", ["prospect", "contacted", "negotiating", "active", "completed", "declined"]).default("prospect").notNull(),
+  costPerPost: decimal("costPerPost", { precision: 15, scale: 2 }),
+  notes: text("notes"),
+  contactInfo: json("contactInfo"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Influencer = typeof influencers.$inferSelect;
+export type InsertInfluencer = typeof influencers.$inferInsert;
+
+export const marketingCampaigns = mysqlTable("marketingCampaigns", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  campaignType: mysqlEnum("campaignType", ["influencer", "content", "paid_ads", "email", "pr", "event", "product_launch", "other"]).notNull(),
+  status: mysqlEnum("status", ["planning", "active", "paused", "completed", "cancelled"]).default("planning").notNull(),
+  budget: decimal("budget", { precision: 15, scale: 2 }),
+  spent: decimal("spent", { precision: 15, scale: 2 }),
+  startDate: timestamp("startDate"),
+  endDate: timestamp("endDate"),
+  goals: json("goals"),
+  metrics: json("metrics"), // impressions, clicks, conversions, etc.
+  targetAudience: text("targetAudience"),
+  channels: json("channels"),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type MarketingCampaign = typeof marketingCampaigns.$inferSelect;
+export type InsertMarketingCampaign = typeof marketingCampaigns.$inferInsert;
+
+export const prContacts = mysqlTable("prContacts", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  email: varchar("email", { length: 320 }),
+  outlet: varchar("outlet", { length: 255 }),
+  role: varchar("role", { length: 128 }),
+  beat: varchar("beat", { length: 128 }), // food, CPG, health, tech, etc.
+  location: varchar("location", { length: 255 }),
+  tier: mysqlEnum("tier", ["top_tier", "mid_tier", "niche", "local", "trade"]).default("mid_tier"),
+  relationship: mysqlEnum("relationship", ["cold", "warm", "strong", "advocate"]).default("cold"),
+  lastContactedAt: timestamp("lastContactedAt"),
+  notes: text("notes"),
+  socialLinks: json("socialLinks"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PrContact = typeof prContacts.$inferSelect;
+export type InsertPrContact = typeof prContacts.$inferInsert;
+
+export const prPitches = mysqlTable("prPitches", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  prContactId: int("prContactId"),
+  subject: varchar("subject", { length: 500 }).notNull(),
+  body: text("body"),
+  pitchType: mysqlEnum("pitchType", ["product_launch", "funding", "partnership", "thought_leadership", "event", "story_angle", "other"]).notNull(),
+  status: mysqlEnum("status", ["draft", "sent", "follow_up", "interested", "published", "declined", "no_response"]).default("draft").notNull(),
+  aiGenerated: boolean("aiGenerated").default(false),
+  aiMatchScore: decimal("aiMatchScore", { precision: 5, scale: 2 }),
+  sentAt: timestamp("sentAt"),
+  responseAt: timestamp("responseAt"),
+  publishedUrl: text("publishedUrl"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PrPitch = typeof prPitches.$inferSelect;
+export type InsertPrPitch = typeof prPitches.$inferInsert;
+
+export const investorUpdates = mysqlTable("investorUpdates", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  title: varchar("title", { length: 500 }).notNull(),
+  body: text("body"),
+  updateType: mysqlEnum("updateType", ["monthly", "quarterly", "annual", "milestone", "ad_hoc"]).notNull(),
+  status: mysqlEnum("status", ["draft", "review", "approved", "sent"]).default("draft").notNull(),
+  periodStart: timestamp("periodStart"),
+  periodEnd: timestamp("periodEnd"),
+  highlights: json("highlights"),
+  metrics: json("metrics"),
+  aiGenerated: boolean("aiGenerated").default(false),
+  sentAt: timestamp("sentAt"),
+  recipientCount: int("recipientCount"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InvestorUpdate = typeof investorUpdates.$inferSelect;
+export type InsertInvestorUpdate = typeof investorUpdates.$inferInsert;
+
 export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
 export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;

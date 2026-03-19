@@ -13657,6 +13657,840 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
     }),
   }),
+
+  // ============================================
+  // RECRUITING & HR AI
+  // ============================================
+  recruiting: router({
+    // Job Postings
+    jobPostings: router({
+      list: protectedProcedure
+        .input(z.object({ status: z.string().optional() }).optional())
+        .query(({ input }) => db.getJobPostings(input?.status)),
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getJobPosting(input.id)),
+      create: protectedProcedure
+        .input(z.object({
+          title: z.string().min(1),
+          departmentId: z.number().optional(),
+          description: z.string().optional(),
+          requirements: z.string().optional(),
+          location: z.string().optional(),
+          employmentType: z.enum(["full_time", "part_time", "contract", "internship", "freelance"]).optional(),
+          salaryMin: z.string().optional(),
+          salaryMax: z.string().optional(),
+          hiringManagerId: z.number().optional(),
+          aiScreeningEnabled: z.boolean().optional(),
+          screeningCriteria: z.any().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createJobPosting({ ...input, companyId: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'job_posting', result.id, input.title);
+          return result;
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          title: z.string().optional(),
+          description: z.string().optional(),
+          requirements: z.string().optional(),
+          location: z.string().optional(),
+          employmentType: z.enum(["full_time", "part_time", "contract", "internship", "freelance"]).optional(),
+          salaryMin: z.string().optional(),
+          salaryMax: z.string().optional(),
+          status: z.enum(["draft", "open", "paused", "closed", "filled"]).optional(),
+          aiScreeningEnabled: z.boolean().optional(),
+          screeningCriteria: z.any().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          const result = await db.updateJobPosting(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'job_posting', id);
+          return result;
+        }),
+      delete: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteJobPosting(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'job_posting', input.id);
+        }),
+    }),
+
+    // Candidates
+    candidates: router({
+      list: protectedProcedure
+        .input(z.object({ jobPostingId: z.number().optional(), status: z.string().optional() }).optional())
+        .query(({ input }) => db.getCandidates(input?.jobPostingId, input?.status)),
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getCandidate(input.id)),
+      create: protectedProcedure
+        .input(z.object({
+          jobPostingId: z.number().optional(),
+          name: z.string().min(1),
+          email: z.string().optional(),
+          phone: z.string().optional(),
+          resumeUrl: z.string().optional(),
+          linkedinUrl: z.string().optional(),
+          source: z.enum(["direct", "referral", "linkedin", "job_board", "recruiter", "website", "other"]).optional(),
+          notes: z.string().optional(),
+          referredBy: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createCandidate({ ...input, companyId: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'candidate', result.id, input.name);
+          return result;
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(["applied", "screening", "shortlisted", "interview_scheduled", "interviewing", "offer_extended", "hired", "rejected", "withdrawn"]).optional(),
+          aiScore: z.string().optional(),
+          aiScreeningSummary: z.string().optional(),
+          aiStrengths: z.any().optional(),
+          aiWeaknesses: z.any().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          const result = await db.updateCandidate(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'candidate', id);
+          return result;
+        }),
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteCandidate(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'candidate', input.id);
+        }),
+      screen: protectedProcedure
+        .input(z.object({
+          candidateId: z.number(),
+          resumeText: z.string(),
+          jobRequirements: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { screenCandidate } = await import("./recruitingAIService");
+          const screening = await screenCandidate(input.resumeText, input.jobRequirements);
+          await db.updateCandidate(input.candidateId, {
+            aiScore: String(screening.score),
+            aiScreeningSummary: screening.summary,
+            aiStrengths: screening.strengths,
+            aiWeaknesses: screening.weaknesses,
+            status: "screening",
+          });
+          await createAuditLog(ctx.user.id, 'update', 'candidate', input.candidateId, 'AI screening');
+          return screening;
+        }),
+    }),
+
+    // Interviews
+    interviews: router({
+      list: protectedProcedure
+        .input(z.object({ candidateId: z.number().optional(), status: z.string().optional() }).optional())
+        .query(({ input }) => db.getInterviews(input?.candidateId, input?.status)),
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getInterview(input.id)),
+      create: protectedProcedure
+        .input(z.object({
+          candidateId: z.number(),
+          jobPostingId: z.number().optional(),
+          interviewerId: z.number().optional(),
+          interviewType: z.enum(["phone_screen", "video", "in_person", "ai_screening", "technical", "panel", "final"]),
+          scheduledAt: z.date().optional(),
+          duration: z.number().optional(),
+          meetingLink: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createInterview({ ...input, companyId: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'interview', result.id);
+          return result;
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(["scheduled", "in_progress", "completed", "cancelled", "no_show"]).optional(),
+          interviewerNotes: z.string().optional(),
+          interviewerRating: z.number().optional(),
+          feedback: z.string().optional(),
+          aiEvaluation: z.string().optional(),
+          aiOverallScore: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          const result = await db.updateInterview(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'interview', id);
+          return result;
+        }),
+      generateQuestions: protectedProcedure
+        .input(z.object({
+          jobTitle: z.string(),
+          jobRequirements: z.string(),
+          candidateSummary: z.string().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { generateInterviewQuestions } = await import("./recruitingAIService");
+          return generateInterviewQuestions(input.jobTitle, input.jobRequirements, input.candidateSummary);
+        }),
+    }),
+
+    // Onboarding
+    onboardingTemplates: router({
+      list: protectedProcedure.query(() => db.getOnboardingTemplates()),
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          departmentId: z.number().optional(),
+          description: z.string().optional(),
+          tasks: z.any().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createOnboardingTemplate({ ...input, companyId: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'onboarding_template', result.id, input.name);
+          return result;
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          description: z.string().optional(),
+          tasks: z.any().optional(),
+          isActive: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          return db.updateOnboardingTemplate(id, data);
+        }),
+      generatePlan: protectedProcedure
+        .input(z.object({
+          role: z.string(),
+          department: z.string(),
+          startDate: z.string(),
+        }))
+        .mutation(async ({ input }) => {
+          const { generateOnboardingPlan } = await import("./recruitingAIService");
+          return generateOnboardingPlan(input.role, input.department, input.startDate);
+        }),
+    }),
+
+    onboardingProgress: router({
+      list: protectedProcedure
+        .input(z.object({ employeeId: z.number().optional() }).optional())
+        .query(({ input }) => db.getOnboardingProgress(input?.employeeId)),
+      create: protectedProcedure
+        .input(z.object({
+          employeeId: z.number(),
+          templateId: z.number().optional(),
+          taskName: z.string().min(1),
+          taskDescription: z.string().optional(),
+          category: z.enum(["paperwork", "it_setup", "training", "introductions", "compliance", "equipment", "other"]).optional(),
+          dueDate: z.date().optional(),
+          assignedTo: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createOnboardingTask({ ...input, companyId: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'onboarding_task', result.id, input.taskName);
+          return result;
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(["pending", "in_progress", "completed", "skipped"]).optional(),
+          completedAt: z.date().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, ...data } = input;
+          return db.updateOnboardingTask(id, data);
+        }),
+    }),
+
+    // Contractor KPIs
+    contractorKpis: router({
+      list: protectedProcedure
+        .input(z.object({ employeeId: z.number().optional() }).optional())
+        .query(({ input }) => db.getContractorKpis(input?.employeeId)),
+      create: protectedProcedure
+        .input(z.object({
+          employeeId: z.number(),
+          kpiName: z.string().min(1),
+          target: z.string().optional(),
+          unit: z.string().optional(),
+          periodStart: z.date(),
+          periodEnd: z.date(),
+          paymentLinked: z.boolean().optional(),
+          paymentAmount: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createContractorKpi({ ...input, companyId: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'contractor_kpi', result.id, input.kpiName);
+          return result;
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          actual: z.string().optional(),
+          status: z.enum(["on_track", "at_risk", "behind", "exceeded"]).optional(),
+          paymentStatus: z.enum(["pending", "approved", "paid", "withheld"]).optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, ...data } = input;
+          return db.updateContractorKpi(id, data);
+        }),
+    }),
+  }),
+
+  // ============================================
+  // FINANCE DASHBOARD & FRAUD DETECTION
+  // ============================================
+  financeDashboard: router({
+    // Financial Dashboards
+    dashboards: router({
+      list: financeProcedure.query(() => db.getFinancialDashboards()),
+      get: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getFinancialDashboard(input.id)),
+      create: financeProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          description: z.string().optional(),
+          dashboardType: z.enum(["pnl", "cash_flow", "balance_sheet", "kpi", "budget_vs_actual", "custom"]),
+          config: z.any().optional(),
+          isDefault: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createFinancialDashboard({ ...input, companyId: ctx.user.id, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'financial_dashboard', result.id, input.name);
+          return result;
+        }),
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          description: z.string().optional(),
+          config: z.any().optional(),
+          isDefault: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          const result = await db.updateFinancialDashboard(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'financial_dashboard', id);
+          return result;
+        }),
+      delete: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteFinancialDashboard(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'financial_dashboard', input.id);
+        }),
+    }),
+
+    // Financial Snapshots
+    snapshots: router({
+      list: financeProcedure
+        .input(z.object({ periodType: z.string().optional() }).optional())
+        .query(({ input }) => db.getFinancialSnapshots(input?.periodType)),
+      create: financeProcedure
+        .input(z.object({
+          snapshotDate: z.date(),
+          periodType: z.enum(["daily", "weekly", "monthly", "quarterly", "yearly"]),
+          totalRevenue: z.string().optional(),
+          totalExpenses: z.string().optional(),
+          grossProfit: z.string().optional(),
+          netIncome: z.string().optional(),
+          totalAssets: z.string().optional(),
+          totalLiabilities: z.string().optional(),
+          cashBalance: z.string().optional(),
+          accountsReceivable: z.string().optional(),
+          accountsPayable: z.string().optional(),
+          burnRate: z.string().optional(),
+          runway: z.number().optional(),
+          grossMargin: z.string().optional(),
+          metadata: z.any().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createFinancialSnapshot({ ...input, companyId: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'financial_snapshot', result.id);
+          return result;
+        }),
+    }),
+
+    // Fraud Alerts
+    fraudAlerts: router({
+      list: financeProcedure
+        .input(z.object({ status: z.string().optional() }).optional())
+        .query(({ input }) => db.getFraudAlerts(input?.status)),
+      get: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getFraudAlert(input.id)),
+      create: financeProcedure
+        .input(z.object({
+          alertType: z.enum(["duplicate_invoice", "unusual_amount", "vendor_mismatch", "timing_anomaly", "pattern_deviation", "unauthorized_change"]),
+          severity: z.enum(["low", "medium", "high", "critical"]).optional(),
+          entityType: z.string().optional(),
+          entityId: z.number().optional(),
+          description: z.string().optional(),
+          aiAnalysis: z.string().optional(),
+          riskScore: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createFraudAlert({ ...input, companyId: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'fraud_alert', result.id);
+          return result;
+        }),
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(["open", "investigating", "resolved", "dismissed"]).optional(),
+          resolution: z.string().optional(),
+          resolvedBy: z.number().optional(),
+          resolvedAt: z.date().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          const result = await db.updateFraudAlert(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'fraud_alert', id);
+          return result;
+        }),
+      runScan: financeProcedure
+        .input(z.object({
+          entityType: z.string(),
+          entityData: z.any(),
+          historicalPatterns: z.any().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { analyzeFraud } = await import("./marketingAIService");
+          return analyzeFraud(input);
+        }),
+    }),
+
+    // Budgets
+    budgets: router({
+      list: financeProcedure
+        .input(z.object({ status: z.string().optional() }).optional())
+        .query(({ input }) => db.getBudgets(input?.status)),
+      get: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getBudget(input.id)),
+      create: financeProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          departmentId: z.number().optional(),
+          accountId: z.number().optional(),
+          periodType: z.enum(["monthly", "quarterly", "yearly"]),
+          periodStart: z.date(),
+          periodEnd: z.date(),
+          budgetAmount: z.string(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createBudget({ ...input, companyId: ctx.user.id, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'budget', result.id, input.name);
+          return result;
+        }),
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          budgetAmount: z.string().optional(),
+          actualAmount: z.string().optional(),
+          variance: z.string().optional(),
+          status: z.enum(["draft", "approved", "active", "closed"]).optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          const result = await db.updateBudget(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'budget', id);
+          return result;
+        }),
+      delete: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteBudget(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'budget', input.id);
+        }),
+    }),
+  }),
+
+  // ============================================
+  // MARKETING & PR
+  // ============================================
+  marketing: router({
+    // Content Pieces
+    contentPieces: router({
+      list: protectedProcedure
+        .input(z.object({ contentType: z.string().optional(), status: z.string().optional() }).optional())
+        .query(({ input }) => db.getContentPieces(input?.contentType, input?.status)),
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getContentPiece(input.id)),
+      create: protectedProcedure
+        .input(z.object({
+          title: z.string().min(1),
+          contentType: z.enum(["blog_post", "social_media", "press_release", "newsletter", "email_copy", "ad_copy", "video_script", "whitepaper"]),
+          platform: z.enum(["website", "linkedin", "twitter", "instagram", "facebook", "tiktok", "youtube", "email", "other"]).optional(),
+          body: z.string().optional(),
+          aiGenerated: z.boolean().optional(),
+          aiPrompt: z.string().optional(),
+          brandVoice: z.string().optional(),
+          status: z.enum(["draft", "review", "approved", "scheduled", "published", "archived"]).optional(),
+          scheduledAt: z.date().optional(),
+          tags: z.any().optional(),
+          metadata: z.any().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createContentPiece({ ...input, companyId: ctx.user.id, authorId: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'content_piece', result.id, input.title);
+          return result;
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          title: z.string().optional(),
+          body: z.string().optional(),
+          status: z.enum(["draft", "review", "approved", "scheduled", "published", "archived"]).optional(),
+          scheduledAt: z.date().optional(),
+          publishedAt: z.date().optional(),
+          tags: z.any().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          const result = await db.updateContentPiece(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'content_piece', id);
+          return result;
+        }),
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteContentPiece(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'content_piece', input.id);
+        }),
+    }),
+
+    // AI Content Generation
+    generateContent: protectedProcedure
+      .input(z.object({
+        contentType: z.string(),
+        topic: z.string(),
+        brandVoice: z.string().optional(),
+        targetAudience: z.string().optional(),
+        platform: z.string().optional(),
+        keywords: z.array(z.string()).optional(),
+        length: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { generateContent } = await import("./marketingAIService");
+        return generateContent(input);
+      }),
+
+    // Influencers
+    influencers: router({
+      list: protectedProcedure
+        .input(z.object({ status: z.string().optional() }).optional())
+        .query(({ input }) => db.getInfluencers(input?.status)),
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getInfluencer(input.id)),
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          email: z.string().optional(),
+          platform: z.enum(["instagram", "tiktok", "youtube", "linkedin", "twitter", "blog", "podcast", "other"]),
+          handle: z.string().optional(),
+          followerCount: z.number().optional(),
+          engagementRate: z.string().optional(),
+          niche: z.string().optional(),
+          tier: z.enum(["nano", "micro", "mid", "macro", "mega"]).optional(),
+          costPerPost: z.string().optional(),
+          notes: z.string().optional(),
+          contactInfo: z.any().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createInfluencer({ ...input, companyId: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'influencer', result.id, input.name);
+          return result;
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          email: z.string().optional(),
+          handle: z.string().optional(),
+          followerCount: z.number().optional(),
+          engagementRate: z.string().optional(),
+          status: z.enum(["prospect", "contacted", "negotiating", "active", "completed", "declined"]).optional(),
+          costPerPost: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          const result = await db.updateInfluencer(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'influencer', id);
+          return result;
+        }),
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteInfluencer(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'influencer', input.id);
+        }),
+    }),
+
+    // Marketing Campaigns
+    campaigns: router({
+      list: protectedProcedure
+        .input(z.object({ status: z.string().optional() }).optional())
+        .query(({ input }) => db.getMarketingCampaigns(input?.status)),
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getMarketingCampaign(input.id)),
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          campaignType: z.enum(["influencer", "content", "paid_ads", "email", "pr", "event", "product_launch", "other"]),
+          budget: z.string().optional(),
+          startDate: z.date().optional(),
+          endDate: z.date().optional(),
+          goals: z.any().optional(),
+          targetAudience: z.string().optional(),
+          channels: z.any().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createMarketingCampaign({ ...input, companyId: ctx.user.id, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'marketing_campaign', result.id, input.name);
+          return result;
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          status: z.enum(["planning", "active", "paused", "completed", "cancelled"]).optional(),
+          budget: z.string().optional(),
+          spent: z.string().optional(),
+          metrics: z.any().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          const result = await db.updateMarketingCampaign(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'marketing_campaign', id);
+          return result;
+        }),
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteMarketingCampaign(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'marketing_campaign', input.id);
+        }),
+    }),
+
+    // PR Contacts
+    prContacts: router({
+      list: protectedProcedure
+        .input(z.object({ tier: z.string().optional() }).optional())
+        .query(({ input }) => db.getPrContacts(input?.tier)),
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getPrContact(input.id)),
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          email: z.string().optional(),
+          outlet: z.string().optional(),
+          role: z.string().optional(),
+          beat: z.string().optional(),
+          location: z.string().optional(),
+          tier: z.enum(["top_tier", "mid_tier", "niche", "local", "trade"]).optional(),
+          relationship: z.enum(["cold", "warm", "strong", "advocate"]).optional(),
+          notes: z.string().optional(),
+          socialLinks: z.any().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createPrContact({ ...input, companyId: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'pr_contact', result.id, input.name);
+          return result;
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          email: z.string().optional(),
+          outlet: z.string().optional(),
+          beat: z.string().optional(),
+          tier: z.enum(["top_tier", "mid_tier", "niche", "local", "trade"]).optional(),
+          relationship: z.enum(["cold", "warm", "strong", "advocate"]).optional(),
+          lastContactedAt: z.date().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          const result = await db.updatePrContact(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'pr_contact', id);
+          return result;
+        }),
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deletePrContact(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'pr_contact', input.id);
+        }),
+    }),
+
+    // PR Pitches
+    prPitches: router({
+      list: protectedProcedure
+        .input(z.object({ status: z.string().optional(), prContactId: z.number().optional() }).optional())
+        .query(({ input }) => db.getPrPitches(input?.status, input?.prContactId)),
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getPrPitch(input.id)),
+      create: protectedProcedure
+        .input(z.object({
+          prContactId: z.number().optional(),
+          subject: z.string().min(1),
+          body: z.string().optional(),
+          pitchType: z.enum(["product_launch", "funding", "partnership", "thought_leadership", "event", "story_angle", "other"]),
+          aiGenerated: z.boolean().optional(),
+          aiMatchScore: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createPrPitch({ ...input, companyId: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'pr_pitch', result.id, input.subject);
+          return result;
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(["draft", "sent", "follow_up", "interested", "published", "declined", "no_response"]).optional(),
+          sentAt: z.date().optional(),
+          responseAt: z.date().optional(),
+          publishedUrl: z.string().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          const result = await db.updatePrPitch(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'pr_pitch', id);
+          return result;
+        }),
+    }),
+
+    // AI Pitch Generation
+    generatePitch: protectedProcedure
+      .input(z.object({
+        pitchType: z.string(),
+        journalistBeat: z.string().optional(),
+        outlet: z.string().optional(),
+        companyInfo: z.string(),
+        newsAngle: z.string(),
+      }))
+      .mutation(async ({ input }) => {
+        const { generatePrPitch } = await import("./marketingAIService");
+        return generatePrPitch(input);
+      }),
+
+    // Journalist Matching
+    matchJournalists: protectedProcedure
+      .input(z.object({
+        newsAngle: z.string(),
+        journalists: z.array(z.object({
+          id: z.number(),
+          name: z.string(),
+          beat: z.string(),
+          outlet: z.string(),
+          tier: z.string(),
+        })),
+      }))
+      .mutation(async ({ input }) => {
+        const { matchJournalist } = await import("./marketingAIService");
+        return matchJournalist(input);
+      }),
+
+    // Investor Updates
+    investorUpdates: router({
+      list: protectedProcedure
+        .input(z.object({ status: z.string().optional() }).optional())
+        .query(({ input }) => db.getInvestorUpdates(input?.status)),
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getInvestorUpdate(input.id)),
+      create: protectedProcedure
+        .input(z.object({
+          title: z.string().min(1),
+          body: z.string().optional(),
+          updateType: z.enum(["monthly", "quarterly", "annual", "milestone", "ad_hoc"]),
+          periodStart: z.date().optional(),
+          periodEnd: z.date().optional(),
+          highlights: z.any().optional(),
+          metrics: z.any().optional(),
+          aiGenerated: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createInvestorUpdate({ ...input, companyId: ctx.user.id, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'investor_update', result.id, input.title);
+          return result;
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          title: z.string().optional(),
+          body: z.string().optional(),
+          status: z.enum(["draft", "review", "approved", "sent"]).optional(),
+          highlights: z.any().optional(),
+          metrics: z.any().optional(),
+          sentAt: z.date().optional(),
+          recipientCount: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          const result = await db.updateInvestorUpdate(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'investor_update', id);
+          return result;
+        }),
+    }),
+
+    // AI Investor Update Generation
+    generateInvestorUpdate: protectedProcedure
+      .input(z.object({
+        updateType: z.string(),
+        periodStart: z.string(),
+        periodEnd: z.string(),
+        metrics: z.any().optional(),
+        highlights: z.array(z.string()).optional(),
+        challenges: z.array(z.string()).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { generateInvestorUpdate } = await import("./marketingAIService");
+        return generateInvestorUpdate(input);
+      }),
+
+    // Vendor Email Automation Logs
+    vendorEmailLogs: router({
+      list: protectedProcedure
+        .input(z.object({ vendorId: z.number().optional() }).optional())
+        .query(({ input }) => db.getVendorEmailAutomationLogs(input?.vendorId)),
+      create: protectedProcedure
+        .input(z.object({
+          vendorId: z.number().optional(),
+          purchaseOrderId: z.number().optional(),
+          emailType: z.enum(["quote_request", "follow_up", "po_confirmation", "shipping_reminder", "payment_notification", "general"]),
+          subject: z.string().optional(),
+          body: z.string().optional(),
+          recipientEmail: z.string().optional(),
+          aiGenerated: z.boolean().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createVendorEmailAutomationLog({ ...input, companyId: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'vendor_email_log', result.id);
+          return result;
+        }),
+    }),
+  }),
 });
 
 // Helper function to calculate next generation date for recurring invoices
