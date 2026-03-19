@@ -11,6 +11,12 @@ import {
   inventory,
   freightRfqs,
   freightCarriers,
+  // FP&A tables
+  budgets,
+  budgetLineItems,
+  cashFlowForecasts,
+  performancePacing,
+  inventoryAgingSnapshots,
 } from "../drizzle/schema";
 import { eq, and, lt, gte, desc, sql, isNull, or } from "drizzle-orm";
 import { sendEmail } from "./_core/email";
@@ -129,6 +135,19 @@ async function evaluateRuleCondition(rule: typeof aiAgentRules.$inferSelect): Pr
       return await checkPaymentReminderCondition(condition);
     case "shipment_tracking":
       return await checkShipmentTrackingCondition(condition);
+    // FP&A rule types
+    case "price_alert":
+      return await checkPriceAlertCondition(condition);
+    case "quality_check":
+      return await checkQualityCheckCondition(condition);
+    case "budget_variance_alert":
+      return await checkBudgetVarianceCondition(condition);
+    case "cash_flow_alert":
+      return await checkCashFlowAlertCondition(condition);
+    case "pacing_alert":
+      return await checkPacingAlertCondition(condition);
+    case "inventory_aging_alert":
+      return await checkInventoryAgingAlertCondition(condition);
     default:
       return false;
   }
@@ -206,6 +225,104 @@ async function checkShipmentTrackingCondition(condition: RuleCondition): Promise
   return false;
 }
 
+async function checkPriceAlertCondition(condition: RuleCondition): Promise<boolean> {
+  // Placeholder - check for price changes exceeding threshold
+  return false;
+}
+
+async function checkQualityCheckCondition(condition: RuleCondition): Promise<boolean> {
+  // Placeholder - check for quality issues
+  return false;
+}
+
+// ============================================
+// FP&A RULE CONDITION CHECKERS
+// ============================================
+
+async function checkBudgetVarianceCondition(condition: RuleCondition): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+
+  // Check for active budgets with line items exceeding variance threshold
+  const activeBudgets = await db.select().from(budgets).where(eq(budgets.status, "active"));
+  if (activeBudgets.length === 0) return false;
+
+  for (const budget of activeBudgets) {
+    const lineItems = await db.select().from(budgetLineItems).where(eq(budgetLineItems.budgetId, budget.id));
+
+    // Check if any category has variance exceeding threshold (default 20%)
+    const varianceThreshold = parseFloat(condition.value || "20");
+    for (const li of lineItems) {
+      const budgeted = parseFloat(li.budgetedAmount || "0");
+      const actual = parseFloat(li.actualAmount || "0");
+      if (budgeted > 0) {
+        const variancePct = Math.abs(((actual - budgeted) / budgeted) * 100);
+        if (variancePct >= varianceThreshold) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+async function checkCashFlowAlertCondition(condition: RuleCondition): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+
+  // Check if projected closing balance falls below minimum threshold
+  const latest = await db.select().from(cashFlowForecasts)
+    .where(eq(cashFlowForecasts.status, "active"))
+    .orderBy(desc(cashFlowForecasts.forecastDate))
+    .limit(1);
+
+  if (latest.length === 0) return false;
+
+  const closingBalance = parseFloat(latest[0].projectedClosingBalance || "0");
+  const minCashThreshold = parseFloat(condition.value || "50000"); // Default $50k minimum
+
+  return closingBalance < minCashThreshold;
+}
+
+async function checkPacingAlertCondition(condition: RuleCondition): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+
+  // Check if pacing status is "behind" or "at_risk"
+  const latest = await db.select().from(performancePacing)
+    .orderBy(desc(performancePacing.snapshotDate))
+    .limit(1);
+
+  if (latest.length === 0) return false;
+
+  return latest[0].overallStatus === "behind" || latest[0].overallStatus === "at_risk";
+}
+
+async function checkInventoryAgingAlertCondition(condition: RuleCondition): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+
+  // Check for high/critical risk inventory items
+  const latestSnapshots = await db.select().from(inventoryAgingSnapshots)
+    .orderBy(desc(inventoryAgingSnapshots.snapshotDate))
+    .limit(200);
+
+  if (latestSnapshots.length === 0) return false;
+
+  // Get latest date's snapshots
+  const latestDate = latestSnapshots[0].snapshotDate;
+  const snapshot = latestSnapshots.filter(s =>
+    s.snapshotDate?.getTime() === latestDate?.getTime()
+  );
+
+  const criticalItems = snapshot.filter(s =>
+    s.riskLevel === "high" || s.riskLevel === "critical"
+  );
+
+  return criticalItems.length > 0;
+}
+
 // ============================================
 // TASK CREATION FROM RULES
 // ============================================
@@ -221,6 +338,15 @@ async function createTaskFromRule(rule: typeof aiAgentRules.$inferSelect): Promi
       return await createRFQTask(rule, actionConfig);
     case "vendor_followup":
       return await createVendorFollowupTask(rule, actionConfig);
+    // FP&A rule task creation
+    case "budget_variance_alert":
+      return await createBudgetVarianceAlertTask(rule, actionConfig);
+    case "cash_flow_alert":
+      return await createCashFlowAlertTask(rule, actionConfig);
+    case "pacing_alert":
+      return await createPacingAlertTask(rule, actionConfig);
+    case "inventory_aging_alert":
+      return await createInventoryAgingAlertTask(rule, actionConfig);
     default:
       return null;
   }
@@ -473,6 +599,246 @@ Respond with JSON: { "subject": "email subject", "body": "email body text" }`,
       relatedEntityType: "purchase_order",
       relatedEntityId: po.id,
       requiresApproval: true,
+    })
+    .$returningId();
+
+  const [createdTask] = await db
+    .select()
+    .from(aiAgentTasks)
+    .where(eq(aiAgentTasks.id, task.id));
+
+  return createdTask;
+}
+
+// ============================================
+// FP&A TASK CREATION FROM RULES
+// ============================================
+
+async function createBudgetVarianceAlertTask(
+  rule: typeof aiAgentRules.$inferSelect,
+  actionConfig: RuleAction
+): Promise<typeof aiAgentTasks.$inferSelect | null> {
+  const db = await getDb();
+  if (!db) return null;
+
+  const activeBudgets = await db.select().from(budgets).where(eq(budgets.status, "active"));
+  if (activeBudgets.length === 0) return null;
+
+  const budget = activeBudgets[0];
+  const lineItems = await db.select().from(budgetLineItems).where(eq(budgetLineItems.budgetId, budget.id));
+
+  // Find categories with significant variance
+  const varianceThreshold = parseFloat(actionConfig.params?.varianceThreshold || "20");
+  const significantVariances: { category: string; budgeted: string; actual: string; variancePct: string }[] = [];
+
+  for (const li of lineItems) {
+    const budgeted = parseFloat(li.budgetedAmount || "0");
+    const actual = parseFloat(li.actualAmount || "0");
+    if (budgeted > 0) {
+      const variancePct = ((actual - budgeted) / budgeted) * 100;
+      if (Math.abs(variancePct) >= varianceThreshold) {
+        significantVariances.push({
+          category: li.category,
+          budgeted: budgeted.toFixed(2),
+          actual: actual.toFixed(2),
+          variancePct: variancePct.toFixed(1),
+        });
+      }
+    }
+  }
+
+  if (significantVariances.length === 0) return null;
+
+  const [task] = await db
+    .insert(aiAgentTasks)
+    .values({
+      taskType: "query",
+      status: "pending_approval",
+      priority: "high",
+      taskData: JSON.stringify({
+        title: `Budget Variance Alert: ${significantVariances.length} categories exceed ${varianceThreshold}% threshold`,
+        description: `Budget "${budget.name}" (FY${budget.fiscalYear}) has ${significantVariances.length} line item categories with variance exceeding ${varianceThreshold}%`,
+        budgetId: budget.id,
+        budgetName: budget.name,
+        significantVariances,
+      }),
+      aiReasoning: `Detected ${significantVariances.length} budget categories with variance exceeding the ${varianceThreshold}% threshold. Largest variance: ${significantVariances[0]?.category} at ${significantVariances[0]?.variancePct}%. Review recommended.`,
+      aiConfidence: "0.90",
+      relatedEntityType: "budget",
+      relatedEntityId: budget.id,
+      requiresApproval: false, // Alert only, no action needed
+    })
+    .$returningId();
+
+  const [createdTask] = await db
+    .select()
+    .from(aiAgentTasks)
+    .where(eq(aiAgentTasks.id, task.id));
+
+  return createdTask;
+}
+
+async function createCashFlowAlertTask(
+  rule: typeof aiAgentRules.$inferSelect,
+  actionConfig: RuleAction
+): Promise<typeof aiAgentTasks.$inferSelect | null> {
+  const db = await getDb();
+  if (!db) return null;
+
+  const latest = await db.select().from(cashFlowForecasts)
+    .where(eq(cashFlowForecasts.status, "active"))
+    .orderBy(desc(cashFlowForecasts.forecastDate))
+    .limit(1);
+
+  if (latest.length === 0) return null;
+
+  const forecast = latest[0];
+  const closingBalance = parseFloat(forecast.projectedClosingBalance || "0");
+  const minThreshold = parseFloat(actionConfig.params?.minCashThreshold || "50000");
+
+  const monthlyBurn = (
+    parseFloat(forecast.projectedSupplierPayments || "0") +
+    parseFloat(forecast.projectedPayroll || "0") +
+    parseFloat(forecast.projectedRent || "0") +
+    parseFloat(forecast.projectedMarketingSpend || "0") +
+    parseFloat(forecast.projectedOtherOutflows || "0")
+  );
+  const runwayMonths = monthlyBurn > 0 ? closingBalance / monthlyBurn : Infinity;
+
+  const [task] = await db
+    .insert(aiAgentTasks)
+    .values({
+      taskType: "query",
+      status: "pending_approval",
+      priority: runwayMonths < 3 ? "urgent" : "high",
+      taskData: JSON.stringify({
+        title: `Cash Flow Alert: Projected balance $${closingBalance.toFixed(0)} below $${minThreshold.toFixed(0)} threshold`,
+        description: `Cash flow forecast "${forecast.name}" projects closing balance below minimum threshold`,
+        forecastId: forecast.id,
+        forecastName: forecast.name,
+        closingBalance: closingBalance.toFixed(2),
+        minThreshold: minThreshold.toFixed(2),
+        monthlyBurnRate: monthlyBurn.toFixed(2),
+        estimatedRunwayMonths: runwayMonths === Infinity ? "N/A" : runwayMonths.toFixed(1),
+      }),
+      aiReasoning: `Projected closing cash balance of $${closingBalance.toFixed(0)} is below the $${minThreshold.toFixed(0)} minimum threshold. Estimated runway: ${runwayMonths === Infinity ? "N/A" : runwayMonths.toFixed(1) + " months"}. Immediate attention recommended.`,
+      aiConfidence: "0.95",
+      relatedEntityType: "cash_flow_forecast",
+      requiresApproval: false,
+    })
+    .$returningId();
+
+  const [createdTask] = await db
+    .select()
+    .from(aiAgentTasks)
+    .where(eq(aiAgentTasks.id, task.id));
+
+  return createdTask;
+}
+
+async function createPacingAlertTask(
+  rule: typeof aiAgentRules.$inferSelect,
+  actionConfig: RuleAction
+): Promise<typeof aiAgentTasks.$inferSelect | null> {
+  const db = await getDb();
+  if (!db) return null;
+
+  const latest = await db.select().from(performancePacing)
+    .orderBy(desc(performancePacing.snapshotDate))
+    .limit(1);
+
+  if (latest.length === 0) return null;
+
+  const p = latest[0];
+
+  const [task] = await db
+    .insert(aiAgentTasks)
+    .values({
+      taskType: "query",
+      status: "pending_approval",
+      priority: p.overallStatus === "at_risk" ? "urgent" : "high",
+      taskData: JSON.stringify({
+        title: `Pacing Alert: ${p.periodYear}-${String(p.periodMonth).padStart(2, "0")} status is "${p.overallStatus}"`,
+        description: `Performance pacing shows ${p.overallStatus} status for the current period`,
+        budgetId: p.budgetId,
+        period: `${p.periodYear}-${String(p.periodMonth).padStart(2, "0")}`,
+        daysElapsedPct: p.daysElapsedPct,
+        revenuePacePercent: p.revenuePacePercent,
+        actualRevenue: p.actualRevenue,
+        budgetedRevenue: p.budgetedRevenue,
+        projectedMonthEndRevenue: p.projectedMonthEndRevenue,
+        actualEbitda: p.actualEbitda,
+        budgetedEbitda: p.budgetedEbitda,
+        overallStatus: p.overallStatus,
+      }),
+      aiReasoning: `Performance pacing for ${p.periodYear}-${String(p.periodMonth).padStart(2, "0")} is "${p.overallStatus}". Revenue pace: ${p.revenuePacePercent}%. With ${p.daysElapsedPct}% of the month elapsed, projected month-end revenue is $${p.projectedMonthEndRevenue || "N/A"} vs budget of $${p.budgetedRevenue || "N/A"}.`,
+      aiConfidence: "0.88",
+      relatedEntityType: "performance_pacing",
+      requiresApproval: false,
+    })
+    .$returningId();
+
+  const [createdTask] = await db
+    .select()
+    .from(aiAgentTasks)
+    .where(eq(aiAgentTasks.id, task.id));
+
+  return createdTask;
+}
+
+async function createInventoryAgingAlertTask(
+  rule: typeof aiAgentRules.$inferSelect,
+  actionConfig: RuleAction
+): Promise<typeof aiAgentTasks.$inferSelect | null> {
+  const db = await getDb();
+  if (!db) return null;
+
+  const latestSnapshots = await db.select().from(inventoryAgingSnapshots)
+    .orderBy(desc(inventoryAgingSnapshots.snapshotDate))
+    .limit(200);
+
+  if (latestSnapshots.length === 0) return null;
+
+  const latestDate = latestSnapshots[0].snapshotDate;
+  const snapshot = latestSnapshots.filter(s =>
+    s.snapshotDate?.getTime() === latestDate?.getTime()
+  );
+
+  const criticalItems = snapshot.filter(s =>
+    s.riskLevel === "high" || s.riskLevel === "critical"
+  );
+
+  if (criticalItems.length === 0) return null;
+
+  const totalExposure = criticalItems.reduce((s, i) =>
+    s + parseFloat(i.val181plus || "0") + parseFloat(i.val121to180 || "0"), 0
+  );
+
+  const [task] = await db
+    .insert(aiAgentTasks)
+    .values({
+      taskType: "query",
+      status: "pending_approval",
+      priority: criticalItems.some(i => i.riskLevel === "critical") ? "urgent" : "high",
+      taskData: JSON.stringify({
+        title: `Inventory Aging Alert: ${criticalItems.length} items at high/critical risk`,
+        description: `${criticalItems.length} products flagged with high or critical aging risk. Total exposure: $${totalExposure.toFixed(2)}`,
+        snapshotDate: latestDate,
+        criticalItemCount: criticalItems.length,
+        totalExposureValue: totalExposure.toFixed(2),
+        items: criticalItems.slice(0, 10).map(i => ({
+          productId: i.productId,
+          sku: i.sku,
+          totalValue: i.totalValue,
+          averageAgeDays: i.averageAgeDays,
+          riskLevel: i.riskLevel,
+          val181plus: i.val181plus,
+        })),
+      }),
+      aiReasoning: `${criticalItems.length} inventory items flagged at high/critical risk level. Total write-off exposure (121+ days): $${totalExposure.toFixed(2)}. Consider markdowns, promotions, or write-offs for aged inventory.`,
+      aiConfidence: "0.92",
+      relatedEntityType: "inventory_aging",
+      requiresApproval: false,
     })
     .$returningId();
 

@@ -23,6 +23,17 @@ import {
   aiAgentTasks,
   aiAgentLogs,
   sentEmails,
+  // FP&A tables
+  budgets,
+  budgetLineItems,
+  financialScenarios,
+  cashFlowForecasts,
+  rollingForecasts,
+  performancePacing,
+  inventoryAgingSnapshots,
+  cashConversionMetrics,
+  marketingSpend,
+  channelPerformance,
 } from "../drizzle/schema";
 import { eq, and, like, desc, sql, gte, lte, or, isNull, isNotNull } from "drizzle-orm";
 
@@ -68,7 +79,7 @@ const AI_TOOLS: Tool[] = [
         properties: {
           dataType: {
             type: "string",
-            enum: ["sales", "inventory", "vendors", "customers", "finances", "orders", "procurement", "production"],
+            enum: ["sales", "inventory", "vendors", "customers", "finances", "orders", "procurement", "production", "budgets", "cash_flow", "channels", "marketing"],
             description: "Type of data to analyze",
           },
           timeRange: {
@@ -354,7 +365,7 @@ const AI_TOOLS: Tool[] = [
         properties: {
           reportType: {
             type: "string",
-            enum: ["sales_summary", "inventory_status", "vendor_performance", "customer_analysis", "financial_overview", "production_status", "order_fulfillment"],
+            enum: ["sales_summary", "inventory_status", "vendor_performance", "customer_analysis", "financial_overview", "production_status", "order_fulfillment", "budget_variance", "cash_flow_summary", "channel_profitability", "pacing_report"],
             description: "Type of report to generate",
           },
           dateRange: {
@@ -395,6 +406,190 @@ const AI_TOOLS: Tool[] = [
           requiresApproval: { type: "boolean" },
         },
         required: ["taskType", "description", "taskData"],
+      },
+    },
+  },
+  // ============================================
+  // FP&A TOOLS
+  // ============================================
+  // Budget Management Tool
+  {
+    type: "function",
+    function: {
+      name: "manage_budget",
+      description: "View, analyze, and manage budgets including line items, variance analysis, and budget-vs-actual comparisons",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["list", "get", "variance_analysis", "budget_vs_actual", "summary"],
+            description: "Action to perform on budgets",
+          },
+          budgetId: { type: "number", description: "Budget ID for get/analysis operations" },
+          fiscalYear: { type: "number", description: "Filter by fiscal year" },
+          periodMonth: { type: "number", description: "Specific month (1-12) for analysis" },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  // Scenario Planning Tool
+  {
+    type: "function",
+    function: {
+      name: "manage_scenarios",
+      description: "View and compare financial scenarios including base, optimistic, pessimistic, and custom projections with P&L outputs",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["list", "get", "compare", "summary"],
+            description: "Action to perform on financial scenarios",
+          },
+          scenarioId: { type: "number", description: "Scenario ID" },
+          compareIds: {
+            type: "array",
+            items: { type: "number" },
+            description: "Array of scenario IDs to compare side-by-side",
+          },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  // Cash Flow Forecast Tool
+  {
+    type: "function",
+    function: {
+      name: "analyze_cash_flow",
+      description: "View and analyze cash flow forecasts, cash positions, inflows vs outflows, and cash runway projections",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["list", "get", "current_position", "runway_analysis"],
+            description: "Action to perform",
+          },
+          forecastId: { type: "number", description: "Cash flow forecast ID" },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  // Rolling Forecast Tool
+  {
+    type: "function",
+    function: {
+      name: "analyze_rolling_forecast",
+      description: "View and analyze rolling P&L forecasts, monthly projections, balance sheet and cash flow trends over the forecast horizon",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["list", "get", "latest", "trend_analysis"],
+            description: "Action to perform",
+          },
+          forecastId: { type: "number", description: "Rolling forecast ID" },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  // Performance Pacing Tool
+  {
+    type: "function",
+    function: {
+      name: "analyze_pacing",
+      description: "Analyze performance pacing against budget - revenue pacing, expense pacing, EBITDA tracking, and month-end projections",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["current", "history", "by_budget"],
+            description: "Action to perform",
+          },
+          budgetId: { type: "number", description: "Budget ID for pacing analysis" },
+          periodMonth: { type: "number", description: "Month (1-12)" },
+          periodYear: { type: "number", description: "Year" },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  // Inventory Aging Tool
+  {
+    type: "function",
+    function: {
+      name: "analyze_inventory_aging",
+      description: "Analyze inventory aging by product - aging buckets (0-30, 31-60, 61-90, 91-120, 121-180, 181+ days), risk levels, days of supply, and write-off exposure",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["latest_snapshot", "by_product", "risk_summary", "trend"],
+            description: "Action to perform",
+          },
+          productId: { type: "number", description: "Product ID for product-specific analysis" },
+          riskLevel: {
+            type: "string",
+            enum: ["low", "medium", "high", "critical"],
+            description: "Filter by risk level",
+          },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  // Channel Analytics Tool
+  {
+    type: "function",
+    function: {
+      name: "analyze_channels",
+      description: "Analyze sales channel performance - DTC/Shopify, Amazon, wholesale, retail. View revenue, margins, contribution profit, marketing efficiency (ROAS, CAC) by channel",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["summary", "by_channel", "compare_channels", "marketing_efficiency"],
+            description: "Action to perform",
+          },
+          channel: {
+            type: "string",
+            enum: ["dtc_shopify", "amazon", "wholesale", "retail", "marketplace_other"],
+            description: "Specific channel to analyze",
+          },
+          periodMonth: { type: "number", description: "Month (1-12)" },
+          periodYear: { type: "number", description: "Year" },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  // Cash Conversion Cycle Tool
+  {
+    type: "function",
+    function: {
+      name: "analyze_cash_conversion",
+      description: "Analyze cash conversion cycle metrics - DSO (days sales outstanding), DIO (days inventory outstanding), DPO (days payable outstanding), and overall CCC trend",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["latest", "trend", "breakdown"],
+            description: "Action to perform",
+          },
+          periodMonth: { type: "number", description: "Month (1-12)" },
+          periodYear: { type: "number", description: "Year" },
+        },
+        required: ["action"],
       },
     },
   },
@@ -570,6 +765,85 @@ async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any
         inProgress: inProgressWOs.length,
         completed: completedWOs.length,
         workOrders: allWorkOrders.slice(0, 10),
+      };
+    }
+
+    case "budgets": {
+      const allBudgets = await db.select().from(budgets);
+      const activeBudgets = allBudgets.filter(b => b.status === "active");
+      const totalBudgetedRevenue = activeBudgets.reduce((sum, b) => sum + parseFloat(b.totalRevenue || "0"), 0);
+      const totalBudgetedExpenses = activeBudgets.reduce((sum, b) => sum + parseFloat(b.totalExpenses || "0"), 0);
+
+      return {
+        summary: "Budget analysis",
+        totalBudgets: allBudgets.length,
+        activeBudgets: activeBudgets.length,
+        totalBudgetedRevenue: totalBudgetedRevenue.toFixed(2),
+        totalBudgetedExpenses: totalBudgetedExpenses.toFixed(2),
+        budgets: allBudgets.slice(0, 10).map(b => ({
+          id: b.id, name: b.name, fiscalYear: b.fiscalYear, status: b.status,
+          totalRevenue: b.totalRevenue, totalExpenses: b.totalExpenses, targetEbitda: b.targetEbitda,
+        })),
+      };
+    }
+
+    case "cash_flow": {
+      const forecasts = await db.select().from(cashFlowForecasts).orderBy(desc(cashFlowForecasts.forecastDate)).limit(5);
+      const latest = forecasts[0];
+
+      return {
+        summary: "Cash flow analysis",
+        totalForecasts: forecasts.length,
+        latestForecast: latest ? {
+          name: latest.name,
+          forecastDate: latest.forecastDate,
+          openingBalance: latest.openingCashBalance,
+          netCashFlow: latest.projectedNetCashFlow,
+          closingBalance: latest.projectedClosingBalance,
+          status: latest.status,
+        } : null,
+        recentForecasts: forecasts.map(f => ({
+          id: f.id, name: f.name, status: f.status,
+          netCashFlow: f.projectedNetCashFlow, closingBalance: f.projectedClosingBalance,
+        })),
+      };
+    }
+
+    case "channels": {
+      const channelData = await db.select().from(channelPerformance);
+      const byChannel: Record<string, { revenue: number; profit: number; orders: number }> = {};
+      for (const c of channelData) {
+        if (!byChannel[c.channel]) byChannel[c.channel] = { revenue: 0, profit: 0, orders: 0 };
+        byChannel[c.channel].revenue += parseFloat(c.netRevenue || "0");
+        byChannel[c.channel].profit += parseFloat(c.contributionProfit || "0");
+        byChannel[c.channel].orders += c.orderCount || 0;
+      }
+
+      return {
+        summary: "Channel performance analysis",
+        channels: Object.entries(byChannel).map(([ch, data]) => ({
+          channel: ch,
+          netRevenue: data.revenue.toFixed(2),
+          contributionProfit: data.profit.toFixed(2),
+          margin: data.revenue > 0 ? ((data.profit / data.revenue) * 100).toFixed(1) + "%" : "0%",
+          orderCount: data.orders,
+        })),
+      };
+    }
+
+    case "marketing": {
+      const mktgData = await db.select().from(marketingSpend);
+      const totalSpend = mktgData.reduce((s, m) => s + parseFloat(m.spend || "0"), 0);
+      const totalRevenue = mktgData.reduce((s, m) => s + parseFloat(m.revenue || "0"), 0);
+      const totalConversions = mktgData.reduce((s, m) => s + (m.conversions || 0), 0);
+
+      return {
+        summary: "Marketing spend analysis",
+        totalSpend: totalSpend.toFixed(2),
+        totalRevenue: totalRevenue.toFixed(2),
+        overallROAS: totalSpend > 0 ? (totalRevenue / totalSpend).toFixed(2) : "N/A",
+        totalConversions,
+        entries: mktgData.length,
       };
     }
 
@@ -1157,6 +1431,104 @@ async function executeGenerateReport(params: any, ctx: AIAgentContext): Promise<
       };
     }
 
+    case "budget_variance": {
+      const activeBudgets = await db.select().from(budgets).where(eq(budgets.status, "active"));
+      if (activeBudgets.length === 0) return { reportType: "budget_variance", message: "No active budgets found" };
+
+      const budget = activeBudgets[0];
+      const lineItems = await db.select().from(budgetLineItems).where(eq(budgetLineItems.budgetId, budget.id));
+
+      const totalBudgeted = lineItems.reduce((s, li) => s + parseFloat(li.budgetedAmount || "0"), 0);
+      const totalActual = lineItems.reduce((s, li) => s + parseFloat(li.actualAmount || "0"), 0);
+
+      return {
+        reportType: "budget_variance",
+        budgetName: budget.name,
+        fiscalYear: budget.fiscalYear,
+        totalBudgeted: totalBudgeted.toFixed(2),
+        totalActual: totalActual.toFixed(2),
+        variance: (totalActual - totalBudgeted).toFixed(2),
+        variancePct: totalBudgeted > 0 ? (((totalActual - totalBudgeted) / totalBudgeted) * 100).toFixed(1) : "0",
+        lineItemCount: lineItems.length,
+      };
+    }
+
+    case "cash_flow_summary": {
+      const forecasts = await db.select().from(cashFlowForecasts).orderBy(desc(cashFlowForecasts.forecastDate)).limit(3);
+      const cccMetrics = await db.select().from(cashConversionMetrics)
+        .orderBy(desc(cashConversionMetrics.periodYear), desc(cashConversionMetrics.periodMonth))
+        .limit(1);
+
+      return {
+        reportType: "cash_flow_summary",
+        latestForecast: forecasts[0] ? {
+          name: forecasts[0].name,
+          openingBalance: forecasts[0].openingCashBalance,
+          closingBalance: forecasts[0].projectedClosingBalance,
+          netCashFlow: forecasts[0].projectedNetCashFlow,
+        } : null,
+        cashConversionCycle: cccMetrics[0] ? {
+          dso: cccMetrics[0].daysRecSalesOutstanding,
+          dio: cccMetrics[0].daysInventoryOutstanding,
+          dpo: cccMetrics[0].daysPayableOutstanding,
+          cccDays: cccMetrics[0].cashConversionCycleDays,
+          trend: cccMetrics[0].cccTrend,
+        } : null,
+      };
+    }
+
+    case "channel_profitability": {
+      const channelData = await db.select().from(channelPerformance);
+      const mktgData = await db.select().from(marketingSpend);
+
+      const byChannel: Record<string, { revenue: number; grossProfit: number; contribution: number; mktgSpend: number }> = {};
+      for (const c of channelData) {
+        if (!byChannel[c.channel]) byChannel[c.channel] = { revenue: 0, grossProfit: 0, contribution: 0, mktgSpend: 0 };
+        byChannel[c.channel].revenue += parseFloat(c.netRevenue || "0");
+        byChannel[c.channel].grossProfit += parseFloat(c.grossProfit || "0");
+        byChannel[c.channel].contribution += parseFloat(c.contributionProfit || "0");
+      }
+
+      return {
+        reportType: "channel_profitability",
+        channels: Object.entries(byChannel).map(([ch, data]) => ({
+          channel: ch,
+          netRevenue: data.revenue.toFixed(2),
+          grossProfit: data.grossProfit.toFixed(2),
+          grossMargin: data.revenue > 0 ? ((data.grossProfit / data.revenue) * 100).toFixed(1) + "%" : "0%",
+          contributionProfit: data.contribution.toFixed(2),
+          contributionMargin: data.revenue > 0 ? ((data.contribution / data.revenue) * 100).toFixed(1) + "%" : "0%",
+        })),
+      };
+    }
+
+    case "pacing_report": {
+      const latestPacing = await db.select().from(performancePacing)
+        .orderBy(desc(performancePacing.snapshotDate))
+        .limit(1);
+
+      if (!latestPacing[0]) return { reportType: "pacing_report", message: "No pacing data available" };
+
+      const p = latestPacing[0];
+      return {
+        reportType: "pacing_report",
+        period: `${p.periodYear}-${String(p.periodMonth).padStart(2, "0")}`,
+        daysElapsedPct: p.daysElapsedPct,
+        revenue: {
+          budgeted: p.budgetedRevenue,
+          actual: p.actualRevenue,
+          pacePercent: p.revenuePacePercent,
+          projectedMonthEnd: p.projectedMonthEndRevenue,
+        },
+        ebitda: {
+          budgeted: p.budgetedEbitda,
+          actual: p.actualEbitda,
+          projectedMonthEnd: p.projectedMonthEndEbitda,
+        },
+        overallStatus: p.overallStatus,
+      };
+    }
+
     default:
       throw new Error(`Unknown report type: ${reportType}`);
   }
@@ -1196,6 +1568,863 @@ async function executeCreateTask(params: any, ctx: AIAgentContext): Promise<any>
 }
 
 // ============================================
+// FP&A TOOL EXECUTION FUNCTIONS
+// ============================================
+
+async function executeManageBudget(params: any, ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { action, budgetId, fiscalYear, periodMonth } = params;
+
+  switch (action) {
+    case "list": {
+      let allBudgets;
+      if (fiscalYear) {
+        allBudgets = await db.select().from(budgets).where(eq(budgets.fiscalYear, fiscalYear)).orderBy(desc(budgets.createdAt));
+      } else {
+        allBudgets = await db.select().from(budgets).orderBy(desc(budgets.createdAt));
+      }
+      return { budgets: allBudgets, total: allBudgets.length };
+    }
+
+    case "get": {
+      if (!budgetId) throw new Error("Budget ID required");
+      const budget = await db.select().from(budgets).where(eq(budgets.id, budgetId)).limit(1);
+      if (!budget[0]) throw new Error("Budget not found");
+
+      const lineItems = await db.select().from(budgetLineItems).where(eq(budgetLineItems.budgetId, budgetId));
+
+      return { budget: budget[0], lineItems, lineItemCount: lineItems.length };
+    }
+
+    case "variance_analysis": {
+      if (!budgetId) throw new Error("Budget ID required");
+      const budget = await db.select().from(budgets).where(eq(budgets.id, budgetId)).limit(1);
+      if (!budget[0]) throw new Error("Budget not found");
+
+      const lineItems = await db.select().from(budgetLineItems).where(eq(budgetLineItems.budgetId, budgetId));
+
+      // Filter by month if specified
+      const filtered = periodMonth
+        ? lineItems.filter(li => li.periodMonth === periodMonth)
+        : lineItems;
+
+      // Group by category
+      const categoryVariance: Record<string, { budgeted: number; actual: number; variance: number; variancePct: number }> = {};
+      for (const li of filtered) {
+        const cat = li.category;
+        if (!categoryVariance[cat]) {
+          categoryVariance[cat] = { budgeted: 0, actual: 0, variance: 0, variancePct: 0 };
+        }
+        categoryVariance[cat].budgeted += parseFloat(li.budgetedAmount || "0");
+        categoryVariance[cat].actual += parseFloat(li.actualAmount || "0");
+        categoryVariance[cat].variance += parseFloat(li.varianceAmount || "0");
+      }
+
+      // Calculate variance percentages
+      for (const cat of Object.keys(categoryVariance)) {
+        const cv = categoryVariance[cat];
+        cv.variancePct = cv.budgeted !== 0 ? ((cv.actual - cv.budgeted) / cv.budgeted) * 100 : 0;
+      }
+
+      const totalBudgeted = Object.values(categoryVariance).reduce((s, c) => s + c.budgeted, 0);
+      const totalActual = Object.values(categoryVariance).reduce((s, c) => s + c.actual, 0);
+
+      return {
+        budgetName: budget[0].name,
+        fiscalYear: budget[0].fiscalYear,
+        periodMonth: periodMonth || "all",
+        totalBudgeted: totalBudgeted.toFixed(2),
+        totalActual: totalActual.toFixed(2),
+        totalVariance: (totalActual - totalBudgeted).toFixed(2),
+        totalVariancePct: totalBudgeted !== 0 ? (((totalActual - totalBudgeted) / totalBudgeted) * 100).toFixed(1) : "0",
+        byCategory: categoryVariance,
+      };
+    }
+
+    case "budget_vs_actual": {
+      if (!budgetId) throw new Error("Budget ID required");
+      const budget = await db.select().from(budgets).where(eq(budgets.id, budgetId)).limit(1);
+      if (!budget[0]) throw new Error("Budget not found");
+
+      const lineItems = await db.select().from(budgetLineItems).where(eq(budgetLineItems.budgetId, budgetId));
+
+      // Build monthly comparison
+      const monthlyComparison: Record<number, { budgeted: number; actual: number }> = {};
+      for (const li of lineItems) {
+        const month = li.periodMonth || 0;
+        if (!monthlyComparison[month]) {
+          monthlyComparison[month] = { budgeted: 0, actual: 0 };
+        }
+        monthlyComparison[month].budgeted += parseFloat(li.budgetedAmount || "0");
+        monthlyComparison[month].actual += parseFloat(li.actualAmount || "0");
+      }
+
+      return {
+        budgetName: budget[0].name,
+        status: budget[0].status,
+        targetEbitda: budget[0].targetEbitda,
+        monthlyComparison,
+      };
+    }
+
+    case "summary": {
+      const allBudgets = await db.select().from(budgets).orderBy(desc(budgets.createdAt));
+      const activeBudgets = allBudgets.filter(b => b.status === "active");
+
+      return {
+        totalBudgets: allBudgets.length,
+        activeBudgets: activeBudgets.length,
+        budgets: allBudgets.map(b => ({
+          id: b.id,
+          name: b.name,
+          fiscalYear: b.fiscalYear,
+          status: b.status,
+          totalRevenue: b.totalRevenue,
+          totalExpenses: b.totalExpenses,
+          targetEbitda: b.targetEbitda,
+        })),
+      };
+    }
+
+    default:
+      throw new Error(`Unknown budget action: ${action}`);
+  }
+}
+
+async function executeManageScenarios(params: any, ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { action, scenarioId, compareIds } = params;
+
+  switch (action) {
+    case "list": {
+      const allScenarios = await db.select().from(financialScenarios).orderBy(desc(financialScenarios.createdAt));
+      return {
+        scenarios: allScenarios.map(s => ({
+          id: s.id,
+          name: s.name,
+          scenarioType: s.scenarioType,
+          status: s.status,
+          projectedRevenue: s.projectedRevenue,
+          projectedEbitda: s.projectedEbitda,
+          projectedEbitdaMargin: s.projectedEbitdaMargin,
+          projectedNetIncome: s.projectedNetIncome,
+        })),
+        total: allScenarios.length,
+      };
+    }
+
+    case "get": {
+      if (!scenarioId) throw new Error("Scenario ID required");
+      const scenario = await db.select().from(financialScenarios).where(eq(financialScenarios.id, scenarioId)).limit(1);
+      if (!scenario[0]) throw new Error("Scenario not found");
+      return { scenario: scenario[0] };
+    }
+
+    case "compare": {
+      if (!compareIds || compareIds.length < 2) throw new Error("At least 2 scenario IDs required for comparison");
+      const scenarios = await db.select().from(financialScenarios);
+      const selected = scenarios.filter(s => compareIds.includes(s.id));
+
+      return {
+        comparison: selected.map(s => ({
+          id: s.id,
+          name: s.name,
+          scenarioType: s.scenarioType,
+          projectedRevenue: s.projectedRevenue,
+          projectedCOGS: s.projectedCOGS,
+          projectedGrossProfit: s.projectedGrossProfit,
+          projectedGrossMargin: s.projectedGrossMargin,
+          projectedOpex: s.projectedOpex,
+          projectedEbitda: s.projectedEbitda,
+          projectedEbitdaMargin: s.projectedEbitdaMargin,
+          projectedNetIncome: s.projectedNetIncome,
+          projectedCashBalance: s.projectedCashBalance,
+          assumptions: s.assumptions,
+        })),
+        scenarioCount: selected.length,
+      };
+    }
+
+    case "summary": {
+      const allScenarios = await db.select().from(financialScenarios);
+      const active = allScenarios.filter(s => s.status === "active");
+      const base = allScenarios.find(s => s.scenarioType === "base" && s.status === "active");
+
+      return {
+        totalScenarios: allScenarios.length,
+        activeScenarios: active.length,
+        baseScenario: base ? {
+          name: base.name,
+          projectedRevenue: base.projectedRevenue,
+          projectedEbitda: base.projectedEbitda,
+          projectedNetIncome: base.projectedNetIncome,
+        } : null,
+        scenarios: allScenarios.map(s => ({
+          id: s.id,
+          name: s.name,
+          scenarioType: s.scenarioType,
+          status: s.status,
+        })),
+      };
+    }
+
+    default:
+      throw new Error(`Unknown scenario action: ${action}`);
+  }
+}
+
+async function executeAnalyzeCashFlow(params: any, ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { action, forecastId } = params;
+
+  switch (action) {
+    case "list": {
+      const forecasts = await db.select().from(cashFlowForecasts).orderBy(desc(cashFlowForecasts.forecastDate));
+      return {
+        forecasts: forecasts.map(f => ({
+          id: f.id,
+          name: f.name,
+          forecastDate: f.forecastDate,
+          status: f.status,
+          projectedNetCashFlow: f.projectedNetCashFlow,
+          projectedClosingBalance: f.projectedClosingBalance,
+        })),
+        total: forecasts.length,
+      };
+    }
+
+    case "get": {
+      if (!forecastId) throw new Error("Forecast ID required");
+      const forecast = await db.select().from(cashFlowForecasts).where(eq(cashFlowForecasts.id, forecastId)).limit(1);
+      if (!forecast[0]) throw new Error("Cash flow forecast not found");
+      return { forecast: forecast[0] };
+    }
+
+    case "current_position": {
+      // Get the most recent active forecast
+      const latest = await db.select().from(cashFlowForecasts)
+        .where(eq(cashFlowForecasts.status, "active"))
+        .orderBy(desc(cashFlowForecasts.forecastDate))
+        .limit(1);
+
+      if (!latest[0]) {
+        // Fall back to any latest forecast
+        const anyLatest = await db.select().from(cashFlowForecasts)
+          .orderBy(desc(cashFlowForecasts.forecastDate))
+          .limit(1);
+        if (!anyLatest[0]) return { message: "No cash flow forecasts available" };
+        return {
+          forecast: anyLatest[0],
+          cashPosition: {
+            openingBalance: anyLatest[0].openingCashBalance,
+            totalInflows: (parseFloat(anyLatest[0].projectedCollections || "0") + parseFloat(anyLatest[0].projectedOtherInflows || "0")).toFixed(2),
+            totalOutflows: (
+              parseFloat(anyLatest[0].projectedSupplierPayments || "0") +
+              parseFloat(anyLatest[0].projectedPayroll || "0") +
+              parseFloat(anyLatest[0].projectedRent || "0") +
+              parseFloat(anyLatest[0].projectedMarketingSpend || "0") +
+              parseFloat(anyLatest[0].projectedOtherOutflows || "0")
+            ).toFixed(2),
+            netCashFlow: anyLatest[0].projectedNetCashFlow,
+            closingBalance: anyLatest[0].projectedClosingBalance,
+          },
+        };
+      }
+
+      const f = latest[0];
+      return {
+        forecast: f,
+        cashPosition: {
+          openingBalance: f.openingCashBalance,
+          totalInflows: (parseFloat(f.projectedCollections || "0") + parseFloat(f.projectedOtherInflows || "0")).toFixed(2),
+          totalOutflows: (
+            parseFloat(f.projectedSupplierPayments || "0") +
+            parseFloat(f.projectedPayroll || "0") +
+            parseFloat(f.projectedRent || "0") +
+            parseFloat(f.projectedMarketingSpend || "0") +
+            parseFloat(f.projectedOtherOutflows || "0")
+          ).toFixed(2),
+          netCashFlow: f.projectedNetCashFlow,
+          closingBalance: f.projectedClosingBalance,
+        },
+      };
+    }
+
+    case "runway_analysis": {
+      const forecasts = await db.select().from(cashFlowForecasts)
+        .orderBy(desc(cashFlowForecasts.forecastDate))
+        .limit(6);
+
+      if (forecasts.length === 0) return { message: "No cash flow forecasts available for runway analysis" };
+
+      const latest = forecasts[0];
+      const closingBalance = parseFloat(latest.projectedClosingBalance || "0");
+      const monthlyBurn = (
+        parseFloat(latest.projectedSupplierPayments || "0") +
+        parseFloat(latest.projectedPayroll || "0") +
+        parseFloat(latest.projectedRent || "0") +
+        parseFloat(latest.projectedMarketingSpend || "0") +
+        parseFloat(latest.projectedOtherOutflows || "0")
+      );
+      const runwayMonths = monthlyBurn > 0 ? closingBalance / monthlyBurn : Infinity;
+
+      return {
+        currentCash: closingBalance.toFixed(2),
+        monthlyBurnRate: monthlyBurn.toFixed(2),
+        estimatedRunwayMonths: runwayMonths === Infinity ? "N/A (no burn)" : runwayMonths.toFixed(1),
+        recentForecasts: forecasts.map(f => ({
+          date: f.forecastDate,
+          netCashFlow: f.projectedNetCashFlow,
+          closingBalance: f.projectedClosingBalance,
+        })),
+      };
+    }
+
+    default:
+      throw new Error(`Unknown cash flow action: ${action}`);
+  }
+}
+
+async function executeAnalyzeRollingForecast(params: any, ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { action, forecastId } = params;
+
+  switch (action) {
+    case "list": {
+      const forecasts = await db.select().from(rollingForecasts).orderBy(desc(rollingForecasts.forecastDate));
+      return {
+        forecasts: forecasts.map(f => ({
+          id: f.id,
+          name: f.name,
+          forecastDate: f.forecastDate,
+          horizonMonths: f.horizonMonths,
+          status: f.status,
+          totalRevenue: f.totalRevenue,
+          totalEbitda: f.totalEbitda,
+          averageGrossMargin: f.averageGrossMargin,
+          averageEbitdaMargin: f.averageEbitdaMargin,
+        })),
+        total: forecasts.length,
+      };
+    }
+
+    case "get": {
+      if (!forecastId) throw new Error("Forecast ID required");
+      const forecast = await db.select().from(rollingForecasts).where(eq(rollingForecasts.id, forecastId)).limit(1);
+      if (!forecast[0]) throw new Error("Rolling forecast not found");
+      return { forecast: forecast[0] };
+    }
+
+    case "latest": {
+      const latest = await db.select().from(rollingForecasts)
+        .where(eq(rollingForecasts.status, "active"))
+        .orderBy(desc(rollingForecasts.forecastDate))
+        .limit(1);
+
+      if (!latest[0]) {
+        const anyLatest = await db.select().from(rollingForecasts)
+          .orderBy(desc(rollingForecasts.forecastDate))
+          .limit(1);
+        if (!anyLatest[0]) return { message: "No rolling forecasts available" };
+        return { forecast: anyLatest[0] };
+      }
+      return { forecast: latest[0] };
+    }
+
+    case "trend_analysis": {
+      const forecasts = await db.select().from(rollingForecasts)
+        .orderBy(desc(rollingForecasts.forecastDate))
+        .limit(6);
+
+      return {
+        trend: forecasts.map(f => ({
+          date: f.forecastDate,
+          revenue: f.totalRevenue,
+          grossProfit: f.totalGrossProfit,
+          ebitda: f.totalEbitda,
+          grossMargin: f.averageGrossMargin,
+          ebitdaMargin: f.averageEbitdaMargin,
+        })),
+        count: forecasts.length,
+      };
+    }
+
+    default:
+      throw new Error(`Unknown rolling forecast action: ${action}`);
+  }
+}
+
+async function executeAnalyzePacing(params: any, ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { action, budgetId, periodMonth, periodYear } = params;
+
+  switch (action) {
+    case "current": {
+      // Get most recent pacing snapshot
+      const latest = await db.select().from(performancePacing)
+        .orderBy(desc(performancePacing.snapshotDate))
+        .limit(1);
+
+      if (!latest[0]) return { message: "No pacing data available" };
+
+      const p = latest[0];
+      return {
+        snapshotDate: p.snapshotDate,
+        period: `${p.periodYear}-${String(p.periodMonth).padStart(2, "0")}`,
+        daysElapsedPct: p.daysElapsedPct,
+        revenue: {
+          budgeted: p.budgetedRevenue,
+          actual: p.actualRevenue,
+          paced: p.pacedRevenue,
+          pacePercent: p.revenuePacePercent,
+          projectedMonthEnd: p.projectedMonthEndRevenue,
+        },
+        expenses: {
+          budgeted: p.budgetedExpenses,
+          actual: p.actualExpenses,
+          paced: p.pacedExpenses,
+          pacePercent: p.expensePacePercent,
+        },
+        ebitda: {
+          budgeted: p.budgetedEbitda,
+          actual: p.actualEbitda,
+          projectedMonthEnd: p.projectedMonthEndEbitda,
+        },
+        overallStatus: p.overallStatus,
+        aiInsights: p.aiInsights,
+      };
+    }
+
+    case "history": {
+      let query = db.select().from(performancePacing).orderBy(desc(performancePacing.snapshotDate));
+      const allPacing = await query.limit(30);
+
+      const filtered = allPacing.filter(p => {
+        if (periodMonth && p.periodMonth !== periodMonth) return false;
+        if (periodYear && p.periodYear !== periodYear) return false;
+        return true;
+      });
+
+      return {
+        history: filtered.map(p => ({
+          snapshotDate: p.snapshotDate,
+          period: `${p.periodYear}-${String(p.periodMonth).padStart(2, "0")}`,
+          revenuePacePercent: p.revenuePacePercent,
+          expensePacePercent: p.expensePacePercent,
+          overallStatus: p.overallStatus,
+        })),
+        total: filtered.length,
+      };
+    }
+
+    case "by_budget": {
+      if (!budgetId) throw new Error("Budget ID required");
+      const pacing = await db.select().from(performancePacing)
+        .where(eq(performancePacing.budgetId, budgetId))
+        .orderBy(desc(performancePacing.snapshotDate));
+
+      return {
+        budgetId,
+        snapshots: pacing.map(p => ({
+          snapshotDate: p.snapshotDate,
+          period: `${p.periodYear}-${String(p.periodMonth).padStart(2, "0")}`,
+          revenuePacePercent: p.revenuePacePercent,
+          actualRevenue: p.actualRevenue,
+          budgetedRevenue: p.budgetedRevenue,
+          actualEbitda: p.actualEbitda,
+          budgetedEbitda: p.budgetedEbitda,
+          overallStatus: p.overallStatus,
+        })),
+        total: pacing.length,
+      };
+    }
+
+    default:
+      throw new Error(`Unknown pacing action: ${action}`);
+  }
+}
+
+async function executeAnalyzeInventoryAging(params: any, ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { action, productId, riskLevel } = params;
+
+  switch (action) {
+    case "latest_snapshot": {
+      // Get the latest snapshot date
+      const latest = await db.select().from(inventoryAgingSnapshots)
+        .orderBy(desc(inventoryAgingSnapshots.snapshotDate))
+        .limit(50);
+
+      if (latest.length === 0) return { message: "No inventory aging snapshots available" };
+
+      // Get snapshots from the most recent date
+      const latestDate = latest[0].snapshotDate;
+      const snapshot = latest.filter(s =>
+        s.snapshotDate?.getTime() === latestDate?.getTime()
+      );
+
+      const totalValue = snapshot.reduce((s, i) => s + parseFloat(i.totalValue || "0"), 0);
+      const agedValue181Plus = snapshot.reduce((s, i) => s + parseFloat(i.val181plus || "0"), 0);
+      const highRiskItems = snapshot.filter(i => i.riskLevel === "high" || i.riskLevel === "critical");
+
+      return {
+        snapshotDate: latestDate,
+        totalProducts: snapshot.length,
+        totalInventoryValue: totalValue.toFixed(2),
+        agedValue181PlusDays: agedValue181Plus.toFixed(2),
+        writeOffExposurePct: totalValue > 0 ? ((agedValue181Plus / totalValue) * 100).toFixed(1) : "0",
+        highRiskItemCount: highRiskItems.length,
+        items: snapshot.slice(0, 20).map(i => ({
+          productId: i.productId,
+          sku: i.sku,
+          totalQuantity: i.totalQuantity,
+          totalValue: i.totalValue,
+          averageAgeDays: i.averageAgeDays,
+          daysOfSupply: i.daysOfSupply,
+          riskLevel: i.riskLevel,
+        })),
+      };
+    }
+
+    case "by_product": {
+      if (!productId) throw new Error("Product ID required");
+      const snapshots = await db.select().from(inventoryAgingSnapshots)
+        .where(eq(inventoryAgingSnapshots.productId, productId))
+        .orderBy(desc(inventoryAgingSnapshots.snapshotDate))
+        .limit(12);
+
+      if (snapshots.length === 0) return { message: "No aging data for this product" };
+
+      return {
+        productId,
+        latestSnapshot: snapshots[0],
+        agingBuckets: {
+          "0-30 days": { qty: snapshots[0].qty0to30, value: snapshots[0].val0to30 },
+          "31-60 days": { qty: snapshots[0].qty31to60, value: snapshots[0].val31to60 },
+          "61-90 days": { qty: snapshots[0].qty61to90, value: snapshots[0].val61to90 },
+          "91-120 days": { qty: snapshots[0].qty91to120, value: snapshots[0].val91to120 },
+          "121-180 days": { qty: snapshots[0].qty121to180, value: snapshots[0].val121to180 },
+          "181+ days": { qty: snapshots[0].qty181plus, value: snapshots[0].val181plus },
+        },
+        trend: snapshots.map(s => ({
+          date: s.snapshotDate,
+          totalValue: s.totalValue,
+          averageAgeDays: s.averageAgeDays,
+          riskLevel: s.riskLevel,
+        })),
+      };
+    }
+
+    case "risk_summary": {
+      const latest = await db.select().from(inventoryAgingSnapshots)
+        .orderBy(desc(inventoryAgingSnapshots.snapshotDate))
+        .limit(200);
+
+      if (latest.length === 0) return { message: "No inventory aging data available" };
+
+      // Get latest date's snapshots
+      const latestDate = latest[0].snapshotDate;
+      let snapshot = latest.filter(s =>
+        s.snapshotDate?.getTime() === latestDate?.getTime()
+      );
+
+      if (riskLevel) {
+        snapshot = snapshot.filter(s => s.riskLevel === riskLevel);
+      }
+
+      const byRisk: Record<string, { count: number; totalValue: number }> = {
+        low: { count: 0, totalValue: 0 },
+        medium: { count: 0, totalValue: 0 },
+        high: { count: 0, totalValue: 0 },
+        critical: { count: 0, totalValue: 0 },
+      };
+
+      for (const s of snapshot) {
+        const risk = s.riskLevel || "low";
+        byRisk[risk].count++;
+        byRisk[risk].totalValue += parseFloat(s.totalValue || "0");
+      }
+
+      return {
+        snapshotDate: latestDate,
+        riskBreakdown: Object.entries(byRisk).map(([level, data]) => ({
+          riskLevel: level,
+          itemCount: data.count,
+          totalValue: data.totalValue.toFixed(2),
+        })),
+        filteredBy: riskLevel || "all",
+      };
+    }
+
+    case "trend": {
+      const snapshots = await db.select().from(inventoryAgingSnapshots)
+        .orderBy(desc(inventoryAgingSnapshots.snapshotDate))
+        .limit(500);
+
+      // Group by snapshot date
+      const byDate: Record<string, { totalValue: number; avgAge: number; count: number; highRisk: number }> = {};
+      for (const s of snapshots) {
+        const dateKey = s.snapshotDate?.toISOString().split("T")[0] || "unknown";
+        if (!byDate[dateKey]) {
+          byDate[dateKey] = { totalValue: 0, avgAge: 0, count: 0, highRisk: 0 };
+        }
+        byDate[dateKey].totalValue += parseFloat(s.totalValue || "0");
+        byDate[dateKey].avgAge += parseFloat(s.averageAgeDays || "0");
+        byDate[dateKey].count++;
+        if (s.riskLevel === "high" || s.riskLevel === "critical") byDate[dateKey].highRisk++;
+      }
+
+      return {
+        trend: Object.entries(byDate).map(([date, data]) => ({
+          date,
+          totalValue: data.totalValue.toFixed(2),
+          averageAgeDays: data.count > 0 ? (data.avgAge / data.count).toFixed(1) : "0",
+          productCount: data.count,
+          highRiskCount: data.highRisk,
+        })).slice(0, 12),
+      };
+    }
+
+    default:
+      throw new Error(`Unknown inventory aging action: ${action}`);
+  }
+}
+
+async function executeAnalyzeChannels(params: any, ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { action, channel, periodMonth, periodYear } = params;
+
+  switch (action) {
+    case "summary": {
+      const allPerf = await db.select().from(channelPerformance);
+      const allMarketing = await db.select().from(marketingSpend);
+
+      // Filter by period if specified
+      let filtered = allPerf;
+      if (periodMonth) filtered = filtered.filter(p => p.periodMonth === periodMonth);
+      if (periodYear) filtered = filtered.filter(p => p.periodYear === periodYear);
+
+      // Aggregate by channel
+      const byChannel: Record<string, { netRevenue: number; grossProfit: number; contributionProfit: number; orders: number; units: number }> = {};
+      for (const p of filtered) {
+        if (!byChannel[p.channel]) {
+          byChannel[p.channel] = { netRevenue: 0, grossProfit: 0, contributionProfit: 0, orders: 0, units: 0 };
+        }
+        byChannel[p.channel].netRevenue += parseFloat(p.netRevenue || "0");
+        byChannel[p.channel].grossProfit += parseFloat(p.grossProfit || "0");
+        byChannel[p.channel].contributionProfit += parseFloat(p.contributionProfit || "0");
+        byChannel[p.channel].orders += p.orderCount || 0;
+        byChannel[p.channel].units += p.unitsSold || 0;
+      }
+
+      const totalRevenue = Object.values(byChannel).reduce((s, c) => s + c.netRevenue, 0);
+
+      return {
+        channelSummary: Object.entries(byChannel).map(([ch, data]) => ({
+          channel: ch,
+          netRevenue: data.netRevenue.toFixed(2),
+          grossProfit: data.grossProfit.toFixed(2),
+          contributionProfit: data.contributionProfit.toFixed(2),
+          revenueSharePct: totalRevenue > 0 ? ((data.netRevenue / totalRevenue) * 100).toFixed(1) : "0",
+          orderCount: data.orders,
+          unitsSold: data.units,
+        })),
+        totalNetRevenue: totalRevenue.toFixed(2),
+        channelCount: Object.keys(byChannel).length,
+      };
+    }
+
+    case "by_channel": {
+      if (!channel) throw new Error("Channel required");
+      let perfData = await db.select().from(channelPerformance)
+        .where(eq(channelPerformance.channel, channel));
+
+      if (periodYear) perfData = perfData.filter(p => p.periodYear === periodYear);
+
+      return {
+        channel,
+        periods: perfData.map(p => ({
+          period: `${p.periodYear}-${String(p.periodMonth).padStart(2, "0")}`,
+          grossRevenue: p.grossRevenue,
+          netRevenue: p.netRevenue,
+          cogs: p.cogs,
+          grossProfit: p.grossProfit,
+          grossMargin: p.grossMargin,
+          contributionProfit: p.contributionProfit,
+          contributionMargin: p.contributionMargin,
+          orderCount: p.orderCount,
+          averageOrderValue: p.averageOrderValue,
+          newCustomers: p.newCustomers,
+          returningCustomers: p.returningCustomers,
+        })),
+        total: perfData.length,
+      };
+    }
+
+    case "compare_channels": {
+      let perfData = await db.select().from(channelPerformance);
+      if (periodMonth) perfData = perfData.filter(p => p.periodMonth === periodMonth);
+      if (periodYear) perfData = perfData.filter(p => p.periodYear === periodYear);
+
+      const byChannel: Record<string, any> = {};
+      for (const p of perfData) {
+        if (!byChannel[p.channel]) {
+          byChannel[p.channel] = {
+            netRevenue: 0, grossProfit: 0, contributionProfit: 0,
+            orders: 0, newCustomers: 0, periods: 0,
+          };
+        }
+        byChannel[p.channel].netRevenue += parseFloat(p.netRevenue || "0");
+        byChannel[p.channel].grossProfit += parseFloat(p.grossProfit || "0");
+        byChannel[p.channel].contributionProfit += parseFloat(p.contributionProfit || "0");
+        byChannel[p.channel].orders += p.orderCount || 0;
+        byChannel[p.channel].newCustomers += p.newCustomers || 0;
+        byChannel[p.channel].periods++;
+      }
+
+      return {
+        comparison: Object.entries(byChannel).map(([ch, data]) => ({
+          channel: ch,
+          netRevenue: data.netRevenue.toFixed(2),
+          grossProfit: data.grossProfit.toFixed(2),
+          grossMarginPct: data.netRevenue > 0 ? ((data.grossProfit / data.netRevenue) * 100).toFixed(1) : "0",
+          contributionProfit: data.contributionProfit.toFixed(2),
+          contributionMarginPct: data.netRevenue > 0 ? ((data.contributionProfit / data.netRevenue) * 100).toFixed(1) : "0",
+          orderCount: data.orders,
+          newCustomers: data.newCustomers,
+        })),
+      };
+    }
+
+    case "marketing_efficiency": {
+      let mktgData = await db.select().from(marketingSpend);
+      if (periodMonth) mktgData = mktgData.filter(m => m.periodMonth === periodMonth);
+      if (periodYear) mktgData = mktgData.filter(m => m.periodYear === periodYear);
+      if (channel) mktgData = mktgData.filter(m => m.channel === channel);
+
+      const byChannel: Record<string, { spend: number; revenue: number; conversions: number; newCustomers: number }> = {};
+      for (const m of mktgData) {
+        if (!byChannel[m.channel]) {
+          byChannel[m.channel] = { spend: 0, revenue: 0, conversions: 0, newCustomers: 0 };
+        }
+        byChannel[m.channel].spend += parseFloat(m.spend || "0");
+        byChannel[m.channel].revenue += parseFloat(m.revenue || "0");
+        byChannel[m.channel].conversions += m.conversions || 0;
+        byChannel[m.channel].newCustomers += m.newCustomers || 0;
+      }
+
+      return {
+        marketingEfficiency: Object.entries(byChannel).map(([ch, data]) => ({
+          channel: ch,
+          totalSpend: data.spend.toFixed(2),
+          totalRevenue: data.revenue.toFixed(2),
+          roas: data.spend > 0 ? (data.revenue / data.spend).toFixed(2) : "N/A",
+          cac: data.newCustomers > 0 ? (data.spend / data.newCustomers).toFixed(2) : "N/A",
+          conversions: data.conversions,
+          newCustomers: data.newCustomers,
+        })),
+      };
+    }
+
+    default:
+      throw new Error(`Unknown channel action: ${action}`);
+  }
+}
+
+async function executeAnalyzeCashConversion(params: any, ctx: AIAgentContext): Promise<any> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const { action, periodMonth, periodYear } = params;
+
+  switch (action) {
+    case "latest": {
+      const latest = await db.select().from(cashConversionMetrics)
+        .orderBy(desc(cashConversionMetrics.periodYear), desc(cashConversionMetrics.periodMonth))
+        .limit(1);
+
+      if (!latest[0]) return { message: "No cash conversion cycle data available" };
+
+      const m = latest[0];
+      return {
+        period: `${m.periodYear}-${String(m.periodMonth).padStart(2, "0")}`,
+        dso: m.daysRecSalesOutstanding,
+        dio: m.daysInventoryOutstanding,
+        dpo: m.daysPayableOutstanding,
+        cashConversionCycleDays: m.cashConversionCycleDays,
+        trend: m.cccTrend,
+        aiAnalysis: m.aiAnalysis,
+      };
+    }
+
+    case "trend": {
+      const metrics = await db.select().from(cashConversionMetrics)
+        .orderBy(desc(cashConversionMetrics.periodYear), desc(cashConversionMetrics.periodMonth))
+        .limit(12);
+
+      return {
+        trend: metrics.map(m => ({
+          period: `${m.periodYear}-${String(m.periodMonth).padStart(2, "0")}`,
+          dso: m.daysRecSalesOutstanding,
+          dio: m.daysInventoryOutstanding,
+          dpo: m.daysPayableOutstanding,
+          cccDays: m.cashConversionCycleDays,
+          trend: m.cccTrend,
+        })),
+        count: metrics.length,
+      };
+    }
+
+    case "breakdown": {
+      let metrics;
+      if (periodMonth && periodYear) {
+        metrics = await db.select().from(cashConversionMetrics)
+          .where(and(
+            eq(cashConversionMetrics.periodMonth, periodMonth),
+            eq(cashConversionMetrics.periodYear, periodYear)
+          ))
+          .limit(1);
+      } else {
+        metrics = await db.select().from(cashConversionMetrics)
+          .orderBy(desc(cashConversionMetrics.periodYear), desc(cashConversionMetrics.periodMonth))
+          .limit(1);
+      }
+
+      if (!metrics[0]) return { message: "No data for specified period" };
+
+      const m = metrics[0];
+      return {
+        period: `${m.periodYear}-${String(m.periodMonth).padStart(2, "0")}`,
+        components: {
+          dso: { days: m.daysRecSalesOutstanding, avgReceivables: m.avgAccountsReceivable, totalRevenue: m.totalRevenue },
+          dio: { days: m.daysInventoryOutstanding, avgInventory: m.avgInventoryValue, totalCOGS: m.totalCOGS },
+          dpo: { days: m.daysPayableOutstanding, avgPayables: m.avgAccountsPayable, totalPurchases: m.totalPurchases },
+        },
+        cashConversionCycleDays: m.cashConversionCycleDays,
+        trend: m.cccTrend,
+      };
+    }
+
+    default:
+      throw new Error(`Unknown cash conversion action: ${action}`);
+  }
+}
+
+// ============================================
 // TOOL EXECUTION DISPATCHER
 // ============================================
 
@@ -1227,6 +2456,23 @@ async function executeTool(toolName: string, params: any, ctx: AIAgentContext): 
       return executeGenerateReport(params, ctx);
     case "create_task":
       return executeCreateTask(params, ctx);
+    // FP&A Tools
+    case "manage_budget":
+      return executeManageBudget(params, ctx);
+    case "manage_scenarios":
+      return executeManageScenarios(params, ctx);
+    case "analyze_cash_flow":
+      return executeAnalyzeCashFlow(params, ctx);
+    case "analyze_rolling_forecast":
+      return executeAnalyzeRollingForecast(params, ctx);
+    case "analyze_pacing":
+      return executeAnalyzePacing(params, ctx);
+    case "analyze_inventory_aging":
+      return executeAnalyzeInventoryAging(params, ctx);
+    case "analyze_channels":
+      return executeAnalyzeChannels(params, ctx);
+    case "analyze_cash_conversion":
+      return executeAnalyzeCashConversion(params, ctx);
     default:
       throw new Error(`Unknown tool: ${toolName}`);
   }
@@ -1255,7 +2501,7 @@ export async function processAIAgentRequest(
 
   const systemPrompt = `You are an AI assistant integrated into a comprehensive ERP system. You have access to tools that allow you to:
 
-1. **Analyze Data**: Query and analyze business data including sales, inventory, vendors, customers, finances, orders, procurement, and production.
+1. **Analyze Data**: Query and analyze business data including sales, inventory, vendors, customers, finances, orders, procurement, production, budgets, cash flow, channels, and marketing.
 
 2. **Send Emails**: Send emails to vendors, customers, or team members. You can also draft emails for review.
 
@@ -1271,9 +2517,25 @@ export async function processAIAgentRequest(
 
 8. **Manage Freight**: Create RFQs, get quotes, book shipments, and track freight.
 
-9. **Generate Reports**: Create various business reports.
+9. **Generate Reports**: Create various business reports including budget variance, cash flow summaries, channel profitability, and pacing reports.
 
 10. **Create Tasks**: Create tasks that require approval before execution.
+
+11. **Budget Management (FP&A)**: View budgets, analyze budget-vs-actual variance, compare periods, and review budget line items by category.
+
+12. **Scenario Planning (FP&A)**: View and compare financial scenarios (base, optimistic, pessimistic, custom) with projected P&L outputs and assumptions.
+
+13. **Cash Flow Analysis (FP&A)**: View cash flow forecasts, analyze current cash position, inflows vs outflows, and estimate cash runway.
+
+14. **Rolling Forecasts (FP&A)**: View rolling P&L forecasts with monthly projections, balance sheet and cash flow trends over the forecast horizon.
+
+15. **Performance Pacing (FP&A)**: Analyze real-time pacing of revenue, expenses, and EBITDA against budget with month-end projections.
+
+16. **Inventory Aging (FP&A)**: Analyze inventory aging buckets (0-30, 31-60, 61-90, 91-120, 121-180, 181+ days), risk levels, write-off exposure, and days of supply.
+
+17. **Channel Analytics (FP&A)**: Analyze sales channel performance (DTC/Shopify, Amazon, wholesale, retail) including revenue, margins, contribution profit, and marketing efficiency (ROAS, CAC).
+
+18. **Cash Conversion Cycle (FP&A)**: Analyze DSO, DIO, DPO, and overall cash conversion cycle trend.
 
 Current System Status:
 - Vendors: ${vendorCount[0]?.count || 0}
@@ -1455,12 +2717,58 @@ function generateSuggestions(message: string, actions: AIAgentAction[], data: Re
     suggestions.push("Send reminder to vendors");
   }
 
+  // FP&A suggestions
+  if (messageLower.includes("budget") || messageLower.includes("variance")) {
+    suggestions.push("Show budget variance analysis");
+    suggestions.push("Compare budget vs actual");
+    suggestions.push("View performance pacing");
+  }
+
+  if (messageLower.includes("cash") || messageLower.includes("runway") || messageLower.includes("liquidity")) {
+    suggestions.push("Analyze cash flow position");
+    suggestions.push("View cash runway analysis");
+    suggestions.push("Check cash conversion cycle");
+  }
+
+  if (messageLower.includes("forecast") || messageLower.includes("projection") || messageLower.includes("scenario")) {
+    suggestions.push("View rolling P&L forecast");
+    suggestions.push("Compare financial scenarios");
+    suggestions.push("Show latest cash flow forecast");
+  }
+
+  if (messageLower.includes("channel") || messageLower.includes("dtc") || messageLower.includes("amazon") || messageLower.includes("wholesale")) {
+    suggestions.push("Compare channel profitability");
+    suggestions.push("View marketing efficiency by channel");
+    suggestions.push("Analyze channel contribution margins");
+  }
+
+  if (messageLower.includes("pacing") || messageLower.includes("on track") || messageLower.includes("behind")) {
+    suggestions.push("View current pacing status");
+    suggestions.push("Show month-end revenue projection");
+  }
+
+  if (messageLower.includes("aging") || messageLower.includes("write-off") || messageLower.includes("slow moving")) {
+    suggestions.push("View inventory aging risk summary");
+    suggestions.push("Show high-risk inventory items");
+  }
+
+  if (messageLower.includes("margin") || messageLower.includes("ebitda") || messageLower.includes("profit")) {
+    suggestions.push("View channel profitability report");
+    suggestions.push("Analyze gross margins by channel");
+    suggestions.push("Check EBITDA pacing");
+  }
+
+  if (messageLower.includes("marketing") || messageLower.includes("roas") || messageLower.includes("cac")) {
+    suggestions.push("Analyze marketing spend efficiency");
+    suggestions.push("View ROAS by channel");
+  }
+
   // Default suggestions if none generated
   if (suggestions.length === 0) {
     suggestions.push("Analyze sales data");
     suggestions.push("Check inventory status");
     suggestions.push("View pending approvals");
-    suggestions.push("Generate a business report");
+    suggestions.push("View budget & pacing status");
   }
 
   return suggestions.slice(0, 4);
