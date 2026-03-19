@@ -1,4 +1,12 @@
 import { invokeLLM, Tool, Message } from "./_core/llm";
+import {
+  processInputSecurity,
+  processOutputSecurity,
+  hardenSystemPrompt,
+  filterToolsByRole,
+  isToolAuthorized,
+  validateToolCallParams,
+} from "./_core/aiSecurity";
 import { getDb } from "./db";
 import { sendEmail, formatEmailHtml } from "./_core/email";
 import {
@@ -1244,6 +1252,22 @@ export async function processAIAgentRequest(
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  // === SECURITY: Input validation pipeline ===
+  const inputSecurity = processInputSecurity(message, ctx.userRole);
+  if (!inputSecurity.allowed) {
+    return {
+      message: "I'm unable to process this request. It was flagged by our security system. Please rephrase your request using standard business language.",
+      suggestions: ["Analyze sales data", "Check inventory status", "View pending approvals"],
+    };
+  }
+  const secureMessage = inputSecurity.sanitizedInput;
+  if (inputSecurity.warnings.length > 0) {
+    console.warn(`[AI Security] User ${ctx.userId} (${ctx.userRole}):`, inputSecurity.warnings);
+  }
+
+  // === SECURITY: Filter tools by user role ===
+  const authorizedTools = filterToolsByRole(AI_TOOLS, ctx.userRole);
+
   // Get current business context
   const [vendorCount, customerCount, orderCount, inventoryCount, poCount] = await Promise.all([
     db.select({ count: sql<number>`count(*)` }).from(vendors),
@@ -1253,7 +1277,7 @@ export async function processAIAgentRequest(
     db.select({ count: sql<number>`count(*)` }).from(purchaseOrders),
   ]);
 
-  const systemPrompt = `You are an AI assistant integrated into a comprehensive ERP system. You have access to tools that allow you to:
+  const basePrompt = `You are an AI assistant integrated into a comprehensive ERP system. You have access to tools that allow you to:
 
 1. **Analyze Data**: Query and analyze business data including sales, inventory, vendors, customers, finances, orders, procurement, and production.
 
@@ -1285,6 +1309,7 @@ Current System Status:
 User Context:
 - Name: ${ctx.userName}
 - Role: ${ctx.userRole}
+- Authorized tools: ${authorizedTools.map(t => t.function.name).join(", ")}
 
 Guidelines:
 - For sensitive operations (creating POs, sending emails, updating inventory), create tasks that require approval unless explicitly told to execute immediately.
@@ -1292,12 +1317,16 @@ Guidelines:
 - When analyzing data, provide insights and recommendations.
 - Format currency values with $ symbol and 2 decimal places.
 - When listing items, limit to 10-20 unless more are requested.
-- Be proactive in suggesting relevant actions based on the data.`;
+- Be proactive in suggesting relevant actions based on the data.
+- NEVER include raw SSNs, credit card numbers, or passwords in your responses.`;
+
+  // === SECURITY: Harden system prompt with injection defense ===
+  const systemPrompt = hardenSystemPrompt(basePrompt);
 
   const messages: Message[] = [
     { role: "system", content: systemPrompt },
     ...conversationHistory,
-    { role: "user", content: message },
+    { role: "user", content: secureMessage },
   ];
 
   const actions: AIAgentAction[] = [];
@@ -1312,7 +1341,7 @@ Guidelines:
 
     const response = await invokeLLM({
       messages,
-      tools: AI_TOOLS,
+      tools: authorizedTools,
       toolChoice: "auto",
     });
 
@@ -1347,6 +1376,45 @@ Guidelines:
             role: "tool",
             tool_call_id: toolCall.id,
             content: JSON.stringify({ error: `Invalid tool arguments: ${parseError.message}` }),
+          });
+          continue;
+        }
+
+        // === SECURITY: Verify tool authorization at execution time ===
+        if (!isToolAuthorized(toolName, ctx.userRole)) {
+          const action: AIAgentAction = {
+            type: toolName,
+            description: `Executing ${toolName}`,
+            status: "failed",
+            error: `Not authorized for role: ${ctx.userRole}`,
+          };
+          actions.push(action);
+          console.warn(`[AI Security] Blocked unauthorized tool ${toolName} for user ${ctx.userId} (${ctx.userRole})`);
+
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: JSON.stringify({ error: `Tool ${toolName} is not authorized for your role (${ctx.userRole}). Please contact an admin.` }),
+          });
+          continue;
+        }
+
+        // === SECURITY: Validate tool call parameters ===
+        const paramValidation = validateToolCallParams(toolName, toolArgs);
+        if (!paramValidation.valid) {
+          const action: AIAgentAction = {
+            type: toolName,
+            description: `Executing ${toolName}`,
+            status: "failed",
+            error: `Parameter validation failed: ${paramValidation.issues.join("; ")}`,
+          };
+          actions.push(action);
+          console.warn(`[AI Security] Tool param validation failed for ${toolName}:`, paramValidation.issues);
+
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: JSON.stringify({ error: `Parameter validation failed: ${paramValidation.issues.join("; ")}` }),
           });
           continue;
         }
@@ -1401,6 +1469,13 @@ Guidelines:
     const summaryContent = summaryResponse.choices[0]?.message?.content;
     finalResponse = typeof summaryContent === "string" ? summaryContent : "I've completed the requested operations.";
   }
+
+  // === SECURITY: Output guardrails ===
+  const outputSecurity = processOutputSecurity(finalResponse);
+  if (outputSecurity.warnings.length > 0) {
+    console.warn(`[AI Security] Output issues for user ${ctx.userId}:`, outputSecurity.warnings);
+  }
+  finalResponse = outputSecurity.output;
 
   // Generate suggestions based on the conversation
   const suggestions = generateSuggestions(message, actions, data);

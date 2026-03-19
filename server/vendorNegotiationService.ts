@@ -6,6 +6,7 @@
  */
 import * as db from "./db";
 import { invokeLLM } from "./_core/llm";
+import { hardenSystemPrompt, wrapUserInput, processOutputSecurity } from "./_core/aiSecurity";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 
@@ -112,8 +113,8 @@ Respond ONLY with valid JSON matching this schema:
   try {
     const aiResult = await invokeLLM({
       messages: [
-        { role: "system", content: "You are a procurement and negotiation expert. Analyze vendor data and provide strategic negotiation recommendations. Always respond with valid JSON only." },
-        { role: "user", content: analysisPrompt },
+        { role: "system", content: hardenSystemPrompt("You are a procurement and negotiation expert. Analyze vendor data and provide strategic negotiation recommendations. Always respond with valid JSON only.") },
+        { role: "user", content: wrapUserInput(analysisPrompt) },
       ],
       response_format: {
         type: "json_schema",
@@ -349,8 +350,8 @@ Respond ONLY with valid JSON:
   try {
     const aiResult = await invokeLLM({
       messages: [
-        { role: "system", content: "You are a skilled procurement negotiator. Draft professional, persuasive vendor negotiation emails. Always respond with valid JSON only." },
-        { role: "user", content: draftPrompt },
+        { role: "system", content: hardenSystemPrompt("You are a skilled procurement negotiator. Draft professional, persuasive vendor negotiation emails. Always respond with valid JSON only. NEVER include sensitive data like SSNs, credit card numbers, or passwords.") },
+        { role: "user", content: wrapUserInput(draftPrompt) },
       ],
     });
 
@@ -362,6 +363,12 @@ Respond ONLY with valid JSON:
       // Validate with Zod schema
       const validated = NegotiationDraftSchema.safeParse(parsed);
       if (validated.success) {
+        // === SECURITY: Validate draft output before returning ===
+        const outputCheck = processOutputSecurity(validated.data.body);
+        if (outputCheck.warnings.length > 0) {
+          console.warn(`[AI Security] Negotiation draft output issues:`, outputCheck.warnings);
+          validated.data.body = outputCheck.output;
+        }
         return validated.data;
       }
       // If validation fails, log and fall through to fallback template

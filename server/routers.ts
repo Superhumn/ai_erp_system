@@ -17,6 +17,7 @@ import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSumm
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
+import { exportUserData, eraseUserData, getUserDataSummary } from "./gdprService";
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
@@ -207,6 +208,54 @@ export const appRouter = router({
         await db.updateUserRole(input.userId, input.role);
         await createAuditLog(ctx.user.id, 'update', 'user', input.userId, undefined, undefined, { role: input.role });
         return { success: true };
+      }),
+  }),
+
+  // ============================================
+  // GDPR / DATA PRIVACY
+  // ============================================
+  gdpr: router({
+    /** Get summary of what personal data is stored for the requesting user */
+    myDataSummary: protectedProcedure.query(async ({ ctx }) => {
+      return getUserDataSummary(ctx.user.id);
+    }),
+
+    /** Export all personal data for the requesting user (DSAR) */
+    exportMyData: protectedProcedure.mutation(async ({ ctx }) => {
+      await createAuditLog(ctx.user.id, 'export', 'gdpr_dsar', ctx.user.id, 'Self-service data export');
+      return exportUserData(ctx.user.id);
+    }),
+
+    /** Request deletion of own personal data */
+    requestErasure: protectedProcedure.mutation(async ({ ctx }) => {
+      await createAuditLog(ctx.user.id, 'delete', 'gdpr_erasure_request', ctx.user.id, 'Self-service erasure request');
+      return eraseUserData(ctx.user.id, ctx.user.id);
+    }),
+
+    /** Admin: Get data summary for any user */
+    userDataSummary: adminProcedure
+      .input(z.object({ userId: z.number() }))
+      .query(async ({ input }) => {
+        return getUserDataSummary(input.userId);
+      }),
+
+    /** Admin: Export data for any user (DSAR fulfillment) */
+    exportUserData: adminProcedure
+      .input(z.object({ userId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await createAuditLog(ctx.user.id, 'export', 'gdpr_dsar', input.userId, `Admin DSAR export for user ${input.userId}`);
+        return exportUserData(input.userId);
+      }),
+
+    /** Admin: Erase data for any user */
+    eraseUserData: adminProcedure
+      .input(z.object({ userId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        if (input.userId === ctx.user.id) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Admins cannot erase their own data via admin endpoint. Use requestErasure instead.' });
+        }
+        await createAuditLog(ctx.user.id, 'delete', 'gdpr_erasure', input.userId, `Admin data erasure for user ${input.userId}`);
+        return eraseUserData(input.userId, ctx.user.id);
       }),
   }),
 

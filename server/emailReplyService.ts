@@ -1,4 +1,5 @@
 import { invokeLLM } from "./_core/llm";
+import { scanAndMaskPii, hardenSystemPrompt, wrapUserInput, processOutputSecurity } from "./_core/aiSecurity";
 import { sendEmail, isEmailConfigured, formatEmailHtml } from "./_core/email";
 import * as db from "./db";
 
@@ -47,12 +48,16 @@ export async function analyzeEmail(email: { from: string; subject: string; body:
   };
   suggestedPriority: "low" | "medium" | "high" | "urgent";
 }> {
+  // === SECURITY: Mask PII in email content before sending to LLM ===
+  const piiScan = scanAndMaskPii(`From: ${email.from}\nSubject: ${email.subject}\nBody:\n${email.body}`);
+  const safeEmailContent = piiScan.maskedText;
+
   const response = await invokeLLM({
     messages: [
       {
         role: "system",
-        content: `You are an email analysis assistant for an ERP system. Analyze the incoming email and extract key information.
-        
+        content: hardenSystemPrompt(`You are an email analysis assistant for an ERP system. Analyze the incoming email and extract key information.
+
 Your task is to:
 1. Determine the sender's intent (what they want)
 2. Assess the sentiment (positive, neutral, negative, urgent)
@@ -60,17 +65,11 @@ Your task is to:
 4. Extract any business entities mentioned (PO numbers, invoice numbers, product names, dates, amounts)
 5. Suggest a priority level for response
 
-Respond in JSON format only.`,
+Respond in JSON format only.`),
       },
       {
         role: "user",
-        content: `Analyze this email:
-
-From: ${email.from}
-Subject: ${email.subject}
-
-Body:
-${email.body}`,
+        content: wrapUserInput(`Analyze this email:\n\n${safeEmailContent}`),
       },
     ],
     response_format: {
@@ -136,11 +135,14 @@ export async function generateEmailReply(context: EmailContext): Promise<Generat
   const senderName = companyContext?.senderName || "Customer Service";
   const companyName = companyContext?.companyName || "Our Company";
 
+  // === SECURITY: Mask PII in email content before LLM ===
+  const emailPiiScan = scanAndMaskPii(`From: ${originalEmail.from}\nSubject: ${originalEmail.subject}\nBody:\n${originalEmail.body}`);
+
   const response = await invokeLLM({
     messages: [
       {
         role: "system",
-        content: `You are a professional email reply assistant for ${companyName}. Generate appropriate email replies that are:
+        content: hardenSystemPrompt(`You are a professional email reply assistant for ${companyName}. Generate appropriate email replies that are:
 - Professional and courteous
 - Clear and concise
 - Helpful and solution-oriented
@@ -153,22 +155,20 @@ Always:
 2. Provide relevant information or next steps
 3. Offer assistance for any follow-up questions
 4. End with a professional closing
+- NEVER include raw SSNs, credit card numbers, or passwords in your response.
 
-Respond in JSON format with the reply details.`,
+Respond in JSON format with the reply details.`),
       },
       {
         role: "user",
-        content: `Generate a reply to this email:
+        content: wrapUserInput(`Generate a reply to this email:
 
 Original Email:
-From: ${originalEmail.from}
-Subject: ${originalEmail.subject}
-Body:
-${originalEmail.body}
+${emailPiiScan.maskedText}
 
 ${contextInfo ? `\nRelevant Business Context:${contextInfo}` : ""}
 
-Generate an appropriate reply.`,
+Generate an appropriate reply.`),
       },
     ],
     response_format: {
@@ -282,6 +282,13 @@ export async function processEmailReply(params: {
       senderTitle,
     },
   });
+
+  // === SECURITY: Validate AI-generated reply before sending ===
+  const outputCheck = processOutputSecurity(generatedReply.body);
+  if (outputCheck.warnings.length > 0) {
+    console.warn(`[AI Security] Email reply output issues:`, outputCheck.warnings);
+    generatedReply.body = outputCheck.output;
+  }
 
   // If auto-send is enabled and email is configured, send the reply
   if (autoSend && isEmailConfigured()) {
