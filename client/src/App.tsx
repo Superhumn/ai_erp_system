@@ -102,6 +102,9 @@ import ShopifySettings from "./pages/settings/ShopifySettings";
 import Projects from "./pages/projects/Projects";
 import InvestmentGrantChecklist from "./pages/projects/InvestmentGrantChecklist";
 
+// Grants & Bids
+import GrantBidSubmitter from "./pages/grants/GrantBidSubmitter";
+
 // Import
 import Import from "./pages/Import";
 
@@ -235,6 +238,9 @@ function Router() {
         {/* Projects */}
         <Route path="/projects" component={Projects} />
         <Route path="/projects/investment-grants" component={InvestmentGrantChecklist} />
+
+        {/* Grants & Bids */}
+        <Route path="/grants/submitter" component={GrantBidSubmitter} />
 
         {/* Import */}
         <Route path="/import" component={Import} />

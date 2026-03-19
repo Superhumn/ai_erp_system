@@ -151,6 +151,7 @@ const menuGroups = [
     items: [
       { icon: FolderKanban, label: "Projects", path: "/projects" },
       { icon: ClipboardCheck, label: "Investment Grants", path: "/projects/investment-grants" },
+      { icon: Send, label: "Grant & Bid Submitter", path: "/grants/submitter" },
       { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
       { icon: BookOpen, label: "SOPs", path: "/sops" },
     ],
