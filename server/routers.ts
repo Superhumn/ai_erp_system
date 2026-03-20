@@ -27,6 +27,7 @@ import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refresh
 import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
 import { collectERPData, autoPopulateFields, generateApplicationNarrative, reviewApplication, generateApplicationDocument, DEFAULT_SECTIONS, searchOpportunities, evaluateOpportunityFit, analyzeWebFormFields, generateAutoFillScript, generateCopyPasteGuide, generateApiPayload } from "./grantBidService";
+import { runFormFillerAgent } from "./formFillerAgent";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 
@@ -14342,6 +14343,38 @@ Ask if they received the original request and if they can provide a quote.`;
             organization: application.grantingOrganization || undefined,
           });
           return { payload, json: JSON.stringify(payload, null, 2) };
+        }),
+
+      // Run the AI form filler agent to autonomously plan form filling
+      runAgent: protectedProcedure
+        .input(z.object({
+          applicationId: z.number(),
+          portalName: z.string().min(1),
+          portalUrl: z.string().optional(),
+          formDescription: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const application = await db.getGrantBidApplicationById(input.applicationId);
+          if (!application) throw new TRPCError({ code: 'NOT_FOUND', message: 'Application not found' });
+
+          const plan = await runFormFillerAgent(
+            {
+              userId: ctx.user.id,
+              applicationId: input.applicationId,
+              portalName: input.portalName,
+              portalUrl: input.portalUrl || '',
+            },
+            input.formDescription,
+          );
+
+          await db.createGrantBidSubmissionLog({
+            applicationId: input.applicationId,
+            action: 'agent_completed',
+            details: `AI agent generated form filler plan for ${input.portalName} — ${plan.fieldActions.length} fields, ${plan.humanActions.length} manual actions, ${plan.steps.length} steps`,
+            performedBy: ctx.user.id,
+          });
+
+          return plan;
         }),
     }),
   }),

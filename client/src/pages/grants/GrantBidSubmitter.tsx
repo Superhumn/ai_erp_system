@@ -43,6 +43,7 @@ import {
   Download, Sparkles, ClipboardCheck, FileSpreadsheet,
   Building2, DollarSign, Users, Target, AlertTriangle,
   RefreshCw, Trash2, Edit, Globe, Copy, Code, ClipboardCopy,
+  Bot, Play, ChevronRight, AlertCircle, HandMetal,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -1272,6 +1273,9 @@ function WebFormFiller({ applicationId }: { applicationId: number }) {
           <TabsTrigger value="api" className="flex items-center gap-1.5">
             <FileSpreadsheet className="h-3.5 w-3.5" /> API / JSON Export
           </TabsTrigger>
+          <TabsTrigger value="agent" className="flex items-center gap-1.5">
+            <Bot className="h-3.5 w-3.5" /> AI Agent
+          </TabsTrigger>
         </TabsList>
 
         {/* Auto-Fill Scripts Tab */}
@@ -1450,7 +1454,326 @@ function WebFormFiller({ applicationId }: { applicationId: number }) {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* AI Agent Tab */}
+        <TabsContent value="agent">
+          <AgentFormFiller applicationId={applicationId} />
+        </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function AgentFormFiller({ applicationId }: { applicationId: number }) {
+  const [agentPortalName, setAgentPortalName] = useState("");
+  const [agentPortalUrl, setAgentPortalUrl] = useState("");
+  const [agentFormDesc, setAgentFormDesc] = useState("");
+  const [agentPlan, setAgentPlan] = useState<any>(null);
+  const [expandedStep, setExpandedStep] = useState<number | null>(null);
+
+  const agentMutation = trpc.grantBid.webForm.runAgent.useMutation({
+    onSuccess: (plan) => {
+      setAgentPlan(plan);
+      toast.success(`AI agent completed — ${plan.fieldActions.length} fields mapped, ${plan.humanActions.length} manual actions`);
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const copyToClipboard = (text: string, label?: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedField(label || 'text');
+      toast.success(`Copied${label ? `: ${label}` : ''}`);
+      setTimeout(() => setCopiedField(null), 2000);
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Launch Card */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Bot className="h-5 w-5 text-purple-500" />
+            AI Form Filler Agent
+          </CardTitle>
+          <CardDescription>
+            An autonomous AI agent analyzes the portal, maps every field to your ERP data, handles multi-step forms, and generates a comprehensive auto-fill plan
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label>Portal Name *</Label>
+              <Input value={agentPortalName} onChange={(e) => setAgentPortalName(e.target.value)} placeholder="e.g., Grants.gov, SAM.gov" />
+            </div>
+            <div>
+              <Label>Portal URL</Label>
+              <Input value={agentPortalUrl} onChange={(e) => setAgentPortalUrl(e.target.value)} placeholder="https://..." />
+            </div>
+          </div>
+          <div>
+            <Label>Form Description (optional)</Label>
+            <Textarea
+              value={agentFormDesc}
+              onChange={(e) => setAgentFormDesc(e.target.value)}
+              rows={4}
+              placeholder="Optionally describe the form fields or paste the page content. The agent will analyze and plan autonomously even without this."
+            />
+          </div>
+          <Button
+            disabled={!agentPortalName || agentMutation.isPending}
+            onClick={() => agentMutation.mutate({
+              applicationId,
+              portalName: agentPortalName,
+              portalUrl: agentPortalUrl || undefined,
+              formDescription: agentFormDesc || undefined,
+            })}
+          >
+            {agentMutation.isPending ? (
+              <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Agent Working...</>
+            ) : (
+              <><Play className="h-4 w-4 mr-2" /> Launch AI Agent</>
+            )}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Agent Progress (while running) */}
+      {agentMutation.isPending && (
+        <Card className="border-purple-200 bg-purple-50/30">
+          <CardContent className="p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="h-8 w-8 rounded-full bg-purple-100 flex items-center justify-center">
+                <Bot className="h-4 w-4 text-purple-600 animate-pulse" />
+              </div>
+              <div>
+                <p className="font-medium">AI Agent is analyzing the portal and planning...</p>
+                <p className="text-sm text-muted-foreground">This may take a moment as the agent iterates through multiple planning steps</p>
+              </div>
+            </div>
+            <Progress value={undefined} className="h-1.5" />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Agent Results */}
+      {agentPlan && (
+        <div className="space-y-4">
+          {/* Status Overview */}
+          <Card className={agentPlan.status === 'completed' ? 'border-green-200' : agentPlan.status === 'failed' ? 'border-red-200' : 'border-yellow-200'}>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  {agentPlan.status === 'completed' ? <CheckCircle2 className="h-5 w-5 text-green-500" /> :
+                   agentPlan.status === 'failed' ? <AlertCircle className="h-5 w-5 text-red-500" /> :
+                   <Clock className="h-5 w-5 text-yellow-500" />}
+                  Agent Plan — {agentPlan.portalName}
+                </CardTitle>
+                <Badge variant="outline" className={
+                  agentPlan.status === 'completed' ? 'bg-green-100 text-green-700' :
+                  agentPlan.status === 'failed' ? 'bg-red-100 text-red-700' :
+                  'bg-yellow-100 text-yellow-700'
+                }>
+                  {agentPlan.status}
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-4 gap-4 text-center">
+                <div className="bg-muted rounded-lg p-3">
+                  <p className="text-2xl font-bold">{agentPlan.fieldActions.length}</p>
+                  <p className="text-xs text-muted-foreground">Fields Mapped</p>
+                </div>
+                <div className="bg-muted rounded-lg p-3">
+                  <p className="text-2xl font-bold">{agentPlan.steps.length}</p>
+                  <p className="text-xs text-muted-foreground">Agent Steps</p>
+                </div>
+                <div className="bg-muted rounded-lg p-3">
+                  <p className="text-2xl font-bold text-orange-600">{agentPlan.humanActions.length}</p>
+                  <p className="text-xs text-muted-foreground">Manual Actions</p>
+                </div>
+                <div className="bg-muted rounded-lg p-3">
+                  <p className="text-2xl font-bold text-yellow-600">{agentPlan.warnings.length}</p>
+                  <p className="text-xs text-muted-foreground">Warnings</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Agent Steps Timeline */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Agent Steps</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {agentPlan.steps.map((step: any, idx: number) => (
+                  <div
+                    key={idx}
+                    className="border rounded-lg p-3 cursor-pointer hover:bg-muted/50 transition-colors"
+                    onClick={() => setExpandedStep(expandedStep === idx ? null : idx)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                        step.status === 'completed' ? 'bg-green-100 text-green-700' :
+                        step.status === 'failed' ? 'bg-red-100 text-red-700' :
+                        step.status === 'needs_human' ? 'bg-orange-100 text-orange-700' :
+                        'bg-gray-100 text-gray-600'
+                      }`}>
+                        {step.stepNumber}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-sm">{step.action}</p>
+                        <p className="text-xs text-muted-foreground truncate">{step.description}</p>
+                      </div>
+                      <ChevronRight className={`h-4 w-4 text-muted-foreground transition-transform ${expandedStep === idx ? 'rotate-90' : ''}`} />
+                    </div>
+                    {expandedStep === idx && step.details && (
+                      <div className="mt-3 pl-9 text-xs">
+                        <pre className="bg-muted rounded p-3 overflow-x-auto whitespace-pre-wrap">
+                          {JSON.stringify(step.details, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Field Actions Table */}
+          {agentPlan.fieldActions.length > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Field Actions ({agentPlan.fieldActions.length})</CardTitle>
+                <CardDescription>Each field the agent plans to fill, in order</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="border rounded-lg overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[40px]">#</TableHead>
+                        <TableHead>Page / Section</TableHead>
+                        <TableHead>Field</TableHead>
+                        <TableHead className="w-[80px]">Type</TableHead>
+                        <TableHead>Value</TableHead>
+                        <TableHead className="w-[60px]">Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {agentPlan.fieldActions.map((action: any, idx: number) => (
+                        <TableRow key={idx} className={action.requiresHuman ? 'bg-orange-50' : ''}>
+                          <TableCell className="text-xs text-muted-foreground">{action.order}</TableCell>
+                          <TableCell className="text-xs">{action.pageOrSection}</TableCell>
+                          <TableCell className="font-medium text-sm">{action.fieldLabel}</TableCell>
+                          <TableCell><Badge variant="secondary" className="text-xs">{action.fieldType}</Badge></TableCell>
+                          <TableCell className="text-sm max-w-[200px] truncate">{action.value || '—'}</TableCell>
+                          <TableCell>
+                            {action.requiresHuman ? (
+                              <Badge variant="outline" className="bg-orange-100 text-orange-700 text-xs">Manual</Badge>
+                            ) : (
+                              <Badge variant="outline" className="bg-green-100 text-green-700 text-xs">Auto</Badge>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Human Actions Required */}
+          {agentPlan.humanActions.length > 0 && (
+            <Card className="border-orange-200">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <HandMetal className="h-4 w-4 text-orange-500" />
+                  Manual Actions Required ({agentPlan.humanActions.length})
+                </CardTitle>
+                <CardDescription>These steps require human intervention</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ul className="space-y-2">
+                  {agentPlan.humanActions.map((action: string, idx: number) => (
+                    <li key={idx} className="flex items-start gap-2 text-sm">
+                      <AlertTriangle className="h-4 w-4 text-orange-500 mt-0.5 shrink-0" />
+                      {action}
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Warnings */}
+          {agentPlan.warnings.length > 0 && (
+            <Card className="border-yellow-200">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 text-yellow-500" />
+                  Warnings ({agentPlan.warnings.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ul className="space-y-2">
+                  {agentPlan.warnings.map((warning: string, idx: number) => (
+                    <li key={idx} className="flex items-start gap-2 text-sm">
+                      <AlertCircle className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
+                      {warning}
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Navigation Instructions */}
+          {agentPlan.navigationInstructions && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Navigation Instructions</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="bg-muted rounded-lg p-4 text-sm whitespace-pre-wrap">
+                  {agentPlan.navigationInstructions}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Generated Auto-Fill Script */}
+          {agentPlan.autoFillScript && (
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Code className="h-4 w-4" /> Generated Auto-Fill Script
+                  </CardTitle>
+                  <Button
+                    variant="outline" size="sm"
+                    onClick={() => copyToClipboard(agentPlan.autoFillScript, 'Agent script')}
+                  >
+                    {copiedField === 'Agent script' ? <CheckCircle2 className="h-3.5 w-3.5 mr-1 text-green-500" /> : <Copy className="h-3.5 w-3.5 mr-1" />}
+                    Copy Script
+                  </Button>
+                </div>
+                <CardDescription>
+                  Open the portal in your browser, press F12 → Console, paste this script and press Enter
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="bg-gray-900 text-gray-100 rounded-lg p-4 text-xs font-mono overflow-x-auto max-h-[300px] overflow-y-auto">
+                  <pre>{agentPlan.autoFillScript}</pre>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
     </div>
   );
 }
