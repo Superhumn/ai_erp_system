@@ -26,7 +26,7 @@ import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolde
 import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems } from "./_core/quickbooks";
 import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
-import { collectERPData, autoPopulateFields, generateApplicationNarrative, reviewApplication, generateApplicationDocument, DEFAULT_SECTIONS, searchOpportunities, evaluateOpportunityFit } from "./grantBidService";
+import { collectERPData, autoPopulateFields, generateApplicationNarrative, reviewApplication, generateApplicationDocument, DEFAULT_SECTIONS, searchOpportunities, evaluateOpportunityFit, analyzeWebFormFields, generateAutoFillScript, generateCopyPasteGuide, generateApiPayload } from "./grantBidService";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 
@@ -14185,6 +14185,163 @@ Ask if they received the original request and if they can provide a quote.`;
           });
           await createAuditLog(ctx.user.id, 'create', 'grant_bid_opportunity', result.id, input.title);
           return result;
+        }),
+    }),
+
+    // ============================================
+    // WEB FORM AUTO-FILLER
+    // ============================================
+    webForm: router({
+      // Get all form mappings for an application
+      list: protectedProcedure
+        .input(z.object({ applicationId: z.number() }))
+        .query(({ input }) => db.getGrantBidWebFormMappings(input.applicationId)),
+
+      // Get a specific form mapping
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getGrantBidWebFormMappingById(input.id)),
+
+      // Analyze a web form and generate field mappings using AI
+      analyze: protectedProcedure
+        .input(z.object({
+          applicationId: z.number(),
+          portalName: z.string().min(1),
+          portalUrl: z.string().optional(),
+          formDescription: z.string().min(1),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const application = await db.getGrantBidApplicationById(input.applicationId);
+          if (!application) throw new TRPCError({ code: 'NOT_FOUND', message: 'Application not found' });
+
+          const formData = application.formData ? JSON.parse(application.formData) : {};
+          // Merge in narrative and meta
+          const fullData = {
+            ...formData,
+            _narrative: application.generatedNarrative || '',
+            _title: application.title,
+            _type: application.type,
+            _organization: application.grantingOrganization || '',
+            _programName: application.programName || '',
+            _requestedAmount: application.requestedAmount || '',
+          };
+
+          const mappings = await analyzeWebFormFields(
+            input.portalName,
+            input.portalUrl || '',
+            input.formDescription,
+            fullData,
+          );
+
+          // Generate auto-fill script
+          const script = generateAutoFillScript(mappings, input.portalName);
+
+          // Save the mapping
+          const result = await db.createGrantBidWebFormMapping({
+            applicationId: input.applicationId,
+            portalName: input.portalName,
+            portalUrl: input.portalUrl,
+            fieldMappings: JSON.stringify(mappings),
+            autoFillScript: script,
+            status: 'mapped',
+            createdBy: ctx.user.id,
+          });
+
+          await db.createGrantBidSubmissionLog({
+            applicationId: input.applicationId,
+            action: 'data_collected',
+            details: `Web form mapping created for ${input.portalName} (${mappings.length} fields)`,
+            performedBy: ctx.user.id,
+          });
+
+          return { id: result.id, mappings, script, fieldCount: mappings.length };
+        }),
+
+      // Regenerate auto-fill script (after user edits mappings)
+      regenerateScript: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          fieldMappings: z.string(), // Updated JSON
+        }))
+        .mutation(async ({ input }) => {
+          const mapping = await db.getGrantBidWebFormMappingById(input.id);
+          if (!mapping) throw new TRPCError({ code: 'NOT_FOUND' });
+
+          const parsedMappings = JSON.parse(input.fieldMappings);
+          const script = generateAutoFillScript(parsedMappings, mapping.portalName);
+
+          await db.updateGrantBidWebFormMapping(input.id, {
+            fieldMappings: input.fieldMappings,
+            autoFillScript: script,
+          });
+
+          return { script };
+        }),
+
+      // Update a form mapping
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          fieldMappings: z.string().optional(),
+          autoFillScript: z.string().optional(),
+          status: z.enum(["draft", "mapped", "tested", "submitted"]).optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, ...data } = input;
+          if (data.status === 'submitted') {
+            (data as any).lastFilledAt = new Date();
+          }
+          await db.updateGrantBidWebFormMapping(id, data);
+          return { success: true };
+        }),
+
+      // Delete a form mapping
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.deleteGrantBidWebFormMapping(input.id);
+          return { success: true };
+        }),
+
+      // Generate copy-paste guide for manual form filling
+      copyPasteGuide: protectedProcedure
+        .input(z.object({
+          applicationId: z.number(),
+          templateId: z.number().optional(),
+        }))
+        .query(async ({ input }) => {
+          const application = await db.getGrantBidApplicationById(input.applicationId);
+          if (!application) throw new TRPCError({ code: 'NOT_FOUND' });
+
+          let sections;
+          if (input.templateId) {
+            const template = await db.getGrantBidTemplateById(input.templateId);
+            sections = template?.sections ? JSON.parse(template.sections) : DEFAULT_SECTIONS.grant;
+          } else {
+            sections = DEFAULT_SECTIONS[application.type] || DEFAULT_SECTIONS.grant;
+          }
+
+          const formData = application.formData ? JSON.parse(application.formData) : {};
+          const guide = generateCopyPasteGuide(formData, sections, application.generatedNarrative || undefined);
+          return { guide };
+        }),
+
+      // Generate API payload for programmatic submissions
+      apiPayload: protectedProcedure
+        .input(z.object({ applicationId: z.number() }))
+        .query(async ({ input }) => {
+          const application = await db.getGrantBidApplicationById(input.applicationId);
+          if (!application) throw new TRPCError({ code: 'NOT_FOUND' });
+
+          const formData = application.formData ? JSON.parse(application.formData) : {};
+          const payload = generateApiPayload(formData, {
+            title: application.title,
+            type: application.type,
+            applicationNumber: application.applicationNumber,
+            organization: application.grantingOrganization || undefined,
+          });
+          return { payload, json: JSON.stringify(payload, null, 2) };
         }),
     }),
   }),

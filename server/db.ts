@@ -120,9 +120,9 @@ import {
   InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
   // Grant & Bid submitter
   grantBidTemplates, grantBidApplications, grantBidDocuments, grantBidFieldMappings, grantBidSubmissionLogs,
-  grantBidOpportunities,
+  grantBidOpportunities, grantBidWebFormMappings,
   InsertGrantBidTemplate, InsertGrantBidApplication, InsertGrantBidDocument, InsertGrantBidFieldMapping, InsertGrantBidSubmissionLog,
-  InsertGrantBidOpportunity,
+  InsertGrantBidOpportunity, InsertGrantBidWebFormMapping,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -9318,4 +9318,40 @@ export async function getGrantBidOpportunityStats() {
     applying: stats[0]?.applying || 0,
     avgMatchScore: Math.round(stats[0]?.avgMatchScore || 0),
   };
+}
+
+// ============================================
+// GRANT & BID WEB FORM MAPPINGS
+// ============================================
+
+export async function getGrantBidWebFormMappings(applicationId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(grantBidWebFormMappings).where(eq(grantBidWebFormMappings.applicationId, applicationId)).orderBy(desc(grantBidWebFormMappings.updatedAt));
+}
+
+export async function getGrantBidWebFormMappingById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(grantBidWebFormMappings).where(eq(grantBidWebFormMappings.id, id));
+  return rows[0] || null;
+}
+
+export async function createGrantBidWebFormMapping(data: InsertGrantBidWebFormMapping) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(grantBidWebFormMappings).values(data);
+  return { id: result.insertId };
+}
+
+export async function updateGrantBidWebFormMapping(id: number, data: Partial<InsertGrantBidWebFormMapping>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(grantBidWebFormMappings).set(data).where(eq(grantBidWebFormMappings.id, id));
+}
+
+export async function deleteGrantBidWebFormMapping(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(grantBidWebFormMappings).where(eq(grantBidWebFormMappings.id, id));
 }

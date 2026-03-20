@@ -5259,3 +5259,26 @@ export const grantBidOpportunities = mysqlTable("grant_bid_opportunities", {
 
 export type GrantBidOpportunity = typeof grantBidOpportunities.$inferSelect;
 export type InsertGrantBidOpportunity = typeof grantBidOpportunities.$inferInsert;
+
+// Web form mappings - maps application data to specific web form fields for auto-filling
+export const grantBidWebFormMappings = mysqlTable("grant_bid_web_form_mappings", {
+  id: int("id").autoincrement().primaryKey(),
+  applicationId: int("applicationId").notNull(),
+  // Target website
+  portalName: varchar("portalName", { length: 255 }).notNull(), // e.g., "Grants.gov", "SAM.gov"
+  portalUrl: text("portalUrl"),
+  // Form field mappings - JSON array of {formFieldId, formFieldLabel, formFieldType, cssSelector, value, dataSourceKey}
+  fieldMappings: text("fieldMappings"),
+  // Auto-fill script - generated JavaScript that can be pasted into browser console or used by extension
+  autoFillScript: text("autoFillScript"),
+  // Status
+  status: mysqlEnum("status", ["draft", "mapped", "tested", "submitted"]).default("draft").notNull(),
+  lastFilledAt: timestamp("lastFilledAt"),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GrantBidWebFormMapping = typeof grantBidWebFormMappings.$inferSelect;
+export type InsertGrantBidWebFormMapping = typeof grantBidWebFormMappings.$inferInsert;

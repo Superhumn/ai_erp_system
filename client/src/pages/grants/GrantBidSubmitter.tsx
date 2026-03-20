@@ -42,7 +42,7 @@ import {
   Circle, Clock, Ban, Send, Brain, Database, Eye,
   Download, Sparkles, ClipboardCheck, FileSpreadsheet,
   Building2, DollarSign, Users, Target, AlertTriangle,
-  RefreshCw, Trash2, Edit,
+  RefreshCw, Trash2, Edit, Globe, Copy, Code, ClipboardCopy,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -610,6 +610,7 @@ function ApplicationDetail({ id, onBack }: { id: number; onBack: () => void }) {
           <TabsTrigger value="form">Form Data</TabsTrigger>
           <TabsTrigger value="narrative">AI Narrative</TabsTrigger>
           <TabsTrigger value="documents">Documents ({documents?.length || 0})</TabsTrigger>
+          <TabsTrigger value="webform">Web Form Filler</TabsTrigger>
           <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
@@ -747,6 +748,11 @@ function ApplicationDetail({ id, onBack }: { id: number; onBack: () => void }) {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* Web Form Filler Tab */}
+        <TabsContent value="webform" className="space-y-4">
+          <WebFormFiller applicationId={id} />
         </TabsContent>
 
         {/* Details Tab */}
@@ -1147,6 +1153,304 @@ function OpportunityDiscovery({ onStartApplication }: { onStartApplication: (app
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// Web Form Filler Component
+function WebFormFiller({ applicationId }: { applicationId: number }) {
+  const [portalName, setPortalName] = useState("");
+  const [portalUrl, setPortalUrl] = useState("");
+  const [formDescription, setFormDescription] = useState("");
+  const [showAnalyze, setShowAnalyze] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [activeExport, setActiveExport] = useState<string>("mappings");
+
+  const { data: formMappings, refetch: refetchMappings } = trpc.grantBid.webForm.list.useQuery({ applicationId });
+  const { data: copyPasteData } = trpc.grantBid.webForm.copyPasteGuide.useQuery({ applicationId });
+  const { data: apiPayloadData } = trpc.grantBid.webForm.apiPayload.useQuery({ applicationId });
+
+  const analyzeMutation = trpc.grantBid.webForm.analyze.useMutation({
+    onSuccess: (result) => {
+      toast.success(`Mapped ${result.fieldCount} form fields`);
+      setShowAnalyze(false);
+      setPortalName("");
+      setPortalUrl("");
+      setFormDescription("");
+      refetchMappings();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const updateMutation = trpc.grantBid.webForm.update.useMutation({
+    onSuccess: () => { toast.success("Updated"); refetchMappings(); },
+  });
+
+  const deleteMutation = trpc.grantBid.webForm.delete.useMutation({
+    onSuccess: () => { toast.success("Deleted"); refetchMappings(); },
+  });
+
+  const copyToClipboard = (text: string, label?: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedField(label || 'text');
+      toast.success(`Copied${label ? `: ${label}` : ''}`);
+      setTimeout(() => setCopiedField(null), 2000);
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Overview Card */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Globe className="h-5 w-5 text-blue-500" />
+                Web Form Auto-Filler
+              </CardTitle>
+              <CardDescription>Fill out grant portal forms automatically or export data for manual entry</CardDescription>
+            </div>
+            <Dialog open={showAnalyze} onOpenChange={setShowAnalyze}>
+              <DialogTrigger asChild>
+                <Button><Brain className="h-4 w-4 mr-2" /> Map New Form</Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Analyze Web Form</DialogTitle>
+                  <DialogDescription>
+                    Describe the form fields on the grant portal and AI will map your application data to each field
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div>
+                    <Label>Portal Name *</Label>
+                    <Input value={portalName} onChange={(e) => setPortalName(e.target.value)} placeholder="e.g., Grants.gov, SAM.gov, State Portal" />
+                  </div>
+                  <div>
+                    <Label>Portal URL</Label>
+                    <Input value={portalUrl} onChange={(e) => setPortalUrl(e.target.value)} placeholder="https://www.grants.gov/apply/..." />
+                  </div>
+                  <div>
+                    <Label>Form Fields Description *</Label>
+                    <Textarea
+                      value={formDescription}
+                      onChange={(e) => setFormDescription(e.target.value)}
+                      rows={6}
+                      placeholder={"Describe or list the form fields, e.g.:\n- Organization Legal Name (text field)\n- EIN/Tax ID (text field)\n- Project Title (text field)\n- Project Abstract (large text area, 300 words max)\n- Requested Funding Amount (number)\n- Project Start Date (date picker)\n- Upload Budget Document (file upload)"}
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Tip: You can copy the form's field labels directly from the website
+                    </p>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setShowAnalyze(false)}>Cancel</Button>
+                  <Button
+                    disabled={!portalName || !formDescription || analyzeMutation.isPending}
+                    onClick={() => analyzeMutation.mutate({ applicationId, portalName, portalUrl, formDescription })}
+                  >
+                    {analyzeMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
+                    Analyze & Map Fields
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </CardHeader>
+      </Card>
+
+      {/* Three export modes */}
+      <Tabs value={activeExport} onValueChange={setActiveExport}>
+        <TabsList>
+          <TabsTrigger value="mappings" className="flex items-center gap-1.5">
+            <Code className="h-3.5 w-3.5" /> Auto-Fill Scripts
+          </TabsTrigger>
+          <TabsTrigger value="copypaste" className="flex items-center gap-1.5">
+            <ClipboardCopy className="h-3.5 w-3.5" /> Copy & Paste
+          </TabsTrigger>
+          <TabsTrigger value="api" className="flex items-center gap-1.5">
+            <FileSpreadsheet className="h-3.5 w-3.5" /> API / JSON Export
+          </TabsTrigger>
+        </TabsList>
+
+        {/* Auto-Fill Scripts Tab */}
+        <TabsContent value="mappings" className="space-y-4">
+          {!formMappings || formMappings.length === 0 ? (
+            <Card>
+              <CardContent className="p-8 text-center">
+                <Globe className="h-10 w-10 mx-auto text-muted-foreground/30 mb-3" />
+                <p className="font-medium text-muted-foreground">No form mappings yet</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Click "Map New Form" to analyze a grant portal's form and generate an auto-fill script
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            formMappings.map((mapping: any) => {
+              const fields = mapping.fieldMappings ? JSON.parse(mapping.fieldMappings) : [];
+              return (
+                <Card key={mapping.id}>
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle className="text-base flex items-center gap-2">
+                          <Globe className="h-4 w-4 text-blue-500" />
+                          {mapping.portalName}
+                        </CardTitle>
+                        {mapping.portalUrl && <p className="text-xs text-muted-foreground mt-0.5">{mapping.portalUrl}</p>}
+                      </div>
+                      <div className="flex gap-2">
+                        <Badge variant="outline" className={
+                          mapping.status === 'submitted' ? 'bg-green-100 text-green-700' :
+                          mapping.status === 'tested' ? 'bg-blue-100 text-blue-700' :
+                          'bg-gray-100 text-gray-700'
+                        }>
+                          {mapping.status}
+                        </Badge>
+                        <Button variant="ghost" size="sm" onClick={() => deleteMutation.mutate({ id: mapping.id })}>
+                          <Trash2 className="h-4 w-4 text-red-400" />
+                        </Button>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {/* Field Mapping Table */}
+                    <div className="border rounded-lg overflow-hidden">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="w-[200px]">Form Field</TableHead>
+                            <TableHead className="w-[80px]">Type</TableHead>
+                            <TableHead>Value</TableHead>
+                            <TableHead className="w-[60px]">Copy</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {fields.map((field: any, idx: number) => (
+                            <TableRow key={idx}>
+                              <TableCell className="font-medium text-sm">{field.formFieldLabel}</TableCell>
+                              <TableCell><Badge variant="secondary" className="text-xs">{field.formFieldType}</Badge></TableCell>
+                              <TableCell className="text-sm max-w-[300px] truncate">{field.value || '-'}</TableCell>
+                              <TableCell>
+                                {field.value && (
+                                  <Button variant="ghost" size="sm" onClick={() => copyToClipboard(field.value, field.formFieldLabel)}>
+                                    {copiedField === field.formFieldLabel ? <CheckCircle2 className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
+                                  </Button>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+
+                    {/* Auto-Fill Script */}
+                    {mapping.autoFillScript && (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <Label className="flex items-center gap-1.5">
+                            <Code className="h-3.5 w-3.5" /> Browser Auto-Fill Script
+                          </Label>
+                          <Button
+                            variant="outline" size="sm"
+                            onClick={() => copyToClipboard(mapping.autoFillScript, 'Auto-fill script')}
+                          >
+                            {copiedField === 'Auto-fill script' ? <CheckCircle2 className="h-3.5 w-3.5 mr-1 text-green-500" /> : <Copy className="h-3.5 w-3.5 mr-1" />}
+                            Copy Script
+                          </Button>
+                        </div>
+                        <div className="bg-gray-900 text-gray-100 rounded-lg p-4 text-xs font-mono overflow-x-auto max-h-[200px] overflow-y-auto">
+                          <pre>{mapping.autoFillScript}</pre>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Open the portal's application form in your browser, press F12 to open Developer Tools, go to Console, paste this script, and press Enter. Review all fields before submitting.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Actions */}
+                    <div className="flex gap-2 pt-2 border-t">
+                      <Button
+                        variant="outline" size="sm"
+                        onClick={() => updateMutation.mutate({ id: mapping.id, status: 'tested' })}
+                      >
+                        Mark as Tested
+                      </Button>
+                      <Button
+                        variant="outline" size="sm"
+                        onClick={() => updateMutation.mutate({ id: mapping.id, status: 'submitted' })}
+                      >
+                        Mark as Submitted
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })
+          )}
+        </TabsContent>
+
+        {/* Copy & Paste Tab */}
+        <TabsContent value="copypaste">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg">Copy & Paste Guide</CardTitle>
+                <Button
+                  variant="outline" size="sm"
+                  onClick={() => copyPasteData?.guide && copyToClipboard(copyPasteData.guide, 'Full guide')}
+                >
+                  {copiedField === 'Full guide' ? <CheckCircle2 className="h-3.5 w-3.5 mr-1 text-green-500" /> : <Copy className="h-3.5 w-3.5 mr-1" />}
+                  Copy All
+                </Button>
+              </div>
+              <CardDescription>Copy individual values and paste them into the portal form fields</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {copyPasteData?.guide ? (
+                <div className="bg-muted rounded-lg p-4 text-sm font-mono whitespace-pre-wrap max-h-[500px] overflow-y-auto">
+                  {copyPasteData.guide}
+                </div>
+              ) : (
+                <p className="text-center text-muted-foreground py-6">
+                  Collect ERP data first to generate the copy & paste guide
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* API / JSON Export Tab */}
+        <TabsContent value="api">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg">API / JSON Export</CardTitle>
+                <Button
+                  variant="outline" size="sm"
+                  onClick={() => apiPayloadData?.json && copyToClipboard(apiPayloadData.json, 'JSON payload')}
+                >
+                  {copiedField === 'JSON payload' ? <CheckCircle2 className="h-3.5 w-3.5 mr-1 text-green-500" /> : <Copy className="h-3.5 w-3.5 mr-1" />}
+                  Copy JSON
+                </Button>
+              </div>
+              <CardDescription>Use this JSON payload for API-based submissions or integrations</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {apiPayloadData?.json ? (
+                <div className="bg-gray-900 text-gray-100 rounded-lg p-4 text-xs font-mono overflow-x-auto max-h-[500px] overflow-y-auto">
+                  <pre>{apiPayloadData.json}</pre>
+                </div>
+              ) : (
+                <p className="text-center text-muted-foreground py-6">
+                  Collect ERP data first to generate the API payload
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
