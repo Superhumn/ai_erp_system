@@ -21,6 +21,9 @@ interface CogsCalculationResult {
   remainingLayers: { layerId: number; remainingQuantity: number }[];
 }
 
+/**
+ * Add a new cost layer when inventory is received (from PO, production, adjustment)
+ */
 export async function addCostLayer(params: {
   companyId?: number;
   productId: number;
@@ -56,24 +59,38 @@ export async function addCostLayer(params: {
   });
 }
 
+/**
+ * Calculate COGS using FIFO method
+ * Consumes oldest cost layers first
+ */
 export async function calculateFifoCogs(
   productId: number,
   quantityToSell: number,
   warehouseId?: number
 ): Promise<CogsCalculationResult> {
+  // Get active layers ordered oldest-first
   const layers = await db.getActiveCostLayers(productId, "asc", warehouseId);
   return consumeLayers(layers, quantityToSell);
 }
 
+/**
+ * Calculate COGS using LIFO method
+ * Consumes newest cost layers first
+ */
 export async function calculateLifoCogs(
   productId: number,
   quantityToSell: number,
   warehouseId?: number
 ): Promise<CogsCalculationResult> {
+  // Get active layers ordered newest-first
   const layers = await db.getActiveCostLayers(productId, "desc", warehouseId);
   return consumeLayers(layers, quantityToSell);
 }
 
+/**
+ * Calculate COGS using Weighted Average method
+ * Uses the weighted average cost across all layers
+ */
 export async function calculateWeightedAverageCogs(
   productId: number,
   quantityToSell: number,
@@ -89,6 +106,7 @@ export async function calculateWeightedAverageCogs(
   const unitCogs = avgData.averageCost;
   const totalCogs = unitCogs * quantityToSell;
 
+  // For weighted average, consume inventory pro-rata across all active layers
   const layers = await db.getActiveCostLayers(productId, "asc", warehouseId);
   const breakdown: CostLayerConsumption[] = [];
   const remainingLayers: { layerId: number; remainingQuantity: number }[] = [];
@@ -101,6 +119,7 @@ export async function calculateWeightedAverageCogs(
     const layer = layers[index];
     const layerQty = parseFloat(layer.remainingQuantity);
 
+    // If we've already allocated the full quantity to sell, leave the rest untouched.
     if (remainingToAllocate <= 0) {
       if (layerQty > 0) {
         remainingLayers.push({
@@ -111,16 +130,26 @@ export async function calculateWeightedAverageCogs(
       continue;
     }
 
+    // Ideal proportional consumption from this layer
     let consumed = layerQty * sellFraction;
 
-    if (consumed > layerQty) consumed = layerQty;
-    if (consumed > remainingToAllocate) consumed = remainingToAllocate;
+    // Ensure we don't over-consume this layer or the total to allocate.
+    if (consumed > layerQty) {
+      consumed = layerQty;
+    }
+    if (consumed > remainingToAllocate) {
+      consumed = remainingToAllocate;
+    }
 
+    // For the last layer, adjust for any residual due to rounding.
     if (index === layers.length - 1) {
       consumed = Math.min(layerQty, remainingToAllocate);
     }
 
-    if (consumed < 0) consumed = 0;
+    // Guard against tiny negative zeros from floating point operations.
+    if (consumed < 0) {
+      consumed = 0;
+    }
 
     const leftover = layerQty - consumed;
 
@@ -128,7 +157,7 @@ export async function calculateWeightedAverageCogs(
       breakdown.push({
         layerId: layer.id,
         quantityConsumed: consumed,
-        unitCost: unitCogs,
+        unitCost: unitCogs, // Use weighted average cost, not layer cost
         totalCost: consumed * unitCogs,
       });
     }
@@ -151,6 +180,9 @@ export async function calculateWeightedAverageCogs(
   };
 }
 
+/**
+ * Generic layer consumption logic used by FIFO and LIFO
+ */
 function consumeLayers(
   layers: any[],
   quantityToSell: number
@@ -208,6 +240,9 @@ function consumeLayers(
   };
 }
 
+/**
+ * Main entry point: Calculate and record COGS for a sale
+ */
 export async function recordCogs(params: {
   companyId?: number;
   productId: number;
@@ -218,9 +253,11 @@ export async function recordCogs(params: {
   unitRevenue?: number;
   calculatedBy?: number;
 }): Promise<{ cogsRecordId: number; totalCogs: number; unitCogs: number; grossMargin: number | null }> {
+  // Get costing method for this product
   const config = await db.getInventoryCostingConfigByProduct(params.productId);
   const method: CostingMethod = config?.costingMethod || "weighted_average";
 
+  // Calculate COGS based on method, filtering by warehouse if provided
   let result: CogsCalculationResult;
   switch (method) {
     case "fifo":
@@ -235,6 +272,7 @@ export async function recordCogs(params: {
       break;
   }
 
+  // Update consumed cost layers
   for (const consumed of result.layerBreakdown) {
     const layer = result.remainingLayers.find((l) => l.layerId === consumed.layerId);
     const newRemaining = layer?.remainingQuantity ?? 0;
@@ -244,6 +282,7 @@ export async function recordCogs(params: {
     });
   }
 
+  // Calculate margin
   const totalRevenue = params.unitRevenue
     ? params.unitRevenue * params.quantitySold
     : null;
@@ -253,6 +292,7 @@ export async function recordCogs(params: {
       ? (grossMargin! / totalRevenue) * 100
       : null;
 
+  // Create COGS record
   const cogsResult = await db.createCogsRecord({
     companyId: params.companyId,
     productId: params.productId,
@@ -280,6 +320,9 @@ export async function recordCogs(params: {
   };
 }
 
+/**
+ * Get current inventory valuation for a product using its configured method
+ */
 export async function getInventoryValuation(productId: number): Promise<{
   method: CostingMethod;
   totalQuantity: number;

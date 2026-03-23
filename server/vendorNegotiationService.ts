@@ -23,7 +23,7 @@ const NegotiationAnalysisSchema = z.object({
     low: z.number(),
     average: z.number(),
     high: z.number(),
-  }).nullable(),
+  }).optional().nullable(),
   vendorDependency: z.enum(["low", "medium", "high"]),
   recommendedStrategy: z.string(),
   targetPriceReduction: z.number().min(0).max(100),
@@ -41,7 +41,7 @@ const NegotiationDraftSchema = z.object({
 
 interface NegotiationAnalysis {
   leveragePoints: string[];
-  marketBenchmark: { low: number; average: number; high: number } | null;
+  marketBenchmark?: { low: number; average: number; high: number } | null;
   vendorDependency: "low" | "medium" | "high";
   recommendedStrategy: string;
   targetPriceReduction: number;
@@ -57,24 +57,32 @@ interface NegotiationDraft {
   keyPoints: string[];
 }
 
+/**
+ * Analyze vendor relationship and generate negotiation strategy
+ */
 export async function analyzeNegotiationOpportunity(params: {
   vendorId: number;
   productIds?: number[];
   negotiationType: string;
 }): Promise<NegotiationAnalysis> {
+  // Gather vendor data
   const spending = await db.getVendorSpendingHistory(params.vendorId);
 
+  // Get product details if provided
   let productDetails: any[] = [];
   if (params.productIds?.length) {
-    for (const pid of params.productIds) {
-      const product = await db.getProductById(pid);
-      if (product) productDetails.push(product);
-    }
+    const productPromises = params.productIds.map((pid) =>
+      db.getProductById(pid)
+    );
+    const products = await Promise.all(productPromises);
+    productDetails = products.filter((product) => product);
   }
 
+  // Get recent POs for price trend analysis
   const recentPOs = await db.getPurchaseOrders({ vendorId: params.vendorId });
   const last10POs = recentPOs.slice(0, 10);
 
+  // Use AI to analyze and generate strategy
   const analysisPrompt = `Analyze this vendor relationship and generate a negotiation strategy.
 
 Vendor Spending History:
@@ -107,19 +115,156 @@ Respond ONLY with valid JSON matching this schema:
         { role: "system", content: "You are a procurement and negotiation expert. Analyze vendor data and provide strategic negotiation recommendations. Always respond with valid JSON only." },
         { role: "user", content: analysisPrompt },
       ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "NegotiationAnalysis",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              leveragePoints: {
+                type: "array",
+                items: { type: "string" },
+                default: [],
+              },
+              marketBenchmark: {
+                type: ["object", "null"],
+                nullable: true,
+                properties: {
+                  low: { type: "number" },
+                  average: { type: "number" },
+                  high: { type: "number" },
+                },
+                required: ["low", "average", "high"],
+                additionalProperties: false,
+              },
+              vendorDependency: {
+                type: "string",
+                enum: ["low", "medium", "high"],
+              },
+              recommendedStrategy: {
+                type: "string",
+              },
+              targetPriceReduction: {
+                type: "number",
+              },
+              confidenceScore: {
+                type: "number",
+              },
+              risks: {
+                type: "array",
+                items: { type: "string" },
+                default: [],
+              },
+              alternativeVendors: {
+                type: "array",
+                items: { type: "string" },
+                default: [],
+              },
+            },
+            required: [
+              "leveragePoints",
+              "marketBenchmark",
+              "vendorDependency",
+              "recommendedStrategy",
+              "targetPriceReduction",
+              "confidenceScore",
+              "risks",
+              "alternativeVendors",
+            ],
+          },
+        },
+      },
     });
 
-    const text = typeof aiResult.content === "string" ? aiResult.content : "";
+    const text = typeof aiResult.text === "string" ? aiResult.text : "";
+    // Extract JSON from the response
     const jsonMatch = text.match(/\{[\s\S]*\}/);
+    let parsed: any;
     if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
+      parsed = JSON.parse(jsonMatch[0]);
+      // Validate with Zod schema
       const validated = NegotiationAnalysisSchema.safeParse(parsed);
       if (validated.success) {
         return validated.data;
       }
-      console.warn(`LLM analysis response failed validation for vendorId ${params.vendorId}:`, validated.error.format());
+      // If validation fails, log and fall through to rule-based analysis
+      console.warn(`LLM analysis response failed validation for vendorId ${params.vendorId}, productIds: ${params.productIds?.join(',') || 'none'}:`, validated.error.format());
     }
+
+    if (!parsed || typeof parsed !== "object") {
+      throw new Error("LLM response was not an object");
+    }
+
+    const leveragePoints: string[] = Array.isArray(parsed.leveragePoints)
+      ? parsed.leveragePoints.map((p: any) => String(p))
+      : [];
+
+    const risks: string[] = Array.isArray(parsed.risks)
+      ? parsed.risks.map((r: any) => String(r))
+      : [];
+
+    const alternativeVendors: string[] = Array.isArray(parsed.alternativeVendors)
+      ? parsed.alternativeVendors.map((v: any) => String(v))
+      : [];
+
+    const vendorDependencyRaw = String(parsed.vendorDependency || "medium").toLowerCase();
+    const vendorDependency: "low" | "medium" | "high" =
+      vendorDependencyRaw === "low" || vendorDependencyRaw === "high"
+        ? (vendorDependencyRaw as "low" | "medium" | "high")
+        : "medium";
+
+    const recommendedStrategy =
+      typeof parsed.recommendedStrategy === "string"
+        ? parsed.recommendedStrategy
+        : "";
+
+    const clampNumber = (value: any, min: number, max: number, fallback: number) => {
+      const num = typeof value === "number" ? value : Number(value);
+      if (!Number.isFinite(num)) return fallback;
+      return Math.min(Math.max(num, min), max);
+    };
+
+    const targetPriceReduction = clampNumber(
+      parsed.targetPriceReduction,
+      0,
+      50,
+      0
+    );
+
+    const confidenceScore = clampNumber(
+      parsed.confidenceScore,
+      0,
+      100,
+      0
+    );
+
+    let marketBenchmark: { low: number; average: number; high: number } | null = null;
+    if (parsed.marketBenchmark && typeof parsed.marketBenchmark === "object") {
+      const mb = parsed.marketBenchmark as any;
+      const maxBenchmark = 1_000_000;
+      const low = clampNumber(mb.low, 0, maxBenchmark, 0);
+      const average = clampNumber(mb.average, 0, maxBenchmark, 0);
+      const high = clampNumber(mb.high, 0, maxBenchmark, 0);
+      marketBenchmark = { low, average, high };
+    }
+
+    const result: NegotiationAnalysis = {
+      leveragePoints,
+      marketBenchmark,
+      vendorDependency,
+      recommendedStrategy,
+      targetPriceReduction,
+      confidenceScore,
+      risks,
+      alternativeVendors,
+    };
+
+    return result;
   } catch (e) {
+    // Fall back to rule-based analysis
     console.warn(`LLM analysis failed for vendorId ${params.vendorId}:`, e);
   }
 
@@ -160,6 +305,9 @@ Respond ONLY with valid JSON matching this schema:
   };
 }
 
+/**
+ * Generate AI-drafted negotiation email
+ */
 export async function generateNegotiationDraft(params: {
   negotiationId: number;
   roundNumber: number;
@@ -171,6 +319,7 @@ export async function generateNegotiationDraft(params: {
   const rounds = await db.getNegotiationRounds(params.negotiationId);
   const previousRounds = rounds.filter((r) => r.roundNumber < params.roundNumber);
 
+  // Get vendor info
   const vendor = await db.getVendorById(negotiation.vendorId);
 
   const draftPrompt = `Draft a professional vendor negotiation email.
@@ -180,8 +329,8 @@ Context:
 - Negotiation Type: ${negotiation.type}
 - Current Unit Price: $${negotiation.currentUnitPrice || "N/A"}
 - Target Unit Price: $${negotiation.targetUnitPrice || "N/A"}
-- Current Payment Terms: ${negotiation.currentPaymentTerms || "N/A"} days
-- Target Payment Terms: ${negotiation.targetPaymentTerms || "N/A"} days
+- Current Payment Terms: ${negotiation.currentPaymentTerms != null ? `${negotiation.currentPaymentTerms} days` : "N/A"}
+- Target Payment Terms: ${negotiation.targetPaymentTerms != null ? `${negotiation.targetPaymentTerms} days` : "N/A"}
 - Message Type: ${params.messageType}
 - Round: ${params.roundNumber}
 
@@ -205,20 +354,25 @@ Respond ONLY with valid JSON:
       ],
     });
 
-    const text = typeof aiResult.content === "string" ? aiResult.content : "";
+    const content = aiResult.choices[0]?.message?.content;
+    const text = typeof content === "string" ? content : "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
+      // Validate with Zod schema
       const validated = NegotiationDraftSchema.safeParse(parsed);
       if (validated.success) {
         return validated.data;
       }
-      console.warn(`LLM draft response failed validation for negotiationId ${params.negotiationId}:`, validated.error.format());
+      // If validation fails, log and fall through to fallback template
+      console.warn(`LLM draft response failed validation for negotiationId ${params.negotiationId}, round ${params.roundNumber}, messageType ${params.messageType}:`, validated.error.format());
     }
   } catch (e) {
+    // Fall through to default
     console.warn(`LLM draft generation failed for negotiationId ${params.negotiationId}:`, e);
   }
 
+  // Fallback drafts
   const vendorName = vendor?.name || "Valued Supplier";
   const contactName = vendor?.contactName || "Team";
 
@@ -239,6 +393,9 @@ Respond ONLY with valid JSON:
   };
 }
 
+/**
+ * Create a new negotiation session
+ */
 export async function initiateNegotiation(params: {
   companyId?: number;
   vendorId: number;
@@ -256,6 +413,7 @@ export async function initiateNegotiation(params: {
 }) {
   const negotiationNumber = `NEG-${nanoid(8).toUpperCase()}`;
 
+  // Create the negotiation record
   const result = await db.createVendorNegotiation({
     companyId: params.companyId,
     vendorId: params.vendorId,
@@ -274,6 +432,7 @@ export async function initiateNegotiation(params: {
     initiatedBy: params.initiatedBy,
   });
 
+  // Auto-analyze if requested
   if (params.autoAnalyze) {
     try {
       const analysis = await analyzeNegotiationOpportunity({
@@ -282,6 +441,7 @@ export async function initiateNegotiation(params: {
         negotiationType: params.type,
       });
 
+      // Calculate targets from analysis
       const targetUnitPrice = params.currentUnitPrice
         ? params.currentUnitPrice * (1 - analysis.targetPriceReduction / 100)
         : undefined;
@@ -300,6 +460,7 @@ export async function initiateNegotiation(params: {
         estimatedSavingsPercent: analysis.targetPriceReduction.toFixed(4),
       });
     } catch (e) {
+      // Keep as draft if analysis fails and record error details for troubleshooting
       await db.updateVendorNegotiation(result.id, {
         status: "draft",
         aiAnalysis: JSON.stringify({
@@ -312,6 +473,9 @@ export async function initiateNegotiation(params: {
   return { id: result.id, negotiationNumber };
 }
 
+/**
+ * Record a negotiation round (outbound or inbound)
+ */
 export async function addNegotiationRound(params: {
   negotiationId: number;
   direction: "outbound" | "inbound";
@@ -340,6 +504,7 @@ export async function addNegotiationRound(params: {
       let aiDraft: string | undefined;
       let aiReasoning: string | undefined;
 
+      // Generate AI draft for outbound messages
       if (
         params.generateAiDraft &&
         params.direction === "outbound" &&
@@ -372,6 +537,7 @@ export async function addNegotiationRound(params: {
         sentBy: params.sentBy,
       });
 
+      // If we got here, the insert succeeded - update negotiation status and return
       let newStatus: string = negotiation.status;
       if (params.messageType === "initial_offer" && params.direction === "outbound") {
         newStatus = "in_progress";
@@ -394,6 +560,7 @@ export async function addNegotiationRound(params: {
         updateData.lastResponseAt = new Date();
       }
 
+      // If accepted, record agreed terms
       if (params.messageType === "acceptance") {
         updateData.completedAt = new Date();
         updateData.agreedUnitPrice = params.proposedUnitPrice?.toFixed(4) || negotiation.targetUnitPrice;
@@ -406,20 +573,23 @@ export async function addNegotiationRound(params: {
       return { id: roundResult.id, roundNumber };
     } catch (error: any) {
       lastError = error;
+      // Check if this is a duplicate key error (unique constraint violation)
       if (isDuplicateKeyError(error)) {
         retries--;
         if (retries > 0) {
-          const BASE_DELAY_MS = 100;
-          const JITTER_MS = 50;
-          const delay = Math.pow(2, 2 - retries) * BASE_DELAY_MS + Math.random() * JITTER_MS;
+          // Exponential backoff: 100ms, 200ms, 400ms (for retries 2, 1, 0 respectively)
+          const delay = Math.pow(2, 2 - retries) * 100 + Math.random() * 50;
           await new Promise(resolve => setTimeout(resolve, delay));
-          continue;
+          continue; // Retry
         }
+        // Exhausted retries on duplicate key error - break to throw final error
         break;
       }
+      // For other errors, throw immediately
       throw error;
     }
   }
   
+  // If we exhausted retries, throw the last error with context
   throw new Error(`Failed to create negotiation round after retries: ${lastError?.message || lastError}`);
 }

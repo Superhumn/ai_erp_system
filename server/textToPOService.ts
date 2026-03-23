@@ -69,7 +69,7 @@ Return a structured JSON object with the extracted information.`;
   } else if (Array.isArray(rawContent)) {
     const textParts = rawContent
       .filter((c: unknown): c is { text: string } => !!c && typeof c === "object" && "text" in (c as Record<string, unknown>))
-      .map((c) => c.text)
+      .map((c: any) => c.text)
       .join("");
 
     if (!textParts) {
