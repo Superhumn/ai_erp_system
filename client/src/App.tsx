@@ -102,6 +102,9 @@ import ShopifySettings from "./pages/settings/ShopifySettings";
 import Projects from "./pages/projects/Projects";
 import InvestmentGrantChecklist from "./pages/projects/InvestmentGrantChecklist";
 
+// Grant Application AI Agent
+import GrantApplications from "./pages/grants/GrantApplications";
+
 // Import
 import Import from "./pages/Import";
 
@@ -235,6 +238,9 @@ function Router() {
         {/* Projects */}
         <Route path="/projects" component={Projects} />
         <Route path="/projects/investment-grants" component={InvestmentGrantChecklist} />
+
+        {/* Grant Application AI Agent */}
+        <Route path="/grants" component={GrantApplications} />
 
         {/* Import */}
         <Route path="/import" component={Import} />

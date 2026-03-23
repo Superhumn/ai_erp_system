@@ -5074,3 +5074,155 @@ export type EdiSettings = typeof ediSettings.$inferSelect;
 export type InsertEdiSettings = typeof ediSettings.$inferInsert;
 export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
 export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
+
+// ============================================
+// GRANT APPLICATION AI AGENT
+// ============================================
+
+// Grant programs (e.g. SIDF, NIDLP, FDA FSMA, USDA, EU Horizon, etc.)
+export const grantPrograms = mysqlTable("grant_programs", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  fundingBody: varchar("fundingBody", { length: 255 }).notNull(),
+  country: varchar("country", { length: 100 }),
+  category: mysqlEnum("category", [
+    "government", "private_foundation", "corporate", "multilateral",
+    "research", "innovation", "export_promotion", "sustainability",
+  ]).default("government").notNull(),
+  maxFundingAmount: decimal("maxFundingAmount", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  matchPercentage: decimal("matchPercentage", { precision: 5, scale: 2 }),
+  eligibilityCriteria: text("eligibilityCriteria"),
+  applicationUrl: varchar("applicationUrl", { length: 512 }),
+  openDate: timestamp("openDate"),
+  deadlineDate: timestamp("deadlineDate"),
+  isRecurring: boolean("isRecurring").default(false),
+  recurringFrequency: varchar("recurringFrequency", { length: 50 }),
+  status: mysqlEnum("status", ["open", "closed", "upcoming", "archived"]).default("open").notNull(),
+  notes: text("notes"),
+  aiSummary: text("aiSummary"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GrantProgram = typeof grantPrograms.$inferSelect;
+export type InsertGrantProgram = typeof grantPrograms.$inferInsert;
+
+// Individual grant applications
+export const grantApplications = mysqlTable("grant_applications", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  grantProgramId: int("grantProgramId"),
+  applicationNumber: varchar("applicationNumber", { length: 50 }).notNull(),
+  title: varchar("title", { length: 500 }).notNull(),
+  projectDescription: text("projectDescription"),
+  requestedAmount: decimal("requestedAmount", { precision: 15, scale: 2 }),
+  matchingFunds: decimal("matchingFunds", { precision: 15, scale: 2 }),
+  totalProjectCost: decimal("totalProjectCost", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  status: mysqlEnum("status", [
+    "draft", "research", "writing", "review",
+    "submitted", "under_review", "approved", "rejected",
+    "awarded", "reporting", "completed", "withdrawn",
+  ]).default("draft").notNull(),
+  priority: mysqlEnum("priority", ["low", "medium", "high", "critical"]).default("medium").notNull(),
+  submissionDeadline: timestamp("submissionDeadline"),
+  submittedDate: timestamp("submittedDate"),
+  awardDate: timestamp("awardDate"),
+  awardedAmount: decimal("awardedAmount", { precision: 15, scale: 2 }),
+  projectStartDate: timestamp("projectStartDate"),
+  projectEndDate: timestamp("projectEndDate"),
+  // AI agent fields
+  aiEligibilityScore: int("aiEligibilityScore"),
+  aiEligibilityNotes: text("aiEligibilityNotes"),
+  aiDraftNarrative: text("aiDraftNarrative"),
+  aiBudgetSuggestions: text("aiBudgetSuggestions"),
+  aiStrengthsWeaknesses: text("aiStrengthsWeaknesses"),
+  aiComplianceChecklist: text("aiComplianceChecklist"),
+  // Contacts
+  principalInvestigator: varchar("principalInvestigator", { length: 255 }),
+  contactEmail: varchar("contactEmail", { length: 320 }),
+  contactPhone: varchar("contactPhone", { length: 32 }),
+  // Metadata
+  assignedTo: int("assignedTo"),
+  createdBy: int("createdBy"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GrantApplication = typeof grantApplications.$inferSelect;
+export type InsertGrantApplication = typeof grantApplications.$inferInsert;
+
+// Grant application workflow steps
+export const grantApplicationSteps = mysqlTable("grant_application_steps", {
+  id: int("id").autoincrement().primaryKey(),
+  applicationId: int("applicationId").notNull(),
+  stepNumber: int("stepNumber").notNull(),
+  stepName: varchar("stepName", { length: 255 }).notNull(),
+  category: mysqlEnum("category", [
+    "eligibility_check", "research", "narrative_writing",
+    "budget_preparation", "document_collection", "compliance_review",
+    "internal_review", "submission", "post_submission", "reporting",
+  ]).notNull(),
+  description: text("description"),
+  status: mysqlEnum("status", ["not_started", "in_progress", "completed", "blocked", "skipped"]).default("not_started").notNull(),
+  aiGenerated: boolean("aiGenerated").default(false),
+  aiContent: text("aiContent"),
+  userContent: text("userContent"),
+  assigneeId: int("assigneeId"),
+  dueDate: timestamp("dueDate"),
+  completedDate: timestamp("completedDate"),
+  notes: text("notes"),
+  sortOrder: int("sortOrder").default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GrantApplicationStep = typeof grantApplicationSteps.$inferSelect;
+export type InsertGrantApplicationStep = typeof grantApplicationSteps.$inferInsert;
+
+// Grant application documents
+export const grantApplicationDocuments = mysqlTable("grant_application_documents", {
+  id: int("id").autoincrement().primaryKey(),
+  applicationId: int("applicationId").notNull(),
+  stepId: int("stepId"),
+  documentName: varchar("documentName", { length: 255 }).notNull(),
+  documentType: mysqlEnum("documentType", [
+    "narrative", "budget", "letter_of_support", "organizational_chart",
+    "financial_statement", "tax_exempt_letter", "resume_cv", "logic_model",
+    "evaluation_plan", "timeline", "mou", "compliance_form", "other",
+  ]).default("other").notNull(),
+  filePath: varchar("filePath", { length: 512 }),
+  fileSize: int("fileSize"),
+  mimeType: varchar("mimeType", { length: 100 }),
+  aiGenerated: boolean("aiGenerated").default(false),
+  aiContent: text("aiContent"),
+  status: mysqlEnum("status", ["draft", "final", "submitted"]).default("draft").notNull(),
+  version: int("version").default(1),
+  uploadedBy: int("uploadedBy"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GrantApplicationDocument = typeof grantApplicationDocuments.$inferSelect;
+export type InsertGrantApplicationDocument = typeof grantApplicationDocuments.$inferInsert;
+
+// AI agent activity log for grant applications
+export const grantAIActivityLog = mysqlTable("grant_ai_activity_log", {
+  id: int("id").autoincrement().primaryKey(),
+  applicationId: int("applicationId").notNull(),
+  action: mysqlEnum("action", [
+    "eligibility_check", "narrative_draft", "budget_analysis",
+    "compliance_review", "strength_analysis", "recommendation",
+    "document_generation", "deadline_reminder", "status_update",
+  ]).notNull(),
+  input: text("input"),
+  output: text("output"),
+  model: varchar("model", { length: 100 }),
+  tokensUsed: int("tokensUsed"),
+  userId: int("userId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});

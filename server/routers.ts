@@ -13,6 +13,7 @@ import { detectMaterialShortages, detectAnomalies, runShortageCheckAndNotify, ru
 import { linkParsedEmailToEntities } from "./emailDocumentLinker";
 import { generateVendorEmail, sendVendorEmail, sendBulkEmail, checkAndSendPoFollowups } from "./vendorEmailAutomation";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
+import { checkGrantEligibility, draftGrantNarrative, analyzeGrantBudget, reviewGrantCompliance, analyzeStrengthsWeaknesses, generateApplicationSteps, processGrantAIChat, type GrantAIContext } from "./grantApplicationAIService";
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
@@ -13655,6 +13656,325 @@ Ask if they received the original request and if they can provide a quote.`;
           await createAuditLog(ctx.user.id, 'create', 'edi_compliance_scorecard', result.id);
           return result;
         }),
+    }),
+  }),
+
+  // ============================================
+  // GRANT APPLICATION AI AGENT
+  // ============================================
+  grantAgent: router({
+    // Grant Programs
+    programs: router({
+      list: protectedProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          status: z.string().optional(),
+          category: z.string().optional(),
+        }).optional())
+        .query(({ input }) => db.getGrantPrograms(input)),
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getGrantProgramById(input.id)),
+      create: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1),
+          fundingBody: z.string().min(1),
+          companyId: z.number().optional(),
+          country: z.string().optional(),
+          category: z.enum(["government", "private_foundation", "corporate", "multilateral", "research", "innovation", "export_promotion", "sustainability"]).optional(),
+          maxFundingAmount: z.string().optional(),
+          currency: z.string().optional(),
+          matchPercentage: z.string().optional(),
+          eligibilityCriteria: z.string().optional(),
+          applicationUrl: z.string().optional(),
+          openDate: z.date().optional(),
+          deadlineDate: z.date().optional(),
+          isRecurring: z.boolean().optional(),
+          recurringFrequency: z.string().optional(),
+          status: z.enum(["open", "closed", "upcoming", "archived"]).optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createGrantProgram(input);
+          await createAuditLog(ctx.user.id, 'create', 'grantProgram', result.id, input.name);
+          return result;
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          fundingBody: z.string().optional(),
+          country: z.string().optional(),
+          category: z.enum(["government", "private_foundation", "corporate", "multilateral", "research", "innovation", "export_promotion", "sustainability"]).optional(),
+          maxFundingAmount: z.string().optional(),
+          currency: z.string().optional(),
+          matchPercentage: z.string().optional(),
+          eligibilityCriteria: z.string().optional(),
+          applicationUrl: z.string().optional(),
+          openDate: z.date().optional(),
+          deadlineDate: z.date().optional(),
+          isRecurring: z.boolean().optional(),
+          status: z.enum(["open", "closed", "upcoming", "archived"]).optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateGrantProgram(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'grantProgram', id);
+          return { success: true };
+        }),
+      delete: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteGrantProgram(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'grantProgram', input.id);
+          return { success: true };
+        }),
+    }),
+
+    // Grant Applications
+    applications: router({
+      list: protectedProcedure
+        .input(z.object({
+          companyId: z.number().optional(),
+          status: z.string().optional(),
+          priority: z.string().optional(),
+          assignedTo: z.number().optional(),
+          grantProgramId: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getGrantApplications(input)),
+      get: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getGrantApplicationWithDetails(input.id)),
+      create: protectedProcedure
+        .input(z.object({
+          title: z.string().min(1),
+          companyId: z.number().optional(),
+          grantProgramId: z.number().optional(),
+          projectDescription: z.string().optional(),
+          requestedAmount: z.string().optional(),
+          matchingFunds: z.string().optional(),
+          totalProjectCost: z.string().optional(),
+          currency: z.string().optional(),
+          status: z.enum(["draft", "research", "writing", "review", "submitted", "under_review", "approved", "rejected", "awarded", "reporting", "completed", "withdrawn"]).optional(),
+          priority: z.enum(["low", "medium", "high", "critical"]).optional(),
+          submissionDeadline: z.date().optional(),
+          principalInvestigator: z.string().optional(),
+          contactEmail: z.string().optional(),
+          contactPhone: z.string().optional(),
+          assignedTo: z.number().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const applicationNumber = generateNumber("GRANT");
+          const result = await db.createGrantApplication({
+            ...input,
+            applicationNumber,
+            createdBy: ctx.user.id,
+          });
+          await createAuditLog(ctx.user.id, 'create', 'grantApplication', result.id, input.title);
+          return { ...result, applicationNumber };
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          title: z.string().optional(),
+          grantProgramId: z.number().optional().nullable(),
+          projectDescription: z.string().optional(),
+          requestedAmount: z.string().optional(),
+          matchingFunds: z.string().optional(),
+          totalProjectCost: z.string().optional(),
+          currency: z.string().optional(),
+          status: z.enum(["draft", "research", "writing", "review", "submitted", "under_review", "approved", "rejected", "awarded", "reporting", "completed", "withdrawn"]).optional(),
+          priority: z.enum(["low", "medium", "high", "critical"]).optional(),
+          submissionDeadline: z.date().optional(),
+          submittedDate: z.date().optional(),
+          awardDate: z.date().optional(),
+          awardedAmount: z.string().optional(),
+          projectStartDate: z.date().optional(),
+          projectEndDate: z.date().optional(),
+          principalInvestigator: z.string().optional(),
+          contactEmail: z.string().optional(),
+          assignedTo: z.number().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateGrantApplication(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'grantApplication', id);
+          return { success: true };
+        }),
+      delete: adminProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteGrantApplication(input.id);
+          await createAuditLog(ctx.user.id, 'delete', 'grantApplication', input.id);
+          return { success: true };
+        }),
+      dashboard: protectedProcedure
+        .input(z.object({ companyId: z.number().optional() }).optional())
+        .query(({ input }) => db.getGrantDashboardStats(input?.companyId)),
+    }),
+
+    // Grant Application Steps
+    steps: router({
+      list: protectedProcedure
+        .input(z.object({ applicationId: z.number() }))
+        .query(({ input }) => db.getGrantApplicationSteps(input.applicationId)),
+      create: protectedProcedure
+        .input(z.object({
+          applicationId: z.number(),
+          stepNumber: z.number(),
+          stepName: z.string().min(1),
+          category: z.enum(["eligibility_check", "research", "narrative_writing", "budget_preparation", "document_collection", "compliance_review", "internal_review", "submission", "post_submission", "reporting"]),
+          description: z.string().optional(),
+          assigneeId: z.number().optional(),
+          dueDate: z.date().optional(),
+          sortOrder: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createGrantApplicationStep(input);
+          await createAuditLog(ctx.user.id, 'create', 'grantApplicationStep', result.id, input.stepName);
+          return result;
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          stepName: z.string().optional(),
+          description: z.string().optional(),
+          status: z.enum(["not_started", "in_progress", "completed", "blocked", "skipped"]).optional(),
+          userContent: z.string().optional(),
+          assigneeId: z.number().optional(),
+          dueDate: z.date().optional(),
+          completedDate: z.date().optional(),
+          notes: z.string().optional(),
+          sortOrder: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateGrantApplicationStep(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'grantApplicationStep', id);
+          return { success: true };
+        }),
+    }),
+
+    // Grant Application Documents
+    documents: router({
+      list: protectedProcedure
+        .input(z.object({ applicationId: z.number() }))
+        .query(({ input }) => db.getGrantApplicationDocuments(input.applicationId)),
+      create: protectedProcedure
+        .input(z.object({
+          applicationId: z.number(),
+          stepId: z.number().optional(),
+          documentName: z.string().min(1),
+          documentType: z.enum(["narrative", "budget", "letter_of_support", "organizational_chart", "financial_statement", "tax_exempt_letter", "resume_cv", "logic_model", "evaluation_plan", "timeline", "mou", "compliance_form", "other"]),
+          aiContent: z.string().optional(),
+          aiGenerated: z.boolean().optional(),
+          status: z.enum(["draft", "final", "submitted"]).optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.createGrantApplicationDocument({ ...input, uploadedBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, 'create', 'grantApplicationDocument', result.id, input.documentName);
+          return result;
+        }),
+      update: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          documentName: z.string().optional(),
+          aiContent: z.string().optional(),
+          status: z.enum(["draft", "final", "submitted"]).optional(),
+          notes: z.string().optional(),
+          version: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...data } = input;
+          await db.updateGrantApplicationDocument(id, data);
+          await createAuditLog(ctx.user.id, 'update', 'grantApplicationDocument', id);
+          return { success: true };
+        }),
+    }),
+
+    // AI Agent Actions
+    ai: router({
+      checkEligibility: protectedProcedure
+        .input(z.object({
+          applicationId: z.number(),
+          grantProgramInfo: z.string(),
+          projectDescription: z.string(),
+          companyProfile: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const aiCtx: GrantAIContext = { userId: ctx.user.id, userName: ctx.user.name || 'User', companyId: ctx.user.companyId || undefined };
+          return checkGrantEligibility(aiCtx, input.applicationId, input.grantProgramInfo, input.projectDescription, input.companyProfile);
+        }),
+      draftNarrative: protectedProcedure
+        .input(z.object({
+          applicationId: z.number(),
+          section: z.enum(["executive_summary", "project_description", "needs_statement", "goals_objectives", "methodology", "evaluation_plan", "sustainability_plan", "organizational_capacity"]),
+          projectDescription: z.string(),
+          grantRequirements: z.string().optional(),
+          organizationBackground: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const aiCtx: GrantAIContext = { userId: ctx.user.id, userName: ctx.user.name || 'User', companyId: ctx.user.companyId || undefined };
+          return draftGrantNarrative(aiCtx, input.applicationId, input.section, input.projectDescription, input.grantRequirements, input.organizationBackground);
+        }),
+      analyzeBudget: protectedProcedure
+        .input(z.object({
+          applicationId: z.number(),
+          totalAmount: z.number(),
+          projectDescription: z.string(),
+          grantRequirements: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const aiCtx: GrantAIContext = { userId: ctx.user.id, userName: ctx.user.name || 'User', companyId: ctx.user.companyId || undefined };
+          return analyzeGrantBudget(aiCtx, input.applicationId, input.totalAmount, input.projectDescription, input.grantRequirements);
+        }),
+      reviewCompliance: protectedProcedure
+        .input(z.object({
+          applicationId: z.number(),
+          applicationContent: z.string(),
+          grantRequirements: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const aiCtx: GrantAIContext = { userId: ctx.user.id, userName: ctx.user.name || 'User', companyId: ctx.user.companyId || undefined };
+          return reviewGrantCompliance(aiCtx, input.applicationId, input.applicationContent, input.grantRequirements);
+        }),
+      analyzeStrengths: protectedProcedure
+        .input(z.object({
+          applicationId: z.number(),
+          applicationContent: z.string(),
+          grantCriteria: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const aiCtx: GrantAIContext = { userId: ctx.user.id, userName: ctx.user.name || 'User', companyId: ctx.user.companyId || undefined };
+          return analyzeStrengthsWeaknesses(aiCtx, input.applicationId, input.applicationContent, input.grantCriteria);
+        }),
+      generateSteps: protectedProcedure
+        .input(z.object({
+          applicationId: z.number(),
+          grantProgramName: z.string(),
+          projectDescription: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const aiCtx: GrantAIContext = { userId: ctx.user.id, userName: ctx.user.name || 'User', companyId: ctx.user.companyId || undefined };
+          return generateApplicationSteps(aiCtx, input.applicationId, input.grantProgramName, input.projectDescription);
+        }),
+      chat: protectedProcedure
+        .input(z.object({
+          applicationId: z.number(),
+          message: z.string().min(1),
+          applicationContext: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const aiCtx: GrantAIContext = { userId: ctx.user.id, userName: ctx.user.name || 'User', companyId: ctx.user.companyId || undefined };
+          return processGrantAIChat(aiCtx, input.applicationId, input.message, input.applicationContext);
+        }),
+      activityLog: protectedProcedure
+        .input(z.object({ applicationId: z.number() }))
+        .query(({ input }) => db.getGrantAIActivityLog(input.applicationId)),
     }),
   }),
 });

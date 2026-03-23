@@ -72,6 +72,7 @@ import {
   Plus,
   Calculator,
   Handshake,
+  Sparkles,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -151,6 +152,7 @@ const menuGroups = [
     items: [
       { icon: FolderKanban, label: "Projects", path: "/projects" },
       { icon: ClipboardCheck, label: "Investment Grants", path: "/projects/investment-grants" },
+      { icon: Sparkles, label: "Grant AI Agent", path: "/grants" },
       { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
       { icon: BookOpen, label: "SOPs", path: "/sops" },
     ],

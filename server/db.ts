@@ -118,6 +118,9 @@ import {
   // Investment grant checklists
   investmentGrantChecklists, investmentGrantItems,
   InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
+  // Grant Application AI Agent
+  grantPrograms, grantApplications, grantApplicationSteps, grantApplicationDocuments, grantAIActivityLog,
+  InsertGrantProgram, InsertGrantApplication, InsertGrantApplicationStep, InsertGrantApplicationDocument,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -9024,5 +9027,253 @@ export async function getVendorSpendingHistory(vendorId: number) {
     totalSpend: parseFloat(poData[0]?.totalSpend || '0'),
     orderCount: poData[0]?.orderCount || 0,
     avgOrderValue: parseFloat(poData[0]?.avgOrderValue || '0'),
+  };
+}
+
+// ============================================
+// INVESTMENT GRANT CHECKLISTS
+// ============================================
+
+export async function getInvestmentGrantChecklists(filters?: { companyId?: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(investmentGrantChecklists.companyId, filters.companyId));
+  if (filters?.status) conditions.push(eq(investmentGrantChecklists.status, filters.status as any));
+  if (conditions.length > 0) {
+    return db.select().from(investmentGrantChecklists).where(and(...conditions)).orderBy(desc(investmentGrantChecklists.createdAt));
+  }
+  return db.select().from(investmentGrantChecklists).orderBy(desc(investmentGrantChecklists.createdAt));
+}
+
+export async function getInvestmentGrantChecklistWithItems(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(investmentGrantChecklists).where(eq(investmentGrantChecklists.id, id)).limit(1);
+  if (!result[0]) return undefined;
+  const items = await db.select().from(investmentGrantItems).where(eq(investmentGrantItems.checklistId, id)).orderBy(asc(investmentGrantItems.sortOrder));
+  return { ...result[0], items };
+}
+
+export async function createInvestmentGrantChecklist(data: InsertInvestmentGrantChecklist) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(investmentGrantChecklists).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateInvestmentGrantChecklist(id: number, data: Partial<InsertInvestmentGrantChecklist>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(investmentGrantChecklists).set(data).where(eq(investmentGrantChecklists.id, id));
+}
+
+export async function getInvestmentGrantItems(checklistId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(investmentGrantItems).where(eq(investmentGrantItems.checklistId, checklistId)).orderBy(asc(investmentGrantItems.sortOrder));
+}
+
+export async function createInvestmentGrantItem(data: InsertInvestmentGrantItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(investmentGrantItems).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateInvestmentGrantItem(id: number, data: Partial<InsertInvestmentGrantItem>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(investmentGrantItems).set(data).where(eq(investmentGrantItems.id, id));
+}
+
+// ============================================
+// GRANT APPLICATION AI AGENT
+// ============================================
+
+// Grant Programs
+export async function getGrantPrograms(filters?: { companyId?: number; status?: string; category?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(grantPrograms.companyId, filters.companyId));
+  if (filters?.status) conditions.push(eq(grantPrograms.status, filters.status as any));
+  if (filters?.category) conditions.push(eq(grantPrograms.category, filters.category as any));
+  if (conditions.length > 0) {
+    return db.select().from(grantPrograms).where(and(...conditions)).orderBy(desc(grantPrograms.createdAt));
+  }
+  return db.select().from(grantPrograms).orderBy(desc(grantPrograms.createdAt));
+}
+
+export async function getGrantProgramById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(grantPrograms).where(eq(grantPrograms.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createGrantProgram(data: InsertGrantProgram) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(grantPrograms).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateGrantProgram(id: number, data: Partial<InsertGrantProgram>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(grantPrograms).set(data).where(eq(grantPrograms.id, id));
+}
+
+export async function deleteGrantProgram(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(grantPrograms).where(eq(grantPrograms.id, id));
+}
+
+// Grant Applications
+export async function getGrantApplications(filters?: { companyId?: number; status?: string; priority?: string; assignedTo?: number; grantProgramId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(grantApplications.companyId, filters.companyId));
+  if (filters?.status) conditions.push(eq(grantApplications.status, filters.status as any));
+  if (filters?.priority) conditions.push(eq(grantApplications.priority, filters.priority as any));
+  if (filters?.assignedTo) conditions.push(eq(grantApplications.assignedTo, filters.assignedTo));
+  if (filters?.grantProgramId) conditions.push(eq(grantApplications.grantProgramId, filters.grantProgramId));
+  if (conditions.length > 0) {
+    return db.select().from(grantApplications).where(and(...conditions)).orderBy(desc(grantApplications.createdAt));
+  }
+  return db.select().from(grantApplications).orderBy(desc(grantApplications.createdAt));
+}
+
+export async function getGrantApplicationById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(grantApplications).where(eq(grantApplications.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getGrantApplicationWithDetails(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const app = await getGrantApplicationById(id);
+  if (!app) return undefined;
+  const steps = await db.select().from(grantApplicationSteps).where(eq(grantApplicationSteps.applicationId, id)).orderBy(asc(grantApplicationSteps.sortOrder));
+  const documents = await db.select().from(grantApplicationDocuments).where(eq(grantApplicationDocuments.applicationId, id)).orderBy(desc(grantApplicationDocuments.createdAt));
+  const activityLog = await db.select().from(grantAIActivityLog).where(eq(grantAIActivityLog.applicationId, id)).orderBy(desc(grantAIActivityLog.createdAt)).limit(20);
+  let program = undefined;
+  if (app.grantProgramId) {
+    program = await getGrantProgramById(app.grantProgramId);
+  }
+  return { ...app, steps, documents, activityLog, program };
+}
+
+export async function createGrantApplication(data: InsertGrantApplication) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(grantApplications).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateGrantApplication(id: number, data: Partial<InsertGrantApplication>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(grantApplications).set(data).where(eq(grantApplications.id, id));
+}
+
+export async function deleteGrantApplication(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(grantApplications).where(eq(grantApplications.id, id));
+}
+
+// Grant Application Steps
+export async function getGrantApplicationSteps(applicationId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(grantApplicationSteps).where(eq(grantApplicationSteps.applicationId, applicationId)).orderBy(asc(grantApplicationSteps.sortOrder));
+}
+
+export async function createGrantApplicationStep(data: InsertGrantApplicationStep) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(grantApplicationSteps).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateGrantApplicationStep(id: number, data: Partial<InsertGrantApplicationStep>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(grantApplicationSteps).set(data).where(eq(grantApplicationSteps.id, id));
+}
+
+// Grant Application Documents
+export async function getGrantApplicationDocuments(applicationId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(grantApplicationDocuments).where(eq(grantApplicationDocuments.applicationId, applicationId)).orderBy(desc(grantApplicationDocuments.createdAt));
+}
+
+export async function createGrantApplicationDocument(data: InsertGrantApplicationDocument) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(grantApplicationDocuments).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateGrantApplicationDocument(id: number, data: Partial<InsertGrantApplicationDocument>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(grantApplicationDocuments).set(data).where(eq(grantApplicationDocuments.id, id));
+}
+
+// Grant AI Activity Log
+export async function createGrantAIActivityLog(data: { applicationId: number; action: string; input?: string; output?: string; model?: string; tokensUsed?: number; userId?: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(grantAIActivityLog).values(data as any);
+  return { id: result[0].insertId };
+}
+
+export async function getGrantAIActivityLog(applicationId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(grantAIActivityLog).where(eq(grantAIActivityLog.applicationId, applicationId)).orderBy(desc(grantAIActivityLog.createdAt)).limit(50);
+}
+
+// Grant Dashboard Stats
+export async function getGrantDashboardStats(companyId?: number) {
+  const db = await getDb();
+  if (!db) return { total: 0, drafts: 0, submitted: 0, awarded: 0, totalRequested: 0, totalAwarded: 0, upcomingDeadlines: [] as any[] };
+
+  const conditions = companyId ? [eq(grantApplications.companyId, companyId)] : [];
+
+  const stats = await db.select({
+    total: sql<number>`COUNT(*)`,
+    drafts: sql<number>`SUM(CASE WHEN ${grantApplications.status} IN ('draft', 'research', 'writing') THEN 1 ELSE 0 END)`,
+    submitted: sql<number>`SUM(CASE WHEN ${grantApplications.status} IN ('submitted', 'under_review') THEN 1 ELSE 0 END)`,
+    awarded: sql<number>`SUM(CASE WHEN ${grantApplications.status} IN ('awarded', 'reporting', 'completed') THEN 1 ELSE 0 END)`,
+    totalRequested: sql<string>`COALESCE(SUM(CAST(${grantApplications.requestedAmount} AS DECIMAL(15,2))), 0)`,
+    totalAwarded: sql<string>`COALESCE(SUM(CAST(${grantApplications.awardedAmount} AS DECIMAL(15,2))), 0)`,
+  }).from(grantApplications).where(conditions.length > 0 ? and(...conditions) : undefined);
+
+  const upcoming = await db.select().from(grantApplications)
+    .where(and(
+      ...(conditions.length > 0 ? conditions : []),
+      gt(grantApplications.submissionDeadline, new Date()),
+      sql`${grantApplications.status} NOT IN ('submitted', 'approved', 'awarded', 'completed', 'rejected', 'withdrawn')`,
+    ))
+    .orderBy(asc(grantApplications.submissionDeadline))
+    .limit(5);
+
+  return {
+    total: Number(stats[0]?.total) || 0,
+    drafts: Number(stats[0]?.drafts) || 0,
+    submitted: Number(stats[0]?.submitted) || 0,
+    awarded: Number(stats[0]?.awarded) || 0,
+    totalRequested: parseFloat(stats[0]?.totalRequested || '0'),
+    totalAwarded: parseFloat(stats[0]?.totalAwarded || '0'),
+    upcomingDeadlines: upcoming,
   };
 }
