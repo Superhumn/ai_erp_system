@@ -383,17 +383,35 @@ export async function generateCogsPeriodSummary(params: {
   const grossMarginPercent =
     totalRevenue > 0 ? (grossMargin / totalRevenue) * 100 : 0;
 
-  return db.createCogsPeriodSummaryRecord({
+  // Check for existing record (upsert behavior)
+  const existingRecords = await db.getCogsPeriodSummaries({
     companyId: params.companyId,
     productId: params.productId,
     periodType: params.periodType,
     periodStart: params.periodStart,
     periodEnd: params.periodEnd,
+  });
+
+  const summaryData = {
     totalQuantitySold: totalQuantitySold.toString(),
     totalCogs: totalCogs.toFixed(2),
     totalRevenue: totalRevenue.toFixed(2),
     averageUnitCogs: totalQuantitySold > 0 ? (totalCogs / totalQuantitySold).toFixed(4) : "0",
     grossMargin: grossMargin.toFixed(2),
     grossMarginPercent: grossMarginPercent.toFixed(4),
+  };
+
+  if (existingRecords.length > 0) {
+    await db.updateCogsPeriodSummaryRecord(existingRecords[0].id, summaryData);
+    return { id: existingRecords[0].id };
+  }
+
+  return db.createCogsPeriodSummaryRecord({
+    companyId: params.companyId,
+    productId: params.productId,
+    periodType: params.periodType,
+    periodStart: params.periodStart,
+    periodEnd: params.periodEnd,
+    ...summaryData,
   });
 }
