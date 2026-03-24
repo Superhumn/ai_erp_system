@@ -272,7 +272,7 @@ const productionPlanningProcessor: WorkflowProcessor = {
             .where(
               and(
                 eq(billOfMaterials.productId, forecast.productId),
-                eq(billOfMaterials.isActive, true)
+                eq(billOfMaterials.status, "active")
               )
             );
 
@@ -499,7 +499,7 @@ const materialRequirementsProcessor: WorkflowProcessor = {
 
       const suggestedPOs: any[] = [];
 
-      for (const [vendorId, items] of vendorReqs) {
+      for (const [vendorId, items] of Array.from(vendorReqs)) {
         const poTotal = items.reduce((sum, item) => sum + item.cost, 0);
         const suggestedPoNumber = `SPO-${Date.now().toString(36).toUpperCase()}`;
 
@@ -857,7 +857,7 @@ Consider demand trends and storage capacity.`,
 
       const createdPOs: any[] = [];
 
-      for (const [vendorId, items] of vendorGroups) {
+      for (const [vendorId, items] of Array.from(vendorGroups)) {
         const poTotal = items.reduce((sum, item) => sum + item.value, 0);
 
         // Request approval for each PO
@@ -945,7 +945,7 @@ const inventoryTransferProcessor: WorkflowProcessor = {
 
       const transferRecommendations: any[] = [];
 
-      for (const [productId, locations] of productDistribution) {
+      for (const [productId, locations] of Array.from(productDistribution)) {
         if (locations.length < 2) continue;
 
         // Find locations with excess and shortage
@@ -1272,8 +1272,8 @@ const productionSchedulingProcessor: WorkflowProcessor = {
       const orders = await db
         .select()
         .from(workOrders)
-        .where(eq(workOrders.status, "planned"))
-        .orderBy(asc(workOrders.plannedStartDate));
+        .where(eq(workOrders.status, "scheduled"))
+        .orderBy(asc(workOrders.scheduledStartDate));
 
       return { success: true, data: { workOrders: orders } };
     });
@@ -1435,7 +1435,7 @@ const freightProcurementProcessor: WorkflowProcessor = {
       const carriers = await db
         .select()
         .from(freightCarriers)
-        .where(eq(freightCarriers.status, "active"));
+        .where(eq(freightCarriers.isActive, true));
 
       return { success: true, data: { carriers } };
     });
@@ -2390,7 +2390,7 @@ const vendorQuoteAnalysisProcessor: WorkflowProcessor = {
 
       // Prepare quote data for AI analysis
       const quoteData = quotes.map((q: any) => {
-        const vendor = vendorMap.get(q.vendorId);
+        const vendor: any = vendorMap.get(q.vendorId);
         return {
           quoteId: q.id,
           vendorId: q.vendorId,

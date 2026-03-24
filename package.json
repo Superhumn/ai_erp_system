@@ -60,7 +60,7 @@
     "drizzle-orm": "^0.44.5",
     "embla-carousel-react": "^8.6.0",
     "express": "^4.21.2",
-    "express-rate-limit": "^8.2.1",
+    "express-rate-limit": "^8.2.2",
     "framer-motion": "^12.23.22",
     "imapflow": "^1.2.5",
     "input-otp": "^1.4.2",
@@ -116,17 +116,5 @@
     "typescript": "5.9.3",
     "vite": "^7.1.7",
     "vitest": "^2.1.4"
-  },
-  "packageManager": "pnpm@10.27.0+sha512.72d699da16b1179c14ba9e64dc71c9a40988cbdc65c264cb0e489db7de917f20dcf4d64d8723625f2969ba52d4b7e2a1170682d9ac2a5dcaeaab732b7e16f04a",
-  "pnpm": {
-    "overrides": {
-      "tailwindcss>nanoid": "3.3.7"
-    },
-    "ignoredBuiltDependencies": [
-      "@tailwindcss/oxide",
-      "canvas",
-      "esbuild",
-      "puppeteer"
-    ]
   }
 }

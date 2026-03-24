@@ -533,13 +533,13 @@ export default function VendorNegotiations() {
                 />
               </div>
               <div>
-                <Label>Annual Volume ($)</Label>
+                <Label>Annual Volume (units/year)</Label>
                 <Input
                   type="number"
                   step="0.01"
                   value={formAnnualVolume}
                   onChange={(e) => setFormAnnualVolume(e.target.value)}
-                  placeholder="100000"
+                  placeholder="100000 units/year"
                 />
               </div>
             </div>
@@ -620,20 +620,50 @@ export default function VendorNegotiations() {
                     <div>
                       <p className="text-muted-foreground mb-1">Current</p>
                       <p>Price: {selectedDetail.negotiation.currentUnitPrice ? `$${parseFloat(selectedDetail.negotiation.currentUnitPrice).toFixed(2)}` : "N/A"}</p>
-                      <p>Terms: {selectedDetail.negotiation.currentPaymentTerms || "N/A"} days</p>
-                      <p>Lead: {selectedDetail.negotiation.currentLeadTimeDays || "N/A"} days</p>
+                      <p>
+                        Terms:{" "}
+                        {selectedDetail.negotiation.currentPaymentTerms
+                          ? `${selectedDetail.negotiation.currentPaymentTerms} days`
+                          : "N/A"}
+                      </p>
+                      <p>
+                        Lead:{" "}
+                        {selectedDetail.negotiation.currentLeadTimeDays
+                          ? `${selectedDetail.negotiation.currentLeadTimeDays} days`
+                          : "N/A"}
+                      </p>
                     </div>
                     <div>
                       <p className="text-muted-foreground mb-1">Target</p>
                       <p className="text-green-600">Price: {selectedDetail.negotiation.targetUnitPrice ? `$${parseFloat(selectedDetail.negotiation.targetUnitPrice).toFixed(2)}` : "N/A"}</p>
-                      <p>Terms: {selectedDetail.negotiation.targetPaymentTerms || "N/A"} days</p>
-                      <p>Lead: {selectedDetail.negotiation.targetLeadTimeDays || "N/A"} days</p>
+                      <p>
+                        Terms:{" "}
+                        {selectedDetail.negotiation.targetPaymentTerms
+                          ? `${selectedDetail.negotiation.targetPaymentTerms} days`
+                          : "N/A"}
+                      </p>
+                      <p>
+                        Lead:{" "}
+                        {selectedDetail.negotiation.targetLeadTimeDays
+                          ? `${selectedDetail.negotiation.targetLeadTimeDays} days`
+                          : "N/A"}
+                      </p>
                     </div>
                     <div>
                       <p className="text-muted-foreground mb-1">Agreed</p>
                       <p className="font-medium">Price: {selectedDetail.negotiation.agreedUnitPrice ? `$${parseFloat(selectedDetail.negotiation.agreedUnitPrice).toFixed(2)}` : "-"}</p>
-                      <p>Terms: {selectedDetail.negotiation.agreedPaymentTerms || "-"} days</p>
-                      <p>Lead: {selectedDetail.negotiation.agreedLeadTimeDays || "-"} days</p>
+                      <p>
+                        Terms:{" "}
+                        {selectedDetail.negotiation.agreedPaymentTerms
+                          ? `${selectedDetail.negotiation.agreedPaymentTerms} days`
+                          : "-"}
+                      </p>
+                      <p>
+                        Lead:{" "}
+                        {selectedDetail.negotiation.agreedLeadTimeDays
+                          ? `${selectedDetail.negotiation.agreedLeadTimeDays} days`
+                          : "-"}
+                      </p>
                     </div>
                   </div>
                 </CardContent>
