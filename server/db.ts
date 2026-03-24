@@ -221,6 +221,61 @@ export async function updateUserRole(userId: number, role: InsertUser['role']) {
 // COMPANY MANAGEMENT
 // ============================================
 
+// ============================================
+// LOCAL AUTH CREDENTIALS
+// ============================================
+
+export async function getUserByEmail(email: string) {
+    const db = await getDb();
+    if (!db) {
+          console.warn("[Database] Cannot get user: database not available");
+          return undefined;
+    }
+
+    const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+    return result.length > 0 ? result[0] : undefined;
+}
+
+export async function getLocalAuthCredentialByEmail(email: string) {
+    const db = await getDb();
+    if (!db) {
+          console.warn("[Database] Cannot get local auth credential: database not available");
+          return undefined;
+    }
+
+    const result = await db.select().from(localAuthCredentials).where(eq(localAuthCredentials.email, email)).limit(1);
+    return result.length > 0 ? result[0] : undefined;
+}
+
+export async function getLocalAuthCredentialByOpenId(openId: string) {
+    const db = await getDb();
+    if (!db) {
+          console.warn("[Database] Cannot get local auth credential: database not available");
+          return undefined;
+    }
+
+    const result = await db.select().from(localAuthCredentials).where(eq(localAuthCredentials.openId, openId)).limit(1);
+    return result.length > 0 ? result[0] : undefined;
+}
+
+export async function createLocalAuthCredential(credential: InsertLocalAuthCredential) {
+    const db = await getDb();
+    if (!db) {
+          throw new Error("[Database] Cannot create local auth credential: database not available");
+    }
+
+    await db.insert(localAuthCredentials).values(credential);
+}
+
+export async function updateLocalAuthCredential(openId: string, updates: Partial<InsertLocalAuthCredential>) {
+    const db = await getDb();
+    if (!db) {
+          throw new Error("[Database] Cannot update local auth credential: database not available");
+    }
+
+    await db.update(localAuthCredentials).set(updates).where(eq(localAuthCredentials.openId, openId));
+}
+
 export async function getCompanies() {
   const db = await getDb();
   if (!db) return [];
