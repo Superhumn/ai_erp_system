@@ -35,7 +35,6 @@ import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refresh
 import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
-import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -783,7 +782,8 @@ export const appRouter = router({
         });
         let invoiceData: any = {};
         try {
-          const raw = parsed.choices[0]?.message?.content || '{}';
+          const rawContent = parsed.choices[0]?.message?.content;
+          const raw = typeof rawContent === 'string' ? rawContent : '{}';
           invoiceData = JSON.parse(raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
         } catch { invoiceData = {}; }
         const amount = invoiceData.amount || '0';
@@ -874,7 +874,8 @@ export const appRouter = router({
         });
         let paymentData: any = {};
         try {
-          const raw = parsed.choices[0]?.message?.content || '{}';
+          const rawContent = parsed.choices[0]?.message?.content;
+          const raw = typeof rawContent === 'string' ? rawContent : '{}';
           paymentData = JSON.parse(raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
         } catch { paymentData = {}; }
         const amount = paymentData.amount || '0';
@@ -1151,7 +1152,8 @@ export const appRouter = router({
         });
         let transferData: any = {};
         try {
-          const raw = parsed.choices[0]?.message?.content || '{}';
+          const rawContent = parsed.choices[0]?.message?.content;
+          const raw = typeof rawContent === 'string' ? rawContent : '{}';
           transferData = JSON.parse(raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
         } catch { transferData = {}; }
         const result = await db.createTransfer({
@@ -1617,7 +1619,7 @@ export const appRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         // If no preview, parse the text first
-        const preview = input.preview ?? await createPOPreview(await parseTextToPO(input.text));
+        const preview = (input.preview ?? await createPOPreview(await parseTextToPO(input.text))) as any;
         // Create the PO from preview
         const po = await createPOFromPreview(preview, ctx.user.id);
         
@@ -1823,7 +1825,8 @@ export const appRouter = router({
         });
         let shipmentData: any = {};
         try {
-          const raw = parsed.choices[0]?.message?.content || '{}';
+          const rawContent = parsed.choices[0]?.message?.content;
+          const raw = typeof rawContent === 'string' ? rawContent : '{}';
           shipmentData = JSON.parse(raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
         } catch { shipmentData = {}; }
         const shipmentNumber = generateNumber('SHIP');
@@ -1846,6 +1849,7 @@ export const appRouter = router({
   // ============================================
   departments: router({
     list: protectedProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
       .query(({ input }) => db.getDepartments(input?.companyId)),
     create: adminProcedure
       .input(z.object({
@@ -5636,17 +5640,17 @@ Extract and return as JSON:
               if (shipment?.purchaseOrderId) {
                 const poItems = await db.getPurchaseOrderItems(shipment.purchaseOrderId);
                 for (const item of poItems) {
-                  const qty = item.quantity || '0';
+                  const quantity = item.quantity || '0';
                   const existingInventory = await db.getInventory({ productId: item.productId, warehouseId });
                   if (existingInventory.length > 0) {
                     const existing = existingInventory[0];
-                    const newQty = (parseFloat(existing.quantity) + parseFloat(qty)).toString();
+                    const newQty = (parseFloat(existing.quantity) + parseFloat(quantity)).toString();
                     await db.updateInventory(existing.id, { quantity: newQty });
                   } else {
                     await db.createInventory({
                       productId: item.productId,
                       warehouseId,
-                      quantity: qty,
+                      quantity,
                       companyId: shipment.companyId,
                     } as any);
                   }
@@ -5654,7 +5658,7 @@ Extract and return as JSON:
                     transactionType: 'receive' as any,
                     productId: item.productId,
                     toWarehouseId: warehouseId,
-                    quantity: qty,
+                    quantity,
                     referenceType: 'purchase_order',
                     referenceId: shipment.purchaseOrderId,
                     performedBy: ctx.user.id,
@@ -6735,7 +6739,8 @@ Provide a brief status summary, any missing documents, and next steps.`;
         });
         let woData: any = {};
         try {
-          const raw = parsed.choices[0]?.message?.content || '{}';
+          const rawContent = parsed.choices[0]?.message?.content;
+          const raw = typeof rawContent === 'string' ? rawContent : '{}';
           woData = JSON.parse(raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
         } catch { woData = {}; }
         const result = await db.createWorkOrder({
