@@ -179,8 +179,8 @@ Respond ONLY with valid JSON matching this schema:
       },
     });
 
-    const rawContent = aiResult.choices?.[0]?.message?.content;
-    const text = typeof rawContent === "string" ? rawContent : (rawContent ? JSON.stringify(rawContent) : "");
+    const content = aiResult.choices?.[0]?.message?.content;
+    const text = typeof content === "string" ? content : "";
     // Extract JSON from the response
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     let parsed: any;

@@ -1,5 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
@@ -2226,7 +2227,7 @@ export const appRouter = router({
   }),
 
   // ============================================
-  // SAUDI INVESTMENT GRANT CHECKLISTS
+  // SAUDI INVESTMENT GRANT CHECKLIST
   // ============================================
   investmentGrants: router({
     list: protectedProcedure
@@ -5545,55 +5546,56 @@ Extract and return as JSON:
           totalAmount: z.string().optional(),
           warehouseId: z.number().optional(),
           notes: z.string().optional(),
+          warehouseId: z.number().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
           const { id, warehouseId, ...data } = input;
 
-          // Validate warehouseId is provided when clearing customs with inventory update
-          if (data.status === 'cleared' && !warehouseId) {
-            throw new TRPCError({
-              code: 'BAD_REQUEST',
-              message: 'warehouseId is required when clearing customs with inventory update',
-            });
-          }
-
-          await db.updateCustomsClearance(id, data);
-
-          // When status changes to 'cleared', update inventory from the linked shipment
-          if (data.status === 'cleared' && warehouseId) {
+          if (data.status === 'cleared') {
             const clearance = await db.getCustomsClearanceById(id);
             if (clearance?.shipmentId) {
+              if (!warehouseId) {
+                throw new TRPCError({ code: 'BAD_REQUEST', message: 'warehouseId is required when clearing customs with inventory update' });
+              }
               const shipment = await db.getShipmentById(clearance.shipmentId);
               if (shipment?.purchaseOrderId) {
                 const poItems = await db.getPurchaseOrderItems(shipment.purchaseOrderId);
                 for (const item of poItems) {
                   if (!item.productId) continue;
-                  const quantity = item.quantity ?? '0';
-                  // Create or update inventory entry
-                  const existingInventory = await db.getInventory({ productId: item.productId, warehouseId });
-                  if (existingInventory.length === 0) {
+                  const allInventory = await db.getInventory();
+                  const existing = allInventory.find(
+                    (inv: any) => inv.productId === item.productId && inv.warehouseId === warehouseId
+                  );
+                  const qty = item.quantity ?? '0';
+                  if (existing) {
+                    await db.updateInventory(existing.id, {
+                      quantity: String(Number(existing.quantity) + Number(qty)),
+                    });
+                  } else {
                     await db.createInventory({
                       productId: item.productId,
                       warehouseId,
-                      quantity,
-                      companyId: shipment.companyId ?? undefined,
+                      quantity: qty,
+                      companyId: (shipment as any).companyId,
                     });
                   }
-                  // Record inventory transaction for the receipt
                   await db.createInventoryTransaction({
                     transactionType: 'receive',
                     productId: item.productId,
                     toWarehouseId: warehouseId,
-                    quantity,
+                    quantity: qty,
                     referenceType: 'shipment',
-                    referenceId: shipment.id,
-                  });
+                    referenceId: clearance.shipmentId,
+                    performedBy: ctx.user.id,
+                  } as any);
+                  await db.updatePurchaseOrderItem(item.id, { receivedQuantity: qty });
                 }
-                // Mark shipment as delivered
-                await db.updateShipment(shipment.id, { status: 'delivered' });
+                await db.updateShipment(clearance.shipmentId, { status: 'delivered' });
               }
             }
           }
+
+          await db.updateCustomsClearance(id, data);
 
           await createAuditLog(ctx.user.id, 'update', 'customs_clearance', id);
           return { success: true };
@@ -5982,18 +5984,15 @@ Provide a brief status summary, any missing documents, and next steps.`;
         return { id: result.id, url };
       }),
 
-    // Get customs clearances accessible to this copacker
     getCustomsClearances: copackerProcedure.query(async ({ ctx }) => {
       const allClearances = await db.getCustomsClearances();
       if (ctx.user.role !== 'copacker') return allClearances;
-
-      // Filter to clearances associated with shipments (copacker sees clearances for their warehouse shipments)
       const allShipments = await db.getShipments();
-      const shipmentIds = allShipments.map(s => s.id);
-      return allClearances.filter(c => c.shipmentId && shipmentIds.includes(c.shipmentId));
+      const shipmentIds = new Set(allShipments.map((s: any) => s.id));
+      return allClearances.filter((c: any) => c.shipmentId != null && shipmentIds.has(c.shipmentId));
     }),
 
-    // Get customs documents for a specific clearance (copacker access check)
+
     getCustomsDocuments: copackerProcedure
       .input(z.object({ clearanceId: z.number() }))
       .query(async ({ input, ctx }) => {
@@ -6147,24 +6146,23 @@ Provide a brief status summary, any missing documents, and next steps.`;
         return { id: result.id, url };
       }),
 
-    // Get customs clearances relevant to this vendor
     getCustomsClearances: vendorProcedure.query(async ({ ctx }) => {
       const allClearances = await db.getCustomsClearances();
       if (ctx.user.role !== 'vendor') return allClearances;
-
-      // Filter to clearances associated with shipments linked to this vendor's POs
-      const vendorPOs = await db.getPurchaseOrders();
-      const vendorPOIds = vendorPOs
-        .filter(po => po.vendorId === ctx.user.linkedVendorId)
-        .map(po => po.id);
-      const vendorShipments = await db.getShipments();
-      const vendorShipmentIds = vendorShipments
-        .filter(s => s.purchaseOrderId && vendorPOIds.includes(s.purchaseOrderId))
-        .map(s => s.id);
-      return allClearances.filter(c => c.shipmentId && vendorShipmentIds.includes(c.shipmentId));
+      const allPOs = await db.getPurchaseOrders();
+      const vendorPOIds = new Set(
+        allPOs.filter((po: any) => po.vendorId === ctx.user.linkedVendorId).map((po: any) => po.id)
+      );
+      const allShipments = await db.getShipments();
+      const vendorShipmentIds = new Set(
+        allShipments
+          .filter((s: any) => s.purchaseOrderId != null && vendorPOIds.has(s.purchaseOrderId))
+          .map((s: any) => s.id)
+      );
+      return allClearances.filter((c: any) => c.shipmentId != null && vendorShipmentIds.has(c.shipmentId));
     }),
 
-    // Get customs documents for a specific clearance (vendor access check)
+
     getCustomsDocuments: vendorProcedure
       .input(z.object({ clearanceId: z.number() }))
       .query(async ({ input, ctx }) => {

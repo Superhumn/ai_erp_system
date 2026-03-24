@@ -123,6 +123,9 @@ import DataRooms from "./pages/DataRooms";
 import DataRoomDetail from "./pages/DataRoomDetail";
 import DataRoomPublic from "./pages/DataRoomPublic";
 
+// Auth
+import Login from "./pages/Login";
+
 // AI Agent
 import ApprovalQueue from "./pages/ai/ApprovalQueue";
 
@@ -266,8 +269,7 @@ function App() {
           <TooltipProvider>
             <Toaster />
             <Switch>
-              {/* Public Login */}
-              {/* Public routes (outside dashboard) */}
+              {/* Auth */}
               <Route path="/login" component={Login} />
               {/* Public Data Room Access (outside dashboard) */}
               <Route path="/share/:code" component={DataRoomPublic} />
