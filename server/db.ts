@@ -9432,12 +9432,6 @@ export async function upsertEdiSettings(data: InsertEdiSettings) {
   const result = await db.insert(ediSettings).values(data);
   return { id: result[0].insertId };
 }
-export async function createInvestmentGrantChecklist(data: InsertInvestmentGrantChecklist) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(investmentGrantChecklists).values(data);
-  return { id: result[0].insertId };
-}
 
 // Recalculate checklist progress
 export async function recalculateChecklistProgress(checklistId: number) {
@@ -9847,39 +9841,6 @@ export async function getEdiTradingPartnerByIsaId(isaId: string) {
 
 // ============================================
 // COGS PERIOD SUMMARIES (alias with array return)
-// ============================================
-
-export async function getCogsPeriodSummaries(params: {
-  companyId?: number;
-  productId?: number;
-  periodType: "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
-  periodStart: Date;
-  periodEnd: Date;
-}) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-
-  const conditions = [
-    eq(cogsPeriodSummary.periodType, params.periodType),
-    eq(cogsPeriodSummary.periodStart, params.periodStart),
-    eq(cogsPeriodSummary.periodEnd, params.periodEnd),
-  ];
-
-  if (params.companyId !== undefined) {
-    conditions.push(eq(cogsPeriodSummary.companyId, params.companyId));
-  } else {
-    conditions.push(isNull(cogsPeriodSummary.companyId));
-  }
-
-  if (params.productId !== undefined) {
-    conditions.push(eq(cogsPeriodSummary.productId, params.productId));
-  } else {
-    conditions.push(isNull(cogsPeriodSummary.productId));
-  }
-
-  return db.select().from(cogsPeriodSummary).where(and(...conditions));
-}
-
 
 // ============================================
 // GOOGLE OAUTH BY USER ID
