@@ -740,7 +740,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
     onSuccess: (data) => {
       setIsLoading(false);
       toast.success("Purchase Order created successfully", {
-        description: `PO #${data.poNumber} has been created`
+        description: `PO #${data.po?.poNumber} has been created`
       });
       utils.purchaseOrders.list.invalidate();
       setLocation("/procurement");

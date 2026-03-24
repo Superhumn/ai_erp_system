@@ -918,6 +918,13 @@ export async function getShipments(filters?: { companyId?: number; status?: stri
   return db.select().from(shipments).orderBy(desc(shipments.createdAt));
 }
 
+export async function getShipmentById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const results = await db.select().from(shipments).where(eq(shipments.id, id)).limit(1);
+  return results[0];
+}
+
 export async function createShipment(data: typeof shipments.$inferInsert) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -3119,6 +3126,13 @@ export async function getPurchaseOrderItems(purchaseOrderId: number) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
+}
+
+export async function updatePurchaseOrderItem(id: number, data: Partial<typeof purchaseOrderItems.$inferInsert>) {
+  const db = await getDb();
+  if (!db) return { success: false };
+  await db.update(purchaseOrderItems).set(data).where(eq(purchaseOrderItems.id, id));
+  return { success: true };
 }
 
 
@@ -8811,6 +8825,32 @@ export async function getCogsSummary(filters?: {
  * Get an existing COGS period summary record by period parameters.
  * Note: undefined companyId/productId represents NULL in the database (company-wide or product-wide aggregation)
  */
+export async function getCogsPeriodSummaries(params: {
+  companyId?: number;
+  productId?: number;
+  periodType?: "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
+  periodStart?: Date;
+  periodEnd?: Date;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const conditions = [];
+  if (params.periodType) conditions.push(eq(cogsPeriodSummary.periodType, params.periodType));
+  if (params.periodStart) conditions.push(eq(cogsPeriodSummary.periodStart, params.periodStart));
+  if (params.periodEnd) conditions.push(eq(cogsPeriodSummary.periodEnd, params.periodEnd));
+  if (params.companyId !== undefined) {
+    conditions.push(eq(cogsPeriodSummary.companyId, params.companyId));
+  }
+  if (params.productId !== undefined) {
+    conditions.push(eq(cogsPeriodSummary.productId, params.productId));
+  }
+  
+  return conditions.length > 0
+    ? db.select().from(cogsPeriodSummary).where(and(...conditions))
+    : db.select().from(cogsPeriodSummary);
+}
+
 export async function getCogsPeriodSummary(params: {
   companyId?: number;
   productId?: number;
@@ -9064,3 +9104,18 @@ export async function getEdiTransactions(filters?: { tradingPartnerId?: number; 
     ? db.select().from(ediTransactions).where(and(...conditions)).orderBy(desc(ediTransactions.createdAt))
     : db.select().from(ediTransactions).orderBy(desc(ediTransactions.createdAt));
 }
+
+export async function getEdiTradingPartnerById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const results = await db.select().from(ediTradingPartners).where(eq(ediTradingPartners.id, id)).limit(1);
+  return results[0];
+}
+
+export async function getEdiTradingPartnerByIsaId(isaId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const results = await db.select().from(ediTradingPartners).where(eq(ediTradingPartners.isaId, isaId)).limit(1);
+  return results[0];
+}
+

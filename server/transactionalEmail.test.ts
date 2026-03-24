@@ -56,7 +56,7 @@ vi.mock("./db", () => ({
   getVendorById: vi.fn().mockResolvedValue(null),
 }));
 
-import { ENV } from "./_core/env";
+import { ENV, validateEmailConfig } from "./_core/env";
 import sgMail from "@sendgrid/mail";
 import * as emailService from "./_core/emailService";
 import * as sendgridProvider from "./_core/sendgridProvider";
@@ -357,7 +357,6 @@ describe("Webhook Event Processing", () => {
 
 describe("Email Config Validation", () => {
   it("should pass when all required config is present", () => {
-    const { validateEmailConfig } = require("./_core/env");
     const result = validateEmailConfig();
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
