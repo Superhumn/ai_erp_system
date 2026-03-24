@@ -4633,3 +4633,49 @@ export const investmentGrantItems = mysqlTable("investment_grant_items", {
 
 export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
 export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
+
+// ============================================
+// REASONING AGENT SYSTEM
+// ============================================
+
+export const agentRuns = mysqlTable("agent_runs", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  userId: int("userId"),
+  goal: text("goal").notNull(),
+  status: mysqlEnum("status", ["running", "completed", "failed", "max_iterations"]).default("running").notNull(),
+  iterations: int("iterations").default(0).notNull(),
+  maxIterations: int("maxIterations").default(20).notNull(),
+  context: text("context"),
+  summary: text("summary"),
+  errorMessage: text("errorMessage"),
+  totalTokensUsed: int("totalTokensUsed").default(0),
+  totalDurationMs: int("totalDurationMs"),
+  toolCallCount: int("toolCallCount").default(0),
+  messageHistory: text("messageHistory"),
+  startedAt: timestamp("startedAt").defaultNow().notNull(),
+  completedAt: timestamp("completedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type AgentRun = typeof agentRuns.$inferSelect;
+export type InsertAgentRun = typeof agentRuns.$inferInsert;
+
+export const agentRunSteps = mysqlTable("agent_run_steps", {
+  id: int("id").autoincrement().primaryKey(),
+  runId: int("runId").notNull(),
+  iteration: int("iteration").notNull(),
+  toolName: varchar("toolName", { length: 255 }),
+  toolInput: text("toolInput"),
+  toolResult: text("toolResult"),
+  assistantMessage: text("assistantMessage"),
+  stopReason: varchar("stopReason", { length: 50 }),
+  tokensUsed: int("tokensUsed"),
+  durationMs: int("durationMs"),
+  isError: boolean("isError").default(false),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type AgentRunStep = typeof agentRunSteps.$inferSelect;
+export type InsertAgentRunStep = typeof agentRunSteps.$inferInsert;
