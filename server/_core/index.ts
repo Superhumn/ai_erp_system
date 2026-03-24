@@ -237,11 +237,6 @@ async function startServer() {
     }
   });
 
-  // Google OAuth callback for Drive/Sheets integration
-  app.get('/api/google/callback', async (req, res) => {
-  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), handleShopifyWebhook);
-  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), handleShopifyWebhook);
-  
   // Google OAuth callback
   app.get('/api/google/callback', oauthCallbackLimiter, async (req, res) => {
     const { code, state } = req.query;
