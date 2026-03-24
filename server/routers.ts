@@ -28,7 +28,6 @@ import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refresh
 import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
-import { COOKIE_NAME } from "@shared/const";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -178,9 +177,27 @@ export function generateNumber(prefix: string) {
   const date = new Date();
   const year = date.getFullYear().toString().slice(-2);
   const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  const cryptoModule = require('crypto');
+  const random = cryptoModule.randomBytes(2).readUInt16BE(0).toString().slice(-4).padStart(4, '0');
   return `${prefix}-${year}${month}-${random}`;
 }
+// Secure password hashing helpers using scrypt
+function hashPassword(password: string): string {
+  const crypto = require('crypto');
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password: string, stored: string): boolean {
+  const crypto = require('crypto');
+  const [salt, hash] = stored.split(':');
+  if (!salt || !hash) return false;
+  const verifyHash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return verifyHash === hash;
+}
+
+
 
 export const appRouter = router({
   system: systemRouter,
@@ -7763,7 +7780,7 @@ Ask if they received the original request and if they can provide a quote.`;
           
           // Create PO if requested
           if (input.createPO && rfq) {
-            const poNumber = `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+            const poNumber = `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${require('crypto').randomBytes(2).toString('hex').toUpperCase()}`;
             const poResult = await db.createPurchaseOrder({
               poNumber,
               vendorId: quote.vendorId,
@@ -8157,14 +8174,14 @@ Ask if they received the original request and if they can provide a quote.`;
                   await db.updateProduct(existingProduct.id, {
                     name: product.title,
                     unitPrice: product.variants[0]?.price || '0',
-                    description: product.body_html?.replace(/<[^>]*>/g, '') || '',
+                    description: product.body_html ? product.body_html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '').replace(/<[^>]*>/g, '') : '',
                   } as any);
                   totalUpdated++;
                 } else {
                   await db.createProduct({
                     name: product.title,
                     sku: product.variants[0]?.sku || `SHOP-${product.id}`,
-                    description: product.body_html?.replace(/<[^>]*>/g, '') || '',
+                    description: product.body_html ? product.body_html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '').replace(/<[^>]*>/g, '') : '',
                     unitPrice: product.variants[0]?.price || '0',
                   } as any);
                   totalImported++;
@@ -8631,7 +8648,7 @@ Ask if they received the original request and if they can provide a quote.`;
         
         // Create inbound email record with initial category
         const { id: emailId } = await db.createInboundEmail({
-          messageId: `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          messageId: `manual-${Date.now()}-${require('crypto').randomBytes(8).toString('hex')}`,
           fromEmail: input.fromEmail,
           fromName: input.fromName || null,
           toEmail: "erp@system.local",
@@ -9384,8 +9401,7 @@ Ask if they received the original request and if they can provide a quote.`;
         // Hash password if provided
         let hashedPassword = null;
         if (input.password) {
-          const crypto = await import('crypto');
-          hashedPassword = crypto.createHash('sha256').update(input.password).digest('hex');
+          hashedPassword = hashPassword(input.password);
         }
 
         const { id } = await db.createDataRoom({
@@ -9426,8 +9442,7 @@ Ask if they received the original request and if they can provide a quote.`;
           if (password === null) {
             hashedPassword = null;
           } else {
-            const crypto = await import('crypto');
-            hashedPassword = crypto.createHash('sha256').update(password).digest('hex');
+            hashedPassword = hashPassword(password);
           }
         }
 
@@ -9615,8 +9630,7 @@ Ask if they received the original request and if they can provide a quote.`;
           const linkCode = nanoid(12);
           let hashedPassword = null;
           if (input.password) {
-            const crypto = await import('crypto');
-            hashedPassword = crypto.createHash('sha256').update(input.password).digest('hex');
+            hashedPassword = hashPassword(input.password);
           }
 
           const { id } = await db.createDataRoomLink({
@@ -10034,9 +10048,10 @@ Ask if they received the original request and if they can provide a quote.`;
             if (!input.password) {
               return { requiresPassword: true, dataRoomId: null, visitorId: null };
             }
-            const crypto = await import('crypto');
-            const hashedPassword = crypto.createHash('sha256').update(input.password).digest('hex');
-            if (hashedPassword !== link.password) {
+            const matches = link.password.includes(':')
+              ? verifyPassword(input.password, link.password)
+              : require('crypto').createHash('sha256').update(input.password).digest('hex') === link.password;
+            if (!matches) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid password' });
             }
           }

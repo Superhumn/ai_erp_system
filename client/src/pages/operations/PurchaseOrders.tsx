@@ -31,7 +31,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SelectWithCreate } from "@/components/ui/select-with-create";
-import { ClipboardList, Plus, Search, Loader2, Sparkles, Send } from "lucide-react";
+import { ClipboardList, Plus, Search, Loader2, Sparkles, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -87,7 +87,56 @@ export default function PurchaseOrders() {
   const { data: vendors } = trpc.vendors.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
   const utils = trpc.useUtils();
-  
+
+  const resetForm = () => {
+    setFormData({ vendorId: 0, expectedDeliveryDate: "", notes: "" });
+    setLineItems([]);
+  };
+
+  const calculateTotals = () => {
+    const subtotal = lineItems.reduce((sum, item) => {
+      return sum + (parseFloat(item.quantity || "0") * parseFloat(item.unitPrice || "0"));
+    }, 0);
+    return { subtotal, total: subtotal };
+  };
+
+  const totals = calculateTotals();
+
+  const addLineItem = () => {
+    setLineItems([...lineItems, { description: "", quantity: "1", unitPrice: "0", totalAmount: "0" }]);
+  };
+
+  const selectProduct = (index: number, productIdStr: string) => {
+    const productId = parseInt(productIdStr);
+    const product = products?.find(p => p.id === productId);
+    const updated = lineItems.map((item, i) => {
+      if (i !== index) return item;
+      const unitPrice = product?.unitPrice || "0";
+      const quantity = item.quantity || "1";
+      const totalAmount = (parseFloat(quantity) * parseFloat(unitPrice)).toFixed(2);
+      return { ...item, productId, description: product?.name || item.description, unitPrice, totalAmount };
+    });
+    setLineItems(updated);
+  };
+
+  const updateLineItem = (index: number, field: keyof LineItem, value: string) => {
+    const updated = lineItems.map((item, i) => {
+      if (i !== index) return item;
+      const newItem = { ...item, [field]: value };
+      if (field === "quantity" || field === "unitPrice") {
+        const qty = parseFloat(field === "quantity" ? value : item.quantity) || 0;
+        const price = parseFloat(field === "unitPrice" ? value : item.unitPrice) || 0;
+        newItem.totalAmount = (qty * price).toFixed(2);
+      }
+      return newItem;
+    });
+    setLineItems(updated);
+  };
+
+  const removeLineItem = (index: number) => {
+    setLineItems(lineItems.filter((_, i) => i !== index));
+  };
+
   const createPO = trpc.purchaseOrders.create.useMutation({
     onSuccess: () => {
       toast.success("Purchase order created successfully");
