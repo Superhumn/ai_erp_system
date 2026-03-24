@@ -61,6 +61,7 @@ import InventoryHub from "./pages/operations/InventoryHub";
 import OperationsHub from "./pages/operations/OperationsHub";
 import InventoryManagementHub from "./pages/operations/InventoryManagementHub";
 import DocumentImport from "./pages/operations/DocumentImport";
+import Profitability from "./pages/operations/Profitability";
 import ReconciliationReport from "./pages/operations/ReconciliationReport";
 import InventoryCosting from "./pages/operations/InventoryCosting";
 import VendorNegotiations from "./pages/operations/VendorNegotiations";
@@ -94,6 +95,7 @@ import Integrations from "./pages/settings/Integrations";
 import NotificationSettings from "./pages/settings/Notifications";
 import TransactionalEmails from "./pages/settings/TransactionalEmails";
 import Fireflies from "./pages/settings/Fireflies";
+import QuickBooksIntegration from "./pages/settings/QuickBooksIntegration";
 import ShopifySettings from "./pages/settings/ShopifySettings";
 
 // Projects
@@ -151,6 +153,7 @@ function Router() {
         <Route path="/settings/notifications" component={NotificationSettings} />
         <Route path="/settings/emails" component={TransactionalEmails} />
         <Route path="/settings/fireflies" component={Fireflies} />
+        <Route path="/settings/quickbooks" component={QuickBooksIntegration} />
         <Route path="/settings/shopify" component={ShopifySettings} />
 
         {/* Finance */}
@@ -200,6 +203,7 @@ function Router() {
         <Route path="/operations/logistics-hub" component={LogisticsHub} />
         <Route path="/operations/inventory-hub" component={InventoryHub} />
         <Route path="/operations/inventory-management" component={InventoryManagementHub} />
+        <Route path="/operations/profitability" component={Profitability} />
         <Route path="/operations/document-import" component={DocumentImport} />
         <Route path="/operations/reconciliation" component={ReconciliationReport} />
         <Route path="/operations/inventory-costing" component={InventoryCosting} />

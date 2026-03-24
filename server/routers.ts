@@ -17,13 +17,14 @@ import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingA
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
+import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
-import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo } from "./_core/quickbooks";
+import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems } from "./_core/quickbooks";
 import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
@@ -37,14 +38,14 @@ const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
   return next({ ctx });
 });
 
-const financeProcedure = protectedProcedure.use(({ ctx, next }) => {
+export const financeProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (!['admin', 'finance', 'exec'].includes(ctx.user.role)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Finance access required' });
   }
   return next({ ctx });
 });
 
-const opsProcedure = protectedProcedure.use(({ ctx, next }) => {
+export const opsProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (!['admin', 'ops', 'exec'].includes(ctx.user.role)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Operations access required' });
   }
@@ -91,7 +92,7 @@ const procurementProcedure = protectedProcedure.use(({ ctx, next }) => {
 });
 
 // Helper to create audit log
-async function createAuditLog(userId: number, action: 'create' | 'update' | 'delete' | 'view' | 'export' | 'approve' | 'reject', entityType: string, entityId: number, entityName?: string, oldValues?: any, newValues?: any) {
+export async function createAuditLog(userId: number, action: 'create' | 'update' | 'delete' | 'view' | 'export' | 'approve' | 'reject', entityType: string, entityId: number, entityName?: string, oldValues?: any, newValues?: any) {
   await db.createAuditLog({
     userId,
     action,
@@ -173,7 +174,7 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
 }
 
 // Helper to generate unique numbers
-function generateNumber(prefix: string) {
+export function generateNumber(prefix: string) {
   const date = new Date();
   const year = date.getFullYear().toString().slice(-2);
   const month = (date.getMonth() + 1).toString().padStart(2, '0');
@@ -1230,6 +1231,114 @@ export const appRouter = router({
   }),
 
   // ============================================
+  // COGS & PROFITABILITY TRACKING
+  // ============================================
+  cogs: router({
+    // Record COGS when a sale is fulfilled
+    recordSale: opsProcedure
+      .input(z.object({
+        salesOrderId: z.number(),
+        salesOrderLineId: z.number(),
+        productId: z.number(),
+        warehouseId: z.number(),
+        quantitySold: z.number(),
+        revenueAmount: z.number(),
+        freightCostAllocated: z.number().optional(),
+        customsCostAllocated: z.number().optional(),
+        insuranceCostAllocated: z.number().optional(),
+        otherCostAllocated: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.recordCOGSSale(
+          input.salesOrderId,
+          input.salesOrderLineId,
+          input.productId,
+          input.warehouseId,
+          input.quantitySold,
+          input.revenueAmount,
+          input.freightCostAllocated,
+          input.customsCostAllocated,
+          input.insuranceCostAllocated,
+          input.otherCostAllocated
+        );
+        await createAuditLog(ctx.user.id, 'create', 'cogs_transaction', input.salesOrderLineId, `Recorded COGS for sale`);
+        return result;
+      }),
+
+    // Get COGS transaction history
+    getTransactions: opsProcedure
+      .input(z.object({
+        salesOrderId: z.number().optional(),
+        productId: z.number().optional(),
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+        limit: z.number().min(1).max(1000).optional(),
+      }).optional())
+      .query(({ input }) => db.getCOGSTransactions(input, input?.limit)),
+
+    // Get product profitability report
+    profitability: opsProcedure
+      .input(z.object({
+        productId: z.number().optional(),
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+      }).optional())
+      .query(({ input }) => db.getProductProfitability(input?.productId, input?.startDate, input?.endDate)),
+
+    // Get inventory valuation
+    valuation: opsProcedure
+      .input(z.object({
+        warehouseId: z.number().optional(),
+      }).optional())
+      .query(({ input }) => db.getInventoryValuation(input?.warehouseId)),
+
+    // Allocate freight costs to products
+    allocateFreight: opsProcedure
+      .input(z.object({
+        purchaseOrderId: z.number().optional(),
+        shipmentId: z.number().optional(),
+        totalFreightCost: z.number(),
+        totalCustomsDuties: z.number().optional(),
+        totalInsuranceCost: z.number().optional(),
+        totalHandlingFees: z.number().optional(),
+        allocationMethod: z.enum(['weight', 'volume', 'quantity', 'value', 'manual']).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await db.allocateFreightCosts(
+          input.purchaseOrderId || null,
+          input.shipmentId || null,
+          input.totalFreightCost,
+          input.totalCustomsDuties,
+          input.totalInsuranceCost,
+          input.totalHandlingFees,
+          input.allocationMethod || 'quantity',
+          ctx.user.id
+        );
+        await createAuditLog(ctx.user.id, 'create', 'freight_allocation', input.purchaseOrderId || input.shipmentId || 0, 'Allocated freight costs');
+        return { success: true };
+      }),
+
+    // Update inventory cost basis (when receiving goods)
+    updateCostBasis: opsProcedure
+      .input(z.object({
+        productId: z.number(),
+        warehouseId: z.number(),
+        receivedQuantity: z.number(),
+        unitCost: z.number(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await db.updateInventoryCostBasis(
+          input.productId,
+          input.warehouseId,
+          input.receivedQuantity,
+          input.unitCost
+        );
+        await createAuditLog(ctx.user.id, 'update', 'inventory', input.productId, 'Updated inventory cost basis');
+        return { success: true };
+      }),
+  }),
+
+  // ============================================
   // OPERATIONS - PRODUCTION BATCHES
   // ============================================
   productionBatches: router({
@@ -1383,6 +1492,7 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'approve', 'purchaseOrder', input.id);
         return { success: true };
       }),
+    // Parse text to PO preview
     parseText: opsProcedure
       .input(z.object({ text: z.string().min(1).max(1000) }))
       .mutation(async ({ input }) => {
@@ -1415,17 +1525,26 @@ export const appRouter = router({
         sendEmail: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
+        // Create the PO from preview
         const po = await createPOFromPreview(input.preview, ctx.user.id);
         
         await createAuditLog(ctx.user.id, 'create', 'purchaseOrder', po.id, po.poNumber);
         
+        // Send email if requested
         if (input.sendEmail) {
           const emailResult = await emailService.sendPOEmail(po.id, {
             triggeredBy: ctx.user.id,
           });
           
           if (!emailResult.success) {
+            // Log the error but don't fail the whole operation since PO is already created
             console.error(`Failed to send PO email for PO ${po.id}:`, emailResult.error);
+          }
+          
+          if (emailResult.success && emailResult.emailMessageId) {
+            await createAuditLog(ctx.user.id, 'create', 'email_message', emailResult.emailMessageId, 'PO Email', undefined, {
+              poId: po.id,
+            });
           }
           
           return { 
@@ -3544,6 +3663,121 @@ export const appRouter = router({
         companyName: result.data?.CompanyInfo?.CompanyName 
       };
     }),
+
+    // Sync Chart of Accounts from QuickBooks
+    syncAccounts: protectedProcedure
+      .input(z.object({ companyId: z.number().optional() }))
+      .mutation(async ({ input, ctx }) => {
+        const token = await db.getQuickBooksOAuthToken(ctx.user.id);
+        if (!token || !token.realmId) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'QuickBooks not connected' });
+        }
+
+        const result = await getChartOfAccounts(token.accessToken, token.realmId);
+        if (result.error) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
+        }
+
+        const accounts = result.data?.QueryResponse?.Account || [];
+        const companyId = input.companyId || 1; // Default to company 1
+        const synced = await db.syncQuickBooksAccounts(companyId, accounts);
+
+        await createAuditLog(ctx.user.id, 'create', 'quickbooks_sync', 0, `Synced ${synced.synced} accounts from QuickBooks`);
+        
+        return { 
+          success: true, 
+          synced: synced.synced,
+          message: `Successfully synced ${synced.synced} accounts from QuickBooks`
+        };
+      }),
+
+    // Sync Items/Products from QuickBooks
+    syncItems: protectedProcedure
+      .input(z.object({ 
+        companyId: z.number().optional(),
+        type: z.enum(['Inventory', 'NonInventory', 'Service']).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const token = await db.getQuickBooksOAuthToken(ctx.user.id);
+        if (!token || !token.realmId) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'QuickBooks not connected' });
+        }
+
+        const result = await getQuickBooksItems(token.accessToken, token.realmId, {
+          type: input.type,
+          activeOnly: true,
+        });
+        
+        if (result.error) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
+        }
+
+        const items = result.data?.QueryResponse?.Item || [];
+        const companyId = input.companyId || 1;
+        const synced = await db.syncQuickBooksItems(companyId, items);
+
+        await createAuditLog(ctx.user.id, 'create', 'quickbooks_sync', 0, `Synced ${synced.synced} items from QuickBooks`);
+        
+        return { 
+          success: true, 
+          synced: synced.synced,
+          message: `Successfully synced ${synced.synced} items from QuickBooks`
+        };
+      }),
+
+    // Get QuickBooks accounts for mapping
+    getAccounts: protectedProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        classification: z.enum(['Asset', 'Liability', 'Equity', 'Revenue', 'Expense']).optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const companyId = input?.companyId || 1;
+        return db.getQuickBooksAccountsByType(companyId, input?.classification);
+      }),
+
+    // Get account mappings
+    getAccountMappings: protectedProcedure
+      .input(z.object({ companyId: z.number().optional() }))
+      .query(async ({ input }) => {
+        const companyId = input.companyId || 1;
+        return db.getQuickBooksAccountMappings(companyId);
+      }),
+
+    // Create or update account mapping
+    upsertAccountMapping: protectedProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        mappingType: z.enum([
+          'cogs_product',
+          'cogs_freight',
+          'cogs_customs',
+          'inventory_asset',
+          'freight_expense',
+          'income_sales',
+          'expense_other'
+        ]),
+        quickbooksAccountId: z.string(),
+        erpCategoryName: z.string().optional(),
+        isDefault: z.boolean().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const companyId = input.companyId || 1;
+        const result = await db.upsertQuickBooksAccountMapping({
+          companyId,
+          mappingType: input.mappingType,
+          quickbooksAccountId: input.quickbooksAccountId,
+          erpCategoryName: input.erpCategoryName,
+          isDefault: input.isDefault ?? true,
+          notes: input.notes,
+          createdBy: ctx.user.id,
+        });
+
+        await createAuditLog(ctx.user.id, 'create', 'quickbooks_mapping', result.id, `Mapped ${input.mappingType} to QB account ${input.quickbooksAccountId}`);
+        
+        return { success: true, id: result.id };
+      }),
   }),
 
   // ============================================

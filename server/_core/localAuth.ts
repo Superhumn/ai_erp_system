@@ -103,6 +103,10 @@ function isValidEmail(email: string): boolean {
   return emailRegex.test(email);
 }
 
+/**
+ * Validate password strength
+ * At least 8 characters
+ */
 function isValidPassword(password: string): boolean {
   return password.length >= 8;
 }

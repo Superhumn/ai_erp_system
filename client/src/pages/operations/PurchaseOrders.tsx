@@ -31,7 +31,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SelectWithCreate } from "@/components/ui/select-with-create";
-import { ClipboardList, Plus, Search, Loader2, Trash2 } from "lucide-react";
+import { ClipboardList, Plus, Search, Loader2, Sparkles, Send } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -100,86 +100,36 @@ export default function PurchaseOrders() {
     },
   });
 
-  const resetForm = () => {
-    setFormData({ vendorId: 0, expectedDeliveryDate: "", notes: "" });
-    setLineItems([]);
-  };
+  const parseText = trpc.purchaseOrders.parseText.useMutation({
+    onSuccess: (data) => {
+      setPoPreview(data.preview);
+      toast.success("Text parsed successfully! Review the preview below.");
+    },
+    onError: (error) => {
+      toast.error(`Failed to parse text: ${error.message}`);
+    },
+  });
 
-  const addLineItem = () => {
-    setLineItems([...lineItems, {
-      productId: undefined,
-      description: "",
-      quantity: "1",
-      unitPrice: "0",
-      totalAmount: "0",
-    }]);
-  };
-
-  const updateLineItem = (index: number, field: keyof LineItem, value: string | number | undefined) => {
-    const updated = [...lineItems];
-    
-    if (field === "quantity") {
-      let numericValue =
-        typeof value === "number"
-          ? value
-          : parseFloat(value?.toString() ?? "0");
-
-      if (Number.isNaN(numericValue)) {
-        numericValue = 0;
+  const createFromText = trpc.purchaseOrders.createFromText.useMutation({
+    onSuccess: (data) => {
+      if (data.emailSent) {
+        toast.success("PO created and email sent to supplier!");
+      } else if (data.emailError) {
+        toast.warning(`PO created successfully, but email failed to send: ${data.emailError}`);
+      } else {
+        toast.success("PO created successfully!");
       }
-
-      if (numericValue < 0) {
-        toast.warning("Quantity cannot be negative. It has been reset to 0.");
-        numericValue = 0;
-      }
-
-      updated[index] = {
-        ...updated[index],
-        quantity: numericValue.toString(),
-      };
-    } else {
-      updated[index] = { ...updated[index], [field]: value };
-    }
-
-    // Recalculate total
-    const qty = parseFloat(updated[index].quantity) || 0;
-    const price = parseFloat(updated[index].unitPrice) || 0;
-
-    updated[index].totalAmount = (qty * price).toFixed(2);
-    
-    setLineItems(updated);
-  };
-
-  const selectProduct = (index: number, productId: string) => {
-    const product = products?.find(p => p.id === parseInt(productId));
-    if (product) {
-      const updated = [...lineItems];
-      updated[index] = {
-        ...updated[index],
-        productId: product.id,
-        description: product.name,
-        unitPrice: product.unitPrice?.toString() || "0",
-      };
-      // Recalculate
-      const qty = parseFloat(updated[index].quantity) || 0;
-      const price = parseFloat(updated[index].unitPrice) || 0;
-      updated[index].totalAmount = (qty * price).toFixed(2);
-      setLineItems(updated);
-    }
-  };
-
-  const removeLineItem = (index: number) => {
-    setLineItems(lineItems.filter((_, i) => i !== index));
-  };
-
-  const calculateTotals = () => {
-    const subtotal = lineItems.reduce((sum, item) => {
-      const qty = parseFloat(item.quantity) || 0;
-      const price = parseFloat(item.unitPrice) || 0;
-      return sum + (qty * price);
-    }, 0);
-    return { subtotal, total: subtotal };
-  };
+      setIsTextPOOpen(false);
+      setTextInput("");
+      setPoPreview(null);
+      setActiveAction(null);
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(`Failed to create PO: ${error.message}`);
+      setActiveAction(null);
+    },
+  });
 
   const filteredPOs = purchaseOrders?.filter((po) => {
     const matchesSearch = po.poNumber.toLowerCase().includes(search.toLowerCase());
@@ -249,7 +199,26 @@ export default function PurchaseOrders() {
     });
   };
 
-  const totals = calculateTotals();
+  const handleParseText = () => {
+    if (!textInput.trim()) {
+      toast.error("Please enter a text description");
+      return;
+    }
+    parseText.mutate({ text: textInput });
+  };
+
+  const handleCreateFromText = (sendEmail: boolean) => {
+    if (!poPreview) {
+      toast.error("Please parse the text first");
+      return;
+    }
+    setActiveAction(sendEmail ? 'email' : 'draft');
+    createFromText.mutate({
+      text: textInput,
+      preview: poPreview,
+      sendEmail,
+    });
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -263,14 +232,138 @@ export default function PurchaseOrders() {
             Manage vendor orders and track deliveries.
           </p>
         </div>
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              Create PO
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <div className="flex gap-2">
+          <Dialog open={isTextPOOpen} onOpenChange={(open) => {
+            setIsTextPOOpen(open);
+            if (!open) {
+              // Clean up state when dialog is closed
+              setTextInput("");
+              setPoPreview(null);
+              setActiveAction(null);
+            }
+          }}>
+            <DialogTrigger asChild>
+              <Button variant="outline">
+                <Sparkles className="h-4 w-4 mr-2" />
+                Quick Create from Text
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Create PO from Text</DialogTitle>
+                <DialogDescription>
+                  Describe what you want to order in plain text, and we'll create a PO for you.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="textInput">Order Description</Label>
+                  <Textarea
+                    id="textInput"
+                    value={textInput}
+                    onChange={(e) => setTextInput(e.target.value)}
+                    placeholder='Example: "order 3 tons of mushrooms ship to alex meats"'
+                    rows={3}
+                    className="resize-none"
+                  />
+                </div>
+                <Button
+                  onClick={handleParseText}
+                  disabled={parseText.isPending || !textInput.trim()}
+                  className="w-full"
+                  variant="secondary"
+                >
+                  {parseText.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  {parseText.isPending ? "Parsing..." : "Parse & Preview"}
+                </Button>
+
+                {poPreview && (
+                  <div className="border rounded-lg p-4 bg-muted/50 space-y-3">
+                    <h3 className="font-semibold">Preview</h3>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Vendor:</span>
+                        <span className="font-medium">{poPreview.vendorName}</span>
+                      </div>
+                      {poPreview.suggested && (
+                        <p className="text-xs text-amber-600">
+                          ⚠️ Default vendor suggested. Material not found in inventory.
+                        </p>
+                      )}
+                      {poPreview.isPriceEstimated && (
+                        <p className="text-xs text-amber-600">
+                          ⚠️ Price not available. Please update manually after creation.
+                        </p>
+                      )}
+                      <div className="border-t pt-2">
+                        <p className="font-medium mb-2">Items:</p>
+                        {poPreview.items.map((item: any, idx: number) => (
+                          <div key={idx} className="flex justify-between text-sm">
+                            <span>{item.description}</span>
+                            <span className="font-mono">${item.totalAmount}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="border-t pt-2 flex justify-between font-semibold">
+                        <span>Total:</span>
+                        <span className="font-mono">${poPreview.totalAmount}</span>
+                      </div>
+                      {poPreview.shippingAddress && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Ship To:</span>
+                          <span>{poPreview.shippingAddress}</span>
+                        </div>
+                      )}
+                      {poPreview.notes && (
+                        <div className="border-t pt-2">
+                          <span className="text-muted-foreground">Notes:</span>
+                          <p className="text-xs mt-1">{poPreview.notes}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <DialogFooter className="gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setIsTextPOOpen(false);
+                    setTextInput("");
+                    setPoPreview(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => handleCreateFromText(false)}
+                  disabled={!poPreview || createFromText.isPending}
+                >
+                  {createFromText.isPending && activeAction === 'draft' && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  Create Draft
+                </Button>
+                <Button
+                  onClick={() => handleCreateFromText(true)}
+                  disabled={!poPreview || createFromText.isPending}
+                  className="bg-green-600 hover:bg-green-700"
+                >
+                  {createFromText.isPending && activeAction === 'email' && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  <Send className="h-4 w-4 mr-2" />
+                  Create & Email
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          
+          <Dialog open={isOpen} onOpenChange={setIsOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="h-4 w-4 mr-2" />
+                Create PO
+              </Button>
+            </DialogTrigger>
+          <DialogContent>
             <form onSubmit={handleSubmit}>
               <DialogHeader>
                 <DialogTitle>Create PO from Text</DialogTitle>
@@ -441,6 +534,7 @@ export default function PurchaseOrders() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <Card>
