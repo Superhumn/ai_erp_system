@@ -5569,7 +5569,8 @@ Extract and return as JSON:
 
           if (data.status === 'cleared') {
             const clearance = await db.getCustomsClearanceById(id);
-            if (clearance?.shipmentId) {
+            // Only run inventory receipt if transitioning TO 'cleared' from a non-cleared status
+            if (clearance?.status !== 'cleared' && clearance?.shipmentId) {
               if (!warehouseId) {
                 throw new TRPCError({ code: 'BAD_REQUEST', message: 'warehouseId is required when clearing customs with inventory update' });
               }
@@ -6003,9 +6004,17 @@ Provide a brief status summary, any missing documents, and next steps.`;
     getCustomsClearances: copackerProcedure.query(async ({ ctx }) => {
       const allClearances = await db.getCustomsClearances();
       if (ctx.user.role !== 'copacker') return allClearances;
+      // Copackers must have a linked warehouse; they can only see clearances
+      // for inbound shipments (receiving goods) that have a purchase order
+      const linkedWarehouseId = ctx.user.linkedWarehouseId;
+      if (!linkedWarehouseId) return [];
       const allShipments = await db.getShipments();
-      const shipmentIds = new Set(allShipments.map((s: any) => s.id));
-      return allClearances.filter((c: any) => c.shipmentId != null && shipmentIds.has(c.shipmentId));
+      const inboundPoShipmentIds = new Set(
+        allShipments
+          .filter((s: any) => s.type === 'inbound' && s.purchaseOrderId != null)
+          .map((s: any) => s.id)
+      );
+      return allClearances.filter((c: any) => c.shipmentId != null && inboundPoShipmentIds.has(c.shipmentId));
     }),
 
 

@@ -198,7 +198,12 @@ export const paymentTextEndpoints = {
         // Find invoice if mentioned
         let invoiceId: number | undefined;
         if (parsed.invoiceNumber) {
-          const invoice = await db.getInvoiceById(parsed.invoiceNumber as unknown as number);
+          // invoiceNumber may be a string like "INV-2024-001" or a numeric ID
+          const invoiceNumStr = String(parsed.invoiceNumber);
+          const numericId = parseInt(invoiceNumStr, 10);
+          const invoice = (!isNaN(numericId) && String(numericId) === invoiceNumStr)
+            ? await db.getInvoiceById(numericId)
+            : await db.getInvoiceByNumber(invoiceNumStr);
           if (invoice) {
             invoiceId = invoice.id;
           }

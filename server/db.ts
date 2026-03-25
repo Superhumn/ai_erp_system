@@ -532,6 +532,13 @@ export async function getInvoiceById(id: number) {
   return result[0];
 }
 
+export async function getInvoiceByNumber(invoiceNumber: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(invoices).where(eq(invoices.invoiceNumber, invoiceNumber)).limit(1);
+  return result[0];
+}
+
 export async function getInvoiceWithItems(id: number) {
   const db = await getDb();
   if (!db) return undefined;

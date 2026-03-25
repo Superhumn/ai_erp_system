@@ -150,14 +150,24 @@ async function startServer() {
           const providerMessageId = event.sg_message_id?.split('.')[0];
           const email = event.email;
           const timestamp = event.timestamp ? new Date(event.timestamp * 1000) : new Date();
-          const emailEvent = await db.createEmailEvent({ event: providerEventType, timestamp, providerMessageId, recipientEmail: email, metadata: { reason: event.reason || event.response, bounceType: event.type } });
-          if (providerMessageId) {
-            const message = await db.getEmailMessageByProviderMessageId(providerMessageId);
-            if (message) {
-              await db.createEmailEvent({ event: providerEventType, timestamp, providerMessageId, emailMessageId: message.id, recipientEmail: email, metadata: { reason: event.reason || event.response, bounceType: event.type } });
-              const newStatus = sendgridProvider.mapEventToStatus(providerEventType);
-              if (newStatus) await db.updateEmailMessageStatus(message.id, newStatus);
-            }
+          const metadata = { reason: event.reason || event.response, bounceType: event.type };
+
+          // Look up the linked message first to avoid inserting a bare row then a duplicate linked row
+          const message = providerMessageId ? await db.getEmailMessageByProviderMessageId(providerMessageId) : null;
+
+          // Insert a single event row, linking to the message when available
+          await db.createEmailEvent({
+            event: providerEventType,
+            timestamp,
+            providerMessageId,
+            emailMessageId: message?.id,
+            recipientEmail: email,
+            metadata,
+          });
+
+          if (message) {
+            const newStatus = sendgridProvider.mapEventToStatus(providerEventType);
+            if (newStatus) await db.updateEmailMessageStatus(message.id, newStatus);
           }
         } catch (eventError) {
           console.error('[SendGrid Webhook] Error processing event:', eventError);
