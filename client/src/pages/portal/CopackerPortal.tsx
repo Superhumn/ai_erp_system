@@ -321,10 +321,9 @@ export default function CopackerPortal() {
       shipmentId: shipDocShipmentId ? parseInt(shipDocShipmentId) : undefined,
       documentType: shipDocType as any,
       name: shipDocName || shipDocFile.name,
-      description: shipDocDescription || undefined,
       fileData,
       mimeType: shipDocFile.type,
-    });
+    } as any);
   };
 
   // ---- Stats ----

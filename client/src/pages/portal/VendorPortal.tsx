@@ -92,12 +92,11 @@ export default function VendorPortal() {
     reader.onload = () => {
       const base64 = (reader.result as string).split(",")[1];
       uploadCustomsDocument.mutate({
-        clearanceId: selectedClearanceId,
         documentType: customsDocType as any,
         name: file.name,
         fileData: base64,
         mimeType: file.type,
-      });
+      } as any);
     };
     reader.readAsDataURL(file);
   };

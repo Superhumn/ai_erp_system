@@ -70,7 +70,7 @@ export default function Documents() {
     },
   });
 
-  const filteredDocuments = documents?.filter((doc: Document) => {
+  const filteredDocuments = documents?.filter((doc: any) => {
     const matchesSearch =
       doc.name.toLowerCase().includes(search.toLowerCase()) ||
       doc.description?.toLowerCase().includes(search.toLowerCase());
@@ -262,7 +262,7 @@ export default function Documents() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredDocuments.map((doc: Document) => (
+                {filteredDocuments.map((doc: any) => (
                   <TableRow key={doc.id}>
                     <TableCell className="font-medium">{doc.name}</TableCell>
                     <TableCell>

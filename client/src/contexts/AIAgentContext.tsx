@@ -16,9 +16,9 @@ export interface AIMessage {
 }
 
 export interface AIAction {
-  type: string;
-  description: string;
-  status: 'pending' | 'completed' | 'failed';
+  type?: string;
+  description?: string;
+  status?: 'pending' | 'completed' | 'failed';
   result?: any;
   error?: string;
 }

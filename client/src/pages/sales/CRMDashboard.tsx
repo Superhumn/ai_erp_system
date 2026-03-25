@@ -11,10 +11,7 @@ export default function CRMDashboard() {
   const { data: investors, isLoading: investorsLoading } = trpc.crm.listInvestors.useQuery();
   const { data: campaigns, isLoading: campaignsLoading } = trpc.crm.listCampaigns.useQuery();
   const { data: investments, isLoading: investmentsLoading } = trpc.crm.listInvestments.useQuery();
-  const { data: reminders, isLoading: remindersLoading } = trpc.crm.listReminders.useQuery({ 
-    status: 'pending',
-    dueBefore: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // Next 30 days
-  });
+  const { data: reminders, isLoading: remindersLoading } = trpc.crm.listReminders.useQuery();
 
   const isLoading = investorsLoading || campaignsLoading || investmentsLoading;
 

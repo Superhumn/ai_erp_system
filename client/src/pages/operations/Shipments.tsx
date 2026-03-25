@@ -76,7 +76,7 @@ export default function Shipments() {
     },
   });
 
-  const filteredShipments = shipments?.filter((shipment: Shipment) => {
+  const filteredShipments = shipments?.filter((shipment: any) => {
     const matchesSearch =
       shipment.shipmentNumber.toLowerCase().includes(search.toLowerCase()) ||
       shipment.trackingNumber?.toLowerCase().includes(search.toLowerCase()) ||
@@ -110,9 +110,9 @@ export default function Shipments() {
   };
 
   // Calculate summary stats
-  const inTransitCount = shipments?.filter((s: Shipment) => s.status === "in_transit").length || 0;
-  const deliveredCount = shipments?.filter((s: Shipment) => s.status === "delivered").length || 0;
-  const pendingCount = shipments?.filter((s: Shipment) => s.status === "pending").length || 0;
+  const inTransitCount = shipments?.filter((s: any) => s.status === "in_transit").length || 0;
+  const deliveredCount = shipments?.filter((s: any) => s.status === "delivered").length || 0;
+  const pendingCount = shipments?.filter((s: any) => s.status === "pending").length || 0;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -303,7 +303,7 @@ export default function Shipments() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredShipments.map((shipment: Shipment) => (
+                {filteredShipments.map((shipment: any) => (
                   <TableRow key={shipment.id}>
                     <TableCell className="font-mono">{shipment.shipmentNumber}</TableCell>
                     <TableCell>

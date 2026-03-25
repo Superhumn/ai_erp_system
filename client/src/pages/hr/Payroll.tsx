@@ -48,7 +48,7 @@ export default function Payroll() {
 
   const { data: employees, isLoading } = trpc.employees.list.useQuery();
 
-  const filteredEmployees = employees?.filter((emp: Employee) => {
+  const filteredEmployees = employees?.filter((emp: any) => {
     const fullName = `${emp.firstName} ${emp.lastName}`.toLowerCase();
     const matchesSearch = fullName.includes(search.toLowerCase()) || emp.email?.toLowerCase().includes(search.toLowerCase());
     const matchesType = typeFilter === "all" || emp.employmentType === typeFilter;
@@ -63,8 +63,8 @@ export default function Payroll() {
   };
 
   // Calculate summary stats
-  const activeEmployees = employees?.filter((e: Employee) => e.status === "active") || [];
-  const totalSalary = activeEmployees.reduce((sum: number, e: Employee) => {
+  const activeEmployees = employees?.filter((e: any) => e.status === "active") || [];
+  const totalSalary = activeEmployees.reduce((sum: number, e: any) => {
     if (e.salaryFrequency === "annual") {
       return sum + parseFloat(e.salary || "0");
     } else if (e.salaryFrequency === "monthly") {
@@ -176,7 +176,7 @@ export default function Payroll() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredEmployees.map((emp: Employee) => (
+                {filteredEmployees.map((emp: any) => (
                   <TableRow key={emp.id}>
                     <TableCell className="font-medium">
                       {emp.firstName} {emp.lastName}

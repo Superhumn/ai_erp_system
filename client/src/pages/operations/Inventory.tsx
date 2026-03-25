@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { SpreadsheetTable, Column, BulkAction } from "@/components/SpreadsheetTable";
+import { Badge } from "@/components/ui/badge";
 import {
   Warehouse,
   Loader2,
@@ -27,6 +28,7 @@ import {
   ArrowUpDown,
   MapPin,
   Target,
+  Plus,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -46,6 +48,7 @@ export default function Inventory() {
   const [selectedRows, setSelectedRows] = useState<Set<number | string>>(new Set());
   const [bulkActionDialogOpen, setBulkActionDialogOpen] = useState(false);
   const [currentBulkAction, setCurrentBulkAction] = useState<BulkActionType>(null);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   // Form states for bulk actions
   const [quantityAdjustment, setQuantityAdjustment] = useState<string>("0");

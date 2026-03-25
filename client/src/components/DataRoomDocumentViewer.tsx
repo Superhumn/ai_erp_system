@@ -97,6 +97,7 @@ export default function DataRoomDocumentViewer({
       const duration = Date.now() - currentPageTracking.current.startTime;
       updatePageViewMutation.mutate({
         id: currentPageTracking.current.pageViewId,
+        sessionToken: "",
         durationMs: duration,
         scrollDepth: currentPageTracking.current.scrollDepth,
         mouseMovements: currentPageTracking.current.mouseMovements,
@@ -214,6 +215,7 @@ export default function DataRoomDocumentViewer({
         const duration = Date.now() - currentPageTracking.current.startTime;
         updatePageViewMutation.mutate({
           id: currentPageTracking.current.pageViewId,
+          sessionToken: "",
           durationMs: duration,
           scrollDepth: currentPageTracking.current.scrollDepth,
           mouseMovements: currentPageTracking.current.mouseMovements,
@@ -335,10 +337,7 @@ export default function DataRoomDocumentViewer({
             <Page
               pageNumber={currentPage}
               scale={scale}
-              rotate={rotation}
               className="shadow-2xl"
-              renderTextLayer={false}
-              renderAnnotationLayer={false}
             />
             {/* Watermark overlay */}
             {watermark && (

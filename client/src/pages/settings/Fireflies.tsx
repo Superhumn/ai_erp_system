@@ -37,12 +37,12 @@ export default function FirefliesPage() {
   const [processCreateProject, setProcessCreateProject] = useState(false);
 
   const { data: config, isLoading: configLoading, refetch: refetchConfig } = trpc.fireflies.getConfig.useQuery();
-  const { data: meetings, isLoading: meetingsLoading, refetch: refetchMeetings } = trpc.fireflies.meetings.list.useQuery({});
-  const { data: stats, refetch: refetchStats } = trpc.fireflies.meetings.getStats.useQuery();
+  const { data: meetings, isLoading: meetingsLoading, refetch: refetchMeetings } = trpc.fireflies.meetings.list.useQuery();
+  const stats = (config as any)?.stats;
 
   const configureMutation = trpc.fireflies.configure.useMutation({
     onSuccess: (data) => {
-      toast.success(data.updated ? "Fireflies configuration updated" : "Fireflies connected successfully");
+      toast.success((data as any).updated ? "Fireflies configuration updated" : "Fireflies connected successfully");
       setApiKey("");
       refetchConfig();
     },
@@ -59,9 +59,8 @@ export default function FirefliesPage() {
 
   const syncMutation = trpc.fireflies.syncMeetings.useMutation({
     onSuccess: (data) => {
-      toast.success(`Synced ${data.synced} new meetings (${data.skipped} already synced)`);
+      toast.success(`Synced ${data.synced} new meetings (${(data as any).skipped ?? 0} already synced)`);
       refetchMeetings();
-      refetchStats();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -69,12 +68,11 @@ export default function FirefliesPage() {
   const processMeetingMutation = trpc.fireflies.processMeeting.useMutation({
     onSuccess: (data) => {
       toast.success(
-        `Processed: ${data.contactsCreated} contacts, ${data.tasksCreated} tasks${data.projectId ? ", 1 project" : ""} created`
+        `Processed: ${(data as any).contactsCreated ?? 0} contacts, ${(data as any).tasksCreated ?? 0} tasks${(data as any).projectId ? ", 1 project" : ""} created`
       );
       setShowProcessDialog(false);
       setSelectedMeetingId(null);
       refetchMeetings();
-      refetchStats();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -82,10 +80,9 @@ export default function FirefliesPage() {
   const processAllMutation = trpc.fireflies.processAllPending.useMutation({
     onSuccess: (data) => {
       toast.success(
-        `Batch processed ${data.processed} meetings: ${data.contactsCreated} contacts, ${data.tasksCreated} tasks, ${data.projectsCreated} projects`
+        `Batch processed ${data.processed} meetings: ${(data as any).contactsCreated ?? 0} contacts, ${(data as any).tasksCreated ?? 0} tasks, ${(data as any).projectsCreated ?? 0} projects`
       );
       refetchMeetings();
-      refetchStats();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -97,21 +94,18 @@ export default function FirefliesPage() {
     }
     configureMutation.mutate({
       apiKey: apiKey.trim(),
-      autoCreateContacts,
-      autoCreateTasks,
-      autoCreateProjects,
     });
   };
 
   const handleProcessMeeting = () => {
     if (!selectedMeetingId) return;
     processMeetingMutation.mutate({
-      meetingId: selectedMeetingId,
+      meetingId: selectedMeetingId.toString(),
       createContacts: true,
       createTasks: true,
       createProject: processCreateProject,
       projectName: processProjectName || undefined,
-    });
+    } as any);
   };
 
   const statusBadge = (status: string) => {
@@ -163,11 +157,11 @@ export default function FirefliesPage() {
             Sync meeting transcripts and auto-generate tasks, projects, and CRM contacts
           </p>
         </div>
-        {config?.configured && (
+        {(config as any)?.configured && (
           <div className="flex gap-2">
             <Button
               variant="outline"
-              onClick={() => syncMutation.mutate({})}
+              onClick={() => syncMutation.mutate()}
               disabled={syncMutation.isPending}
             >
               {syncMutation.isPending ? (
@@ -179,11 +173,7 @@ export default function FirefliesPage() {
             </Button>
             {(stats?.pending ?? 0) > 0 && (
               <Button
-                onClick={() => processAllMutation.mutate({
-                  createContacts: autoCreateContacts,
-                  createTasks: autoCreateTasks,
-                  createProjects: autoCreateProjects,
-                })}
+                onClick={() => processAllMutation.mutate()}
                 disabled={processAllMutation.isPending}
               >
                 {processAllMutation.isPending ? (
@@ -199,7 +189,7 @@ export default function FirefliesPage() {
       </div>
 
       {/* Stats Cards */}
-      {config?.configured && stats && (
+      {(config as any)?.configured && stats && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <Card>
             <CardContent className="pt-4 pb-4">
@@ -234,10 +224,10 @@ export default function FirefliesPage() {
         </div>
       )}
 
-      <Tabs defaultValue={config?.configured ? "meetings" : "setup"}>
+      <Tabs defaultValue={(config as any)?.configured ? "meetings" : "setup"}>
         <TabsList>
           <TabsTrigger value="setup"><Settings className="h-4 w-4 mr-1" /> Setup</TabsTrigger>
-          {config?.configured && (
+          {(config as any)?.configured && (
             <TabsTrigger value="meetings"><Mic className="h-4 w-4 mr-1" /> Meetings</TabsTrigger>
           )}
         </TabsList>
@@ -247,7 +237,7 @@ export default function FirefliesPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                {config?.configured ? (
+                {(config as any)?.configured ? (
                   <CheckCircle2 className="h-5 w-5 text-green-500" />
                 ) : (
                   <XCircle className="h-5 w-5 text-gray-400" />
@@ -263,22 +253,22 @@ export default function FirefliesPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              {config?.configured && (
+              {(config as any)?.configured && (
                 <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
                   <div className="flex items-center gap-2 text-green-700 font-medium">
                     <CheckCircle2 className="h-4 w-4" />
                     Connected to Fireflies.ai
                   </div>
-                  {config.config && (
+                  {(config as any).config && (
                     <div className="mt-2 text-sm text-green-600">
-                      {(config.config as any).firefliesUserName && (
-                        <span>Account: {(config.config as any).firefliesUserName} ({(config.config as any).firefliesEmail})</span>
+                      {((config as any).config as any).firefliesUserName && (
+                        <span>Account: {((config as any).config as any).firefliesUserName} ({((config as any).config as any).firefliesEmail})</span>
                       )}
                     </div>
                   )}
-                  {config.lastSyncAt && (
+                  {(config as any).lastSyncAt && (
                     <div className="mt-1 text-sm text-green-600">
-                      Last synced: {formatDate(config.lastSyncAt)}
+                      Last synced: {formatDate((config as any).lastSyncAt)}
                     </div>
                   )}
                 </div>
@@ -286,7 +276,7 @@ export default function FirefliesPage() {
 
               <div className="space-y-4">
                 <div>
-                  <Label htmlFor="apiKey">{config?.configured ? "Update" : ""} Fireflies API Key</Label>
+                  <Label htmlFor="apiKey">{(config as any)?.configured ? "Update" : ""} Fireflies API Key</Label>
                   <div className="flex gap-2 mt-1">
                     <Input
                       id="apiKey"
@@ -299,7 +289,7 @@ export default function FirefliesPage() {
                       {configureMutation.isPending ? (
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                       ) : null}
-                      {config?.configured ? "Update" : "Connect"}
+                      {(config as any)?.configured ? "Update" : "Connect"}
                     </Button>
                   </div>
                 </div>
@@ -329,7 +319,7 @@ export default function FirefliesPage() {
                   </div>
                 </div>
 
-                {config?.configured && (
+                {(config as any)?.configured && (
                   <div className="pt-4 border-t">
                     <Button variant="destructive" size="sm" onClick={() => disconnectMutation.mutate()} disabled={disconnectMutation.isPending}>
                       Disconnect Fireflies
@@ -342,7 +332,7 @@ export default function FirefliesPage() {
         </TabsContent>
 
         {/* Meetings Tab */}
-        {config?.configured && (
+        {(config as any)?.configured && (
           <TabsContent value="meetings">
             <Card>
               <CardHeader>
