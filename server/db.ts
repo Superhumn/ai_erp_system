@@ -205,12 +205,6 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-export async function getUserByEmail(email: string) {
-  const db = await getDb();
-  if (!db) return undefined;
-  const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
-}
 
 export async function getAllUsers() {
   const db = await getDb();
@@ -9442,12 +9436,6 @@ export async function upsertEdiSettings(data: InsertEdiSettings) {
     return { id: existing.id };
   }
   const result = await db.insert(ediSettings).values(data);
-  return { id: result[0].insertId };
-}
-export async function createInvestmentGrantChecklist(data: InsertInvestmentGrantChecklist) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(investmentGrantChecklists).values(data);
   return { id: result[0].insertId };
 }
 
