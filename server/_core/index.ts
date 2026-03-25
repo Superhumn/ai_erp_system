@@ -95,6 +95,13 @@ async function startServer() {
     }
   }, RATE_LIMIT_WINDOW_MS);
 
+  const oauthCallbackLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
   // ============================================
   // HEALTH CHECK
   // ============================================

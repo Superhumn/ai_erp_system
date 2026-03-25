@@ -38,6 +38,9 @@ export const ENV = {
   shopifyRedirectUri: process.env.SHOPIFY_REDIRECT_URI ?? "",
   // Airtable integration
   airtablePersonalAccessToken: process.env.AIRTABLE_PERSONAL_ACCESS_TOKEN ?? "",
+  // Forge API
+  forgeApiUrl: process.env.FORGE_API_URL ?? "",
+  forgeApiKey: process.env.FORGE_API_KEY ?? "",
 };
 
 /**

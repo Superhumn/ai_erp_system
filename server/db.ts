@@ -113,6 +113,11 @@ import {
   // Investment grant checklists
   investmentGrantChecklists, investmentGrantItems,
   InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
+  // Data room
+  dueDiligenceTemplates, dueDiligenceCategories, dueDiligenceItems,
+  dataRoomChecklists, dataRoomChecklistItems,
+  InsertDueDiligenceTemplate, InsertDueDiligenceCategory, InsertDueDiligenceItem,
+  InsertDataRoomChecklist, InsertDataRoomChecklistItem,
   // Transactional email
   transactionalEmailTemplates, InsertTransactionalEmailTemplate,
   emailMessages, InsertEmailMessage,
@@ -2691,19 +2696,18 @@ export async function deleteBomComponent(id: number) {
 }
 
 // Raw Materials
-export async function getRawMaterials(filters?: { status?: string; category?: string }) {
+export async function getRawMaterials(filters?: { status?: string; category?: string; searchTerm?: string; limit?: number }) {
   const db = await getDb();
   if (!db) return [];
   
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(rawMaterials.status, filters.status as any));
+  if (filters?.category) conditions.push(eq(rawMaterials.category, filters.category));
+  if (filters?.searchTerm) conditions.push(like(rawMaterials.name, `%${filters.searchTerm}%`));
+
   let query = db.select().from(rawMaterials).orderBy(rawMaterials.name);
-  
-  if (filters?.status) {
-    query = query.where(eq(rawMaterials.status, filters.status as any)) as typeof query;
-  }
-  if (filters?.category) {
-    query = query.where(eq(rawMaterials.category, filters.category)) as typeof query;
-  }
-  
+  if (conditions.length > 0) query = query.where(and(...conditions)) as typeof query;
+  if (filters?.limit) query = query.limit(filters.limit) as typeof query;
   return query;
 }
 
@@ -9496,6 +9500,32 @@ export async function createChecklistFromTemplate(
   return checklist;
 }
 
+const STANDARD_DD_CATEGORIES: Record<string, { name: string; items: Array<{ name: string; keywords: string[] }> }> = {
+  corporate: { name: "Corporate Documents", items: [
+    { name: "Certificate of Incorporation", keywords: ["incorporation", "certificate"] },
+    { name: "Articles of Association", keywords: ["articles", "association"] },
+    { name: "Board Resolutions", keywords: ["board", "resolution"] },
+  ]},
+  financial: { name: "Financial Information", items: [
+    { name: "Audited Financial Statements", keywords: ["audited", "financial", "statements"] },
+    { name: "Management Accounts", keywords: ["management", "accounts"] },
+    { name: "Cap Table", keywords: ["cap table", "capitalization"] },
+  ]},
+  legal: { name: "Legal & Compliance", items: [
+    { name: "Material Contracts", keywords: ["contract", "agreement"] },
+    { name: "IP Assignments", keywords: ["intellectual property", "assignment"] },
+  ]},
+};
+
+const SERIES_B_DD_CATEGORIES: Record<string, { name: string; items: Array<{ name: string; keywords: string[] }> }> = {
+  ...STANDARD_DD_CATEGORIES,
+  growth: { name: "Growth & Metrics", items: [
+    { name: "Monthly Recurring Revenue", keywords: ["mrr", "revenue", "recurring"] },
+    { name: "Customer Cohort Analysis", keywords: ["cohort", "retention", "churn"] },
+    { name: "Pipeline & Forecasts", keywords: ["pipeline", "forecast", "sales"] },
+  ]},
+};
+
 // Create a standard due diligence checklist
 export async function createStandardChecklist(
   dataRoomId: number,
@@ -9822,24 +9852,6 @@ export async function getVendorSpendingHistory(vendorId: number) {
 }
 
 // ============================================
-// EDI TRADING PARTNERS
-// ============================================
-
-export async function getEdiTradingPartnerById(id: number) {
-  const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(ediTradingPartners).where(eq(ediTradingPartners.id, id)).limit(1);
-  return result[0] || null;
-}
-
-export async function getEdiTradingPartnerByIsaId(isaId: string) {
-  const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(ediTradingPartners).where(eq(ediTradingPartners.isaId, isaId)).limit(1);
-  return result[0] || null;
-}
-
-// ============================================
 // COGS PERIOD SUMMARIES (alias with array return)
 
 // ============================================
@@ -10117,5 +10129,104 @@ export async function upsertQuickBooksAccountMapping(data: InsertQuickBooksAccou
   }
   const result = await db.insert(quickbooksAccountMappings).values(data);
   return { id: result[0].insertId };
+}
+
+export async function getInventoryCostingConfigs(filters?: { companyId?: number; productId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(inventoryCostingConfig.companyId, filters.companyId));
+  if (filters?.productId) conditions.push(eq(inventoryCostingConfig.productId, filters.productId));
+  if (conditions.length > 0) {
+    return db.select().from(inventoryCostingConfig).where(and(...conditions)).orderBy(desc(inventoryCostingConfig.createdAt));
+  }
+  return db.select().from(inventoryCostingConfig).orderBy(desc(inventoryCostingConfig.createdAt));
+}
+
+export async function getInventoryCostingConfigByProduct(productId: number, companyId?: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const conditions = [eq(inventoryCostingConfig.productId, productId), eq(inventoryCostingConfig.isActive, true)];
+  if (companyId) conditions.push(eq(inventoryCostingConfig.companyId, companyId));
+  const result = await db.select().from(inventoryCostingConfig).where(and(...conditions)).limit(1);
+  return result[0] || null;
+}
+
+export async function createInventoryCostingConfig(data: InsertInventoryCostingConfig) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(inventoryCostingConfig).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateInventoryCostingConfig(id: number, data: Partial<InsertInventoryCostingConfig>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(inventoryCostingConfig).set(data as any).where(eq(inventoryCostingConfig.id, id));
+}
+
+export async function getInventoryCostLayers(filters?: { companyId?: number; productId?: number; warehouseId?: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(inventoryCostLayers.companyId, filters.companyId));
+  if (filters?.productId) conditions.push(eq(inventoryCostLayers.productId, filters.productId));
+  if (filters?.warehouseId) conditions.push(eq(inventoryCostLayers.warehouseId, filters.warehouseId));
+  if (filters?.status) conditions.push(eq(inventoryCostLayers.status, filters.status as any));
+  if (conditions.length > 0) {
+    return db.select().from(inventoryCostLayers).where(and(...conditions)).orderBy(asc(inventoryCostLayers.layerDate));
+  }
+  return db.select().from(inventoryCostLayers).orderBy(asc(inventoryCostLayers.layerDate));
+}
+
+export async function getActiveCostLayers(productId: number, sortOrder?: "asc" | "desc", warehouseId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(inventoryCostLayers.productId, productId), eq(inventoryCostLayers.status, "active")];
+  if (warehouseId) conditions.push(eq(inventoryCostLayers.warehouseId, warehouseId));
+  const order = sortOrder === "desc" ? desc(inventoryCostLayers.layerDate) : asc(inventoryCostLayers.layerDate);
+  return db.select().from(inventoryCostLayers)
+    .where(and(...conditions))
+    .orderBy(order);
+}
+
+export async function createInventoryCostLayer(data: InsertInventoryCostLayer) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(inventoryCostLayers).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateInventoryCostLayer(id: number, data: Partial<InsertInventoryCostLayer>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(inventoryCostLayers).set(data as any).where(eq(inventoryCostLayers.id, id));
+}
+
+export async function getWeightedAverageCost(productId: number, warehouseId?: number): Promise<{ totalQuantity: number; averageCost: number; totalValue: number }> {
+  const db = await getDb();
+  if (!db) return { totalQuantity: 0, averageCost: 0, totalValue: 0 };
+  const conditions = [eq(inventoryCostLayers.productId, productId), eq(inventoryCostLayers.status, "active")];
+  if (warehouseId) conditions.push(eq(inventoryCostLayers.warehouseId, warehouseId));
+  const layers = await db.select().from(inventoryCostLayers).where(and(...conditions));
+  const totalQty = layers.reduce((sum, l) => sum + parseFloat(l.remainingQuantity), 0);
+  if (totalQty === 0) return { totalQuantity: 0, averageCost: 0, totalValue: 0 };
+  const totalCost = layers.reduce((sum, l) => sum + parseFloat(l.unitCost) * parseFloat(l.remainingQuantity), 0);
+  return { totalQuantity: totalQty, averageCost: totalCost / totalQty, totalValue: totalCost };
+}
+
+export async function getCogsSummary(filters?: { companyId?: number; productId?: number; periodType?: string; startDate?: Date; endDate?: Date }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(cogsPeriodSummary.companyId, filters.companyId));
+  if (filters?.productId) conditions.push(eq(cogsPeriodSummary.productId, filters.productId));
+  if (filters?.periodType) conditions.push(eq(cogsPeriodSummary.periodType, filters.periodType as any));
+  if (filters?.startDate) conditions.push(gte(cogsPeriodSummary.periodStart, filters.startDate));
+  if (filters?.endDate) conditions.push(lte(cogsPeriodSummary.periodEnd, filters.endDate));
+  if (conditions.length > 0) {
+    return db.select().from(cogsPeriodSummary).where(and(...conditions)).orderBy(desc(cogsPeriodSummary.periodStart));
+  }
+  return db.select().from(cogsPeriodSummary).orderBy(desc(cogsPeriodSummary.periodStart));
 }
 

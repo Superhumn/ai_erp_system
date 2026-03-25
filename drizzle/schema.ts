@@ -2801,6 +2801,95 @@ export type DataRoomVisitorSession = typeof dataRoomVisitorSessions.$inferSelect
 export type InsertDataRoomVisitorSession = typeof dataRoomVisitorSessions.$inferInsert;
 
 // ============================================
+// DUE DILIGENCE TEMPLATES
+// ============================================
+
+export const dueDiligenceTemplates = mysqlTable("dueDiligenceTemplates", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  type: mysqlEnum("type", ["fundraising", "ma", "full", "series_b"]).default("full").notNull(),
+  isPublic: boolean("isPublic").default(false).notNull(),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DueDiligenceTemplate = typeof dueDiligenceTemplates.$inferSelect;
+export type InsertDueDiligenceTemplate = typeof dueDiligenceTemplates.$inferInsert;
+
+export const dueDiligenceCategories = mysqlTable("dueDiligenceCategories", {
+  id: int("id").autoincrement().primaryKey(),
+  templateId: int("templateId").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  sortOrder: int("sortOrder").default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DueDiligenceCategory = typeof dueDiligenceCategories.$inferSelect;
+export type InsertDueDiligenceCategory = typeof dueDiligenceCategories.$inferInsert;
+
+export const dueDiligenceItems = mysqlTable("dueDiligenceItems", {
+  id: int("id").autoincrement().primaryKey(),
+  templateId: int("templateId").notNull(),
+  categoryId: int("categoryId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  required: boolean("required").default(true).notNull(),
+  requirement: mysqlEnum("requirement", ["required", "optional", "conditional"]).default("required").notNull(),
+  matchKeywords: text("matchKeywords"),
+  matchFileTypes: text("matchFileTypes"),
+  sortOrder: int("sortOrder").default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DueDiligenceItem = typeof dueDiligenceItems.$inferSelect;
+export type InsertDueDiligenceItem = typeof dueDiligenceItems.$inferInsert;
+
+export const dataRoomChecklists = mysqlTable("dataRoomChecklists", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  templateId: int("templateId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  status: mysqlEnum("status", ["active", "archived"]).default("active").notNull(),
+  createdBy: int("createdBy"),
+  totalItems: int("totalItems").default(0).notNull(),
+  completedItems: int("completedItems").default(0).notNull(),
+  partialItems: int("partialItems").default(0).notNull(),
+  missingItems: int("missingItems").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoomChecklist = typeof dataRoomChecklists.$inferSelect;
+export type InsertDataRoomChecklist = typeof dataRoomChecklists.$inferInsert;
+
+export const dataRoomChecklistItems = mysqlTable("dataRoomChecklistItems", {
+  id: int("id").autoincrement().primaryKey(),
+  checklistId: int("checklistId").notNull(),
+  dataRoomId: int("dataRoomId").notNull(),
+  categoryName: varchar("categoryName", { length: 255 }),
+  itemName: varchar("itemName", { length: 255 }).notNull(),
+  itemDescription: text("itemDescription"),
+  requirement: mysqlEnum("requirement", ["required", "optional", "conditional"]).default("required").notNull(),
+  status: mysqlEnum("status", ["missing", "pending", "uploaded", "approved", "rejected", "waived", "not_applicable", "complete", "partial"]).default("missing").notNull(),
+  matchKeywords: text("matchKeywords"),
+  matchFileTypes: text("matchFileTypes"),
+  linkedDocumentId: int("linkedDocumentId"),
+  linkedDocumentIds: text("linkedDocumentIds"),
+  linkedDocumentCount: int("linkedDocumentCount").default(0),
+  sortOrder: int("sortOrder").default(0),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoomChecklistItem = typeof dataRoomChecklistItems.$inferSelect;
+export type InsertDataRoomChecklistItem = typeof dataRoomChecklistItems.$inferInsert;
+
+// ============================================
 // EMAIL IMAP CREDENTIALS
 // ============================================
 

@@ -703,11 +703,11 @@ export async function processInboundEdi(
           // Try to resolve product via crosswalk
           let productId: number | undefined;
           if (item.buyerPartNumber) {
-            const crosswalk = await db.getEdiProductCrosswalkByBuyerPart(item.buyerPartNumber, tradingPartnerId);
+            const crosswalk = await db.getEdiProductCrosswalkByBuyerPart(tradingPartnerId, item.buyerPartNumber);
             if (crosswalk) productId = crosswalk.productId;
           }
           if (!productId && item.upc) {
-            const crosswalk = await db.getEdiProductCrosswalkByUpc(item.upc, tradingPartnerId);
+            const crosswalk = await db.getEdiProductCrosswalkByUpc(tradingPartnerId, item.upc);
             if (crosswalk) productId = crosswalk.productId;
           }
 

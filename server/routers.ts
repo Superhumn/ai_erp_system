@@ -2250,9 +2250,9 @@ export const appRouter = router({
     list: protectedProcedure
       .input(z.object({
         companyId: z.number().optional(),
-        status: z.string().optional(),
+        status: z.enum(["not_started", "in_progress", "completed", "on_hold"]).optional(),
       }).optional())
-      .query(({ input }) => db.getInvestmentGrantChecklists(input?.companyId)),
+      .query(({ input }) => db.getInvestmentGrantChecklists(input)),
     get: protectedProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => db.getInvestmentGrantChecklistWithItems(input.id)),
@@ -5563,7 +5563,6 @@ Extract and return as JSON:
           totalAmount: z.string().optional(),
           warehouseId: z.number().optional(),
           notes: z.string().optional(),
-          warehouseId: z.number().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
           const { id, warehouseId, ...data } = input;
