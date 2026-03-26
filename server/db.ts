@@ -92,18 +92,6 @@ import {
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
   InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
-  // Fireflies integration
-  firefliesMeetings, firefliesActionItems, firefliesContactMappings,
-  InsertFirefliesMeeting, InsertFirefliesActionItem, InsertFirefliesContactMapping,
-  // Copacker portal
-  copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
-  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
-  // Inventory costing & COGS
-  inventoryCostingConfig, inventoryCostLayers, cogsRecords, cogsPeriodSummary,
-  InsertInventoryCostingConfig, InsertInventoryCostLayer, InsertCogsRecord, InsertCogsPeriodSummary,
-  // Vendor negotiations
-  vendorNegotiations, negotiationRounds,
-  InsertVendorNegotiation, InsertNegotiationRound,
   // Local authentication
   localAuthCredentials, InsertLocalAuthCredential,
   // Investment grant checklists
@@ -9206,67 +9194,3 @@ export async function getChecklistSummary(dataRoomId: number) {
   };
 }
 
-// ============================================
-// COGS (COST OF GOODS SOLD) FUNCTIONS
-// ============================================
-
-export async function createCogsRecord(data: InsertCogsRecord) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(cogsRecords).values(data);
-  return { id: result[0].insertId };
-}
-
-export async function getCogsRecords(filters?: {
-  companyId?: number;
-  productId?: number;
-  startDate?: Date;
-  endDate?: Date;
-}) {
-  const db = await getDb();
-  if (!db) return [];
-  const conditions = [];
-  if (filters?.companyId) conditions.push(eq(cogsRecords.companyId, filters.companyId));
-  if (filters?.productId) conditions.push(eq(cogsRecords.productId, filters.productId));
-  if (filters?.startDate) conditions.push(gte(cogsRecords.periodDate, filters.startDate));
-  if (filters?.endDate) conditions.push(lte(cogsRecords.periodDate, filters.endDate));
-  if (conditions.length > 0) {
-    return db.select().from(cogsRecords).where(and(...conditions)).orderBy(desc(cogsRecords.periodDate));
-  }
-  return db.select().from(cogsRecords).orderBy(desc(cogsRecords.periodDate));
-}
-
-export async function getCogsPeriodSummaries(filters?: {
-  companyId?: number;
-  productId?: number;
-  periodType?: string;
-  periodStart?: Date;
-  periodEnd?: Date;
-}) {
-  const db = await getDb();
-  if (!db) return [];
-  const conditions = [];
-  if (filters?.companyId) conditions.push(eq(cogsPeriodSummary.companyId, filters.companyId));
-  if (filters?.productId) conditions.push(eq(cogsPeriodSummary.productId, filters.productId));
-  if (filters?.periodType) conditions.push(eq(cogsPeriodSummary.periodType, filters.periodType as any));
-  if (filters?.periodStart) conditions.push(eq(cogsPeriodSummary.periodStart, filters.periodStart));
-  if (filters?.periodEnd) conditions.push(eq(cogsPeriodSummary.periodEnd, filters.periodEnd));
-  if (conditions.length > 0) {
-    return db.select().from(cogsPeriodSummary).where(and(...conditions)).orderBy(desc(cogsPeriodSummary.periodStart));
-  }
-  return db.select().from(cogsPeriodSummary).orderBy(desc(cogsPeriodSummary.periodStart));
-}
-
-export async function createCogsPeriodSummaryRecord(data: InsertCogsPeriodSummary) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(cogsPeriodSummary).values(data);
-  return { id: result[0].insertId };
-}
-
-export async function updateCogsPeriodSummaryRecord(id: number, data: Partial<InsertCogsPeriodSummary>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(cogsPeriodSummary).set(data).where(eq(cogsPeriodSummary.id, id));
-  return { id };
-}
