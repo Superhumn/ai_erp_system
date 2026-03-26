@@ -1,0 +1,1 @@
+-- Empty migration placeholder: tables already created via drizzle-kit push
