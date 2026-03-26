@@ -32,10 +32,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy package files and install production deps only
+# Copy package files and install all deps (drizzle-kit needed at runtime for migrations)
 COPY package.json pnpm-lock.yaml ./
 COPY patches/ ./patches/
-RUN pnpm install --prod
+RUN pnpm install
 
 # Copy built artifacts from builder
 COPY --from=builder /app/dist ./dist
