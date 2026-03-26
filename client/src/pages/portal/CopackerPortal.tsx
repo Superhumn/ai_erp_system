@@ -282,7 +282,7 @@ export default function CopackerPortal() {
 
     if (invoiceFile) {
       const buffer = await invoiceFile.arrayBuffer();
-      fileData = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+      fileData = btoa(String.fromCharCode(...Array.from(new Uint8Array(buffer))));
       mimeType = invoiceFile.type;
       fileName = invoiceFile.name;
     }
@@ -315,7 +315,7 @@ export default function CopackerPortal() {
       return;
     }
     const buffer = await shipDocFile.arrayBuffer();
-    const fileData = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+    const fileData = btoa(String.fromCharCode(...Array.from(new Uint8Array(buffer))));
 
     uploadShippingDoc.mutate({
       shipmentId: shipDocShipmentId ? parseInt(shipDocShipmentId) : undefined,

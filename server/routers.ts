@@ -5960,6 +5960,184 @@ Provide a brief status summary, any missing documents, and next steps.`;
         }
         return db.getCustomsDocuments(input.clearanceId);
       }),
+
+    // Current billing period (current calendar month)
+    getCurrentPeriod: copackerProcedure.query(() => {
+      const now = new Date();
+      const periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+      const daysLeft = Math.max(0, Math.ceil((periodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+      const isDue = daysLeft <= 3;
+      const periodLabel = periodStart.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+      return { periodStart, periodEnd, isDue, daysLeft, periodLabel };
+    }),
+
+    // Inventory updates submitted by this copacker
+    getInventoryUpdates: copackerProcedure.query(async ({ ctx }) => {
+      const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId ?? undefined : undefined;
+      return db.getCopackerInventoryUpdates(warehouseId);
+    }),
+
+    // Invoices submitted by this copacker
+    getInvoices: copackerProcedure.query(async ({ ctx }) => {
+      const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId ?? undefined : undefined;
+      return db.getCopackerInvoices(warehouseId);
+    }),
+
+    // Shipping documents uploaded by this copacker
+    getShippingDocuments: copackerProcedure.query(async ({ ctx }) => {
+      const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId ?? undefined : undefined;
+      return db.getCopackerShippingDocuments(warehouseId);
+    }),
+
+    // Detail view for an inventory update
+    getInventoryUpdateDetail: copackerProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const update = await db.getCopackerInventoryUpdateById(input.id);
+        if (!update) throw new TRPCError({ code: 'NOT_FOUND', message: 'Inventory update not found' });
+        const rawItems = await db.getCopackerInventoryUpdateItems(input.id);
+        const items = await Promise.all(rawItems.map(async (item) => {
+          const product = await db.getProductById(item.productId);
+          return { item, product };
+        }));
+        return { update, items };
+      }),
+
+    // Detail view for an invoice
+    getInvoiceDetail: copackerProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const invoice = await db.getCopackerInvoiceById(input.id);
+        if (!invoice) throw new TRPCError({ code: 'NOT_FOUND', message: 'Invoice not found' });
+        const items = await db.getCopackerInvoiceItems(input.id);
+        return { invoice, items };
+      }),
+
+    // Create a new inventory update (draft)
+    createInventoryUpdate: copackerProcedure
+      .input(z.object({
+        periodStart: z.coerce.date(),
+        periodEnd: z.coerce.date(),
+        notes: z.string().optional(),
+        items: z.array(z.object({
+          productId: z.number(),
+          previousQuantity: z.string().optional(),
+          newQuantity: z.string(),
+          quantityReceived: z.string().optional(),
+          quantityShipped: z.string().optional(),
+          quantityDamaged: z.string().optional(),
+          notes: z.string().optional(),
+        })),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId ?? undefined : undefined;
+        const update = await db.createCopackerInventoryUpdate({
+          warehouseId,
+          periodStart: input.periodStart,
+          periodEnd: input.periodEnd,
+          notes: input.notes,
+          status: "draft",
+          submittedBy: ctx.user.id,
+        });
+        for (const item of input.items) {
+          await db.createCopackerInventoryUpdateItem({
+            updateId: update.id,
+            productId: item.productId,
+            previousQuantity: item.previousQuantity,
+            newQuantity: item.newQuantity,
+            quantityReceived: item.quantityReceived,
+            quantityShipped: item.quantityShipped,
+            quantityDamaged: item.quantityDamaged,
+            notes: item.notes,
+          });
+        }
+        return update;
+      }),
+
+    // Submit an inventory update (transitions from draft to submitted)
+    submitInventoryUpdate: copackerProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const update = await db.getCopackerInventoryUpdateById(input.id);
+        if (!update) throw new TRPCError({ code: 'NOT_FOUND', message: 'Inventory update not found' });
+        await db.updateCopackerInventoryUpdate(input.id, { status: "submitted" });
+        await createAuditLog(ctx.user.id, 'update', 'copackerInventoryUpdate', input.id, 'Submitted');
+        return { success: true };
+      }),
+
+    // Create a new copacker invoice
+    createInvoice: copackerProcedure
+      .input(z.object({
+        invoiceNumber: z.string().min(1),
+        invoiceDate: z.string(),
+        dueDate: z.string().optional(),
+        description: z.string().optional(),
+        notes: z.string().optional(),
+        items: z.array(z.object({
+          description: z.string(),
+          quantity: z.string().optional(),
+          unitPrice: z.string().optional(),
+          totalAmount: z.string().optional(),
+        })),
+        fileName: z.string().optional(),
+        fileData: z.string().optional(),
+        mimeType: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId ?? undefined : undefined;
+        const totalAmount = input.items.reduce((sum, i) => sum + parseFloat(i.totalAmount || "0"), 0);
+        const invoice = await db.createCopackerInvoice({
+          warehouseId,
+          invoiceNumber: input.invoiceNumber,
+          invoiceDate: input.invoiceDate,
+          dueDate: input.dueDate,
+          totalAmount: totalAmount.toFixed(2),
+          description: input.description,
+          notes: input.notes,
+          fileName: input.fileName,
+          status: "submitted",
+          submittedBy: ctx.user.id,
+        });
+        for (const item of input.items) {
+          if (item.description.trim()) {
+            await db.createCopackerInvoiceItem({
+              invoiceId: invoice.id,
+              description: item.description,
+              quantity: item.quantity || "1",
+              unitPrice: item.unitPrice || "0",
+              totalAmount: item.totalAmount || "0",
+            });
+          }
+        }
+        await createAuditLog(ctx.user.id, 'create', 'copackerInvoice', invoice.id, input.invoiceNumber);
+        return invoice;
+      }),
+
+    // Upload a shipping document
+    uploadShippingDocument: copackerProcedure
+      .input(z.object({
+        shipmentId: z.number().optional(),
+        documentType: z.string(),
+        name: z.string(),
+        description: z.string().optional(),
+        fileData: z.string().optional(),
+        mimeType: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId ?? undefined : undefined;
+        const doc = await db.createCopackerShippingDocument({
+          warehouseId,
+          shipmentId: input.shipmentId,
+          documentType: input.documentType,
+          name: input.name,
+          description: input.description,
+          mimeType: input.mimeType,
+          uploadedBy: ctx.user.id,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'copackerShippingDocument', doc.id, input.name);
+        return doc;
+      }),
   }),
 
   // Vendor Portal - restricted views for vendors
