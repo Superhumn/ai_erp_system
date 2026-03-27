@@ -100,7 +100,7 @@ export async function runAgent(
           logAgent({ level: "info", runId, iteration: iterations, toolName: block.name, message: `Calling tool` });
 
           try {
-            result = await dispatchTool(block.name, block.input);
+            result = await dispatchTool(block.name, block.input, runId);
           } catch (err) {
             result = `ERROR: ${(err as Error).message}`;
             isError = true;

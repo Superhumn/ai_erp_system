@@ -3,9 +3,10 @@ import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
 import { triggerAgent } from "./trigger";
 import { getAgentRunWithSteps } from "./persistence";
+import { getAuditTrail, revertAuditEntry, revertAgentRun } from "./audit";
 import { getDb } from "../db";
-import { agentRuns, agentRunSteps } from "../../drizzle/schema";
-import { desc, eq } from "drizzle-orm";
+import { agentRuns, agentRunSteps, agentAuditTrail } from "../../drizzle/schema";
+import { desc, eq, sql } from "drizzle-orm";
 
 // Only admin/ops/exec can trigger agent runs
 const agentProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -94,5 +95,89 @@ export const agentRouter = router({
         .offset(offset);
 
       return runs;
+    }),
+
+  /**
+   * Get the full audit trail for an agent run — every mutation with before/after snapshots.
+   */
+  getAuditTrail: agentProcedure
+    .input(z.object({ runId: z.number() }))
+    .query(async ({ input }) => {
+      const trail = await getAuditTrail(input.runId);
+      return trail.map((entry) => ({
+        ...entry,
+        beforeSnapshot: entry.beforeSnapshot ? JSON.parse(entry.beforeSnapshot) : null,
+        afterSnapshot: entry.afterSnapshot ? JSON.parse(entry.afterSnapshot) : null,
+      }));
+    }),
+
+  /**
+   * Undo a single agent action by reverting the audit trail entry.
+   */
+  undoAction: agentProcedure
+    .input(z.object({ auditId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      const result = await revertAuditEntry(input.auditId, ctx.user.id);
+      if (!result.success) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: result.error ?? "Undo failed" });
+      }
+      return { success: true, auditId: input.auditId };
+    }),
+
+  /**
+   * Undo all mutations from an entire agent run, in reverse order.
+   */
+  undoRun: agentProcedure
+    .input(z.object({ runId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      const result = await revertAgentRun(input.runId, ctx.user.id);
+      return result;
+    }),
+
+  /**
+   * Unified activity feed — recent agent actions across all runs.
+   * Combines audit trail entries with run metadata for a timeline view.
+   */
+  activityFeed: agentProcedure
+    .input(
+      z.object({
+        limit: z.number().int().min(1).max(100).optional(),
+        offset: z.number().int().min(0).optional(),
+        runId: z.number().optional(),
+      }).optional(),
+    )
+    .query(async ({ input }) => {
+      const db = await getDb();
+      const limit = input?.limit ?? 50;
+      const offset = input?.offset ?? 0;
+
+      let query = db
+        .select({
+          id: agentAuditTrail.id,
+          agentRunId: agentAuditTrail.agentRunId,
+          operationType: agentAuditTrail.operationType,
+          tableName: agentAuditTrail.tableName,
+          rowId: agentAuditTrail.rowId,
+          description: agentAuditTrail.description,
+          isReverted: agentAuditTrail.isReverted,
+          revertedAt: agentAuditTrail.revertedAt,
+          createdAt: agentAuditTrail.createdAt,
+          // Join run info
+          runGoal: agentRuns.goal,
+          runStatus: agentRuns.status,
+        })
+        .from(agentAuditTrail)
+        .innerJoin(agentRuns, eq(agentAuditTrail.agentRunId, agentRuns.id))
+        .orderBy(desc(agentAuditTrail.createdAt))
+        .limit(limit)
+        .offset(offset);
+
+      if (input?.runId) {
+        query = query.where(eq(agentAuditTrail.agentRunId, input.runId)) as any;
+      }
+
+      const entries = await query;
+
+      return entries;
     }),
 });

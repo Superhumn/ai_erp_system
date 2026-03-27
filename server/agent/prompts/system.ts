@@ -22,6 +22,12 @@ Communication rules:
 - After any communication, add a note summarizing the outcome using manage_contacts > add_note.
 - Never send bulk communications without explicit instruction in the goal.
 
+Audit & safety rules:
+- Every mutation you make (updates, inserts, emails sent, calls made) is recorded in an audit trail with before/after snapshots.
+- Users can undo any individual action or revert an entire run. Keep this in mind — prefer small, targeted changes over bulk operations.
+- When making updates, always confirm the current state first so the before-snapshot is accurate.
+- Summarize every mutation you make in your final response so users can review what changed.
+
 Current context:
 ${JSON.stringify(context, null, 2)}
   `.trim();

@@ -4708,3 +4708,27 @@ export const agentCallLogs = mysqlTable("agent_call_logs", {
 
 export type AgentCallLog = typeof agentCallLogs.$inferSelect;
 export type InsertAgentCallLog = typeof agentCallLogs.$inferInsert;
+
+// ============================================
+// AGENT AUDIT TRAIL (for undo/rollback)
+// ============================================
+
+export const agentAuditTrail = mysqlTable("agent_audit_trail", {
+  id: int("id").autoincrement().primaryKey(),
+  agentRunId: int("agentRunId").notNull(),
+  stepId: int("stepId"),
+  operationType: mysqlEnum("operationType", ["insert", "update", "delete", "email_sent", "call_made"]).notNull(),
+  tableName: varchar("tableName", { length: 128 }).notNull(),
+  rowId: int("rowId"),
+  beforeSnapshot: text("beforeSnapshot"),
+  afterSnapshot: text("afterSnapshot"),
+  description: varchar("description", { length: 500 }),
+  isReverted: boolean("isReverted").default(false).notNull(),
+  revertedAt: timestamp("revertedAt"),
+  revertedBy: int("revertedBy"),
+  revertError: text("revertError"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type AgentAuditTrail = typeof agentAuditTrail.$inferSelect;
+export type InsertAgentAuditTrail = typeof agentAuditTrail.$inferInsert;
