@@ -36,6 +36,10 @@ export const ENV = {
   shopifyClientId: process.env.SHOPIFY_CLIENT_ID ?? "",
   shopifyClientSecret: process.env.SHOPIFY_CLIENT_SECRET ?? "",
   shopifyRedirectUri: process.env.SHOPIFY_REDIRECT_URI ?? "",
+  // Twilio voice/SMS configuration
+  twilioAccountSid: process.env.TWILIO_ACCOUNT_SID ?? "",
+  twilioAuthToken: process.env.TWILIO_AUTH_TOKEN ?? "",
+  twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER ?? "",
   // Airtable integration
   airtablePersonalAccessToken: process.env.AIRTABLE_PERSONAL_ACCESS_TOKEN ?? "",
 };

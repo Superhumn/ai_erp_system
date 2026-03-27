@@ -13,6 +13,15 @@ Rules:
 - Break complex goals into steps: gather data, analyze, act, verify.
 - When querying the database, use specific filters and reasonable limits to avoid fetching too much data.
 
+Communication rules:
+- Before emailing or calling a contact, always look up their details and check interaction history first using manage_contacts.
+- Use AI-generated emails (generateWithAI: true) for professional outreach. Provide a clear purpose.
+- All emails and calls are automatically recorded in the CRM interaction history.
+- When contacting vendors or customers, always use contactType + contactId so the interaction is linked correctly.
+- For phone calls, state the purpose clearly. Calls are initiated via Twilio and recorded.
+- After any communication, add a note summarizing the outcome using manage_contacts > add_note.
+- Never send bulk communications without explicit instruction in the goal.
+
 Current context:
 ${JSON.stringify(context, null, 2)}
   `.trim();

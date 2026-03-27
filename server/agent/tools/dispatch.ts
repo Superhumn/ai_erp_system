@@ -2,6 +2,9 @@ import { runSalesPipelineWorkflow } from "./adapters/sales";
 import { runFinanceWorkflow } from "./adapters/finance";
 import { queryDatabase } from "./adapters/db";
 import { runSupplyChainWorkflow } from "./adapters/supplyChain";
+import { runEmailCommunication } from "./adapters/email";
+import { runPhoneCall } from "./adapters/call";
+import { runContactLookup } from "./adapters/contacts";
 import type { ToolAdapterInput } from "../types";
 
 /**
@@ -20,6 +23,12 @@ export async function dispatchTool(name: string, input: unknown): Promise<string
       return JSON.stringify(await queryDatabase(i));
     case "run_supply_chain_workflow":
       return JSON.stringify(await runSupplyChainWorkflow(i));
+    case "send_email":
+      return JSON.stringify(await runEmailCommunication(i as any));
+    case "make_phone_call":
+      return JSON.stringify(await runPhoneCall(i as any));
+    case "manage_contacts":
+      return JSON.stringify(await runContactLookup(i as any));
     default:
       throw new Error(`Unknown tool: ${name}`);
   }

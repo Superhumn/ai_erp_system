@@ -4679,3 +4679,32 @@ export const agentRunSteps = mysqlTable("agent_run_steps", {
 
 export type AgentRunStep = typeof agentRunSteps.$inferSelect;
 export type InsertAgentRunStep = typeof agentRunSteps.$inferInsert;
+
+// ============================================
+// AGENT CALL LOGS (Twilio)
+// ============================================
+
+export const agentCallLogs = mysqlTable("agent_call_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  agentRunId: int("agentRunId"),
+  contactType: mysqlEnum("contactType", ["vendor", "customer", "crm_contact", "employee"]).notNull(),
+  contactId: int("contactId").notNull(),
+  contactName: varchar("contactName", { length: 255 }),
+  phoneNumber: varchar("phoneNumber", { length: 32 }).notNull(),
+  direction: mysqlEnum("direction", ["outbound", "inbound"]).default("outbound").notNull(),
+  status: mysqlEnum("status", ["initiated", "ringing", "in_progress", "completed", "failed", "busy", "no_answer", "voicemail"]).default("initiated").notNull(),
+  twilioCallSid: varchar("twilioCallSid", { length: 64 }),
+  duration: int("duration"),
+  recordingUrl: text("recordingUrl"),
+  transcription: text("transcription"),
+  summary: text("summary"),
+  purpose: text("purpose"),
+  crmInteractionId: int("crmInteractionId"),
+  initiatedBy: int("initiatedBy"),
+  companyId: int("companyId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type AgentCallLog = typeof agentCallLogs.$inferSelect;
+export type InsertAgentCallLog = typeof agentCallLogs.$inferInsert;
