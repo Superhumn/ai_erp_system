@@ -4708,3 +4708,79 @@ export const agentCallLogs = mysqlTable("agent_call_logs", {
 
 export type AgentCallLog = typeof agentCallLogs.$inferSelect;
 export type InsertAgentCallLog = typeof agentCallLogs.$inferInsert;
+
+// ============================================
+// AI ACTIVITY TRACKING & UNDO
+// ============================================
+
+export const aiActivityLog = mysqlTable("ai_activity_log", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  userId: int("userId"),
+
+  // Source tracking — which AI system initiated this
+  source: mysqlEnum("source", ["agent", "autonomous_workflow", "ai_assistant", "ai_agent_task"]).notNull(),
+  sourceRunId: int("sourceRunId"),       // agent_runs.id or workflowRuns.id
+  sourceStepId: int("sourceStepId"),     // agent_run_steps.id or workflowSteps.id
+
+  // What happened
+  actionType: mysqlEnum("actionType", [
+    "create", "update", "delete", "send_email", "approve", "reject",
+    "transfer", "allocate", "forecast", "analyze", "decision"
+  ]).notNull(),
+  entityType: varchar("entityType", { length: 64 }).notNull(),
+  entityId: int("entityId"),
+  entityName: varchar("entityName", { length: 255 }),
+  description: text("description").notNull(),
+
+  // Change data for undo
+  oldValues: json("oldValues"),
+  newValues: json("newValues"),
+
+  // AI context
+  aiReasoning: text("aiReasoning"),
+  confidence: decimal("confidence", { precision: 5, scale: 2 }),
+
+  // Undo status
+  undoStatus: mysqlEnum("undoStatus", ["available", "undone", "expired", "not_undoable"]).default("available").notNull(),
+  undoOperationId: int("undoOperationId"),
+  undoDeadline: timestamp("undoDeadline"),
+
+  // Metadata
+  ipAddress: varchar("ipAddress", { length: 64 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type AiActivityLog = typeof aiActivityLog.$inferSelect;
+export type InsertAiActivityLog = typeof aiActivityLog.$inferInsert;
+
+export const aiUndoOperations = mysqlTable("ai_undo_operations", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  activityLogId: int("activityLogId").notNull(),
+
+  // Who requested the undo
+  requestedBy: int("requestedBy").notNull(),
+  requestedAt: timestamp("requestedAt").defaultNow().notNull(),
+
+  // Undo details
+  undoType: mysqlEnum("undoType", [
+    "revert_update", "delete_created", "restore_deleted",
+    "reverse_transfer", "cancel_email", "reject_approval", "bulk_revert"
+  ]).notNull(),
+  entityType: varchar("entityType", { length: 64 }).notNull(),
+  entityId: int("entityId"),
+  revertData: json("revertData"),        // The old values to restore
+
+  // Status
+  status: mysqlEnum("status", ["pending", "in_progress", "completed", "failed", "cancelled"]).default("pending").notNull(),
+  errorMessage: text("errorMessage"),
+  completedAt: timestamp("completedAt"),
+
+  // Audit
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type AiUndoOperation = typeof aiUndoOperations.$inferSelect;
+export type InsertAiUndoOperation = typeof aiUndoOperations.$inferInsert;

@@ -135,6 +135,9 @@ import AutonomousApprovals from "./pages/autonomous/Approvals";
 import AutonomousExceptions from "./pages/autonomous/Exceptions";
 import AutonomousSettings from "./pages/autonomous/Settings";
 
+// AI Activity Tracking
+import AIActivityTracker from "./pages/ai/ActivityTracker";
+
 function Router() {
   return (
     <DashboardLayout>
@@ -143,6 +146,7 @@ function Router() {
         <Route path="/" component={Home} />
         <Route path="/ai" component={AIAssistant} />
         <Route path="/ai/approvals" component={ApprovalQueue} />
+        <Route path="/ai/activity" component={AIActivityTracker} />
         <Route path="/search" component={GlobalSearch} />
 
         {/* Autonomous Supply Chain */}

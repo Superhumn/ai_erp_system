@@ -94,6 +94,7 @@ const menuGroups = [
       { icon: LayoutDashboard, label: "Dashboard", path: "/" },
       { icon: Bot, label: "AI Assistant", path: "/ai" },
       { icon: ClipboardList, label: "Approval Queue", path: "/ai/approvals" },
+      { icon: ArrowRightLeft, label: "AI Activity & Undo", path: "/ai/activity" },
     ],
   },
   {
