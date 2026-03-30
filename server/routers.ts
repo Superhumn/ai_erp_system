@@ -18,6 +18,7 @@ import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSumm
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import { agentRouter } from "./agent";
+import { executiveReasoningRouter } from "./executiveReasoningRouter";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 import * as db from "./db";
 import { storagePut } from "./storage";
@@ -191,6 +192,9 @@ export const appRouter = router({
 
   // Reasoning Agent
   agent: agentRouter,
+
+  // COO Executive Reasoning Engine
+  executive: executiveReasoningRouter,
 
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),

@@ -195,5 +195,32 @@ export function getTools(): Anthropic.Tool[] {
         required: ["action"],
       },
     },
+    {
+      name: "executive_reasoning",
+      description:
+        "COO-level executive reasoning engine. Use for strategic analysis, cross-functional KPI dashboards, risk assessment, bottleneck identification, executive briefings, department deep-dives, and answering strategic questions. This tool aggregates data across finance, operations, supply chain, sales, and workforce to provide holistic operational intelligence.",
+      input_schema: {
+        type: "object" as const,
+        properties: {
+          action: {
+            type: "string",
+            enum: ["get_kpis", "strategic_analysis", "executive_briefing", "ask_question", "department_deep_dive"],
+            description:
+              "get_kpis: raw cross-functional KPI snapshot. strategic_analysis: full COO-level analysis with risks, bottlenecks, opportunities. executive_briefing: narrative briefing for leadership. ask_question: answer a specific strategic question. department_deep_dive: focused analysis on one department.",
+          },
+          payload: {
+            type: "object",
+            description:
+              "For strategic_analysis/executive_briefing: { focusArea?: string }. For ask_question: { question: string }. For department_deep_dive: { department: 'finance'|'operations'|'supply_chain'|'sales'|'workforce' }.",
+            properties: {
+              focusArea: { type: "string", description: "Optional focus area for analysis (e.g., 'cash flow', 'supply chain risk')" },
+              question: { type: "string", description: "Strategic question to answer" },
+              department: { type: "string", enum: ["finance", "operations", "supply_chain", "sales", "workforce"] },
+            },
+          },
+        },
+        required: ["action"],
+      },
+    },
   ];
 }

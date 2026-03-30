@@ -135,6 +135,9 @@ import AutonomousApprovals from "./pages/autonomous/Approvals";
 import AutonomousExceptions from "./pages/autonomous/Exceptions";
 import AutonomousSettings from "./pages/autonomous/Settings";
 
+// Executive Intelligence
+import ExecutiveDashboard from "./pages/executive/Dashboard";
+
 function Router() {
   return (
     <DashboardLayout>
@@ -146,6 +149,7 @@ function Router() {
         <Route path="/search" component={GlobalSearch} />
 
         {/* Autonomous Supply Chain */}
+        <Route path="/executive" component={ExecutiveDashboard} />
         <Route path="/autonomous-dashboard" component={AutonomousDashboard} />
         <Route path="/approvals" component={AutonomousApprovals} />
         <Route path="/exceptions" component={AutonomousExceptions} />

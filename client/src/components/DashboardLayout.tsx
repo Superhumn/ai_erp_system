@@ -93,6 +93,7 @@ const menuGroups = [
     items: [
       { icon: LayoutDashboard, label: "Dashboard", path: "/" },
       { icon: Bot, label: "AI Assistant", path: "/ai" },
+      { icon: Brain, label: "Executive Intelligence", path: "/executive" },
       { icon: ClipboardList, label: "Approval Queue", path: "/ai/approvals" },
     ],
   },

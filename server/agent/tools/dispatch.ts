@@ -5,6 +5,7 @@ import { runSupplyChainWorkflow } from "./adapters/supplyChain";
 import { runEmailCommunication } from "./adapters/email";
 import { runPhoneCall } from "./adapters/call";
 import { runContactLookup } from "./adapters/contacts";
+import { runExecutiveReasoning } from "./adapters/executive";
 import type { ToolAdapterInput } from "../types";
 
 /**
@@ -29,6 +30,8 @@ export async function dispatchTool(name: string, input: unknown): Promise<string
       return JSON.stringify(await runPhoneCall(i as any));
     case "manage_contacts":
       return JSON.stringify(await runContactLookup(i as any));
+    case "executive_reasoning":
+      return JSON.stringify(await runExecutiveReasoning(i as any));
     default:
       throw new Error(`Unknown tool: ${name}`);
   }

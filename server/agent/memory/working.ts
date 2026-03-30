@@ -4,6 +4,10 @@ import {
   invoices,
   purchaseOrders,
   workOrders,
+  inventory,
+  shipments,
+  customers,
+  vendors,
 } from "../../../drizzle/schema";
 import { eq, sql } from "drizzle-orm";
 import type { AgentContext } from "../types";
@@ -60,6 +64,41 @@ export async function buildWorkingContext(userId: string, companyId?: number): P
     // Table may not have data yet
   }
 
+  // Executive context: inventory health + customer/vendor counts
+  let lowStockItems = 0;
+  let activeShipments = 0;
+  let totalCustomers = 0;
+  let totalVendors = 0;
+
+  try {
+    const [invResult] = await db
+      .select({ count: sql<number>`SUM(CASE WHEN CAST(${inventory.quantity} AS SIGNED) <= CAST(${inventory.reorderPoint} AS SIGNED) AND CAST(${inventory.quantity} AS SIGNED) > 0 THEN 1 ELSE 0 END)` })
+      .from(inventory);
+    lowStockItems = Number(invResult?.count ?? 0);
+  } catch {
+    // Table may not have data yet
+  }
+
+  try {
+    const [shipResult] = await db
+      .select({ count: sql<number>`COUNT(*)` })
+      .from(shipments)
+      .where(eq(shipments.status, "in_transit"));
+    activeShipments = shipResult?.count ?? 0;
+  } catch {
+    // Table may not have data yet
+  }
+
+  try {
+    const [custResult] = await db.select({ count: sql<number>`COUNT(*)` }).from(customers);
+    totalCustomers = custResult?.count ?? 0;
+  } catch {}
+
+  try {
+    const [vendResult] = await db.select({ count: sql<number>`COUNT(*)` }).from(vendors);
+    totalVendors = vendResult?.count ?? 0;
+  } catch {}
+
   return {
     userId,
     companyId,
@@ -67,6 +106,10 @@ export async function buildWorkingContext(userId: string, companyId?: number): P
     openInvoiceCount,
     pendingPOCount,
     openWorkOrders,
+    lowStockItems,
+    activeShipments,
+    totalCustomers,
+    totalVendors,
     timestamp: new Date().toISOString(),
   };
 }
