@@ -1,15 +1,16 @@
 import { invokeLLM } from "./llm";
 
 // Email category types
-export type EmailCategory = 
-  | "receipt" 
-  | "purchase_order" 
-  | "invoice" 
-  | "shipping_confirmation" 
-  | "freight_quote" 
+export type EmailCategory =
+  | "receipt"
+  | "purchase_order"
+  | "invoice"
+  | "shipping_confirmation"
+  | "freight_quote"
   | "delivery_notification"
   | "order_confirmation"
   | "payment_confirmation"
+  | "inventory_report"
   | "general";
 
 export interface EmailCategorization {
@@ -107,6 +108,7 @@ CATEGORIES:
 - delivery_notification: Delivery confirmations, proof of delivery, signed receipts
 - order_confirmation: Order acknowledgments, sales order confirmations
 - payment_confirmation: Payment received notices, wire transfer confirmations
+- inventory_report: Inventory stock reports, warehouse stock levels, copacker inventory updates, material quantity reports
 - general: Other business emails that don't fit above categories
 
 INSTRUCTIONS:
@@ -120,7 +122,7 @@ INSTRUCTIONS:
 
 Return JSON with this structure:
 {
-  "category": "receipt|purchase_order|invoice|shipping_confirmation|freight_quote|delivery_notification|order_confirmation|payment_confirmation|general",
+  "category": "receipt|purchase_order|invoice|shipping_confirmation|freight_quote|delivery_notification|order_confirmation|payment_confirmation|inventory_report|general",
   "confidence": 85,
   "subcategory": "optional specific type",
   "keywords": ["keyword1", "keyword2", "keyword3"],
@@ -184,7 +186,7 @@ function validateCategory(category: string): EmailCategory {
   const validCategories: EmailCategory[] = [
     "receipt", "purchase_order", "invoice", "shipping_confirmation",
     "freight_quote", "delivery_notification", "order_confirmation",
-    "payment_confirmation", "general"
+    "payment_confirmation", "inventory_report", "general"
   ];
   return validCategories.includes(category as EmailCategory) 
     ? (category as EmailCategory) 
@@ -278,6 +280,13 @@ export function quickCategorize(subject: string, fromEmail: string): EmailCatego
       emailPatterns: [/bank/i, /paypal/i, /stripe/i],
       priority: "medium",
       action: "Reconcile payment"
+    },
+    {
+      category: "inventory_report",
+      subjectPatterns: [/inventory/i, /stock.*(report|level|update)/i, /left amount/i, /remaining.*(stock|inventory)/i, /warehouse report/i, /material.*report/i],
+      emailPatterns: [/copacker/i, /warehouse/i, /3pl/i, /fulfillment/i],
+      priority: "high",
+      action: "Update copacker raw material inventory levels"
     }
   ];
   

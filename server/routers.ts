@@ -18,6 +18,7 @@ import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSumm
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import { agentRouter } from "./agent";
+import { parseCopackerInventoryEmail, applyCopackerInventoryUpdate } from "./copackerEmailExtractor";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 import * as db from "./db";
 import { storagePut } from "./storage";
@@ -5963,6 +5964,105 @@ Provide a brief status summary, any missing documents, and next steps.`;
           }
         }
         return db.getCustomsDocuments(input.clearanceId);
+      }),
+
+    // Parse copacker inventory report email and extract structured data
+    parseInventoryEmail: copackerProcedure
+      .input(z.object({
+        emailBody: z.string().min(1),
+        subject: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return parseCopackerInventoryEmail(input.emailBody, input.subject);
+      }),
+
+    // Apply extracted copacker inventory data to the system
+    applyInventoryFromEmail: copackerProcedure
+      .input(z.object({
+        warehouseId: z.number(),
+        items: z.array(z.object({
+          sku: z.string(),
+          itemName: z.string(),
+          quantityBoxes: z.number(),
+          quantityUnit: z.string(),
+          quantityKg: z.number(),
+          unitType: z.string(),
+        })),
+        createMissing: z.boolean().optional().default(false),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await applyCopackerInventoryUpdate(
+          input.items,
+          input.warehouseId,
+          ctx.user.id,
+          { createMissing: input.createMissing }
+        );
+
+        // Audit log
+        await db.createAuditLog({
+          userId: ctx.user.id,
+          action: 'update',
+          entityType: 'raw_material_inventory',
+          entityId: input.warehouseId,
+          newValues: {
+            source: 'copacker_email',
+            matched: result.matched.length,
+            unmatched: result.unmatched.length,
+            created: result.created.length,
+          },
+        });
+
+        return result;
+      }),
+
+    // Combined: parse email and apply inventory update in one step
+    importInventoryFromEmail: copackerProcedure
+      .input(z.object({
+        emailBody: z.string().min(1),
+        subject: z.string().optional(),
+        warehouseId: z.number(),
+        createMissing: z.boolean().optional().default(false),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Step 1: Parse
+        const parseResult = await parseCopackerInventoryEmail(input.emailBody, input.subject);
+        if (!parseResult.success || parseResult.items.length === 0) {
+          return {
+            success: false,
+            parseResult,
+            updateResult: null,
+            error: parseResult.error || 'No inventory items found in email',
+          };
+        }
+
+        // Step 2: Apply
+        const updateResult = await applyCopackerInventoryUpdate(
+          parseResult.items,
+          input.warehouseId,
+          ctx.user.id,
+          { createMissing: input.createMissing }
+        );
+
+        // Audit log
+        await db.createAuditLog({
+          userId: ctx.user.id,
+          action: 'update',
+          entityType: 'raw_material_inventory',
+          entityId: input.warehouseId,
+          newValues: {
+            source: 'copacker_email',
+            reportDate: parseResult.reportDate,
+            matched: updateResult.matched.length,
+            unmatched: updateResult.unmatched.length,
+            created: updateResult.created.length,
+          },
+        });
+
+        return {
+          success: true,
+          parseResult,
+          updateResult,
+        };
       }),
   }),
 
