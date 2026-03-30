@@ -14,6 +14,7 @@ import * as sendgridProvider from "./sendgridProvider";
 import * as emailService from "./emailService";
 import * as db from "../db";
 import { startEmailQueueWorker } from "../emailQueueWorker";
+import { startEmailPollingWorker } from "../emailPollingWorker";
 import { startOrchestrator } from "../supplyChainOrchestrator";
 import { startScheduler } from "../aiAgentScheduler";
 
@@ -343,8 +344,11 @@ async function startServer() {
   server.listen(port, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${port}/`);
 
-    // Start the email queue worker
+    // Start the email queue worker (outbound)
     startEmailQueueWorker();
+
+    // Start the email polling worker (inbound - auto-tracks new emails)
+    startEmailPollingWorker();
 
     // Start EDI polling scheduler (check every 5 minutes)
     import('../ediTransportService').then(({ startEdiPolling }) => {
