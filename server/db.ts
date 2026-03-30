@@ -92,6 +92,9 @@ import {
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
   InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
+  // Copacker portal
+  copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
+  InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
   // Local authentication
   localAuthCredentials, InsertLocalAuthCredential,
   // Investment grant checklists
@@ -9194,3 +9197,155 @@ export async function getChecklistSummary(dataRoomId: number) {
   };
 }
 
+// ============================================
+// COPACKER PORTAL
+// ============================================
+
+// --- Inventory Updates ---
+
+export async function getCopackerInventoryUpdates(warehouseId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (warehouseId) conditions.push(eq(copackerInventoryUpdates.warehouseId, warehouseId));
+
+  const result = conditions.length
+    ? await db.select().from(copackerInventoryUpdates).where(and(...conditions)).orderBy(desc(copackerInventoryUpdates.createdAt))
+    : await db.select().from(copackerInventoryUpdates).orderBy(desc(copackerInventoryUpdates.createdAt));
+
+  return result;
+}
+
+export async function getCopackerInventoryUpdateById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const rows = await db.select().from(copackerInventoryUpdates).where(eq(copackerInventoryUpdates.id, id)).limit(1);
+  return rows[0] || null;
+}
+
+export async function createCopackerInventoryUpdate(data: InsertCopackerInventoryUpdate) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(copackerInventoryUpdates).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateCopackerInventoryUpdate(id: number, data: Partial<InsertCopackerInventoryUpdate>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(copackerInventoryUpdates).set(data).where(eq(copackerInventoryUpdates.id, id));
+}
+
+export async function getCopackerInventoryUpdateItems(updateId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db.select({
+    item: copackerInventoryUpdateItems,
+    product: products,
+  })
+    .from(copackerInventoryUpdateItems)
+    .leftJoin(products, eq(copackerInventoryUpdateItems.productId, products.id))
+    .where(eq(copackerInventoryUpdateItems.updateId, updateId))
+    .orderBy(copackerInventoryUpdateItems.id);
+}
+
+export async function createCopackerInventoryUpdateItem(data: InsertCopackerInventoryUpdateItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(copackerInventoryUpdateItems).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function deleteCopackerInventoryUpdateItems(updateId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(copackerInventoryUpdateItems).where(eq(copackerInventoryUpdateItems.updateId, updateId));
+}
+
+// --- Copacker Invoices ---
+
+export async function getCopackerInvoices(warehouseId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (warehouseId) conditions.push(eq(copackerInvoices.warehouseId, warehouseId));
+
+  const result = conditions.length
+    ? await db.select().from(copackerInvoices).where(and(...conditions)).orderBy(desc(copackerInvoices.createdAt))
+    : await db.select().from(copackerInvoices).orderBy(desc(copackerInvoices.createdAt));
+
+  return result;
+}
+
+export async function getCopackerInvoiceById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const rows = await db.select().from(copackerInvoices).where(eq(copackerInvoices.id, id)).limit(1);
+  return rows[0] || null;
+}
+
+export async function createCopackerInvoice(data: InsertCopackerInvoice) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(copackerInvoices).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateCopackerInvoice(id: number, data: Partial<InsertCopackerInvoice>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(copackerInvoices).set(data).where(eq(copackerInvoices.id, id));
+}
+
+export async function getCopackerInvoiceItems(invoiceId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(copackerInvoiceItems).where(eq(copackerInvoiceItems.invoiceId, invoiceId)).orderBy(copackerInvoiceItems.id);
+}
+
+export async function createCopackerInvoiceItem(data: InsertCopackerInvoiceItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(copackerInvoiceItems).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function deleteCopackerInvoiceItems(invoiceId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(copackerInvoiceItems).where(eq(copackerInvoiceItems.invoiceId, invoiceId));
+}
+
+// --- Copacker Shipping Documents ---
+
+export async function getCopackerShippingDocuments(warehouseId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (warehouseId) conditions.push(eq(copackerShippingDocuments.warehouseId, warehouseId));
+
+  const result = conditions.length
+    ? await db.select().from(copackerShippingDocuments).where(and(...conditions)).orderBy(desc(copackerShippingDocuments.createdAt))
+    : await db.select().from(copackerShippingDocuments).orderBy(desc(copackerShippingDocuments.createdAt));
+
+  return result;
+}
+
+export async function createCopackerShippingDocument(data: InsertCopackerShippingDocument) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(copackerShippingDocuments).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateCopackerShippingDocument(id: number, data: Partial<InsertCopackerShippingDocument>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(copackerShippingDocuments).set(data).where(eq(copackerShippingDocuments.id, id));
+}
