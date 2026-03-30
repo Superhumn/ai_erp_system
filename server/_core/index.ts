@@ -9,7 +9,7 @@ import { registerLocalAuthRoutes } from "./localAuth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { ENV, validateEmailConfig } from "./env";
+import { ENV, validateEmailConfig, validateRequiredSecrets } from "./env";
 import * as sendgridProvider from "./sendgridProvider";
 import * as emailService from "./emailService";
 import * as db from "../db";
@@ -37,6 +37,9 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  // Fail fast if critical secrets are missing in production
+  validateRequiredSecrets();
+
   const emailConfigValidation = validateEmailConfig();
   if (!emailConfigValidation.valid) {
     console.warn("[Email Config] Warning: Some email configuration is missing:");
@@ -64,36 +67,24 @@ async function startServer() {
   // ============================================
   // RATE LIMITING
   // ============================================
-  const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
-  const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
-  const RATE_LIMIT_MAX = 200; // requests per window
-
-  app.use("/api/", (req, res, next) => {
-    const ip = req.ip || req.socket.remoteAddress || "unknown";
-    const now = Date.now();
-    const entry = rateLimitMap.get(ip);
-
-    if (!entry || now > entry.resetTime) {
-      rateLimitMap.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
-      return next();
-    }
-
-    entry.count++;
-    if (entry.count > RATE_LIMIT_MAX) {
-      res.setHeader("Retry-After", String(Math.ceil((entry.resetTime - now) / 1000)));
-      return res.status(429).json({ error: "Too many requests. Please try again later." });
-    }
-
-    next();
+  const apiLimiter = rateLimit({
+    windowMs: 60_000, // 1 minute
+    max: 200,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many requests. Please try again later." },
   });
 
-  // Periodically clean up stale rate limit entries
-  setInterval(() => {
-    const now = Date.now();
-    for (const [ip, entry] of rateLimitMap) {
-      if (now > entry.resetTime) rateLimitMap.delete(ip);
-    }
-  }, RATE_LIMIT_WINDOW_MS);
+  app.use("/api/", apiLimiter);
+
+  // Stricter rate limit for OAuth callbacks (prevent abuse)
+  const oauthCallbackLimiter = rateLimit({
+    windowMs: 15 * 60_000, // 15 minutes
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many OAuth attempts. Please try again later." },
+  });
 
   // ============================================
   // HEALTH CHECK

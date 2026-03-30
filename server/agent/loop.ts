@@ -6,9 +6,11 @@ import { MessageHistory } from "./memory/short";
 import { logAgent } from "./logger";
 import { createAgentRun, recordAgentStep, completeAgentRun } from "./persistence";
 import type { AgentContext, AgentRunResult } from "./types";
+import { ENV } from "../_core/env";
 
 const client = new Anthropic();
 const DEFAULT_MAX_ITERATIONS = 20;
+const AGENT_MODEL = ENV.llmModel || "claude-sonnet-4-20250514";
 
 /**
  * Core reasoning loop. Sends the goal to Claude, dispatches tool calls,
@@ -50,7 +52,7 @@ export async function runAgent(
       logAgent({ level: "debug", runId, iteration: iterations, message: "Sending request to Claude" });
 
       const response = await client.messages.create({
-        model: "claude-sonnet-4-6",
+        model: AGENT_MODEL,
         max_tokens: 4096,
         system: buildSystemPrompt(context),
         tools,

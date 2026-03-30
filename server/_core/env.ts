@@ -85,3 +85,22 @@ function isValidEmail(email: string): boolean {
 export function isTransactionalEmailReady(): boolean {
   return !!(ENV.sendgridApiKey && ENV.sendgridFromEmail);
 }
+
+/**
+ * Validate critical secrets at startup. Throws in production if
+ * required secrets are missing so the process fails fast.
+ */
+export function validateRequiredSecrets(): void {
+  if (!ENV.isProduction) return;
+
+  const missing: string[] = [];
+  if (!ENV.cookieSecret) missing.push("JWT_SECRET");
+  if (!ENV.databaseUrl) missing.push("DATABASE_URL");
+
+  if (missing.length > 0) {
+    throw new Error(
+      `[FATAL] Missing required secrets in production: ${missing.join(", ")}. ` +
+      `The server cannot start without these environment variables.`
+    );
+  }
+}
