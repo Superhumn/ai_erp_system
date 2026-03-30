@@ -19,7 +19,6 @@ import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import { agentRouter } from "./agent";
 import { parseCopackerInventoryEmail, applyCopackerInventoryUpdate } from "./copackerEmailExtractor";
-import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
