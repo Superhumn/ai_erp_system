@@ -131,6 +131,22 @@ const menuGroups = [
     ],
   },
   {
+    label: "Quality & Food Safety",
+    items: [
+      { icon: ClipboardCheck, label: "Quality Hub", path: "/quality" },
+      { icon: FileCheck, label: "Specifications", path: "/quality/specifications" },
+      { icon: AlertTriangle, label: "Shelf Life", path: "/quality/shelf-life" },
+    ],
+  },
+  {
+    label: "Commercial",
+    items: [
+      { icon: DollarSign, label: "Pricing & Price Books", path: "/commercial/pricing" },
+      { icon: Handshake, label: "Broker Commissions", path: "/commercial/commissions" },
+      { icon: FileText, label: "Deductions & Claims", path: "/commercial/deductions" },
+    ],
+  },
+  {
     label: "EDI & Retail",
     items: [
       { icon: ArrowRightLeft, label: "EDI Hub", path: "/edi" },
@@ -144,6 +160,14 @@ const menuGroups = [
     items: [
       { icon: UserCog, label: "Team & Payroll", path: "/hr/employees" },
       { icon: FileSignature, label: "Contracts & Legal", path: "/legal/contracts" },
+    ],
+  },
+  {
+    label: "Portals",
+    items: [
+      { icon: Users, label: "Customer Portal", path: "/portal/customer" },
+      { icon: Package, label: "Copacker Portal", path: "/portal/copacker" },
+      { icon: Building2, label: "Vendor Portal", path: "/portal/vendor" },
     ],
   },
   {

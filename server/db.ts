@@ -96,7 +96,21 @@ import {
   localAuthCredentials, InsertLocalAuthCredential,
   // Investment grant checklists
   investmentGrantChecklists, investmentGrantItems,
-  InsertInvestmentGrantChecklist, InsertInvestmentGrantItem
+  InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
+  // Quality Management & Food Safety
+  certificatesOfAnalysis, coaTestResults, nonConformanceReports, capaActions, labTestingLogs,
+  InsertCertificateOfAnalysis, InsertCoaTestResult, InsertNonConformanceReport, InsertCapaAction, InsertLabTestingLog,
+  // Lot Traceability
+  lotTraceabilityLinks, lotShipmentRecords,
+  InsertLotTraceabilityLink, InsertLotShipmentRecord,
+  // Product Specifications
+  productSpecifications, specParameters, customerSpecifications,
+  InsertProductSpecification, InsertSpecParameter, InsertCustomerSpecification,
+  // Pricing, Commissions & Deductions
+  priceBooks, priceBookEntries, brokerCommissions, commissionTransactions, customerDeductions,
+  InsertPriceBook, InsertPriceBookEntry, InsertBrokerCommission, InsertCommissionTransaction, InsertCustomerDeduction,
+  // Shelf Life
+  shelfLifeAlerts, InsertShelfLifeAlert,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 

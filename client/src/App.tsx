@@ -118,6 +118,19 @@ import { Login } from "./pages/Login";
 // SOPs
 import SOPs from "./pages/SOPs";
 
+// Quality Management
+import QualityHub from "./pages/quality/QualityHub";
+import Specifications from "./pages/quality/Specifications";
+import ShelfLife from "./pages/quality/ShelfLife";
+
+// Commercial Management
+import Pricing from "./pages/commercial/Pricing";
+import Commissions from "./pages/commercial/Commissions";
+import Deductions from "./pages/commercial/Deductions";
+
+// Customer Portal
+import CustomerPortal from "./pages/portal/CustomerPortal";
+
 // Data Room
 import DataRooms from "./pages/DataRooms";
 import DataRoomDetail from "./pages/DataRoomDetail";
@@ -212,6 +225,16 @@ function Router() {
         <Route path="/operations/inventory-costing" component={InventoryCosting} />
         <Route path="/operations/vendor-negotiations" component={VendorNegotiations} />
 
+        {/* Quality Management */}
+        <Route path="/quality" component={QualityHub} />
+        <Route path="/quality/specifications" component={Specifications} />
+        <Route path="/quality/shelf-life" component={ShelfLife} />
+
+        {/* Commercial Management */}
+        <Route path="/commercial/pricing" component={Pricing} />
+        <Route path="/commercial/commissions" component={Commissions} />
+        <Route path="/commercial/deductions" component={Deductions} />
+
         {/* EDI */}
         <Route path="/edi" component={EDIDashboard} />
         <Route path="/edi/connect" component={RetailerOnboarding} />
@@ -248,6 +271,7 @@ function Router() {
         {/* Portals */}
         <Route path="/portal/copacker" component={CopackerPortal} />
         <Route path="/portal/vendor" component={VendorPortal} />
+        <Route path="/portal/customer" component={CustomerPortal} />
 
         {/* Data Room */}
         <Route path="/datarooms" component={DataRooms} />

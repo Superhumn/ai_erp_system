@@ -17,7 +17,9 @@ import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingA
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
+import { qualityManagementRouter } from "./qualityManagementRouter";
 import { agentRouter } from "./agent";
+import { qualityManagementRouter } from "./qualityManagementRouter";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 import * as db from "./db";
 import { storagePut } from "./storage";
@@ -191,6 +193,9 @@ export const appRouter = router({
 
   // Reasoning Agent
   agent: agentRouter,
+
+  // Quality Management, COAs, Specs, Traceability, Shelf Life, Pricing, Commissions, Deductions
+  qualityManagement: qualityManagementRouter,
 
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
