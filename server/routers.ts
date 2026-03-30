@@ -30,6 +30,7 @@ import { listTranscripts, getTranscript, extractParticipants, parseActionItems, 
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
+import { generateCfoInsights, generateCfoStrategy, generateCashFlowForecast, runScenarioAnalysis, captureKpiSnapshot, generateBoardReport } from "./cfoInsightService";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -13767,6 +13768,167 @@ Ask if they received the original request and if they can provide a quote.`;
           return result;
         }),
     }),
+  }),
+
+  // ============================================
+  // CFO INSIGHTS, STRATEGY & REASONING
+  // ============================================
+  cfo: router({
+    // Financial summary dashboard data
+    financialSummary: financeProcedure.query(async () => {
+      return db.getCfoFinancialSummary();
+    }),
+
+    // Insights
+    insights: router({
+      list: financeProcedure
+        .input(z.object({
+          category: z.string().optional(),
+          severity: z.string().optional(),
+          status: z.string().optional(),
+        }).optional())
+        .query(async ({ input }) => {
+          return db.getCfoInsights(input);
+        }),
+
+      get: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => {
+          return db.getCfoInsightById(input.id);
+        }),
+
+      generate: financeProcedure.mutation(async ({ ctx }) => {
+        return generateCfoInsights({
+          userId: ctx.user.id,
+          userName: ctx.user.name || "Unknown",
+          companyId: undefined,
+        });
+      }),
+
+      updateStatus: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(["new", "acknowledged", "in_progress", "resolved", "dismissed"]),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          return db.updateCfoInsightStatus(input.id, input.status, ctx.user.id);
+        }),
+    }),
+
+    // Strategies
+    strategies: router({
+      list: financeProcedure
+        .input(z.object({
+          category: z.string().optional(),
+          status: z.string().optional(),
+          priority: z.string().optional(),
+          timeHorizon: z.string().optional(),
+        }).optional())
+        .query(async ({ input }) => {
+          return db.getCfoStrategies(input);
+        }),
+
+      get: financeProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ input }) => {
+          return db.getCfoStrategyById(input.id);
+        }),
+
+      generate: financeProcedure
+        .input(z.object({
+          objective: z.string().min(1),
+          category: z.enum(["growth", "cost_reduction", "capital_allocation", "risk_management", "cash_optimization", "debt_strategy", "tax_planning", "m_and_a", "fundraising", "operational_efficiency"]),
+          timeHorizon: z.enum(["short_term", "medium_term", "long_term"]),
+          constraints: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          return generateCfoStrategy(
+            { userId: ctx.user.id, userName: ctx.user.name || "Unknown" },
+            input
+          );
+        }),
+
+      update: financeProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(["draft", "active", "completed", "paused", "archived"]).optional(),
+          priority: z.enum(["low", "medium", "high", "critical"]).optional(),
+          actualImpact: z.string().optional(),
+        }))
+        .mutation(async ({ input }) => {
+          const { id, ...data } = input;
+          return db.updateCfoStrategy(id, data);
+        }),
+    }),
+
+    // Cash Flow Projections
+    cashFlow: router({
+      projections: financeProcedure
+        .input(z.object({
+          scenarioType: z.string().optional(),
+          granularity: z.string().optional(),
+        }).optional())
+        .query(async ({ input }) => {
+          return db.getCfoCashFlowProjections(input);
+        }),
+
+      forecast: financeProcedure
+        .input(z.object({
+          months: z.number().min(1).max(24).default(6),
+          granularity: z.enum(["daily", "weekly", "monthly", "quarterly"]).default("monthly"),
+          scenarioType: z.enum(["base", "optimistic", "pessimistic"]).default("base"),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          return generateCashFlowForecast(
+            { userId: ctx.user.id, userName: ctx.user.name || "Unknown" },
+            input
+          );
+        }),
+    }),
+
+    // KPI Snapshots
+    kpis: router({
+      list: financeProcedure
+        .input(z.object({ limit: z.number().optional() }).optional())
+        .query(async ({ input }) => {
+          return db.getCfoKpiSnapshots(input?.limit);
+        }),
+
+      capture: financeProcedure.mutation(async ({ ctx }) => {
+        return captureKpiSnapshot({
+          userId: ctx.user.id,
+          userName: ctx.user.name || "Unknown",
+        });
+      }),
+    }),
+
+    // Scenario Analysis
+    scenarioAnalysis: financeProcedure
+      .input(z.object({
+        scenario: z.string().min(1),
+        variables: z.record(z.any()).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return runScenarioAnalysis(
+          { userId: ctx.user.id, userName: ctx.user.name || "Unknown" },
+          input
+        );
+      }),
+
+    // Board Report
+    boardReport: financeProcedure.mutation(async ({ ctx }) => {
+      return generateBoardReport({
+        userId: ctx.user.id,
+        userName: ctx.user.name || "Unknown",
+      });
+    }),
+
+    // Reasoning Logs (audit trail)
+    reasoningLogs: financeProcedure
+      .input(z.object({ limit: z.number().optional() }).optional())
+      .query(async ({ input }) => {
+        return db.getCfoReasoningLogs(input?.limit);
+      }),
   }),
 });
 

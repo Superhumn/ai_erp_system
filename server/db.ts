@@ -96,7 +96,10 @@ import {
   localAuthCredentials, InsertLocalAuthCredential,
   // Investment grant checklists
   investmentGrantChecklists, investmentGrantItems,
-  InsertInvestmentGrantChecklist, InsertInvestmentGrantItem
+  InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
+  // CFO Insights & Strategy
+  cfoInsights, cfoStrategies, cfoCashFlowProjections, cfoKpiSnapshots, cfoReasoningLogs,
+  InsertCfoInsight, InsertCfoStrategy, InsertCfoCashFlowProjection, InsertCfoKpiSnapshot, InsertCfoReasoningLog,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -9191,6 +9194,173 @@ export async function getChecklistSummary(dataRoomId: number) {
       : 0,
     byCategory,
     requiredMissing: items.filter(i => i.status === 'missing' && i.requirement === 'required'),
+  };
+}
+
+// ============================================
+// CFO INSIGHTS, STRATEGY & REASONING
+// ============================================
+
+export async function getCfoInsights(filters?: { category?: string; severity?: string; status?: string; companyId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.category) conditions.push(eq(cfoInsights.category, filters.category as any));
+  if (filters?.severity) conditions.push(eq(cfoInsights.severity, filters.severity as any));
+  if (filters?.status) conditions.push(eq(cfoInsights.status, filters.status as any));
+  if (filters?.companyId) conditions.push(eq(cfoInsights.companyId, filters.companyId));
+  return db.select().from(cfoInsights).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(cfoInsights.createdAt)).limit(100);
+}
+
+export async function getCfoInsightById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [result] = await db.select().from(cfoInsights).where(eq(cfoInsights.id, id)).limit(1);
+  return result || null;
+}
+
+export async function createCfoInsight(data: InsertCfoInsight) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(cfoInsights).values(data);
+  return { id: result.insertId, ...data };
+}
+
+export async function updateCfoInsightStatus(id: number, status: string, resolvedBy?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(cfoInsights).set({
+    status: status as any,
+    resolvedBy,
+    resolvedAt: status === 'resolved' ? new Date() : undefined,
+  }).where(eq(cfoInsights.id, id));
+  return { id, status };
+}
+
+export async function getCfoStrategies(filters?: { category?: string; status?: string; priority?: string; timeHorizon?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.category) conditions.push(eq(cfoStrategies.category, filters.category as any));
+  if (filters?.status) conditions.push(eq(cfoStrategies.status, filters.status as any));
+  if (filters?.priority) conditions.push(eq(cfoStrategies.priority, filters.priority as any));
+  if (filters?.timeHorizon) conditions.push(eq(cfoStrategies.timeHorizon, filters.timeHorizon as any));
+  return db.select().from(cfoStrategies).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(desc(cfoStrategies.createdAt)).limit(100);
+}
+
+export async function getCfoStrategyById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [result] = await db.select().from(cfoStrategies).where(eq(cfoStrategies.id, id)).limit(1);
+  return result || null;
+}
+
+export async function createCfoStrategy(data: InsertCfoStrategy) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(cfoStrategies).values(data);
+  return { id: result.insertId, ...data };
+}
+
+export async function updateCfoStrategy(id: number, data: Partial<InsertCfoStrategy>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(cfoStrategies).set(data).where(eq(cfoStrategies.id, id));
+  return { id, ...data };
+}
+
+export async function getCfoCashFlowProjections(filters?: { scenarioType?: string; granularity?: string; companyId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.scenarioType) conditions.push(eq(cfoCashFlowProjections.scenarioType, filters.scenarioType as any));
+  if (filters?.granularity) conditions.push(eq(cfoCashFlowProjections.granularity, filters.granularity as any));
+  if (filters?.companyId) conditions.push(eq(cfoCashFlowProjections.companyId, filters.companyId));
+  return db.select().from(cfoCashFlowProjections).where(conditions.length > 0 ? and(...conditions) : undefined).orderBy(asc(cfoCashFlowProjections.periodStart)).limit(200);
+}
+
+export async function createCfoCashFlowProjection(data: InsertCfoCashFlowProjection) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(cfoCashFlowProjections).values(data);
+  return { id: result.insertId, ...data };
+}
+
+export async function createCfoCashFlowProjectionsBatch(data: InsertCfoCashFlowProjection[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(cfoCashFlowProjections).values(data);
+  return { count: data.length };
+}
+
+export async function getCfoKpiSnapshots(limit = 12) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(cfoKpiSnapshots).orderBy(desc(cfoKpiSnapshots.snapshotDate)).limit(limit);
+}
+
+export async function createCfoKpiSnapshot(data: InsertCfoKpiSnapshot) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(cfoKpiSnapshots).values(data);
+  return { id: result.insertId, ...data };
+}
+
+export async function getCfoReasoningLogs(limit = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(cfoReasoningLogs).orderBy(desc(cfoReasoningLogs.createdAt)).limit(limit);
+}
+
+export async function createCfoReasoningLog(data: InsertCfoReasoningLog) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(cfoReasoningLogs).values(data);
+  return { id: result.insertId, ...data };
+}
+
+export async function getCfoFinancialSummary() {
+  const db = await getDb();
+  if (!db) return null;
+
+  // Aggregate financial data across the system
+  const [invoiceSummary] = await db.select({
+    totalRevenue: sql<string>`COALESCE(SUM(CASE WHEN ${invoices.type} = 'sales' AND ${invoices.status} = 'paid' THEN ${invoices.totalAmount} ELSE 0 END), 0)`,
+    totalOutstanding: sql<string>`COALESCE(SUM(CASE WHEN ${invoices.status} IN ('sent', 'overdue') THEN ${invoices.totalAmount} ELSE 0 END), 0)`,
+    totalOverdue: sql<string>`COALESCE(SUM(CASE WHEN ${invoices.status} = 'overdue' THEN ${invoices.totalAmount} ELSE 0 END), 0)`,
+    invoiceCount: sql<number>`COUNT(*)`,
+  }).from(invoices);
+
+  const [paymentSummary] = await db.select({
+    totalPaymentsReceived: sql<string>`COALESCE(SUM(CASE WHEN ${payments.type} = 'received' THEN ${payments.amount} ELSE 0 END), 0)`,
+    totalPaymentsMade: sql<string>`COALESCE(SUM(CASE WHEN ${payments.type} = 'made' THEN ${payments.amount} ELSE 0 END), 0)`,
+  }).from(payments);
+
+  const [orderSummary] = await db.select({
+    totalOrders: sql<number>`COUNT(*)`,
+    totalOrderValue: sql<string>`COALESCE(SUM(${orders.totalAmount}), 0)`,
+    pendingOrders: sql<number>`SUM(CASE WHEN ${orders.status} IN ('pending', 'processing') THEN 1 ELSE 0 END)`,
+  }).from(orders);
+
+  const [poSummary] = await db.select({
+    totalPOs: sql<number>`COUNT(*)`,
+    totalPOValue: sql<string>`COALESCE(SUM(${purchaseOrders.totalAmount}), 0)`,
+    pendingPOs: sql<number>`SUM(CASE WHEN ${purchaseOrders.status} IN ('pending', 'approved') THEN 1 ELSE 0 END)`,
+  }).from(purchaseOrders);
+
+  const [accountSummary] = await db.select({
+    totalAssets: sql<string>`COALESCE(SUM(CASE WHEN ${accounts.type} = 'asset' THEN ${accounts.balance} ELSE 0 END), 0)`,
+    totalLiabilities: sql<string>`COALESCE(SUM(CASE WHEN ${accounts.type} = 'liability' THEN ${accounts.balance} ELSE 0 END), 0)`,
+    totalEquity: sql<string>`COALESCE(SUM(CASE WHEN ${accounts.type} = 'equity' THEN ${accounts.balance} ELSE 0 END), 0)`,
+    cashBalance: sql<string>`COALESCE(SUM(CASE WHEN ${accounts.type} = 'asset' AND ${accounts.subType} = 'cash' THEN ${accounts.balance} ELSE 0 END), 0)`,
+  }).from(accounts);
+
+  return {
+    invoices: invoiceSummary,
+    payments: paymentSummary,
+    orders: orderSummary,
+    purchaseOrders: poSummary,
+    accounts: accountSummary,
   };
 }
 

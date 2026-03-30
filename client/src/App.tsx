@@ -129,6 +129,11 @@ import Login from "./pages/Login";
 // AI Agent
 import ApprovalQueue from "./pages/ai/ApprovalQueue";
 
+// CFO Intelligence
+import CfoDashboard from "./pages/cfo/CfoDashboard";
+import CfoStrategy from "./pages/cfo/CfoStrategy";
+import CfoCashFlow from "./pages/cfo/CfoCashFlow";
+
 // Autonomous Supply Chain
 import AutonomousDashboard from "./pages/autonomous/Dashboard";
 import AutonomousApprovals from "./pages/autonomous/Approvals";
@@ -164,6 +169,11 @@ function Router() {
         <Route path="/finance/invoices" component={Invoices} />
         <Route path="/finance/payments" component={Payments} />
         <Route path="/finance/transactions" component={Transactions} />
+
+        {/* CFO Intelligence */}
+        <Route path="/cfo" component={CfoDashboard} />
+        <Route path="/cfo/strategy" component={CfoStrategy} />
+        <Route path="/cfo/cash-flow" component={CfoCashFlow} />
 
         {/* Sales */}
         <Route path="/sales/orders/:id" component={OrderDetail} />

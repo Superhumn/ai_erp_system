@@ -4708,3 +4708,141 @@ export const agentCallLogs = mysqlTable("agent_call_logs", {
 
 export type AgentCallLog = typeof agentCallLogs.$inferSelect;
 export type InsertAgentCallLog = typeof agentCallLogs.$inferInsert;
+
+// ============================================
+// CFO INSIGHTS, STRATEGY & REASONING ENGINE
+// ============================================
+
+export const cfoInsights = mysqlTable("cfo_insights", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  category: mysqlEnum("category", ["cash_flow", "profitability", "revenue", "cost_optimization", "risk", "working_capital", "debt", "tax", "growth", "compliance"]).notNull(),
+  severity: mysqlEnum("severity", ["info", "warning", "critical", "opportunity"]).notNull().default("info"),
+  title: varchar("title", { length: 500 }).notNull(),
+  summary: text("summary").notNull(),
+  analysis: text("analysis").notNull(),
+  recommendation: text("recommendation"),
+  impact: text("impact"),
+  impactAmount: decimal("impactAmount", { precision: 15, scale: 2 }),
+  confidence: decimal("confidence", { precision: 5, scale: 2 }),
+  dataPoints: text("dataPoints"),
+  status: mysqlEnum("status", ["new", "acknowledged", "in_progress", "resolved", "dismissed"]).notNull().default("new"),
+  resolvedBy: int("resolvedBy"),
+  resolvedAt: timestamp("resolvedAt"),
+  expiresAt: timestamp("expiresAt"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CfoInsight = typeof cfoInsights.$inferSelect;
+export type InsertCfoInsight = typeof cfoInsights.$inferInsert;
+
+export const cfoStrategies = mysqlTable("cfo_strategies", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  title: varchar("title", { length: 500 }).notNull(),
+  objective: text("objective").notNull(),
+  timeHorizon: mysqlEnum("timeHorizon", ["short_term", "medium_term", "long_term"]).notNull().default("medium_term"),
+  category: mysqlEnum("category", ["growth", "cost_reduction", "capital_allocation", "risk_management", "cash_optimization", "debt_strategy", "tax_planning", "m_and_a", "fundraising", "operational_efficiency"]).notNull(),
+  status: mysqlEnum("status", ["draft", "active", "completed", "paused", "archived"]).notNull().default("draft"),
+  priority: mysqlEnum("priority", ["low", "medium", "high", "critical"]).notNull().default("medium"),
+  reasoning: text("reasoning").notNull(),
+  assumptions: text("assumptions"),
+  risks: text("risks"),
+  milestones: text("milestones"),
+  kpis: text("kpis"),
+  estimatedImpact: decimal("estimatedImpact", { precision: 15, scale: 2 }),
+  actualImpact: decimal("actualImpact", { precision: 15, scale: 2 }),
+  startDate: timestamp("startDate"),
+  targetDate: timestamp("targetDate"),
+  completedAt: timestamp("completedAt"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CfoStrategy = typeof cfoStrategies.$inferSelect;
+export type InsertCfoStrategy = typeof cfoStrategies.$inferInsert;
+
+export const cfoCashFlowProjections = mysqlTable("cfo_cash_flow_projections", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  periodStart: timestamp("periodStart").notNull(),
+  periodEnd: timestamp("periodEnd").notNull(),
+  granularity: mysqlEnum("granularity", ["daily", "weekly", "monthly", "quarterly"]).notNull().default("monthly"),
+  projectedInflow: decimal("projectedInflow", { precision: 15, scale: 2 }).notNull().default("0"),
+  projectedOutflow: decimal("projectedOutflow", { precision: 15, scale: 2 }).notNull().default("0"),
+  projectedNetCash: decimal("projectedNetCash", { precision: 15, scale: 2 }).notNull().default("0"),
+  actualInflow: decimal("actualInflow", { precision: 15, scale: 2 }),
+  actualOutflow: decimal("actualOutflow", { precision: 15, scale: 2 }),
+  actualNetCash: decimal("actualNetCash", { precision: 15, scale: 2 }),
+  arCollections: decimal("arCollections", { precision: 15, scale: 2 }),
+  apPayments: decimal("apPayments", { precision: 15, scale: 2 }),
+  payrollExpense: decimal("payrollExpense", { precision: 15, scale: 2 }),
+  capitalExpenditure: decimal("capitalExpenditure", { precision: 15, scale: 2 }),
+  debtService: decimal("debtService", { precision: 15, scale: 2 }),
+  otherInflows: decimal("otherInflows", { precision: 15, scale: 2 }),
+  otherOutflows: decimal("otherOutflows", { precision: 15, scale: 2 }),
+  assumptions: text("assumptions"),
+  scenarioType: mysqlEnum("scenarioType", ["base", "optimistic", "pessimistic"]).notNull().default("base"),
+  confidence: decimal("confidence", { precision: 5, scale: 2 }),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CfoCashFlowProjection = typeof cfoCashFlowProjections.$inferSelect;
+export type InsertCfoCashFlowProjection = typeof cfoCashFlowProjections.$inferInsert;
+
+export const cfoKpiSnapshots = mysqlTable("cfo_kpi_snapshots", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  snapshotDate: timestamp("snapshotDate").notNull(),
+  revenue: decimal("revenue", { precision: 15, scale: 2 }),
+  grossProfit: decimal("grossProfit", { precision: 15, scale: 2 }),
+  grossMargin: decimal("grossMargin", { precision: 5, scale: 2 }),
+  operatingExpenses: decimal("operatingExpenses", { precision: 15, scale: 2 }),
+  ebitda: decimal("ebitda", { precision: 15, scale: 2 }),
+  netIncome: decimal("netIncome", { precision: 15, scale: 2 }),
+  cashOnHand: decimal("cashOnHand", { precision: 15, scale: 2 }),
+  accountsReceivable: decimal("accountsReceivable", { precision: 15, scale: 2 }),
+  accountsPayable: decimal("accountsPayable", { precision: 15, scale: 2 }),
+  inventoryValue: decimal("inventoryValue", { precision: 15, scale: 2 }),
+  currentRatio: decimal("currentRatio", { precision: 5, scale: 2 }),
+  quickRatio: decimal("quickRatio", { precision: 5, scale: 2 }),
+  debtToEquity: decimal("debtToEquity", { precision: 5, scale: 2 }),
+  dso: decimal("dso", { precision: 5, scale: 2 }),
+  dpo: decimal("dpo", { precision: 5, scale: 2 }),
+  dio: decimal("dio", { precision: 5, scale: 2 }),
+  cashConversionCycle: decimal("cashConversionCycle", { precision: 5, scale: 2 }),
+  burnRate: decimal("burnRate", { precision: 15, scale: 2 }),
+  runway: decimal("runway", { precision: 5, scale: 2 }),
+  revenueGrowthRate: decimal("revenueGrowthRate", { precision: 5, scale: 2 }),
+  customerAcquisitionCost: decimal("customerAcquisitionCost", { precision: 15, scale: 2 }),
+  ltv: decimal("ltv", { precision: 15, scale: 2 }),
+  metadata: text("metadata"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CfoKpiSnapshot = typeof cfoKpiSnapshots.$inferSelect;
+export type InsertCfoKpiSnapshot = typeof cfoKpiSnapshots.$inferInsert;
+
+export const cfoReasoningLogs = mysqlTable("cfo_reasoning_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  insightId: int("insightId"),
+  strategyId: int("strategyId"),
+  requestType: mysqlEnum("requestType", ["insight_generation", "strategy_creation", "cash_flow_forecast", "scenario_analysis", "risk_assessment", "kpi_analysis", "board_report", "what_if"]).notNull(),
+  prompt: text("prompt").notNull(),
+  reasoning: text("reasoning").notNull(),
+  conclusion: text("conclusion").notNull(),
+  dataSourcesSummary: text("dataSourcesSummary"),
+  tokensUsed: int("tokensUsed"),
+  durationMs: int("durationMs"),
+  requestedBy: int("requestedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CfoReasoningLog = typeof cfoReasoningLogs.$inferSelect;
+export type InsertCfoReasoningLog = typeof cfoReasoningLogs.$inferInsert;

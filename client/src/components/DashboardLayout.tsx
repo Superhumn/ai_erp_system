@@ -105,6 +105,7 @@ const menuGroups = [
       { icon: Target, label: "Campaigns", path: "/crm/campaigns" },
       { icon: DollarSign, label: "Accounts", path: "/finance/accounts" },
       { icon: TrendingUp, label: "Transactions", path: "/finance/transactions" },
+      { icon: Brain, label: "CFO Intelligence", path: "/cfo" },
     ],
   },
   {

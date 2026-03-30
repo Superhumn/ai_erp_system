@@ -183,6 +183,13 @@
       "when": 1771251256000,
       "tag": "0025_investment_grant_checklists",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "5",
+      "when": 1774972800000,
+      "tag": "0029_cfo_insights_strategy",
+      "breakpoints": true
     }
   ]
 }
