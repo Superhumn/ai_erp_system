@@ -25,9 +25,10 @@ export interface CopackerInventoryUpdateResult {
   matched: Array<{
     sku: string;
     itemName: string;
-    rawMaterialId: number;
-    previousQuantityKg: number;
-    newQuantityKg: number;
+    matchType: "raw_material" | "product";
+    matchedId: number;
+    previousQuantity: number;
+    newQuantity: number;
     quantityBoxes: number;
   }>;
   unmatched: Array<{
@@ -157,9 +158,17 @@ Return JSON:
   }
 }
 
+// Helper to fuzzy-match a name against a candidate
+function nameMatches(itemName: string, candidateName: string): boolean {
+  const a = itemName.toLowerCase();
+  const b = candidateName.toLowerCase();
+  return a === b || a.includes(b) || b.includes(a);
+}
+
 /**
  * Apply extracted copacker inventory data to the system.
- * Matches items by SKU or name to raw materials, then updates inventory at the copacker warehouse.
+ * Matches items to both raw materials AND finished-goods products,
+ * updating the appropriate inventory table for each match.
  */
 export async function applyCopackerInventoryUpdate(
   items: CopackerInventoryItem[],
@@ -171,38 +180,25 @@ export async function applyCopackerInventoryUpdate(
   const unmatched: CopackerInventoryUpdateResult["unmatched"] = [];
   const created: CopackerInventoryUpdateResult["created"] = [];
 
-  // Load all raw materials once for matching
+  // Load raw materials and products once for matching
   const allMaterials = await db.getRawMaterials();
+  const allProducts = await db.getProducts();
 
   for (const item of items) {
-    // Try to match by SKU first, then by name
-    let rawMaterial = allMaterials.find(
-      (m) => m.sku && m.sku === item.sku
-    );
+    // --- Try raw materials first (by SKU, then exact name, then fuzzy) ---
+    let rawMaterial = allMaterials.find((m) => m.sku && m.sku === item.sku);
     if (!rawMaterial) {
-      rawMaterial = allMaterials.find(
-        (m) => m.name.toLowerCase() === item.itemName.toLowerCase()
-      );
+      rawMaterial = allMaterials.find((m) => m.name.toLowerCase() === item.itemName.toLowerCase());
     }
     if (!rawMaterial) {
-      // Fuzzy match: check if the item name is contained in the material name or vice versa
-      rawMaterial = allMaterials.find(
-        (m) =>
-          m.name.toLowerCase().includes(item.itemName.toLowerCase()) ||
-          item.itemName.toLowerCase().includes(m.name.toLowerCase())
-      );
+      rawMaterial = allMaterials.find((m) => nameMatches(item.itemName, m.name));
     }
 
     if (rawMaterial) {
-      // Get current inventory at this warehouse
-      const currentInv = await db.getRawMaterialInventoryByLocation(
-        rawMaterial.id,
-        warehouseId
-      );
+      const currentInv = await db.getRawMaterialInventoryByLocation(rawMaterial.id, warehouseId);
       const previousQty = parseFloat(currentInv?.quantity?.toString() || "0");
       const newQty = item.quantityKg;
 
-      // Update inventory (set absolute quantity, not increment - this is a stock report)
       await db.upsertRawMaterialInventory(rawMaterial.id, warehouseId, {
         quantity: newQty.toFixed(4),
         availableQuantity: newQty.toFixed(4),
@@ -210,7 +206,6 @@ export async function applyCopackerInventoryUpdate(
         lastCountDate: new Date(),
       });
 
-      // Create adjustment transaction if quantity changed
       if (previousQty !== newQty) {
         await db.createRawMaterialTransaction({
           rawMaterialId: rawMaterial.id,
@@ -229,13 +224,61 @@ export async function applyCopackerInventoryUpdate(
       matched.push({
         sku: item.sku,
         itemName: item.itemName,
-        rawMaterialId: rawMaterial.id,
-        previousQuantityKg: previousQty,
-        newQuantityKg: newQty,
+        matchType: "raw_material",
+        matchedId: rawMaterial.id,
+        previousQuantity: previousQty,
+        newQuantity: newQty,
         quantityBoxes: item.quantityBoxes,
       });
-    } else if (options?.createMissing) {
-      // Create new raw material
+      continue;
+    }
+
+    // --- Try finished-goods products (by SKU, then exact name, then fuzzy) ---
+    let product = allProducts.find((p: any) => p.sku && p.sku === item.sku);
+    if (!product) {
+      product = allProducts.find((p: any) => p.name.toLowerCase() === item.itemName.toLowerCase());
+    }
+    if (!product) {
+      product = allProducts.find((p: any) => nameMatches(item.itemName, p.name));
+    }
+
+    if (product) {
+      // Use the finished-goods inventory table
+      const currentInv = await db.getInventoryByProductId(product.id);
+      const previousQty = parseFloat(currentInv?.quantity?.toString() || "0");
+      // For finished goods, use box quantity if available (boxes are the stocking unit), else kg
+      const newQty = item.quantityBoxes > 0 ? item.quantityBoxes : item.quantityKg;
+
+      if (currentInv && currentInv.warehouseId === warehouseId) {
+        await db.updateInventory(currentInv.id, { quantity: newQty.toFixed(4) });
+      } else {
+        // Upsert: update existing record at this warehouse, or create one
+        const warehouseInv = (await db.getInventory({ warehouseId, productId: product.id })) as any[];
+        if (warehouseInv.length > 0) {
+          await db.updateInventory(warehouseInv[0].id, { quantity: newQty.toFixed(4) });
+        } else {
+          await db.createInventory({
+            productId: product.id,
+            warehouseId,
+            quantity: newQty.toFixed(4),
+          });
+        }
+      }
+
+      matched.push({
+        sku: item.sku,
+        itemName: item.itemName,
+        matchType: "product",
+        matchedId: product.id,
+        previousQuantity: previousQty,
+        newQuantity: newQty,
+        quantityBoxes: item.quantityBoxes,
+      });
+      continue;
+    }
+
+    // --- No match found ---
+    if (options?.createMissing) {
       const { id: newId } = await db.createRawMaterial({
         name: item.itemName,
         sku: item.sku,
@@ -244,7 +287,6 @@ export async function applyCopackerInventoryUpdate(
         status: "active",
       });
 
-      // Set initial inventory
       await db.upsertRawMaterialInventory(newId, warehouseId, {
         quantity: item.quantityKg.toFixed(4),
         availableQuantity: item.quantityKg.toFixed(4),
