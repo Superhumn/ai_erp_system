@@ -59,6 +59,18 @@ function statusVariant(status: string): "default" | "secondary" | "outline" | "d
   }
 }
 
+/** Convert an ArrayBuffer to a base64 string using chunked encoding to avoid
+ *  call-stack overflows with large files (avoids spread-to-args limit). */
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const CHUNK = 8192;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...Array.from(bytes.subarray(i, i + CHUNK)));
+  }
+  return btoa(binary);
+}
+
 export default function CopackerPortal() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState("overview");
@@ -282,7 +294,7 @@ export default function CopackerPortal() {
 
     if (invoiceFile) {
       const buffer = await invoiceFile.arrayBuffer();
-      fileData = btoa(String.fromCharCode(...Array.from(new Uint8Array(buffer))));
+      fileData = arrayBufferToBase64(buffer);
       mimeType = invoiceFile.type;
       fileName = invoiceFile.name;
     }
@@ -315,7 +327,7 @@ export default function CopackerPortal() {
       return;
     }
     const buffer = await shipDocFile.arrayBuffer();
-    const fileData = btoa(String.fromCharCode(...Array.from(new Uint8Array(buffer))));
+    const fileData = arrayBufferToBase64(buffer);
 
     uploadShippingDoc.mutate({
       shipmentId: shipDocShipmentId ? parseInt(shipDocShipmentId) : undefined,

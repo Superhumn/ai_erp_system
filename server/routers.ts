@@ -5987,42 +5987,72 @@ Provide a brief status summary, any missing documents, and next steps.`;
 
     // Inventory updates submitted by this copacker
     getInventoryUpdates: copackerProcedure.query(async ({ ctx }) => {
-      const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId ?? undefined : undefined;
-      return db.getCopackerInventoryUpdates(warehouseId);
+      if (ctx.user.role === 'copacker') {
+        if (!ctx.user.linkedWarehouseId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Copacker must be linked to a warehouse to view inventory updates' });
+        }
+        return db.getCopackerInventoryUpdates(ctx.user.linkedWarehouseId);
+      }
+      return db.getCopackerInventoryUpdates(undefined);
     }),
 
     // Invoices submitted by this copacker
     getInvoices: copackerProcedure.query(async ({ ctx }) => {
-      const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId ?? undefined : undefined;
-      return db.getCopackerInvoices(warehouseId);
+      if (ctx.user.role === 'copacker') {
+        if (!ctx.user.linkedWarehouseId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Copacker must be linked to a warehouse to view invoices' });
+        }
+        return db.getCopackerInvoices(ctx.user.linkedWarehouseId);
+      }
+      return db.getCopackerInvoices(undefined);
     }),
 
     // Shipping documents uploaded by this copacker
     getShippingDocuments: copackerProcedure.query(async ({ ctx }) => {
-      const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId ?? undefined : undefined;
-      return db.getCopackerShippingDocuments(warehouseId);
+      if (ctx.user.role === 'copacker') {
+        if (!ctx.user.linkedWarehouseId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Copacker must be linked to a warehouse to view shipping documents' });
+        }
+        return db.getCopackerShippingDocuments(ctx.user.linkedWarehouseId);
+      }
+      return db.getCopackerShippingDocuments(undefined);
     }),
 
     // Detail view for an inventory update
     getInventoryUpdateDetail: copackerProcedure
       .input(z.object({ id: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         const update = await db.getCopackerInventoryUpdateById(input.id);
         if (!update) throw new TRPCError({ code: 'NOT_FOUND', message: 'Inventory update not found' });
+        if (ctx.user.role === 'copacker') {
+          if (!ctx.user.linkedWarehouseId || update.warehouseId !== ctx.user.linkedWarehouseId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Not authorized to view this inventory update' });
+          }
+        }
         const rawItems = await db.getCopackerInventoryUpdateItems(input.id);
-        const items = await Promise.all(rawItems.map(async (item) => {
-          const product = await db.getProductById(item.productId);
-          return { item, product };
-        }));
+        // Batch product lookups to avoid N+1 queries
+        const uniqueProductIds = Array.from(new Set(rawItems.map((item) => item.productId)));
+        const productResults = await Promise.all(uniqueProductIds.map((productId) => db.getProductById(productId)));
+        const productById = new Map<number, typeof productResults[number]>();
+        uniqueProductIds.forEach((productId, index) => {
+          const product = productResults[index];
+          if (product) productById.set(productId, product);
+        });
+        const items = rawItems.map((item) => ({ item, product: productById.get(item.productId) ?? null }));
         return { update, items };
       }),
 
     // Detail view for an invoice
     getInvoiceDetail: copackerProcedure
       .input(z.object({ id: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         const invoice = await db.getCopackerInvoiceById(input.id);
         if (!invoice) throw new TRPCError({ code: 'NOT_FOUND', message: 'Invoice not found' });
+        if (ctx.user.role === 'copacker') {
+          if (!ctx.user.linkedWarehouseId || invoice.warehouseId !== ctx.user.linkedWarehouseId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Not authorized to view this invoice' });
+          }
+        }
         const items = await db.getCopackerInvoiceItems(input.id);
         return { invoice, items };
       }),
@@ -6044,7 +6074,10 @@ Provide a brief status summary, any missing documents, and next steps.`;
         })),
       }))
       .mutation(async ({ input, ctx }) => {
-        const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId ?? undefined : undefined;
+        if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Copacker must be linked to a warehouse to create inventory updates' });
+        }
+        const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId! : undefined;
         const update = await db.createCopackerInventoryUpdate({
           warehouseId,
           periodStart: input.periodStart,
@@ -6074,6 +6107,11 @@ Provide a brief status summary, any missing documents, and next steps.`;
       .mutation(async ({ input, ctx }) => {
         const update = await db.getCopackerInventoryUpdateById(input.id);
         if (!update) throw new TRPCError({ code: 'NOT_FOUND', message: 'Inventory update not found' });
+        if (ctx.user.role === 'copacker') {
+          if (!ctx.user.linkedWarehouseId || update.warehouseId !== ctx.user.linkedWarehouseId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this inventory update' });
+          }
+        }
         await db.updateCopackerInventoryUpdate(input.id, { status: "submitted" });
         await createAuditLog(ctx.user.id, 'update', 'copackerInventoryUpdate', input.id, 'Submitted');
         return { success: true };
@@ -6098,8 +6136,20 @@ Provide a brief status summary, any missing documents, and next steps.`;
         mimeType: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId ?? undefined : undefined;
+        if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Copacker must be linked to a warehouse to create invoices' });
+        }
+        const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId! : undefined;
         const totalAmount = input.items.reduce((sum, i) => sum + parseFloat(i.totalAmount || "0"), 0);
+
+        let fileUrl: string | undefined;
+        if (input.fileData && input.fileName) {
+          const buffer = Buffer.from(input.fileData, 'base64');
+          const fileKey = `copacker-invoices/${ctx.user.id}/${nanoid()}-${input.fileName}`;
+          const uploadResult = await storagePut(fileKey, buffer, input.mimeType || 'application/octet-stream');
+          fileUrl = uploadResult.url;
+        }
+
         const invoice = await db.createCopackerInvoice({
           warehouseId,
           invoiceNumber: input.invoiceNumber,
@@ -6109,6 +6159,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
           description: input.description,
           notes: input.notes,
           fileName: input.fileName,
+          fileUrl,
           status: "submitted",
           submittedBy: ctx.user.id,
         });
@@ -6134,18 +6185,26 @@ Provide a brief status summary, any missing documents, and next steps.`;
         documentType: z.string(),
         name: z.string(),
         description: z.string().optional(),
-        fileData: z.string().optional(),
-        mimeType: z.string().optional(),
+        fileData: z.string().min(1),
+        mimeType: z.string(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId ?? undefined : undefined;
+        if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Copacker must be linked to a warehouse to upload shipping documents' });
+        }
+        const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId! : undefined;
+        const buffer = Buffer.from(input.fileData, 'base64');
+        const fileKey = `copacker-shipping/${warehouseId ?? ctx.user.id}/${nanoid()}-${input.name}`;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType);
         const doc = await db.createCopackerShippingDocument({
           warehouseId,
           shipmentId: input.shipmentId,
           documentType: input.documentType,
           name: input.name,
           description: input.description,
+          fileUrl: url,
           mimeType: input.mimeType,
+          fileSize: buffer.length,
           uploadedBy: ctx.user.id,
         });
         await createAuditLog(ctx.user.id, 'create', 'copackerShippingDocument', doc.id, input.name);
