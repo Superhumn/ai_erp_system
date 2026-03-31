@@ -96,7 +96,9 @@ import {
   localAuthCredentials, InsertLocalAuthCredential,
   // Investment grant checklists
   investmentGrantChecklists, investmentGrantItems,
-  InsertInvestmentGrantChecklist, InsertInvestmentGrantItem
+  InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
+  // Fireflies meetings
+  firefliesMeetings, firefliesConfigs,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -559,6 +561,19 @@ export async function createInvoice(data: InsertInvoice) {
   return { id: result[0].insertId };
 }
 
+export async function getInvoiceByNumber(
+  invoiceNumber: string,
+): Promise<typeof invoices.$inferSelect | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db
+    .select()
+    .from(invoices)
+    .where(eq(invoices.invoiceNumber, invoiceNumber))
+    .limit(1);
+  return result[0] ?? undefined;
+}
+
 export async function updateInvoice(id: number, data: Partial<InsertInvoice>) {
   const db = await getDb();
   if (!db) return;
@@ -821,6 +836,13 @@ export async function getWarehouseById(id: number) {
   const db = await getDb();
   if (!db) return null;
   const result = await db.select().from(warehouses).where(eq(warehouses.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function getWarehouseByName(name: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(warehouses).where(eq(warehouses.name, name)).limit(1);
   return result[0] || null;
 }
 
@@ -2106,6 +2128,9 @@ export async function addTransferItem(data: InsertInventoryTransferItem) {
   const result = await db.insert(inventoryTransferItems).values(data);
   return { id: result[0].insertId };
 }
+
+export const createInventoryTransfer = createTransfer;
+export const createInventoryTransferItem = addTransferItem;
 
 export async function updateTransfer(id: number, data: Partial<InsertInventoryTransfer>) {
   const db = await getDb();
@@ -9191,6 +9216,127 @@ export async function getChecklistSummary(dataRoomId: number) {
       : 0,
     byCategory,
     requiredMissing: items.filter(i => i.status === 'missing' && i.requirement === 'required'),
+  };
+}
+
+// ============================================
+// ORDER ITEMS
+// ============================================
+
+export async function getOrderItems(orderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+}
+
+// ============================================
+// INVENTORY MANAGEMENT (enriched view)
+// ============================================
+
+export async function getInventoryManagementList() {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({
+      id: inventory.id,
+      productId: inventory.productId,
+      name: products.name,
+      sku: products.sku,
+      quantity: inventory.quantity,
+      reservedQuantity: inventory.reservedQuantity,
+      reorderLevel: inventory.reorderLevel,
+      averageCost: inventory.averageCost,
+      warehouseId: inventory.warehouseId,
+    })
+    .from(inventory)
+    .leftJoin(products, eq(inventory.productId, products.id))
+    .orderBy(products.name);
+  return rows;
+}
+
+export async function updateInventoryManagement(id: number, data: Record<string, any>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(inventory).set(data).where(eq(inventory.id, id));
+  return { success: true };
+}
+
+// ============================================
+// FIREFLIES MEETINGS
+// ============================================
+
+export async function getFirefliesConfig(userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(firefliesConfigs).where(eq(firefliesConfigs.userId, userId)).limit(1);
+  return result[0] || null;
+}
+
+export async function upsertFirefliesConfig(userId: number, data: { apiKey: string; autoCreateContacts?: boolean; autoCreateTasks?: boolean; autoCreateProjects?: boolean }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = await getFirefliesConfig(userId);
+  if (existing) {
+    await db.update(firefliesConfigs).set({ ...data, updatedAt: new Date() }).where(eq(firefliesConfigs.id, existing.id));
+    return { id: existing.id, updated: true };
+  }
+  const result = await db.insert(firefliesConfigs).values({ userId, ...data });
+  return { id: result[0].insertId, updated: false };
+}
+
+export async function deleteFirefliesConfig(userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(firefliesConfigs).where(eq(firefliesConfigs.userId, userId));
+}
+
+export async function getFirefliesMeetings(filters?: { status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(firefliesMeetings);
+  if (filters?.status) {
+    query = query.where(eq(firefliesMeetings.status, filters.status as any)) as any;
+  }
+  return query.orderBy(desc(firefliesMeetings.date));
+}
+
+export async function getFirefliesMeetingById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(firefliesMeetings).where(eq(firefliesMeetings.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function createFirefliesMeeting(data: typeof firefliesMeetings.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(firefliesMeetings).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateFirefliesMeeting(id: number, data: Partial<typeof firefliesMeetings.$inferInsert>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(firefliesMeetings).set(data).where(eq(firefliesMeetings.id, id));
+}
+
+export async function getFirefliesMeetingByFirefliesId(firefliesId: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(firefliesMeetings).where(eq(firefliesMeetings.firefliesId, firefliesId)).limit(1);
+  return result[0] || null;
+}
+
+export async function getFirefliesMeetingStats() {
+  const db = await getDb();
+  if (!db) return { total: 0, pending: 0, processed: 0 };
+  const all = await db.select({ count: count() }).from(firefliesMeetings);
+  const pending = await db.select({ count: count() }).from(firefliesMeetings).where(eq(firefliesMeetings.status, 'pending'));
+  const processed = await db.select({ count: count() }).from(firefliesMeetings).where(eq(firefliesMeetings.status, 'fully_processed'));
+  return {
+    total: all[0]?.count || 0,
+    pending: pending[0]?.count || 0,
+    processed: processed[0]?.count || 0,
   };
 }
 

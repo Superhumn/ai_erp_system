@@ -29,7 +29,7 @@ import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refresh
 import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
-import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
+import { purchaseOrderTextEndpoints, shipmentTextEndpoints, paymentTextEndpoints, workOrderTextEndpoints, inventoryTextEndpoints } from "./naturalLanguageRouterExtensions";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -828,6 +828,8 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'update', 'payment', id);
         return { success: true };
       }),
+    // Natural language text-to-payment
+    ...paymentTextEndpoints,
   }),
 
   // ============================================
@@ -1077,6 +1079,8 @@ export const appRouter = router({
     // Get inbound shipments from POs
     getInboundShipments: opsProcedure
       .query(() => db.getInboundShipmentsFromPOs()),
+    // Natural language text-to-inventory-transfer
+    ...inventoryTextEndpoints,
   }),
 
   // ============================================
@@ -1655,6 +1659,9 @@ export const appRouter = router({
         
         return { success: true, shipmentId, rfqId, portalToken };
       }),
+    // Natural language text-to-PO (V2 endpoints, keep existing createFromText/parseText unchanged)
+    createFromTextV2: purchaseOrderTextEndpoints.createFromText,
+    parseTextV2: purchaseOrderTextEndpoints.parseText,
   }),
 
   // ============================================
@@ -1722,6 +1729,8 @@ export const appRouter = router({
         
         return { success: true };
       }),
+    // Natural language text-to-shipment
+    ...shipmentTextEndpoints,
   }),
 
   // ============================================
@@ -6608,6 +6617,8 @@ Provide a brief status summary, any missing documents, and next steps.`;
         
         return { success: true };
       }),
+    // Natural language text-to-work-order
+    ...workOrderTextEndpoints,
   }),
 
   // Raw Material Inventory
@@ -13766,6 +13777,209 @@ Ask if they received the original request and if they can provide a quote.`;
           await createAuditLog(ctx.user.id, 'create', 'edi_compliance_scorecard', result.id);
           return result;
         }),
+    }),
+  }),
+
+  // ============================================
+  // ORDER ITEMS
+  // ============================================
+  orderItems: router({
+    list: protectedProcedure
+      .input(z.object({ orderId: z.number() }))
+      .query(({ input }) => db.getOrderItems(input.orderId)),
+  }),
+
+  // ============================================
+  // INVENTORY MANAGEMENT (enriched view)
+  // ============================================
+  inventoryManagement: router({
+    list: opsProcedure.query(() => db.getInventoryManagementList()),
+    update: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        forecastedQuantity: z.string().optional(),
+        poStatus: z.string().optional(),
+        freightStatus: z.string().optional(),
+        freightTrackingNumber: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        // Filter out undefined values
+        const updateData: Record<string, any> = {};
+        for (const [k, v] of Object.entries(data)) {
+          if (v !== undefined) updateData[k] = v;
+        }
+        return db.updateInventoryManagement(id, updateData);
+      }),
+  }),
+
+  // ============================================
+  // FIREFLIES INTEGRATION
+  // ============================================
+  fireflies: router({
+    getConfig: protectedProcedure.query(async ({ ctx }) => {
+      const config = await db.getFirefliesConfig(ctx.user.id);
+      if (!config) return null;
+      return {
+        isConnected: true,
+        autoCreateContacts: config.autoCreateContacts,
+        autoCreateTasks: config.autoCreateTasks,
+        autoCreateProjects: config.autoCreateProjects,
+        lastSyncAt: config.lastSyncAt,
+      };
+    }),
+    configure: protectedProcedure
+      .input(z.object({
+        apiKey: z.string().min(1),
+        autoCreateContacts: z.boolean().optional(),
+        autoCreateTasks: z.boolean().optional(),
+        autoCreateProjects: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Validate the API key
+        const isValid = await validateFirefliesApiKey(input.apiKey);
+        if (!isValid) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid Fireflies API key' });
+        }
+        return db.upsertFirefliesConfig(ctx.user.id, input);
+      }),
+    disconnect: protectedProcedure.mutation(async ({ ctx }) => {
+      await db.deleteFirefliesConfig(ctx.user.id);
+      return { success: true };
+    }),
+    syncMeetings: protectedProcedure.mutation(async ({ ctx }) => {
+      const config = await db.getFirefliesConfig(ctx.user.id);
+      if (!config) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fireflies not configured' });
+      }
+      const transcripts = await listTranscripts(config.apiKey);
+      let synced = 0;
+      let skipped = 0;
+      for (const t of transcripts) {
+        const existing = await db.getFirefliesMeetingByFirefliesId(t.id);
+        if (existing) {
+          skipped++;
+          continue;
+        }
+        const fullTranscript = await getTranscript(config.apiKey, t.id);
+        await db.createFirefliesMeeting({
+          firefliesId: t.id,
+          title: t.title,
+          date: t.date ? new Date(t.date) : new Date(),
+          duration: t.duration,
+          participants: fullTranscript ? extractParticipants(fullTranscript) : [],
+          transcript: fullTranscript?.transcript_text || null,
+          summary: fullTranscript?.summary || null,
+          actionItems: fullTranscript ? parseActionItems(fullTranscript) : [],
+          status: 'pending',
+        });
+        synced++;
+      }
+      return { synced, skipped };
+    }),
+    processMeeting: protectedProcedure
+      .input(z.object({
+        meetingId: z.number(),
+        createContacts: z.boolean().optional(),
+        createTasks: z.boolean().optional(),
+        createProject: z.boolean().optional(),
+        projectName: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const meeting = await db.getFirefliesMeetingById(input.meetingId);
+        if (!meeting) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Meeting not found' });
+        }
+        let contactsCreated = 0;
+        let tasksCreated = 0;
+        let projectId: number | undefined;
+
+        // Create contacts from participants
+        if (input.createContacts && Array.isArray(meeting.participants)) {
+          for (const p of meeting.participants as Array<{ name: string; email: string }>) {
+            if (p.email) {
+              try {
+                await db.createCrmContact({
+                  name: p.name || p.email.split('@')[0],
+                  email: p.email,
+                  source: 'fireflies',
+                });
+                contactsCreated++;
+              } catch { /* duplicate, skip */ }
+            }
+          }
+        }
+
+        // Create project if requested
+        if (input.createProject) {
+          const project = await db.createProject({
+            name: input.projectName || meeting.title || 'Untitled Meeting Project',
+            status: 'planning',
+            createdBy: ctx.user.id,
+          });
+          projectId = project.id;
+        }
+
+        // Create tasks from action items
+        if (input.createTasks && Array.isArray(meeting.actionItems)) {
+          for (const item of meeting.actionItems as Array<{ text: string }>) {
+            if (projectId) {
+              await db.createProjectTask({
+                projectId,
+                title: item.text,
+                status: 'pending',
+              });
+              tasksCreated++;
+            }
+          }
+        }
+
+        const status = contactsCreated > 0 && tasksCreated > 0 ? 'fully_processed'
+          : contactsCreated > 0 ? 'contacts_created'
+          : tasksCreated > 0 ? 'tasks_created'
+          : 'pending';
+
+        await db.updateFirefliesMeeting(input.meetingId, {
+          status,
+          contactsCreated,
+          tasksCreated,
+          projectId,
+        });
+
+        return { contactsCreated, tasksCreated, projectId };
+      }),
+    processAllPending: protectedProcedure.mutation(async ({ ctx }) => {
+      const meetings = await db.getFirefliesMeetings({ status: 'pending' });
+      let processed = 0;
+      let contactsCreated = 0;
+      let tasksCreated = 0;
+      let projectsCreated = 0;
+      for (const meeting of meetings) {
+        // Auto-create contacts from participants
+        if (Array.isArray(meeting.participants)) {
+          for (const p of meeting.participants as Array<{ name: string; email: string }>) {
+            if (p.email) {
+              try {
+                await db.createCrmContact({
+                  name: p.name || p.email.split('@')[0],
+                  email: p.email,
+                  source: 'fireflies',
+                });
+                contactsCreated++;
+              } catch { /* duplicate */ }
+            }
+          }
+        }
+        await db.updateFirefliesMeeting(meeting.id, { status: 'fully_processed' });
+        processed++;
+      }
+      return { processed, contactsCreated, tasksCreated, projectsCreated };
+    }),
+    meetings: router({
+      list: protectedProcedure
+        .input(z.object({ status: z.string().optional() }).optional())
+        .query(({ input }) => db.getFirefliesMeetings(input || undefined)),
+      getStats: protectedProcedure.query(() => db.getFirefliesMeetingStats()),
     }),
   }),
 });

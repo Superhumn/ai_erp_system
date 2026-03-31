@@ -113,7 +113,7 @@ import CopackerPortal from "./pages/portal/CopackerPortal";
 import VendorPortal from "./pages/portal/VendorPortal";
 
 // Auth
-import { Login } from "./pages/Login";
+import Login from "./pages/Login";
 
 // SOPs
 import SOPs from "./pages/SOPs";
@@ -122,9 +122,6 @@ import SOPs from "./pages/SOPs";
 import DataRooms from "./pages/DataRooms";
 import DataRoomDetail from "./pages/DataRoomDetail";
 import DataRoomPublic from "./pages/DataRoomPublic";
-
-// Auth
-import Login from "./pages/Login";
 
 // AI Agent
 import ApprovalQueue from "./pages/ai/ApprovalQueue";
@@ -238,6 +235,9 @@ function Router() {
         {/* Projects */}
         <Route path="/projects" component={Projects} />
         <Route path="/projects/investment-grants" component={InvestmentGrantChecklist} />
+
+        {/* SOPs */}
+        <Route path="/sops" component={SOPs} />
 
         {/* Import */}
         <Route path="/import" component={Import} />
