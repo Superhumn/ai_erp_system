@@ -1,55 +1,66 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, cleanup } from "@testing-library/react";
 import ErrorBoundary from "./ErrorBoundary";
 
-function ProblemChild() {
-  throw new Error("Test error");
+// A component that throws an error on render
+function ThrowingComponent({ message }: { message: string }) {
+  throw new Error(message);
 }
 
-function GoodChild() {
-  return <div>All good</div>;
-}
+// Suppress React error boundary console errors during tests
+const originalConsoleError = console.error;
 
 describe("ErrorBoundary", () => {
+  beforeEach(() => {
+    console.error = vi.fn();
+  });
+
+  afterEach(() => {
+    cleanup();
+    console.error = originalConsoleError;
+  });
+
   it("renders children when there is no error", () => {
     render(
       <ErrorBoundary>
-        <GoodChild />
+        <div>Child content</div>
       </ErrorBoundary>
     );
-    expect(screen.getByText("All good")).toBeInTheDocument();
+
+    expect(screen.getByText("Child content")).toBeInTheDocument();
   });
 
-  it("renders fallback UI when a child throws", () => {
-    // Suppress console.error from React for the intentional throw
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-
+  it("renders fallback UI when a child throws an error", () => {
     render(
       <ErrorBoundary>
-        <ProblemChild />
+        <ThrowingComponent message="Test error" />
       </ErrorBoundary>
     );
 
     expect(
       screen.getByText("An unexpected error occurred.")
     ).toBeInTheDocument();
-    expect(screen.getByText("Reload Page")).toBeInTheDocument();
-
-    spy.mockRestore();
   });
 
-  it("displays the error stack in the fallback", () => {
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-
+  it("displays the error stack in the fallback UI", () => {
     render(
       <ErrorBoundary>
-        <ProblemChild />
+        <ThrowingComponent message="Test error" />
       </ErrorBoundary>
     );
 
-    // The error stack should contain our test error message
     expect(screen.getByText(/Test error/)).toBeInTheDocument();
+  });
 
-    spy.mockRestore();
+  it("renders a Reload Page button in fallback UI", () => {
+    render(
+      <ErrorBoundary>
+        <ThrowingComponent message="Test error" />
+      </ErrorBoundary>
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Reload Page/i })
+    ).toBeInTheDocument();
   });
 });
