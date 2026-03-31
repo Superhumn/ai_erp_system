@@ -561,11 +561,17 @@ export async function createInvoice(data: InsertInvoice) {
   return { id: result[0].insertId };
 }
 
-export async function getInvoiceByNumber(invoiceNumber: string) {
+export async function getInvoiceByNumber(
+  invoiceNumber: string,
+): Promise<typeof invoices.$inferSelect | undefined> {
   const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(invoices).where(eq(invoices.invoiceNumber, invoiceNumber)).limit(1);
-  return result[0] || null;
+  if (!db) return undefined;
+  const result = await db
+    .select()
+    .from(invoices)
+    .where(eq(invoices.invoiceNumber, invoiceNumber))
+    .limit(1);
+  return result[0] ?? undefined;
 }
 
 export async function updateInvoice(id: number, data: Partial<InsertInvoice>) {

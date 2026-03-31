@@ -32,9 +32,31 @@ function generateNumber(prefix: string) {
   return `${prefix}-${year}${month}-${random}`;
 }
 
-async function createAuditLog(userId: number, action: 'create' | 'update' | 'delete' | 'view' | 'export' | 'approve' | 'reject', entityType: string, entityId: number, entityName?: string, oldValues?: any, newValues?: any) {
+type CoreAuditAction =
+  | 'create'
+  | 'update'
+  | 'delete'
+  | 'view'
+  | 'export'
+  | 'approve'
+  | 'reject';
+
+type ExtendedAuditAction = CoreAuditAction | 'warning' | 'error' | 'bulk_update';
+
+function normalizeAuditAction(action: ExtendedAuditAction): CoreAuditAction {
+  switch (action) {
+    case 'bulk_update':
+    case 'warning':
+    case 'error':
+      return 'update';
+    default:
+      return action;
+  }
+}
+
+async function createAuditLog(userId: number, action: ExtendedAuditAction, entityType: string, entityId: number, entityName?: string, oldValues?: any, newValues?: any) {
   await db.createAuditLog({
-    userId, action, entityType, entityId, entityName, oldValues, newValues,
+    userId, action: normalizeAuditAction(action), entityType, entityId, entityName, oldValues, newValues,
   });
 }
 

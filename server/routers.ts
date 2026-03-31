@@ -1659,8 +1659,9 @@ export const appRouter = router({
         
         return { success: true, shipmentId, rfqId, portalToken };
       }),
-    // Natural language text-to-PO
-    ...purchaseOrderTextEndpoints,
+    // Natural language text-to-PO (V2 endpoints, keep existing createFromText/parseText unchanged)
+    createFromTextV2: purchaseOrderTextEndpoints.createFromText,
+    parseTextV2: purchaseOrderTextEndpoints.parseText,
   }),
 
   // ============================================

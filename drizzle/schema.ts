@@ -296,7 +296,7 @@ export const accounts = mysqlTable("accounts", {
   balance: decimal("balance", { precision: 15, scale: 2 }).default("0"),
   currency: varchar("currency", { length: 3 }).default("USD"),
   isActive: boolean("isActive").default(true),
-  parentAccountId: int("parentAccountId").references((): any => accounts.id),
+  parentAccountId: int("parentAccountId").references(() => accounts.id),
   quickbooksAccountId: varchar("quickbooksAccountId", { length: 64 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
