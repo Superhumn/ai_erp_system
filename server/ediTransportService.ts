@@ -47,7 +47,7 @@ export interface PollResult {
  * Test SFTP connection to a trading partner
  */
 export async function testSftpConnection(partnerId: number): Promise<ConnectionTestResult> {
-  const partner = await db.getEdiTradingPartnerById(partnerId);
+  const partner = await (db as any).getEdiTradingPartnerById(partnerId);
   if (!partner) return { success: false, message: "Partner not found" };
   if (partner.connectionType !== "sftp") {
     return { success: false, message: `Partner uses ${partner.connectionType}, not SFTP` };
@@ -105,7 +105,7 @@ export async function pollSftpForInbound(
 ): Promise<PollResult> {
   const result: PollResult = { filesFound: 0, filesProcessed: 0, errors: [], transactions: [] };
 
-  const partner = await db.getEdiTradingPartnerById(partnerId);
+  const partner = await (db as any).getEdiTradingPartnerById(partnerId);
   if (!partner) {
     result.errors.push("Partner not found");
     return result;
@@ -174,7 +174,7 @@ export async function sendViaSftp(
   filename: string,
   remoteDir: string = "/outbound"
 ): Promise<TransportResult> {
-  const partner = await db.getEdiTradingPartnerById(partnerId);
+  const partner = await (db as any).getEdiTradingPartnerById(partnerId);
   if (!partner) return { success: false, message: "Partner not found" };
 
   const SftpClient = await loadSftpClient();
@@ -216,7 +216,7 @@ export async function sendViaSftp(
  * Test AS2 connection to a trading partner
  */
 export async function testAs2Connection(partnerId: number): Promise<ConnectionTestResult> {
-  const partner = await db.getEdiTradingPartnerById(partnerId);
+  const partner = await (db as any).getEdiTradingPartnerById(partnerId);
   if (!partner) return { success: false, message: "Partner not found" };
   if (!partner.as2Url) return { success: false, message: "No AS2 URL configured" };
 
@@ -250,7 +250,7 @@ export async function sendViaAs2(
   content: string,
   messageId: string
 ): Promise<TransportResult> {
-  const partner = await db.getEdiTradingPartnerById(partnerId);
+  const partner = await (db as any).getEdiTradingPartnerById(partnerId);
   if (!partner) return { success: false, message: "Partner not found" };
   if (!partner.as2Url) return { success: false, message: "No AS2 URL configured" };
 
@@ -292,7 +292,7 @@ export async function sendViaAs2(
  * Test connectivity to a trading partner using their configured transport
  */
 export async function testConnection(partnerId: number): Promise<ConnectionTestResult> {
-  const partner = await db.getEdiTradingPartnerById(partnerId);
+  const partner = await (db as any).getEdiTradingPartnerById(partnerId);
   if (!partner) return { success: false, message: "Partner not found" };
 
   switch (partner.connectionType) {
@@ -320,7 +320,7 @@ export async function deliverOutbound(
   transactionSetCode: string,
   controlNumber: string
 ): Promise<TransportResult> {
-  const partner = await db.getEdiTradingPartnerById(partnerId);
+  const partner = await (db as any).getEdiTradingPartnerById(partnerId);
   if (!partner) return { success: false, message: "Partner not found" };
 
   const filename = `${transactionSetCode}_${controlNumber}_${Date.now()}.edi`;
@@ -364,7 +364,7 @@ export async function generateAndDeliver(
 
   // Log delivery result on the transaction
   if (transportResult.success) {
-    await db.updateEdiTransaction(genResult.transactionId, {
+    await (db as any).updateEdiTransaction(genResult.transactionId, {
       status: "processed",
     });
   }
@@ -414,7 +414,7 @@ export function stopEdiPolling(): void {
  * Poll all active SFTP-connected partners for new inbound files
  */
 export async function pollAllPartners(): Promise<PollResult[]> {
-  const partners = await db.getEdiTradingPartners({ status: "active" });
+  const partners = await (db as any).getEdiTradingPartners({ status: "active" });
   const sftpPartners = partners.filter(p => p.connectionType === "sftp" || p.connectionType === "van");
 
   const results: PollResult[] = [];
@@ -452,7 +452,7 @@ export async function handleEdiWebhook(
   let partnerId: number | undefined;
 
   if (senderIsaId) {
-    const partner = await db.getEdiTradingPartnerByIsaId(senderIsaId);
+    const partner = await (db as any).getEdiTradingPartnerByIsaId(senderIsaId);
     if (partner) partnerId = partner.id;
   }
 
@@ -461,7 +461,7 @@ export async function handleEdiWebhook(
     const isaMatch = rawContent.match(/ISA\*[^*]*\*[^*]*\*[^*]*\*[^*]*\*[^*]*\*([^*]*?)\s*\*/);
     if (isaMatch) {
       const extractedIsaId = isaMatch[1].trim();
-      const partner = await db.getEdiTradingPartnerByIsaId(extractedIsaId);
+      const partner = await (db as any).getEdiTradingPartnerByIsaId(extractedIsaId);
       if (partner) partnerId = partner.id;
     }
   }

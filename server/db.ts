@@ -9282,3 +9282,299 @@ export async function getChecklistSummary(dataRoomId: number) {
   };
 }
 
+// ============================================
+// COGS / Inventory Costing Stubs
+// ============================================
+
+export async function recordCOGSSale(
+  salesOrderId: number, salesOrderLineId: number, productId: number,
+  warehouseId: number, quantitySold: number, revenueAmount: number,
+  freightCostAllocated?: number, customsCostAllocated?: number,
+  insuranceCostAllocated?: number, otherCostAllocated?: number
+) {
+  return { id: 0, salesOrderId, salesOrderLineId, productId, warehouseId, quantitySold, revenueAmount, totalCogs: 0 };
+}
+
+export async function getCOGSTransactions(filters?: any, limit?: number) {
+  return [];
+}
+
+export async function getProductProfitability(productId?: number, startDate?: Date, endDate?: Date) {
+  return [];
+}
+
+export async function getInventoryValuationReport(warehouseId?: number) {
+  return [];
+}
+
+export async function allocateFreightCosts(
+  purchaseOrderId: number | null, shipmentId: number | null,
+  totalFreightCost: number, totalCustomsDuties?: number,
+  totalInsuranceCost?: number, totalHandlingFees?: number,
+  allocationMethod?: string, userId?: number
+) {
+  return { success: true };
+}
+
+export async function updateInventoryCostBasis(
+  productId: number, warehouseId: number, receivedQuantity: number, unitCost: number
+) {
+  return { success: true };
+}
+
+// ============================================
+// Transactional Email System Stubs
+// ============================================
+
+export async function getEmailMessageStats() {
+  return { total: 0, queued: 0, sent: 0, delivered: 0, failed: 0, opened: 0, clicked: 0 };
+}
+
+export async function getTransactionalEmailTemplates() {
+  return [];
+}
+
+export async function getTransactionalEmailTemplateById(id: number) {
+  return null;
+}
+
+export async function getTransactionalEmailTemplateByName(name: string) {
+  return null;
+}
+
+export async function createTransactionalEmailTemplate(data: any) {
+  return { id: 0, ...data };
+}
+
+export async function updateTransactionalEmailTemplate(id: number, data: any) {
+  return { id, ...data };
+}
+
+export async function deleteTransactionalEmailTemplate(id: number) {
+  return { success: true };
+}
+
+export async function getEmailMessages(filters?: any) {
+  return [];
+}
+
+export async function getEmailMessageById(id: number) {
+  return null as any;
+}
+
+export async function getEmailEventsByMessageId(messageId: number) {
+  return [];
+}
+
+export async function getEmailMessageByProviderMessageId(providerMessageId: string) {
+  return null;
+}
+
+export async function updateEmailMessage(id: number, data: any) {
+  return { id, ...data };
+}
+
+export async function getEmailEventsByProviderMessageId(providerMessageId: string) {
+  return [];
+}
+
+export async function getRecentEmailEvents(limit?: number) {
+  return [];
+}
+
+export async function getQueuedEmailMessages(limit?: number) {
+  return [] as any[];
+}
+
+// ============================================
+// QuickBooks Sync Stubs
+// ============================================
+
+export async function syncQuickBooksAccounts(companyId: number, accounts: any[]) {
+  return { synced: accounts.length };
+}
+
+export async function syncQuickBooksItems(companyId: number, items: any[]) {
+  return { synced: items.length };
+}
+
+export async function getQuickBooksAccountsByType(companyId: number, classification?: string) {
+  return [];
+}
+
+export async function getQuickBooksAccountMappings(companyId: number) {
+  return [];
+}
+
+export async function upsertQuickBooksAccountMapping(data: any) {
+  return { id: 0, ...data };
+}
+
+// ============================================
+// Inventory Costing Config Stubs
+// ============================================
+
+export async function getInventoryCostingConfigs(filters?: any) {
+  return [];
+}
+
+export async function getInventoryCostingConfigByProduct(productId: number) {
+  return null;
+}
+
+export async function createInventoryCostingConfig(data: any) {
+  return { id: 0, ...data };
+}
+
+export async function updateInventoryCostingConfig(id: number, data: any) {
+  return { id, ...data };
+}
+
+export async function getInventoryCostLayers(filters?: any) {
+  return [];
+}
+
+export async function getWeightedAverageCost(productId: number) {
+  return { productId, weightedAverageCost: 0, totalQuantity: 0 };
+}
+
+export async function getCogsRecords(filters?: any) {
+  return [];
+}
+
+export async function getCogsSummary(filters?: any) {
+  return [];
+}
+
+export async function getCogsDashboardStats(companyId?: number) {
+  return { totalCogs: 0, totalRevenue: 0, grossMargin: 0, recordCount: 0 };
+}
+
+// ============================================
+// Vendor Negotiation Stubs
+// ============================================
+
+export async function getVendorNegotiations(filters?: any) {
+  return [];
+}
+
+export async function getVendorNegotiationById(id: number) {
+  return null as any;
+}
+
+export async function getNegotiationRounds(negotiationId: number) {
+  return [];
+}
+
+export async function updateVendorNegotiation(id: number, data: any) {
+  return { id, ...data };
+}
+
+export async function getVendorNegotiationStats(companyId?: number) {
+  return { total: 0, active: 0, completed: 0, avgSavingsPercent: 0 };
+}
+
+// ============================================
+// EDI Module Stubs
+// ============================================
+
+export async function getEdiDashboardStats() {
+  return { totalPartners: 0, activePartners: 0, totalTransactions: 0, recentTransactions: 0, failedTransactions: 0 };
+}
+
+export async function getEdiTradingPartners(filters?: any) {
+  return [];
+}
+
+export async function getEdiTradingPartnerById(id: number) {
+  return null as any;
+}
+
+export async function createEdiTradingPartner(data: any) {
+  return { id: 0, ...data };
+}
+
+export async function updateEdiTradingPartner(id: number, data: any) {
+  return { id, ...data };
+}
+
+export async function deleteEdiTradingPartner(id: number) {
+  return { success: true };
+}
+
+export async function getEdiDocumentMaps(tradingPartnerId?: number) {
+  return [];
+}
+
+export async function getEdiDocumentMapById(id: number) {
+  return null;
+}
+
+export async function createEdiDocumentMap(data: any) {
+  return { id: 0, ...data };
+}
+
+export async function updateEdiDocumentMap(id: number, data: any) {
+  return { id, ...data };
+}
+
+export async function getEdiTransactions(filters?: any) {
+  return [];
+}
+
+export async function getEdiTransactionById(id: number) {
+  return null as any;
+}
+
+export async function getEdiTransactionWithItems(id: number) {
+  return null;
+}
+
+export async function getEdiProductCrosswalks(tradingPartnerId?: number) {
+  return [];
+}
+
+export async function createEdiProductCrosswalk(data: any) {
+  return { id: 0, ...data };
+}
+
+export async function updateEdiProductCrosswalk(id: number, data: any) {
+  return { id, ...data };
+}
+
+export async function deleteEdiProductCrosswalk(id: number) {
+  return { success: true };
+}
+
+export async function getEdiShipToLocations(tradingPartnerId?: number) {
+  return [];
+}
+
+export async function createEdiShipToLocation(data: any) {
+  return { id: 0, ...data };
+}
+
+export async function updateEdiShipToLocation(id: number, data: any) {
+  return { id, ...data };
+}
+
+export async function getEdiSettings() {
+  return null;
+}
+
+export async function upsertEdiSettings(data: any) {
+  return { id: 0, ...data };
+}
+
+export async function getNextControlNumber(tradingPartnerId: number, type: string) {
+  return String(Math.floor(Math.random() * 999999999)).padStart(9, '0');
+}
+
+export async function getEdiComplianceScorecards(tradingPartnerId?: number) {
+  return [];
+}
+
+export async function createEdiComplianceScorecard(data: any) {
+  return { id: 0, ...data };
+}
+

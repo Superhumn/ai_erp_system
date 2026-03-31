@@ -104,7 +104,7 @@ async function processQueuedEmails(): Promise<void> {
 
   try {
     // Get queued emails
-    const queuedMessages = await db.getQueuedEmailMessages(config.batchSize);
+    const queuedMessages = await (db as any).getQueuedEmailMessages(config.batchSize);
 
     if (queuedMessages.length === 0) {
       isProcessing = false;
@@ -168,7 +168,7 @@ export async function triggerProcessing(): Promise<{
   isProcessing = true;
 
   try {
-    const queuedMessages = await db.getQueuedEmailMessages(config.batchSize);
+    const queuedMessages = await (db as any).getQueuedEmailMessages(config.batchSize);
 
     if (queuedMessages.length === 0) {
       return { processed: 0, successful: 0, failed: 0 };

@@ -3,6 +3,7 @@ import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -27,6 +28,7 @@ import {
   ArrowUpDown,
   MapPin,
   Target,
+  Plus,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -44,6 +46,7 @@ type BulkActionType = 'adjust_quantity' | 'change_location' | 'update_reorder_po
 
 export default function Inventory() {
   const [selectedRows, setSelectedRows] = useState<Set<number | string>>(new Set());
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [bulkActionDialogOpen, setBulkActionDialogOpen] = useState(false);
   const [currentBulkAction, setCurrentBulkAction] = useState<BulkActionType>(null);
 
@@ -61,8 +64,7 @@ export default function Inventory() {
 
   const bulkUpdateMutation = trpc.inventory.bulkUpdate.useMutation({
     onSuccess: (data) => {
-      toast({
-        title: "Bulk Update Complete",
+      toast.success("Bulk Update Complete", {
         description: `Successfully updated ${data.totalUpdated} item(s).${data.totalFailed > 0 ? ` ${data.totalFailed} item(s) failed.` : ''}`,
       });
       setSelectedRows(new Set());
@@ -71,10 +73,8 @@ export default function Inventory() {
       utils.inventory.list.invalidate();
     },
     onError: (error) => {
-      toast({
-        title: "Bulk Update Failed",
+      toast.error("Bulk Update Failed", {
         description: error.message,
-        variant: "destructive",
       });
     },
   });
@@ -210,10 +210,8 @@ export default function Inventory() {
         break;
       case 'change_location':
         if (!selectedWarehouseId) {
-          toast({
-            title: "Select a location",
+          toast.error("Select a location", {
             description: "Please select a warehouse location.",
-            variant: "destructive",
           });
           return;
         }

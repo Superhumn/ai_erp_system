@@ -88,32 +88,31 @@ export default function InventoryCosting() {
   // Mutations
   const createConfigMutation = trpc.inventoryCosting.configs.create.useMutation({
     onSuccess: () => {
-      toast({ title: "Costing Method Configured", description: "Product costing method has been set." });
+      toast.success("Costing Method Configured", { description: "Product costing method has been set." });
       setConfigDialogOpen(false);
       resetConfigForm();
       utils.inventoryCosting.configs.list.invalidate();
     },
     onError: (error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      toast.error("Error", { description: error.message });
     },
   });
 
   const createLayerMutation = trpc.inventoryCosting.layers.create.useMutation({
     onSuccess: () => {
-      toast({ title: "Cost Layer Added", description: "Inventory cost layer has been recorded." });
+      toast.success("Cost Layer Added", { description: "Inventory cost layer has been recorded." });
       setLayerDialogOpen(false);
       resetLayerForm();
       utils.inventoryCosting.layers.list.invalidate();
     },
     onError: (error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      toast.error("Error", { description: error.message });
     },
   });
 
   const recordCogsMutation = trpc.inventoryCosting.cogs.record.useMutation({
     onSuccess: (data) => {
-      toast({
-        title: "COGS Recorded",
+      toast.success("COGS Recorded", {
         description: `Total COGS: $${data.totalCogs.toFixed(2)} | Unit COGS: $${data.unitCogs.toFixed(4)}${data.grossMargin !== null ? ` | Margin: $${data.grossMargin.toFixed(2)}` : ""}`,
       });
       setCogsDialogOpen(false);
@@ -123,7 +122,7 @@ export default function InventoryCosting() {
       utils.inventoryCosting.layers.list.invalidate();
     },
     onError: (error) => {
-      toast({ title: "COGS Calculation Failed", description: error.message, variant: "destructive" });
+      toast.error("COGS Calculation Failed", { description: error.message });
     },
   });
 

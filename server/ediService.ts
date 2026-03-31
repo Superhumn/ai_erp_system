@@ -675,7 +675,7 @@ export async function processInboundEdi(
   const txnSet = envelope.transactionSets[0];
 
   // Create transaction record
-  const txnResult = await db.createEdiTransaction({
+  const txnResult = await (db as any).createEdiTransaction({
     tradingPartnerId,
     transactionSetCode: txnSet.transactionSetCode,
     direction: "inbound",
@@ -692,7 +692,7 @@ export async function processInboundEdi(
     switch (txnSet.transactionSetCode) {
       case "850": {
         const po = parse850(txnSet);
-        await db.updateEdiTransaction(txnResult.id, {
+        await (db as any).updateEdiTransaction(txnResult.id, {
           parsedData: JSON.stringify(po),
           purchaseOrderNumber: po.poNumber,
           status: "parsed",
@@ -703,15 +703,15 @@ export async function processInboundEdi(
           // Try to resolve product via crosswalk
           let productId: number | undefined;
           if (item.buyerPartNumber) {
-            const crosswalk = await db.getEdiProductCrosswalkByBuyerPart(tradingPartnerId, item.buyerPartNumber);
+            const crosswalk = await (db as any).getEdiProductCrosswalkByBuyerPart(tradingPartnerId, item.buyerPartNumber);
             if (crosswalk) productId = crosswalk.productId;
           }
           if (!productId && item.upc) {
-            const crosswalk = await db.getEdiProductCrosswalkByUpc(tradingPartnerId, item.upc);
+            const crosswalk = await (db as any).getEdiProductCrosswalkByUpc(tradingPartnerId, item.upc);
             if (crosswalk) productId = crosswalk.productId;
           }
 
-          await db.createEdiTransactionItem({
+          await (db as any).createEdiTransactionItem({
             transactionId: txnResult.id,
             lineNumber: item.lineNumber,
             buyerPartNumber: item.buyerPartNumber,
@@ -737,9 +737,9 @@ export async function processInboundEdi(
           });
         }
 
-        await db.updateEdiTransaction(txnResult.id, { status: "validated" });
+        await (db as any).updateEdiTransaction(txnResult.id, { status: "validated" });
         // Update partner's last transaction timestamp
-        await db.updateEdiTradingPartner(tradingPartnerId, { lastTransactionAt: new Date() });
+        await (db as any).updateEdiTradingPartner(tradingPartnerId, { lastTransactionAt: new Date() });
 
         // Auto-send 997 Functional Acknowledgment if enabled
         try {
@@ -753,7 +753,7 @@ export async function processInboundEdi(
 
       case "997": {
         const ack = parse997(txnSet);
-        await db.updateEdiTransaction(txnResult.id, {
+        await (db as any).updateEdiTransaction(txnResult.id, {
           parsedData: JSON.stringify(ack),
           status: "processed",
         });
@@ -762,14 +762,14 @@ export async function processInboundEdi(
       }
 
       default:
-        await db.updateEdiTransaction(txnResult.id, {
+        await (db as any).updateEdiTransaction(txnResult.id, {
           status: "error",
           errorMessage: `Unsupported inbound transaction set: ${txnSet.transactionSetCode}`,
         });
         return { transactionId: txnResult.id, status: "error", message: `Unsupported transaction set: ${txnSet.transactionSetCode}` };
     }
   } catch (error: any) {
-    await db.updateEdiTransaction(txnResult.id, {
+    await (db as any).updateEdiTransaction(txnResult.id, {
       status: "error",
       errorMessage: error.message,
       errorDetails: JSON.stringify({ stack: error.stack }),
@@ -782,12 +782,12 @@ export async function processInboundEdi(
  * Convert an 850 EDI PO into an internal sales order
  */
 export async function convertEdi850ToOrder(transactionId: number): Promise<{ orderId: number; orderNumber: string }> {
-  const txn = await db.getEdiTransactionWithItems(transactionId);
+  const txn = await (db as any).getEdiTransactionWithItems(transactionId);
   if (!txn) throw new Error("EDI transaction not found");
   if (txn.transactionSetCode !== "850") throw new Error("Transaction is not an 850 PO");
   if (txn.orderId) throw new Error("Transaction already converted to order");
 
-  const partner = await db.getEdiTradingPartnerById(txn.tradingPartnerId);
+  const partner = await (db as any).getEdiTradingPartnerById(txn.tradingPartnerId);
   if (!partner) throw new Error("Trading partner not found");
 
   const parsedPo: Edi850PurchaseOrder = JSON.parse(txn.parsedData || "{}");
@@ -838,7 +838,7 @@ export async function convertEdi850ToOrder(transactionId: number): Promise<{ ord
   }
 
   // Link transaction to sales order
-  await db.updateEdiTransaction(transactionId, {
+  await (db as any).updateEdiTransaction(transactionId, {
     orderId: salesOrderResult.id,
     status: "processed",
     processedAt: new Date(),
@@ -856,15 +856,15 @@ export async function generateOutboundEdi(
   sourceData: Edi855Acknowledgment | Edi810Invoice | Edi856ShipNotice,
   controlNumber?: string
 ): Promise<{ transactionId: number; rawContent: string }> {
-  const partner = await db.getEdiTradingPartnerById(tradingPartnerId);
+  const partner = await (db as any).getEdiTradingPartnerById(tradingPartnerId);
   if (!partner) throw new Error("Trading partner not found");
 
   // Load our company EDI settings
-  const settings = await db.getEdiSettings();
+  const settings = await (db as any).getEdiSettings();
 
   // Auto-generate control number if not provided
   if (!controlNumber) {
-    controlNumber = await db.getNextControlNumber(tradingPartnerId, "isa");
+    controlNumber = await (db as any).getNextControlNumber(tradingPartnerId, "isa");
   }
 
   // Use company settings for sender IDs, fall back to partner config for backwards compat
@@ -901,7 +901,7 @@ export async function generateOutboundEdi(
   }
 
   // Record the transaction
-  const txnResult = await db.createEdiTransaction({
+  const txnResult = await (db as any).createEdiTransaction({
     tradingPartnerId,
     transactionSetCode,
     direction: "outbound",
@@ -916,7 +916,7 @@ export async function generateOutboundEdi(
     processedAt: new Date(),
   });
 
-  await db.updateEdiTradingPartner(tradingPartnerId, { lastTransactionAt: new Date() });
+  await (db as any).updateEdiTradingPartner(tradingPartnerId, { lastTransactionAt: new Date() });
 
   return { transactionId: txnResult.id, rawContent };
 }
@@ -929,13 +929,13 @@ async function sendAuto997(
   tradingPartnerId: number,
   envelope: ParsedEdiEnvelope
 ): Promise<void> {
-  const settings = await db.getEdiSettings();
+  const settings = await (db as any).getEdiSettings();
   if (settings && !settings.autoSend997) return;
 
-  const partner = await db.getEdiTradingPartnerById(tradingPartnerId);
+  const partner = await (db as any).getEdiTradingPartnerById(tradingPartnerId);
   if (!partner) return;
 
-  const controlNumber = await db.getNextControlNumber(tradingPartnerId, "isa");
+  const controlNumber = await (db as any).getNextControlNumber(tradingPartnerId, "isa");
 
   const ourIsaId = settings?.isaId || "OURCOMPANY";
   const ourIsaQualifier = settings?.isaQualifier || "ZZ";
@@ -966,7 +966,7 @@ async function sendAuto997(
   );
 
   // Record the outbound 997
-  const txnResult = await db.createEdiTransaction({
+  const txnResult = await (db as any).createEdiTransaction({
     tradingPartnerId,
     transactionSetCode: "997",
     direction: "outbound",

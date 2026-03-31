@@ -70,7 +70,8 @@ export default function Documents() {
     },
   });
 
-  const filteredDocuments = documents?.filter((doc: Document) => {
+  const allDocuments = (documents || []) as Document[];
+  const filteredDocuments = allDocuments.filter((doc: Document) => {
     const matchesSearch =
       doc.name.toLowerCase().includes(search.toLowerCase()) ||
       doc.description?.toLowerCase().includes(search.toLowerCase());
