@@ -29,7 +29,7 @@ import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refresh
 import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
-import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
+import { purchaseOrderTextEndpoints, shipmentTextEndpoints, paymentTextEndpoints, workOrderTextEndpoints, inventoryTextEndpoints } from "./naturalLanguageRouterExtensions";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -828,6 +828,8 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'update', 'payment', id);
         return { success: true };
       }),
+    // Natural language text-to-payment
+    ...paymentTextEndpoints,
   }),
 
   // ============================================
@@ -1077,6 +1079,8 @@ export const appRouter = router({
     // Get inbound shipments from POs
     getInboundShipments: opsProcedure
       .query(() => db.getInboundShipmentsFromPOs()),
+    // Natural language text-to-inventory-transfer
+    ...inventoryTextEndpoints,
   }),
 
   // ============================================
@@ -1655,6 +1659,8 @@ export const appRouter = router({
         
         return { success: true, shipmentId, rfqId, portalToken };
       }),
+    // Natural language text-to-PO
+    ...purchaseOrderTextEndpoints,
   }),
 
   // ============================================
@@ -1722,6 +1728,8 @@ export const appRouter = router({
         
         return { success: true };
       }),
+    // Natural language text-to-shipment
+    ...shipmentTextEndpoints,
   }),
 
   // ============================================
@@ -6608,6 +6616,8 @@ Provide a brief status summary, any missing documents, and next steps.`;
         
         return { success: true };
       }),
+    // Natural language text-to-work-order
+    ...workOrderTextEndpoints,
   }),
 
   // Raw Material Inventory

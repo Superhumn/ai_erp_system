@@ -559,6 +559,13 @@ export async function createInvoice(data: InsertInvoice) {
   return { id: result[0].insertId };
 }
 
+export async function getInvoiceByNumber(invoiceNumber: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(invoices).where(eq(invoices.invoiceNumber, invoiceNumber)).limit(1);
+  return result[0] || null;
+}
+
 export async function updateInvoice(id: number, data: Partial<InsertInvoice>) {
   const db = await getDb();
   if (!db) return;
@@ -821,6 +828,13 @@ export async function getWarehouseById(id: number) {
   const db = await getDb();
   if (!db) return null;
   const result = await db.select().from(warehouses).where(eq(warehouses.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function getWarehouseByName(name: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(warehouses).where(eq(warehouses.name, name)).limit(1);
   return result[0] || null;
 }
 
@@ -2106,6 +2120,9 @@ export async function addTransferItem(data: InsertInventoryTransferItem) {
   const result = await db.insert(inventoryTransferItems).values(data);
   return { id: result[0].insertId };
 }
+
+export const createInventoryTransfer = createTransfer;
+export const createInventoryTransferItem = addTransferItem;
 
 export async function updateTransfer(id: number, data: Partial<InsertInventoryTransfer>) {
   const db = await getDb();
