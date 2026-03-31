@@ -48,7 +48,7 @@ export default function Payroll() {
 
   const { data: employees, isLoading } = trpc.employees.list.useQuery();
 
-  const allEmployees = (employees || []) as Employee[];
+  const allEmployees = (employees || []) as unknown as Employee[];
   const filteredEmployees = allEmployees.filter((emp: Employee) => {
     const fullName = `${emp.firstName} ${emp.lastName}`.toLowerCase();
     const matchesSearch = fullName.includes(search.toLowerCase()) || emp.email?.toLowerCase().includes(search.toLowerCase());

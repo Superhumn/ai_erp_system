@@ -211,7 +211,7 @@ export default function VendorNegotiations() {
             <Clock className="h-4 w-4 text-red-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.rejected || 0}</div>
+            <div className="text-2xl font-bold">{(stats as any)?.rejected || 0}</div>
           </CardContent>
         </Card>
         <Card>
@@ -221,7 +221,7 @@ export default function VendorNegotiations() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              ${(stats?.totalEstimatedSavings || 0).toFixed(0)}
+              ${((stats as any)?.totalEstimatedSavings || 0).toFixed(0)}
             </div>
           </CardContent>
         </Card>

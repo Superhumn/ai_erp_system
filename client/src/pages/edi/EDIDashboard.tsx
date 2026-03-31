@@ -153,7 +153,7 @@ export default function EDIDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.pendingAcks || 0}</div>
+            <div className="text-2xl font-bold">{(stats as any)?.pendingAcks || 0}</div>
             <p className="text-xs text-muted-foreground">Awaiting response</p>
           </CardContent>
         </Card>
@@ -166,7 +166,7 @@ export default function EDIDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-600">{stats?.errorTransactions || 0}</div>
+            <div className="text-2xl font-bold text-red-600">{(stats as any)?.errorTransactions || stats?.failedTransactions || 0}</div>
             <p className="text-xs text-muted-foreground">Needs attention</p>
           </CardContent>
         </Card>

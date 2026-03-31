@@ -204,7 +204,7 @@ export default function DocumentImport() {
           // Match line items to materials
           try {
             const matchedItems = await matchMaterialsMutation.mutateAsync({
-              lineItems: result.purchaseOrder.lineItems,
+              lineItems: result.purchaseOrder.lineItems as any,
             });
 
             setParsedPO({
@@ -233,7 +233,7 @@ export default function DocumentImport() {
           // Match line items to materials for vendor invoices
           try {
             const matchedItems = await matchMaterialsMutation.mutateAsync({
-              lineItems: result.vendorInvoice.lineItems,
+              lineItems: result.vendorInvoice.lineItems as any,
             });
 
             setParsedVendorInvoice({

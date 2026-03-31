@@ -76,7 +76,7 @@ export default function Shipments() {
     },
   });
 
-  const allShipments = (shipments || []) as Shipment[];
+  const allShipments = (shipments || []) as unknown as Shipment[];
   const filteredShipments = allShipments.filter((shipment: Shipment) => {
     const matchesSearch =
       shipment.shipmentNumber.toLowerCase().includes(search.toLowerCase()) ||

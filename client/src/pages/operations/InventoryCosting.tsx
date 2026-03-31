@@ -200,7 +200,7 @@ export default function InventoryCosting() {
               ${cogsDashboard?.totalRevenue?.toFixed(2) || "0.00"}
             </div>
             <p className="text-xs text-muted-foreground">
-              {(cogsDashboard?.totalQuantitySold || 0).toFixed(0)} units sold
+              {((cogsDashboard as any)?.totalQuantitySold || 0).toFixed(0)} units sold
             </p>
           </CardContent>
         </Card>
@@ -218,7 +218,7 @@ export default function InventoryCosting() {
               ${cogsDashboard?.grossMargin?.toFixed(2) || "0.00"}
             </div>
             <p className="text-xs text-muted-foreground">
-              {cogsDashboard?.grossMarginPercent?.toFixed(1) || "0.0"}% margin rate
+              {(cogsDashboard as any)?.grossMarginPercent?.toFixed(1) || "0.0"}% margin rate
             </p>
           </CardContent>
         </Card>

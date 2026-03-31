@@ -85,7 +85,7 @@ export default function Projects() {
     },
   });
 
-  const allProjects = (projects || []) as Project[];
+  const allProjects = (projects || []) as unknown as Project[];
   const filteredProjects = allProjects.filter((project: Project) => {
     const matchesSearch =
       project.name.toLowerCase().includes(search.toLowerCase()) ||

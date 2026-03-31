@@ -57,7 +57,7 @@ export default function FirefliesPage() {
     onError: (error) => toast.error(error.message),
   });
 
-  const syncMutation = trpc.fireflies.syncMeetings.useMutation({
+  const syncMutation = (trpc as any).fireflies.syncMeetings.useMutation({
     onSuccess: (data) => {
       toast.success(`Synced ${data.synced} new meetings (${data.skipped} already synced)`);
       refetchMeetings();
@@ -66,7 +66,7 @@ export default function FirefliesPage() {
     onError: (error) => toast.error(error.message),
   });
 
-  const processMeetingMutation = trpc.fireflies.processMeeting.useMutation({
+  const processMeetingMutation = (trpc as any).fireflies.processMeeting.useMutation({
     onSuccess: (data) => {
       toast.success(
         `Processed: ${data.contactsCreated} contacts, ${data.tasksCreated} tasks${data.projectId ? ", 1 project" : ""} created`
@@ -79,7 +79,7 @@ export default function FirefliesPage() {
     onError: (error) => toast.error(error.message),
   });
 
-  const processAllMutation = trpc.fireflies.processAllPending.useMutation({
+  const processAllMutation = (trpc as any).fireflies.processAllPending.useMutation({
     onSuccess: (data) => {
       toast.success(
         `Batch processed ${data.processed} meetings: ${data.contactsCreated} contacts, ${data.tasksCreated} tasks, ${data.projectsCreated} projects`
