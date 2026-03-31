@@ -77,6 +77,32 @@ async function startServer() {
 
   app.use("/api/", apiLimiter);
 
+  // CSRF protection: validate Origin header on state-changing requests
+  app.use("/api/", (req, res, next) => {
+    // Safe methods don't need CSRF protection
+    if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
+
+    const origin = req.headers.origin || req.headers.referer;
+    if (!origin) {
+      return res.status(403).json({ error: "Missing Origin header" });
+    }
+
+    // In production, validate origin matches our app URL
+    if (ENV.isProduction && ENV.publicAppUrl) {
+      try {
+        const allowedHost = new URL(ENV.publicAppUrl).host;
+        const requestHost = new URL(origin as string).host;
+        if (requestHost !== allowedHost) {
+          return res.status(403).json({ error: "Origin mismatch" });
+        }
+      } catch {
+        return res.status(403).json({ error: "Invalid Origin header" });
+      }
+    }
+
+    next();
+  });
+
   // Stricter rate limit for OAuth callbacks (prevent abuse)
   const oauthCallbackLimiter = rateLimit({
     windowMs: 15 * 60_000, // 15 minutes
@@ -356,6 +382,22 @@ async function startServer() {
       console.warn("[Startup] Server running in degraded mode - AI agent automation disabled");
     }
   });
+
+  function gracefulShutdown(signal: string) {
+    console.log(`[Shutdown] ${signal} received. Closing server...`);
+    server.close(() => {
+      console.log("[Shutdown] Server closed. Exiting.");
+      process.exit(0);
+    });
+    // Force exit after 10 seconds if connections don't drain
+    setTimeout(() => {
+      console.error("[Shutdown] Forced exit after timeout.");
+      process.exit(1);
+    }, 10_000);
+  }
+
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 }
 
 startServer().catch(console.error);
