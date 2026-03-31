@@ -189,7 +189,7 @@ describe("Material Shortage Detection", () => {
 
       mockDb.getPurchaseOrders
         .mockResolvedValueOnce([
-          { id: 1, poNumber: "PO-001", status: "sent", expectedDeliveryDate: pastDate, vendorId: 1 } as any,
+          { id: 1, poNumber: "PO-001", status: "sent", expectedDate: pastDate, vendorId: 1 } as any,
         ])
         .mockResolvedValueOnce([]);
 

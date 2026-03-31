@@ -9490,6 +9490,10 @@ export async function getEdiTradingPartnerById(id: number) {
   return null as any;
 }
 
+export async function getEdiTradingPartnerByIsaId(isaId: string) {
+  return null as any;
+}
+
 export async function createEdiTradingPartner(data: any) {
   return { id: 0, ...data };
 }
