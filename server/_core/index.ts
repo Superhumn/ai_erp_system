@@ -97,7 +97,7 @@ async function startServer() {
   // Periodically clean up stale rate limit entries
   setInterval(() => {
     const now = Date.now();
-    for (const [ip, entry] of rateLimitMap) {
+    for (const [ip, entry] of Array.from(rateLimitMap)) {
       if (now > entry.resetTime) rateLimitMap.delete(ip);
     }
   }, RATE_LIMIT_WINDOW_MS);
@@ -150,13 +150,13 @@ async function startServer() {
           const providerMessageId = event.sg_message_id?.split('.')[0];
           const email = event.email;
           const timestamp = event.timestamp ? new Date(event.timestamp * 1000) : new Date();
-          const emailEvent = await db.createEmailEvent({ providerEventType, providerMessageId, providerTimestamp: timestamp, rawEventJson: event, email, reason: event.reason || event.response || null, bounceType: event.type || null, processedAt: new Date() });
+          const emailEvent = await (db as any).createEmailEvent({ providerEventType, providerMessageId, providerTimestamp: timestamp, rawEventJson: event, email, reason: event.reason || event.response || null, bounceType: event.type || null, processedAt: new Date() });
           if (providerMessageId) {
-            const message = await db.getEmailMessageByProviderMessageId(providerMessageId);
+            const message = await (db as any).getEmailMessageByProviderMessageId(providerMessageId);
             if (message) {
-              await db.createEmailEvent({ ...emailEvent, emailMessageId: message.id });
+              await (db as any).createEmailEvent({ ...emailEvent, emailMessageId: message.id });
               const newStatus = sendgridProvider.mapEventToStatus(providerEventType);
-              if (newStatus) await db.updateEmailMessageStatus(message.id, newStatus);
+              if (newStatus) await (db as any).updateEmailMessageStatus(message.id, newStatus);
             }
           }
         } catch (eventError) {
@@ -191,12 +191,12 @@ async function startServer() {
     }
   };
 
-  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), (req, res) => 
-    handleShopifyWebhook(req, res, 'orders')
+  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), (req, res) =>
+    handleShopifyWebhook(req, res)
   );
 
   app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), (req, res) =>
-    handleShopifyWebhook(req, res, 'inventory')
+    handleShopifyWebhook(req, res)
   );
 
   // ============================================
@@ -293,11 +293,11 @@ async function startServer() {
       const shopInfoResponse = await fetch(`https://${shopDomain}/admin/api/2024-01/shop.json`, { headers: { 'X-Shopify-Access-Token': accessToken, 'Content-Type': 'application/json' } });
       if (!shopInfoResponse.ok) return res.redirect('/settings/integrations?shopify_error=failed_to_fetch_shop_info');
       const shopInfo = await shopInfoResponse.json();
-      const { upsertShopifyStore, createSyncLog } = await import('../db');
+      const dbModule = await import('../db') as any;
       const { encrypt } = await import('../_core/crypto');
       const encryptedToken = encrypt(accessToken);
-      await upsertShopifyStore(shopDomain, { companyId: user.companyId || undefined, storeDomain: shopDomain, storeName: shopInfo.shop.name || shopDomain, accessToken: encryptedToken, apiVersion: '2024-01', isEnabled: true, syncInventory: true, syncOrders: true, inventoryAuthority: 'hybrid' });
-      await createSyncLog({ integration: 'shopify', action: 'store_connected', status: 'success', details: `Connected store: ${shopInfo.shop.name} (${shopDomain})` });
+      await dbModule.upsertShopifyStore(shopDomain, { companyId: user.companyId || undefined, storeDomain: shopDomain, storeName: shopInfo.shop.name || shopDomain, accessToken: encryptedToken, apiVersion: '2024-01', isEnabled: true, syncInventory: true, syncOrders: true, inventoryAuthority: 'hybrid' });
+      await dbModule.createSyncLog({ integration: 'shopify', action: 'store_connected', status: 'success', details: `Connected store: ${shopInfo.shop.name} (${shopDomain})` });
       res.redirect('/settings/integrations?shopify_success=connected&shop=' + encodeURIComponent(shopInfo.shop.name));
     } catch (error) {
       console.error('Shopify OAuth error:', error);

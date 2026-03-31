@@ -29,7 +29,7 @@ import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refresh
 import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
-import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
+import type { InsertDataRoomDriveSyncConfig } from "../drizzle/schema";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -1035,7 +1035,7 @@ export const appRouter = router({
 
         // Create audit logs for each updated item
         for (const result of results.filter(r => r.success)) {
-          await createAuditLog(ctx.user.id, 'bulk_update', 'inventory', result.id);
+          await createAuditLog(ctx.user.id, 'update', 'inventory', result.id);
         }
 
         // Check for low stock alerts on quantity adjustments
@@ -1530,7 +1530,7 @@ export const appRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         // Create the PO from preview
-        const po = await createPOFromPreview(input.preview, ctx.user.id);
+        const po = await createPOFromPreview(input.preview as any, ctx.user.id);
         
         await createAuditLog(ctx.user.id, 'create', 'purchaseOrder', po.id, po.poNumber);
         
@@ -2202,7 +2202,7 @@ export const appRouter = router({
         companyId: z.number().optional(),
         status: z.string().optional(),
       }).optional())
-      .query(({ input }) => db.getInvestmentGrantChecklists(input)),
+      .query(({ input }) => db.getInvestmentGrantChecklists(input as any)),
     get: protectedProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => db.getInvestmentGrantChecklistWithItems(input.id)),
@@ -2389,7 +2389,7 @@ export const appRouter = router({
         config: z.any().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const result = await db.createIntegrationConfig(input);
+        const result = await db.createIntegrationConfig(input as any);
         await createAuditLog(ctx.user.id, 'create', 'integration', result.id, input.name);
         return result;
       }),
@@ -2653,7 +2653,7 @@ export const appRouter = router({
         toEmail: z.string().email(),
         toName: z.string().optional(),
         subject: z.string(),
-        payload: z.record(z.any()),
+        payload: z.record(z.string(), z.any()),
         idempotencyKey: z.string().optional(),
         relatedEntityType: z.string().optional(),
         relatedEntityId: z.number().optional(),
@@ -2687,7 +2687,7 @@ export const appRouter = router({
       .input(z.object({
         quoteId: z.number(),
         customSubject: z.string().optional(),
-        customPayload: z.record(z.any()).optional(),
+        customPayload: z.record(z.string(), z.any()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const result = await emailService.sendQuoteEmail(input.quoteId, {
@@ -2709,7 +2709,7 @@ export const appRouter = router({
       .input(z.object({
         poId: z.number(),
         customSubject: z.string().optional(),
-        customPayload: z.record(z.any()).optional(),
+        customPayload: z.record(z.string(), z.any()).optional(),
         pdfUrl: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
@@ -2735,7 +2735,7 @@ export const appRouter = router({
         recipientEmail: z.string().email().optional(),
         recipientName: z.string().optional(),
         customSubject: z.string().optional(),
-        customPayload: z.record(z.any()).optional(),
+        customPayload: z.record(z.string(), z.any()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const result = await emailService.sendShipmentEmail(input.shipmentId, {
@@ -2761,7 +2761,7 @@ export const appRouter = router({
         recipientEmail: z.string().email().optional(),
         recipientName: z.string().optional(),
         customSubject: z.string().optional(),
-        customPayload: z.record(z.any()).optional(),
+        customPayload: z.record(z.string(), z.any()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const result = await emailService.sendAlertEmail(input.alertId, {
@@ -2786,7 +2786,7 @@ export const appRouter = router({
         rfqId: z.number(),
         vendorId: z.number(),
         customSubject: z.string().optional(),
-        customPayload: z.record(z.any()).optional(),
+        customPayload: z.record(z.string(), z.any()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const result = await emailService.sendRFQEmail(input.rfqId, input.vendorId, {
@@ -3303,12 +3303,12 @@ export const appRouter = router({
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
         }
         
-        const result = await sendGmailMessage(accessToken, input);
-        
+        const result = await sendGmailMessage(accessToken, input as any);
+
         if (!result.success) {
           throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error || 'Failed to send email' });
         }
-        
+
         // Create audit log
         await createAuditLog(ctx.user.id, 'create', 'gmail_message', 0, `Sent email to ${Array.isArray(input.to) ? input.to.join(', ') : input.to}`);
         

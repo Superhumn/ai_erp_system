@@ -208,7 +208,7 @@ export function AIAgentProvider({ children }: AIAgentProviderProps) {
           role: 'assistant',
           content: response.message,
           timestamp: new Date(),
-          actions: response.actions,
+          actions: response.actions as AIAction[],
           data: response.data,
           suggestions: response.suggestions,
         };

@@ -4,6 +4,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+// @ts-ignore - react-pdf types may not be installed
 import { Document, Page, pdfjs } from 'react-pdf';
 import { trpc } from '@/lib/trpc';
 import { Button } from '@/components/ui/button';
@@ -75,8 +76,8 @@ export default function DataRoomDocumentViewer({
   const lastMouseMoveTime = useRef<number>(0);
 
   // Mutations for tracking
-  const recordPageViewMutation = trpc.dataRoom.pageTracking.recordPageView.useMutation();
-  const updatePageViewMutation = trpc.dataRoom.pageTracking.updatePageView.useMutation();
+  const recordPageViewMutation = (trpc.dataRoom as any).pageTracking.recordPageView.useMutation();
+  const updatePageViewMutation = (trpc.dataRoom as any).pageTracking.updatePageView.useMutation();
 
   // Get device info
   const getDeviceInfo = useCallback(() => {

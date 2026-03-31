@@ -4635,6 +4635,91 @@ export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
 export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
 
 // ============================================
+// DUE DILIGENCE CHECKLISTS
+// ============================================
+
+export const dueDiligenceTemplates = mysqlTable("due_diligence_templates", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  isPublic: boolean("isPublic").default(false).notNull(),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DueDiligenceTemplate = typeof dueDiligenceTemplates.$inferSelect;
+export type InsertDueDiligenceTemplate = typeof dueDiligenceTemplates.$inferInsert;
+
+export const dueDiligenceCategories = mysqlTable("due_diligence_categories", {
+  id: int("id").autoincrement().primaryKey(),
+  templateId: int("templateId").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  sortOrder: int("sortOrder").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DueDiligenceCategory = typeof dueDiligenceCategories.$inferSelect;
+export type InsertDueDiligenceCategory = typeof dueDiligenceCategories.$inferInsert;
+
+export const dueDiligenceItems = mysqlTable("due_diligence_items", {
+  id: int("id").autoincrement().primaryKey(),
+  templateId: int("templateId").notNull(),
+  categoryId: int("categoryId").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  requirement: mysqlEnum("requirement", ["required", "recommended", "optional"]).default("required").notNull(),
+  matchKeywords: text("matchKeywords"),
+  matchFileTypes: text("matchFileTypes"),
+  sortOrder: int("sortOrder").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DueDiligenceItem = typeof dueDiligenceItems.$inferSelect;
+export type InsertDueDiligenceItem = typeof dueDiligenceItems.$inferInsert;
+
+export const dataRoomChecklists = mysqlTable("data_room_checklists", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  templateId: int("templateId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  status: mysqlEnum("status", ["active", "archived", "completed"]).default("active").notNull(),
+  totalItems: int("totalItems").default(0),
+  completedItems: int("completedItems").default(0),
+  partialItems: int("partialItems").default(0),
+  missingItems: int("missingItems").default(0),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoomChecklist = typeof dataRoomChecklists.$inferSelect;
+export type InsertDataRoomChecklist = typeof dataRoomChecklists.$inferInsert;
+
+export const dataRoomChecklistItems = mysqlTable("data_room_checklist_items", {
+  id: int("id").autoincrement().primaryKey(),
+  checklistId: int("checklistId").notNull(),
+  dataRoomId: int("dataRoomId").notNull(),
+  categoryName: varchar("categoryName", { length: 255 }).notNull(),
+  itemName: varchar("itemName", { length: 255 }).notNull(),
+  itemDescription: text("itemDescription"),
+  requirement: mysqlEnum("requirement", ["required", "recommended", "optional"]).default("required").notNull(),
+  status: mysqlEnum("status", ["missing", "partial", "complete", "waived", "not_applicable"]).default("missing").notNull(),
+  matchKeywords: text("matchKeywords"),
+  matchFileTypes: text("matchFileTypes"),
+  linkedDocumentIds: text("linkedDocumentIds"),
+  linkedDocumentCount: int("linkedDocumentCount").default(0),
+  sortOrder: int("sortOrder").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoomChecklistItem = typeof dataRoomChecklistItems.$inferSelect;
+export type InsertDataRoomChecklistItem = typeof dataRoomChecklistItems.$inferInsert;
+
+// ============================================
 // REASONING AGENT SYSTEM
 // ============================================
 

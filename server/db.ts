@@ -92,11 +92,14 @@ import {
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
   InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
-  // Local authentication
-  localAuthCredentials, InsertLocalAuthCredential,
   // Investment grant checklists
   investmentGrantChecklists, investmentGrantItems,
-  InsertInvestmentGrantChecklist, InsertInvestmentGrantItem
+  InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
+  // Due diligence & data room checklists
+  dueDiligenceTemplates, dueDiligenceCategories, dueDiligenceItems,
+  dataRoomChecklists, dataRoomChecklistItems,
+  InsertDueDiligenceTemplate, InsertDueDiligenceCategory, InsertDueDiligenceItem,
+  InsertDataRoomChecklist, InsertDataRoomChecklistItem,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -2286,7 +2289,7 @@ export async function getUsersByRoles(roles: string[]) {
   if (!db) return [];
   return db.select().from(users).where(
     and(
-      inArray(users.role, roles),
+      inArray(users.role, roles as any),
       eq(users.isActive, true)
     )
   );
@@ -6353,7 +6356,7 @@ export async function getPageViewAnalytics(dataRoomId: number) {
   });
 
   // Aggregate stats by visitor
-  const visitorIds = [...new Set(pageViews.map(pv => pv.visitorId))];
+  const visitorIds = Array.from(new Set(pageViews.map(pv => pv.visitorId)));
   const visitors = visitorIds.length > 0
     ? await db.select().from(dataRoomVisitors).where(inArray(dataRoomVisitors.id, visitorIds))
     : [];
@@ -6606,7 +6609,7 @@ export async function getDetailedVisitorAnalytics(dataRoomId: number, visitorId:
     .where(eq(documentViews.visitorId, visitorId));
 
   // Get documents info
-  const docIds = [...new Set(pageViews.map(pv => pv.documentId))];
+  const docIds = Array.from(new Set(pageViews.map(pv => pv.documentId)));
   const documents = docIds.length > 0
     ? await db.select().from(dataRoomDocuments).where(inArray(dataRoomDocuments.id, docIds))
     : [];
@@ -6614,7 +6617,7 @@ export async function getDetailedVisitorAnalytics(dataRoomId: number, visitorId:
   // Build detailed analytics
   const documentEngagement = documents.map(doc => {
     const docPageViews = pageViews.filter(pv => pv.documentId === doc.id);
-    const uniquePages = [...new Set(docPageViews.map(pv => pv.pageNumber))];
+    const uniquePages = Array.from(new Set(docPageViews.map(pv => pv.pageNumber)));
     const totalDuration = docPageViews.reduce((sum, pv) => sum + (pv.durationMs || 0), 0);
 
     // Page-by-page breakdown
@@ -6716,7 +6719,7 @@ export async function getDataRoomEngagementReport(dataRoomId: number, startDate?
       ndaAcceptedAt: v.ndaAcceptedAt,
       sessionsCount: vSessions.length,
       totalTimeMs: vSessions.reduce((sum, s) => sum + (s.totalDurationMs || 0), 0),
-      documentsViewed: [...new Set(vPageViews.map(pv => pv.documentId))].length,
+      documentsViewed: Array.from(new Set(vPageViews.map(pv => pv.documentId))).length,
       pagesViewed: vPageViews.length,
       lastActivity: vSessions.length > 0
         ? vSessions.reduce((latest, s) => s.sessionStartAt > latest ? s.sessionStartAt : latest, vSessions[0].sessionStartAt)
@@ -6726,7 +6729,7 @@ export async function getDataRoomEngagementReport(dataRoomId: number, startDate?
 
   const documentEngagement = documents.map(d => {
     const dPageViews = filteredPageViews.filter(pv => pv.documentId === d.id);
-    const uniqueVisitors = [...new Set(dPageViews.map(pv => pv.visitorId))];
+    const uniqueVisitors = Array.from(new Set(dPageViews.map(pv => pv.visitorId)));
 
     return {
       documentId: d.id,
@@ -8083,12 +8086,12 @@ export async function getCrmPipelines(type?: string) {
   const db = await getDb();
   if (!db) return [];
 
-  let query = db.select().from(crmPipelines).where(eq(crmPipelines.isActive, true));
+  const conditions = [eq(crmPipelines.isActive, true)];
   if (type) {
-    query = query.where(eq(crmPipelines.type, type as any)) as any;
+    conditions.push(eq(crmPipelines.type, type as any));
   }
 
-  return query.orderBy(crmPipelines.name);
+  return db.select().from(crmPipelines).where(and(...conditions)).orderBy(crmPipelines.name);
 }
 
 export async function getCrmPipelineById(id: number) {
@@ -8303,6 +8306,8 @@ export async function processVCardCapture(captureId: number, vcardData: string, 
     // Create new contact
     contactId = await createCrmContact({
       ...parsedData,
+      firstName: parsedData.firstName || "Unknown",
+      fullName: parsedData.fullName || parsedData.firstName || "Unknown",
       source: "iphone_bump",
       capturedBy,
       captureData: JSON.stringify({ vcardData, captureId }),
@@ -9103,6 +9108,89 @@ export async function createChecklistFromTemplate(
 
   return checklist;
 }
+
+// Standard DD category definitions
+interface DDCategoryItem {
+  name: string;
+  keywords: string[];
+}
+
+interface DDCategory {
+  name: string;
+  items: DDCategoryItem[];
+}
+
+const STANDARD_DD_CATEGORIES: Record<string, DDCategory> = {
+  corporate: {
+    name: "Corporate Documents",
+    items: [
+      { name: "Certificate of Incorporation", keywords: ["certificate", "incorporation", "articles"] },
+      { name: "Bylaws / Operating Agreement", keywords: ["bylaws", "operating agreement"] },
+      { name: "Board Resolutions", keywords: ["board resolution", "board minutes"] },
+      { name: "Shareholder Agreement", keywords: ["shareholder agreement", "stockholder"] },
+      { name: "Cap Table", keywords: ["cap table", "capitalization", "equity"] },
+      { name: "Good Standing Certificate", keywords: ["good standing", "certificate"] },
+    ],
+  },
+  financial: {
+    name: "Financial Documents",
+    items: [
+      { name: "Audited Financial Statements", keywords: ["audited", "financial statements", "annual report"] },
+      { name: "Tax Returns", keywords: ["tax return", "tax filing"] },
+      { name: "Revenue Projections", keywords: ["revenue projection", "forecast", "financial model"] },
+      { name: "Bank Statements", keywords: ["bank statement"] },
+      { name: "Budget / P&L", keywords: ["budget", "profit and loss", "p&l", "income statement"] },
+    ],
+  },
+  legal: {
+    name: "Legal & Compliance",
+    items: [
+      { name: "Material Contracts", keywords: ["contract", "agreement", "material"] },
+      { name: "IP Portfolio / Patents", keywords: ["patent", "intellectual property", "ip", "trademark"] },
+      { name: "Litigation Summary", keywords: ["litigation", "lawsuit", "legal proceedings"] },
+      { name: "Regulatory Licenses", keywords: ["license", "permit", "regulatory"] },
+      { name: "Insurance Policies", keywords: ["insurance", "policy", "coverage"] },
+    ],
+  },
+  team: {
+    name: "Team & HR",
+    items: [
+      { name: "Org Chart", keywords: ["org chart", "organization chart", "team structure"] },
+      { name: "Key Employee Agreements", keywords: ["employment agreement", "offer letter"] },
+      { name: "Employee Stock Option Plan", keywords: ["esop", "stock option", "equity plan"] },
+    ],
+  },
+  product: {
+    name: "Product & Technology",
+    items: [
+      { name: "Product Roadmap", keywords: ["product roadmap", "roadmap"] },
+      { name: "Technical Architecture", keywords: ["technical architecture", "system design", "infrastructure"] },
+      { name: "Security & Compliance", keywords: ["security", "soc 2", "compliance", "gdpr", "privacy"] },
+    ],
+  },
+};
+
+const SERIES_B_DD_CATEGORIES: Record<string, DDCategory> = {
+  ...STANDARD_DD_CATEGORIES,
+  growth: {
+    name: "Growth & Metrics",
+    items: [
+      { name: "KPI Dashboard", keywords: ["kpi", "metrics", "dashboard"] },
+      { name: "Cohort Analysis", keywords: ["cohort", "retention", "churn"] },
+      { name: "Unit Economics", keywords: ["unit economics", "ltv", "cac", "customer acquisition"] },
+      { name: "Market Analysis", keywords: ["market analysis", "tam", "sam", "som", "market size"] },
+      { name: "Competitive Landscape", keywords: ["competitive", "competitor", "landscape"] },
+    ],
+  },
+  governance: {
+    name: "Governance & ESG",
+    items: [
+      { name: "Board Composition", keywords: ["board composition", "board members", "directors"] },
+      { name: "ESG Policy", keywords: ["esg", "environmental", "social", "governance policy"] },
+      { name: "Diversity Report", keywords: ["diversity", "inclusion", "dei"] },
+    ],
+  },
+};
 
 // Create a standard due diligence checklist
 export async function createStandardChecklist(

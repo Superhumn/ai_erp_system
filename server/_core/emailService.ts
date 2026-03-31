@@ -61,7 +61,7 @@ export async function queueEmail(options: QueueEmailOptions): Promise<QueueEmail
   try {
     // Check for duplicate using idempotency key
     if (options.idempotencyKey) {
-      const existing = await db.getEmailMessageByIdempotencyKey(options.idempotencyKey);
+      const existing = await (db as any).getEmailMessageByIdempotencyKey(options.idempotencyKey);
       if (existing) {
         console.log(`[EmailService] Duplicate email detected: ${options.idempotencyKey}`);
         return {
@@ -73,7 +73,7 @@ export async function queueEmail(options: QueueEmailOptions): Promise<QueueEmail
     }
 
     // Create the email message record
-    const result = await db.createEmailMessage({
+    const result = await (db as any).createEmailMessage({
       toEmail: options.to.email,
       toName: options.to.name,
       fromEmail: ENV.sendgridFromEmail,
@@ -112,7 +112,7 @@ export async function queueEmail(options: QueueEmailOptions): Promise<QueueEmail
 export async function sendQueuedEmail(emailMessageId: number): Promise<SendEmailResult> {
   try {
     // Get the email message
-    const message = await db.getEmailMessageById(emailMessageId);
+    const message = await (db as any).getEmailMessageById(emailMessageId);
     if (!message) {
       return {
         success: false,
@@ -131,12 +131,12 @@ export async function sendQueuedEmail(emailMessageId: number): Promise<SendEmail
     }
 
     // Update status to sending
-    await db.updateEmailMessageStatus(emailMessageId, "sending");
+    await (db as any).updateEmailMessageStatus(emailMessageId, "sending");
 
     // Get the template
-    const template = await db.getTransactionalEmailTemplateByName(message.templateName);
+    const template = await (db as any).getTransactionalEmailTemplateByName(message.templateName);
     if (!template) {
-      await db.updateEmailMessageStatus(emailMessageId, "failed", undefined, {
+      await (db as any).updateEmailMessageStatus(emailMessageId, "failed", undefined, {
         message: `Template ${message.templateName} not found`,
         code: "TEMPLATE_NOT_FOUND",
       });
@@ -148,7 +148,7 @@ export async function sendQueuedEmail(emailMessageId: number): Promise<SendEmail
     }
 
     if (!template.isActive) {
-      await db.updateEmailMessageStatus(emailMessageId, "failed", undefined, {
+      await (db as any).updateEmailMessageStatus(emailMessageId, "failed", undefined, {
         message: `Template ${message.templateName} is not active`,
         code: "TEMPLATE_INACTIVE",
       });
@@ -187,7 +187,7 @@ export async function sendQueuedEmail(emailMessageId: number): Promise<SendEmail
     });
 
     if (sendResult.success) {
-      await db.updateEmailMessageStatus(
+      await (db as any).updateEmailMessageStatus(
         emailMessageId,
         "sent",
         sendResult.providerMessageId
@@ -203,8 +203,8 @@ export async function sendQueuedEmail(emailMessageId: number): Promise<SendEmail
       // Handle failure
       if (sendResult.error?.isTransient) {
         // Transient error - increment retry and keep as queued
-        await db.incrementEmailMessageRetry(emailMessageId);
-        await db.updateEmailMessage(emailMessageId, {
+        await (db as any).incrementEmailMessageRetry(emailMessageId);
+        await (db as any).updateEmailMessage(emailMessageId, {
           errorJson: sendResult.error,
         });
 
@@ -215,7 +215,7 @@ export async function sendQueuedEmail(emailMessageId: number): Promise<SendEmail
         };
       } else {
         // Permanent error - mark as failed
-        await db.updateEmailMessageStatus(emailMessageId, "failed", undefined, sendResult.error);
+        await (db as any).updateEmailMessageStatus(emailMessageId, "failed", undefined, sendResult.error);
 
         return {
           success: false,
@@ -229,7 +229,7 @@ export async function sendQueuedEmail(emailMessageId: number): Promise<SendEmail
 
     // Try to update status
     try {
-      await db.incrementEmailMessageRetry(emailMessageId);
+      await (db as any).incrementEmailMessageRetry(emailMessageId);
     } catch (e) {
       console.error("[EmailService] Failed to update retry count:", e);
     }

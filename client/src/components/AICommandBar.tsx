@@ -719,7 +719,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
   });
 
   // Invoice creation from text mutation
-  const createInvoiceFromText = trpc.invoices.createFromText.useMutation({
+  const createInvoiceFromText = (trpc.invoices as any).createFromText.useMutation({
     onSuccess: (data) => {
       setIsLoading(false);
       toast.success("Invoice created successfully", {
@@ -736,11 +736,11 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
   });
 
   // Universal entity creation from text mutations
-  const createPOFromText = trpc.purchaseOrders.createFromText.useMutation({
+  const createPOFromText = (trpc.purchaseOrders as any).createFromText.useMutation({
     onSuccess: (data) => {
       setIsLoading(false);
       toast.success("Purchase Order created successfully", {
-        description: `PO #${data.poNumber} has been created`
+        description: `PO #${(data as any).poNumber} has been created`
       });
       utils.purchaseOrders.list.invalidate();
       setLocation("/procurement");
@@ -752,7 +752,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
     },
   });
 
-  const createShipmentFromText = trpc.shipments.createFromText.useMutation({
+  const createShipmentFromText = (trpc.shipments as any).createFromText.useMutation({
     onSuccess: (data) => {
       setIsLoading(false);
       toast.success("Shipment tracked successfully", {
@@ -767,7 +767,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
     },
   });
 
-  const recordPaymentFromText = trpc.payments.createFromText.useMutation({
+  const recordPaymentFromText = (trpc.payments as any).createFromText.useMutation({
     onSuccess: (data) => {
       setIsLoading(false);
       toast.success("Payment recorded successfully", {
@@ -783,7 +783,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
     },
   });
 
-  const createWorkOrderFromText = trpc.workOrders.createFromText.useMutation({
+  const createWorkOrderFromText = (trpc.workOrders as any).createFromText.useMutation({
     onSuccess: (data) => {
       setIsLoading(false);
       toast.success("Work Order created successfully", {
@@ -799,7 +799,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
     },
   });
 
-  const transferInventoryFromText = trpc.inventory.transferFromText.useMutation({
+  const transferInventoryFromText = (trpc.inventory as any).transferFromText.useMutation({
     onSuccess: (data) => {
       setIsLoading(false);
       toast.success("Inventory transfer initiated", {
