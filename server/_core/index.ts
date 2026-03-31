@@ -35,6 +35,13 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
   }
   throw new Error(`No available port found starting from ${startPort}`);
 }
+const oauthCallbackLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: { error: "Too many OAuth callback requests, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 async function startServer() {
   const emailConfigValidation = validateEmailConfig();
