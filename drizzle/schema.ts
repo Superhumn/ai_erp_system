@@ -4708,3 +4708,45 @@ export const agentCallLogs = mysqlTable("agent_call_logs", {
 
 export type AgentCallLog = typeof agentCallLogs.$inferSelect;
 export type InsertAgentCallLog = typeof agentCallLogs.$inferInsert;
+
+// ============================================
+// FIREFLIES MEETINGS
+// ============================================
+
+export const firefliesMeetings = mysqlTable("fireflies_meetings", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
+  firefliesId: varchar("firefliesId", { length: 128 }).notNull(),
+  title: varchar("title", { length: 512 }),
+  date: timestamp("date"),
+  duration: int("duration"), // seconds
+  participants: json("participants"),
+  transcript: text("transcript"),
+  summary: text("summary"),
+  actionItems: json("actionItems"),
+  status: mysqlEnum("status", ["pending", "contacts_created", "tasks_created", "project_created", "fully_processed", "error"]).default("pending").notNull(),
+  contactsCreated: int("contactsCreated").default(0),
+  tasksCreated: int("tasksCreated").default(0),
+  projectId: int("projectId").references(() => projects.id),
+  errorMessage: text("errorMessage"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FirefliesMeeting = typeof firefliesMeetings.$inferSelect;
+export type InsertFirefliesMeeting = typeof firefliesMeetings.$inferInsert;
+
+// Fireflies integration config (per-company)
+export const firefliesConfigs = mysqlTable("fireflies_configs", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
+  userId: int("userId").notNull().references(() => users.id),
+  apiKey: text("apiKey").notNull(),
+  autoCreateContacts: boolean("autoCreateContacts").default(true),
+  autoCreateTasks: boolean("autoCreateTasks").default(true),
+  autoCreateProjects: boolean("autoCreateProjects").default(false),
+  isActive: boolean("isActive").default(true),
+  lastSyncAt: timestamp("lastSyncAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
