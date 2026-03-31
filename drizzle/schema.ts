@@ -10,6 +10,7 @@ export const users = mysqlTable("users", {
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
+  passwordHash: text("passwordHash"),
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "copacker", "vendor", "contractor"]).default("user").notNull(),
   departmentId: int("departmentId"),
@@ -50,14 +51,14 @@ export const teamInvitations = mysqlTable("teamInvitations", {
   email: varchar("email", { length: 320 }).notNull(),
   role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "copacker", "vendor", "contractor"]).default("user").notNull(),
   inviteCode: varchar("inviteCode", { length: 64 }).notNull().unique(),
-  invitedBy: int("invitedBy").notNull(),
-  linkedVendorId: int("linkedVendorId"),
-  linkedWarehouseId: int("linkedWarehouseId"),
+  invitedBy: int("invitedBy").notNull().references(() => users.id),
+  linkedVendorId: int("linkedVendorId").references(() => vendors.id),
+  linkedWarehouseId: int("linkedWarehouseId").references(() => warehouses.id),
   customPermissions: text("customPermissions"), // JSON array of permission keys
   status: mysqlEnum("status", ["pending", "accepted", "expired", "revoked"]).default("pending").notNull(),
   expiresAt: timestamp("expiresAt").notNull(),
   acceptedAt: timestamp("acceptedAt"),
-  acceptedByUserId: int("acceptedByUserId"),
+  acceptedByUserId: int("acceptedByUserId").references(() => users.id),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -67,9 +68,9 @@ export type InsertTeamInvitation = typeof teamInvitations.$inferInsert;
 // User permissions for granular access control
 export const userPermissions = mysqlTable("userPermissions", {
   id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+  userId: int("userId").notNull().references(() => users.id),
   permission: varchar("permission", { length: 64 }).notNull(), // e.g., 'inventory.update', 'shipments.upload'
-  grantedBy: int("grantedBy").notNull(),
+  grantedBy: int("grantedBy").notNull().references(() => users.id),
   grantedAt: timestamp("grantedAt").defaultNow().notNull(),
 });
 
@@ -79,7 +80,7 @@ export type InsertUserPermission = typeof userPermissions.$inferInsert;
 // Google OAuth tokens for Drive/Sheets access
 export const googleOAuthTokens = mysqlTable("googleOAuthTokens", {
   id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+  userId: int("userId").notNull().references(() => users.id),
   accessToken: text("accessToken").notNull(),
   refreshToken: text("refreshToken"),
   tokenType: varchar("tokenType", { length: 32 }).default("Bearer"),
@@ -95,7 +96,7 @@ export type InsertGoogleOAuthToken = typeof googleOAuthTokens.$inferInsert;
 
 export const quickbooksOAuthTokens = mysqlTable("quickbooksOAuthTokens", {
   id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+  userId: int("userId").notNull().references(() => users.id),
   accessToken: text("accessToken").notNull(),
   refreshToken: text("refreshToken"),
   tokenType: varchar("tokenType", { length: 32 }).default("Bearer"),
@@ -207,7 +208,7 @@ export const companies = mysqlTable("companies", {
 
 export const customers = mysqlTable("customers", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId"),
+  companyId: int("companyId").references(() => companies.id),
   name: varchar("name", { length: 255 }).notNull(),
   email: varchar("email", { length: 320 }),
   phone: varchar("phone", { length: 32 }),
@@ -234,7 +235,7 @@ export const customers = mysqlTable("customers", {
 
 export const vendors = mysqlTable("vendors", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId"),
+  companyId: int("companyId").references(() => companies.id),
   name: varchar("name", { length: 255 }).notNull(),
   contactName: varchar("contactName", { length: 255 }),
   email: varchar("email", { length: 320 }),
@@ -261,7 +262,7 @@ export const vendors = mysqlTable("vendors", {
 
 export const products = mysqlTable("products", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId"),
+  companyId: int("companyId").references(() => companies.id),
   sku: varchar("sku", { length: 64 }).notNull(),
   name: varchar("name", { length: 255 }).notNull(),
   description: text("description"),
@@ -275,7 +276,7 @@ export const products = mysqlTable("products", {
   status: mysqlEnum("status", ["active", "inactive", "discontinued"]).default("active").notNull(),
   shopifyProductId: varchar("shopifyProductId", { length: 64 }),
   quickbooksItemId: varchar("quickbooksItemId", { length: 64 }),
-  preferredVendorId: int("preferredVendorId"), // Preferred vendor for auto-purchase orders
+  preferredVendorId: int("preferredVendorId").references(() => vendors.id), // Preferred vendor for auto-purchase orders
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -286,7 +287,7 @@ export const products = mysqlTable("products", {
 
 export const accounts = mysqlTable("accounts", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId"),
+  companyId: int("companyId").references(() => companies.id),
   code: varchar("code", { length: 32 }).notNull(),
   name: varchar("name", { length: 255 }).notNull(),
   type: mysqlEnum("type", ["asset", "liability", "equity", "revenue", "expense"]).notNull(),
@@ -295,7 +296,7 @@ export const accounts = mysqlTable("accounts", {
   balance: decimal("balance", { precision: 15, scale: 2 }).default("0"),
   currency: varchar("currency", { length: 3 }).default("USD"),
   isActive: boolean("isActive").default(true),
-  parentAccountId: int("parentAccountId"),
+  parentAccountId: int("parentAccountId").references(() => accounts.id),
   quickbooksAccountId: varchar("quickbooksAccountId", { length: 64 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -303,9 +304,9 @@ export const accounts = mysqlTable("accounts", {
 
 export const invoices = mysqlTable("invoices", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId"),
+  companyId: int("companyId").references(() => companies.id),
   invoiceNumber: varchar("invoiceNumber", { length: 64 }).notNull(),
-  customerId: int("customerId"),
+  customerId: int("customerId").references(() => customers.id),
   type: mysqlEnum("type", ["invoice", "credit_note", "quote"]).default("invoice").notNull(),
   status: mysqlEnum("status", ["draft", "sent", "paid", "partial", "overdue", "cancelled"]).default("draft").notNull(),
   issueDate: timestamp("issueDate").notNull(),
@@ -319,8 +320,8 @@ export const invoices = mysqlTable("invoices", {
   notes: text("notes"),
   terms: text("terms"),
   quickbooksInvoiceId: varchar("quickbooksInvoiceId", { length: 64 }),
-  createdBy: int("createdBy"),
-  approvedBy: int("approvedBy"),
+  createdBy: int("createdBy").references(() => users.id),
+  approvedBy: int("approvedBy").references(() => users.id),
   approvedAt: timestamp("approvedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -328,8 +329,8 @@ export const invoices = mysqlTable("invoices", {
 
 export const invoiceItems = mysqlTable("invoice_items", {
   id: int("id").autoincrement().primaryKey(),
-  invoiceId: int("invoiceId").notNull(),
-  productId: int("productId"),
+  invoiceId: int("invoiceId").notNull().references(() => invoices.id),
+  productId: int("productId").references(() => products.id),
   description: text("description").notNull(),
   quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),
   unitPrice: decimal("unitPrice", { precision: 15, scale: 2 }).notNull(),
@@ -342,13 +343,13 @@ export const invoiceItems = mysqlTable("invoice_items", {
 
 export const payments = mysqlTable("payments", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId"),
+  companyId: int("companyId").references(() => companies.id),
   paymentNumber: varchar("paymentNumber", { length: 64 }).notNull(),
   type: mysqlEnum("type", ["received", "made"]).notNull(),
-  invoiceId: int("invoiceId"),
-  vendorId: int("vendorId"),
-  customerId: int("customerId"),
-  accountId: int("accountId"),
+  invoiceId: int("invoiceId").references(() => invoices.id),
+  vendorId: int("vendorId").references(() => vendors.id),
+  customerId: int("customerId").references(() => customers.id),
+  accountId: int("accountId").references(() => accounts.id),
   amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
   currency: varchar("currency", { length: 3 }).default("USD"),
   paymentMethod: mysqlEnum("paymentMethod", ["cash", "check", "bank_transfer", "credit_card", "ach", "wire", "other"]).default("bank_transfer"),
@@ -357,14 +358,14 @@ export const payments = mysqlTable("payments", {
   status: mysqlEnum("status", ["pending", "completed", "failed", "cancelled"]).default("pending").notNull(),
   notes: text("notes"),
   quickbooksPaymentId: varchar("quickbooksPaymentId", { length: 64 }),
-  createdBy: int("createdBy"),
+  createdBy: int("createdBy").references(() => users.id),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export const transactions = mysqlTable("transactions", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId"),
+  companyId: int("companyId").references(() => companies.id),
   transactionNumber: varchar("transactionNumber", { length: 64 }).notNull(),
   type: mysqlEnum("type", ["journal", "invoice", "payment", "expense", "transfer", "adjustment"]).notNull(),
   referenceType: varchar("referenceType", { length: 64 }),
@@ -374,8 +375,8 @@ export const transactions = mysqlTable("transactions", {
   totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).notNull(),
   currency: varchar("currency", { length: 3 }).default("USD"),
   status: mysqlEnum("status", ["draft", "posted", "void"]).default("draft").notNull(),
-  createdBy: int("createdBy"),
-  postedBy: int("postedBy"),
+  createdBy: int("createdBy").references(() => users.id),
+  postedBy: int("postedBy").references(() => users.id),
   postedAt: timestamp("postedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -383,8 +384,8 @@ export const transactions = mysqlTable("transactions", {
 
 export const transactionLines = mysqlTable("transaction_lines", {
   id: int("id").autoincrement().primaryKey(),
-  transactionId: int("transactionId").notNull(),
-  accountId: int("accountId").notNull(),
+  transactionId: int("transactionId").notNull().references(() => transactions.id),
+  accountId: int("accountId").notNull().references(() => accounts.id),
   debit: decimal("debit", { precision: 15, scale: 2 }).default("0"),
   credit: decimal("credit", { precision: 15, scale: 2 }).default("0"),
   description: text("description"),
@@ -397,9 +398,9 @@ export const transactionLines = mysqlTable("transaction_lines", {
 
 export const orders = mysqlTable("orders", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId"),
+  companyId: int("companyId").references(() => companies.id),
   orderNumber: varchar("orderNumber", { length: 64 }).notNull(),
-  customerId: int("customerId"),
+  customerId: int("customerId").references(() => customers.id),
   type: mysqlEnum("type", ["sales", "return"]).default("sales").notNull(),
   status: mysqlEnum("status", ["pending", "confirmed", "processing", "shipped", "delivered", "cancelled", "refunded"]).default("pending").notNull(),
   orderDate: timestamp("orderDate").notNull(),
@@ -413,16 +414,16 @@ export const orders = mysqlTable("orders", {
   currency: varchar("currency", { length: 3 }).default("USD"),
   notes: text("notes"),
   shopifyOrderId: varchar("shopifyOrderId", { length: 64 }),
-  invoiceId: int("invoiceId"),
-  createdBy: int("createdBy"),
+  invoiceId: int("invoiceId").references(() => invoices.id),
+  createdBy: int("createdBy").references(() => users.id),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export const orderItems = mysqlTable("order_items", {
   id: int("id").autoincrement().primaryKey(),
-  orderId: int("orderId").notNull(),
-  productId: int("productId"),
+  orderId: int("orderId").notNull().references(() => orders.id),
+  productId: int("productId").references(() => products.id),
   sku: varchar("sku", { length: 64 }),
   name: varchar("name", { length: 255 }).notNull(),
   quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),
@@ -439,9 +440,9 @@ export const orderItems = mysqlTable("order_items", {
 
 export const inventory = mysqlTable("inventory", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId"),
-  productId: int("productId").notNull(),
-  warehouseId: int("warehouseId"),
+  companyId: int("companyId").references(() => companies.id),
+  productId: int("productId").notNull().references(() => products.id),
+  warehouseId: int("warehouseId").references(() => warehouses.id),
   quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),
   reservedQuantity: decimal("reservedQuantity", { precision: 15, scale: 4 }).default("0"),
   reorderLevel: decimal("reorderLevel", { precision: 15, scale: 4 }),
@@ -456,7 +457,7 @@ export const inventory = mysqlTable("inventory", {
 
 export const warehouses = mysqlTable("warehouses", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId"),
+  companyId: int("companyId").references(() => companies.id),
   name: varchar("name", { length: 255 }).notNull(),
   code: varchar("code", { length: 32 }),
   address: text("address"),
@@ -482,8 +483,8 @@ export type InsertWarehouse = typeof warehouses.$inferInsert;
 export const inventoryTransfers = mysqlTable("inventory_transfers", {
   id: int("id").autoincrement().primaryKey(),
   transferNumber: varchar("transferNumber", { length: 64 }).notNull(),
-  fromWarehouseId: int("fromWarehouseId").notNull(),
-  toWarehouseId: int("toWarehouseId").notNull(),
+  fromWarehouseId: int("fromWarehouseId").notNull().references(() => warehouses.id),
+  toWarehouseId: int("toWarehouseId").notNull().references(() => warehouses.id),
   status: mysqlEnum("status", ["draft", "pending", "in_transit", "received", "cancelled"]).default("draft").notNull(),
   requestedDate: timestamp("requestedDate").notNull(),
   shippedDate: timestamp("shippedDate"),
@@ -492,8 +493,8 @@ export const inventoryTransfers = mysqlTable("inventory_transfers", {
   trackingNumber: varchar("trackingNumber", { length: 128 }),
   carrier: varchar("carrier", { length: 128 }),
   notes: text("notes"),
-  requestedBy: int("requestedBy"),
-  approvedBy: int("approvedBy"),
+  requestedBy: int("requestedBy").references(() => users.id),
+  approvedBy: int("approvedBy").references(() => users.id),
   approvedAt: timestamp("approvedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -505,8 +506,8 @@ export type InsertInventoryTransfer = typeof inventoryTransfers.$inferInsert;
 // Transfer line items
 export const inventoryTransferItems = mysqlTable("inventory_transfer_items", {
   id: int("id").autoincrement().primaryKey(),
-  transferId: int("transferId").notNull(),
-  productId: int("productId").notNull(),
+  transferId: int("transferId").notNull().references(() => inventoryTransfers.id),
+  productId: int("productId").notNull().references(() => products.id),
   requestedQuantity: decimal("requestedQuantity", { precision: 15, scale: 4 }).notNull(),
   shippedQuantity: decimal("shippedQuantity", { precision: 15, scale: 4 }),
   receivedQuantity: decimal("receivedQuantity", { precision: 15, scale: 4 }),
@@ -522,25 +523,25 @@ export type InsertInventoryTransferItem = typeof inventoryTransferItems.$inferIn
 
 export const productionBatches = mysqlTable("production_batches", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId"),
+  companyId: int("companyId").references(() => companies.id),
   batchNumber: varchar("batchNumber", { length: 64 }).notNull(),
-  productId: int("productId").notNull(),
+  productId: int("productId").notNull().references(() => products.id),
   quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),
   status: mysqlEnum("status", ["planned", "in_progress", "completed", "cancelled"]).default("planned").notNull(),
   startDate: timestamp("startDate"),
   completionDate: timestamp("completionDate"),
-  warehouseId: int("warehouseId"),
+  warehouseId: int("warehouseId").references(() => warehouses.id),
   notes: text("notes"),
-  createdBy: int("createdBy"),
+  createdBy: int("createdBy").references(() => users.id),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export const purchaseOrders = mysqlTable("purchase_orders", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId"),
+  companyId: int("companyId").references(() => companies.id),
   poNumber: varchar("poNumber", { length: 64 }).notNull(),
-  vendorId: int("vendorId").notNull(),
+  vendorId: int("vendorId").notNull().references(() => vendors.id),
   status: mysqlEnum("status", ["draft", "sent", "confirmed", "partial", "received", "cancelled"]).default("draft").notNull(),
   orderDate: timestamp("orderDate").notNull(),
   expectedDate: timestamp("expectedDate"),
@@ -552,8 +553,8 @@ export const purchaseOrders = mysqlTable("purchase_orders", {
   totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).notNull(),
   currency: varchar("currency", { length: 3 }).default("USD"),
   notes: text("notes"),
-  createdBy: int("createdBy"),
-  approvedBy: int("approvedBy"),
+  createdBy: int("createdBy").references(() => users.id),
+  approvedBy: int("approvedBy").references(() => users.id),
   approvedAt: timestamp("approvedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -561,8 +562,8 @@ export const purchaseOrders = mysqlTable("purchase_orders", {
 
 export const purchaseOrderItems = mysqlTable("purchase_order_items", {
   id: int("id").autoincrement().primaryKey(),
-  purchaseOrderId: int("purchaseOrderId").notNull(),
-  productId: int("productId"),
+  purchaseOrderId: int("purchaseOrderId").notNull().references(() => purchaseOrders.id),
+  productId: int("productId").references(() => products.id),
   description: text("description").notNull(),
   quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),
   receivedQuantity: decimal("receivedQuantity", { precision: 15, scale: 4 }).default("0"),
@@ -573,11 +574,11 @@ export const purchaseOrderItems = mysqlTable("purchase_order_items", {
 
 export const shipments = mysqlTable("shipments", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId"),
+  companyId: int("companyId").references(() => companies.id),
   shipmentNumber: varchar("shipmentNumber", { length: 64 }).notNull(),
   type: mysqlEnum("type", ["inbound", "outbound"]).notNull(),
-  orderId: int("orderId"),
-  purchaseOrderId: int("purchaseOrderId"),
+  orderId: int("orderId").references(() => orders.id),
+  purchaseOrderId: int("purchaseOrderId").references(() => purchaseOrders.id),
   carrier: varchar("carrier", { length: 128 }),
   trackingNumber: varchar("trackingNumber", { length: 128 }),
   status: mysqlEnum("status", ["pending", "in_transit", "delivered", "returned", "cancelled"]).default("pending").notNull(),
@@ -1477,8 +1478,8 @@ export type InsertFreightBooking = typeof freightBookings.$inferInsert;
 // BOM header - defines a product's bill of materials
 export const billOfMaterials = mysqlTable("billOfMaterials", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId"),
-  productId: int("productId").notNull(), // The finished product
+  companyId: int("companyId").references(() => companies.id),
+  productId: int("productId").notNull().references(() => products.id), // The finished product
   name: varchar("name", { length: 255 }).notNull(),
   version: varchar("version", { length: 32 }).default("1.0").notNull(),
   status: mysqlEnum("status", ["draft", "active", "obsolete"]).default("draft").notNull(),
@@ -1491,7 +1492,7 @@ export const billOfMaterials = mysqlTable("billOfMaterials", {
   totalMaterialCost: decimal("totalMaterialCost", { precision: 15, scale: 2 }), // Calculated from components
   totalCost: decimal("totalCost", { precision: 15, scale: 2 }), // Material + Labor + Overhead
   notes: text("notes"),
-  createdBy: int("createdBy"),
+  createdBy: int("createdBy").references(() => users.id),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -1499,10 +1500,10 @@ export const billOfMaterials = mysqlTable("billOfMaterials", {
 // BOM components - individual items that make up a product
 export const bomComponents = mysqlTable("bomComponents", {
   id: int("id").autoincrement().primaryKey(),
-  bomId: int("bomId").notNull(), // Reference to billOfMaterials
+  bomId: int("bomId").notNull().references(() => billOfMaterials.id), // Reference to billOfMaterials
   componentType: mysqlEnum("componentType", ["product", "raw_material", "packaging", "labor"]).default("raw_material").notNull(),
-  productId: int("productId"), // If component is another product (sub-assembly)
-  rawMaterialId: int("rawMaterialId"), // If component is a raw material
+  productId: int("productId").references(() => products.id), // If component is another product (sub-assembly)
+  rawMaterialId: int("rawMaterialId").references(() => rawMaterials.id), // If component is a raw material
   name: varchar("name", { length: 255 }).notNull(), // Component name (for display)
   sku: varchar("sku", { length: 64 }),
   quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),
@@ -1521,7 +1522,7 @@ export const bomComponents = mysqlTable("bomComponents", {
 // Raw materials - ingredients and materials not tracked as products
 export const rawMaterials = mysqlTable("rawMaterials", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId"),
+  companyId: int("companyId").references(() => companies.id),
   sku: varchar("sku", { length: 64 }),
   name: varchar("name", { length: 255 }).notNull(),
   description: text("description"),
@@ -1531,11 +1532,11 @@ export const rawMaterials = mysqlTable("rawMaterials", {
   currency: varchar("currency", { length: 3 }).default("USD"),
   minOrderQty: decimal("minOrderQty", { precision: 15, scale: 4 }),
   leadTimeDays: int("leadTimeDays").default(0),
-  preferredVendorId: int("preferredVendorId"),
+  preferredVendorId: int("preferredVendorId").references(() => vendors.id),
   status: mysqlEnum("status", ["active", "inactive", "discontinued"]).default("active").notNull(),
   // Receiving tracking fields
   receivingStatus: mysqlEnum("receivingStatus", ["none", "ordered", "in_transit", "received", "inspected"]).default("none"),
-  lastPoId: int("lastPoId"), // Reference to most recent PO
+  lastPoId: int("lastPoId").references(() => purchaseOrders.id), // Reference to most recent PO
   quantityOnOrder: decimal("quantityOnOrder", { precision: 15, scale: 4 }).default("0"),
   quantityInTransit: decimal("quantityInTransit", { precision: 15, scale: 4 }).default("0"),
   quantityReceived: decimal("quantityReceived", { precision: 15, scale: 4 }).default("0"),
@@ -1550,7 +1551,7 @@ export const rawMaterials = mysqlTable("rawMaterials", {
 // BOM version history for tracking changes
 export const bomVersionHistory = mysqlTable("bomVersionHistory", {
   id: int("id").autoincrement().primaryKey(),
-  bomId: int("bomId").notNull(),
+  bomId: int("bomId").notNull().references(() => billOfMaterials.id),
   version: varchar("version", { length: 32 }).notNull(),
   changeType: mysqlEnum("changeType", ["created", "updated", "activated", "obsoleted"]).notNull(),
   changeDescription: text("changeDescription"),
@@ -1576,11 +1577,11 @@ export type InsertBomVersionHistory = typeof bomVersionHistory.$inferInsert;
 // Work orders for production runs
 export const workOrders = mysqlTable("workOrders", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId"),
+  companyId: int("companyId").references(() => companies.id),
   workOrderNumber: varchar("workOrderNumber", { length: 64 }).notNull(),
-  bomId: int("bomId").notNull(),
-  productId: int("productId").notNull(),
-  warehouseId: int("warehouseId"), // Production location
+  bomId: int("bomId").notNull().references(() => billOfMaterials.id),
+  productId: int("productId").notNull().references(() => products.id),
+  warehouseId: int("warehouseId").references(() => warehouses.id), // Production location
   quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(), // Target production quantity
   completedQuantity: decimal("completedQuantity", { precision: 15, scale: 4 }).default("0"),
   unit: varchar("unit", { length: 32 }).default("EA").notNull(),
@@ -1591,8 +1592,8 @@ export const workOrders = mysqlTable("workOrders", {
   actualStartDate: timestamp("actualStartDate"),
   actualEndDate: timestamp("actualEndDate"),
   notes: text("notes"),
-  createdBy: int("createdBy"),
-  assignedTo: int("assignedTo"),
+  createdBy: int("createdBy").references(() => users.id),
+  assignedTo: int("assignedTo").references(() => users.id),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -1600,9 +1601,9 @@ export const workOrders = mysqlTable("workOrders", {
 // Work order material requirements (auto-calculated from BOM)
 export const workOrderMaterials = mysqlTable("workOrderMaterials", {
   id: int("id").autoincrement().primaryKey(),
-  workOrderId: int("workOrderId").notNull(),
-  rawMaterialId: int("rawMaterialId"),
-  productId: int("productId"), // For sub-assemblies
+  workOrderId: int("workOrderId").notNull().references(() => workOrders.id),
+  rawMaterialId: int("rawMaterialId").references(() => rawMaterials.id),
+  productId: int("productId").references(() => products.id), // For sub-assemblies
   name: varchar("name", { length: 255 }).notNull(),
   requiredQuantity: decimal("requiredQuantity", { precision: 15, scale: 4 }).notNull(),
   reservedQuantity: decimal("reservedQuantity", { precision: 15, scale: 4 }).default("0"),
@@ -1617,8 +1618,8 @@ export const workOrderMaterials = mysqlTable("workOrderMaterials", {
 // Raw material inventory (separate from finished goods inventory)
 export const rawMaterialInventory = mysqlTable("rawMaterialInventory", {
   id: int("id").autoincrement().primaryKey(),
-  rawMaterialId: int("rawMaterialId").notNull(),
-  warehouseId: int("warehouseId").notNull(),
+  rawMaterialId: int("rawMaterialId").notNull().references(() => rawMaterials.id),
+  warehouseId: int("warehouseId").notNull().references(() => warehouses.id),
   quantity: decimal("quantity", { precision: 15, scale: 4 }).default("0").notNull(),
   reservedQuantity: decimal("reservedQuantity", { precision: 15, scale: 4 }).default("0"),
   availableQuantity: decimal("availableQuantity", { precision: 15, scale: 4 }).default("0"),

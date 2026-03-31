@@ -4,11 +4,61 @@
  */
 
 import { z } from 'zod';
-import { router, opsProcedure, financeProcedure } from './routers';
+import { protectedProcedure } from './_core/trpc';
 import { parseEntityText, findOrCreateEntity } from './_core/universalTextParser';
-import { generateNumber, createAuditLog } from './routers';
 import * as db from './db';
 import { TRPCError } from '@trpc/server';
+
+// Role-based procedures (defined locally to avoid circular dependency with routers.ts)
+const opsProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!['admin', 'ops', 'exec'].includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Operations access required' });
+  }
+  return next({ ctx });
+});
+
+const financeProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!['admin', 'finance', 'exec'].includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Finance access required' });
+  }
+  return next({ ctx });
+});
+
+function generateNumber(prefix: string) {
+  const date = new Date();
+  const year = date.getFullYear().toString().slice(-2);
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  return `${prefix}-${year}${month}-${random}`;
+}
+
+type CoreAuditAction =
+  | 'create'
+  | 'update'
+  | 'delete'
+  | 'view'
+  | 'export'
+  | 'approve'
+  | 'reject';
+
+type ExtendedAuditAction = CoreAuditAction | 'warning' | 'error' | 'bulk_update';
+
+function normalizeAuditAction(action: ExtendedAuditAction): CoreAuditAction {
+  switch (action) {
+    case 'bulk_update':
+    case 'warning':
+    case 'error':
+      return 'update';
+    default:
+      return action;
+  }
+}
+
+async function createAuditLog(userId: number, action: ExtendedAuditAction, entityType: string, entityId: number, entityName?: string, oldValues?: any, newValues?: any) {
+  await db.createAuditLog({
+    userId, action: normalizeAuditAction(action), entityType, entityId, entityName, oldValues, newValues,
+  });
+}
 
 // ============================================
 // PURCHASE ORDERS

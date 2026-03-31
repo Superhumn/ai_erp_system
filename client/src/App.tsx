@@ -113,7 +113,7 @@ import CopackerPortal from "./pages/portal/CopackerPortal";
 import VendorPortal from "./pages/portal/VendorPortal";
 
 // Auth
-import { Login } from "./pages/Login";
+import Login from "./pages/Login";
 
 // SOPs
 import SOPs from "./pages/SOPs";
@@ -236,6 +236,9 @@ function Router() {
         <Route path="/projects" component={Projects} />
         <Route path="/projects/investment-grants" component={InvestmentGrantChecklist} />
 
+        {/* SOPs */}
+        <Route path="/sops" component={SOPs} />
+
         {/* Import */}
         <Route path="/import" component={Import} />
 
@@ -266,8 +269,7 @@ function App() {
           <TooltipProvider>
             <Toaster />
             <Switch>
-              {/* Public Login */}
-              {/* Public routes (outside dashboard) */}
+              {/* Auth */}
               <Route path="/login" component={Login} />
               {/* Public Data Room Access (outside dashboard) */}
               <Route path="/share/:code" component={DataRoomPublic} />

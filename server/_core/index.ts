@@ -35,6 +35,13 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
   }
   throw new Error(`No available port found starting from ${startPort}`);
 }
+const oauthCallbackLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: { error: "Too many OAuth callback requests, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 async function startServer() {
   const emailConfigValidation = validateEmailConfig();
@@ -105,29 +112,18 @@ async function startServer() {
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
-
-  const oauthCallbackLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 20,
-    standardHeaders: true,
-    legacyHeaders: false,
-  });
-
-  const webhookLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 100,
-    standardHeaders: true,
-    legacyHeaders: false,
-  });
-
-  // Local authentication endpoints (email/password)
-  registerLocalAuthRoutes(app);
-  
-  // OAuth callback under /api/oauth/callback (for legacy/external OAuth)
+  // Auth routes (login, register)
   registerOAuthRoutes(app);
 
-  // SendGrid webhook
-  app.post('/webhooks/sendgrid/events', webhookLimiter, express.raw({ type: 'application/json' }), async (req, res) => {
+  // Health check endpoint
+  app.get('/api/health', (_req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  // ============================================
+  // SENDGRID WEBHOOK ENDPOINT
+  // ============================================
+  app.post('/webhooks/sendgrid/events', express.raw({ type: 'application/json' }), async (req, res) => {
     try {
       const rawBody = req.body.toString();
       if (ENV.sendgridWebhookSecret) {
@@ -351,8 +347,10 @@ async function startServer() {
   const port = await findAvailablePort(preferredPort);
   if (port !== preferredPort) console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
 
-  server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}/`);
+  server.listen(port, "0.0.0.0", () => {
+    console.log(`Server running on http://0.0.0.0:${port}/`);
+
+    // Start the email queue worker
     startEmailQueueWorker();
 
     // Start EDI polling scheduler (check every 5 minutes)
