@@ -1,4 +1,4 @@
-import { eq, and, or, desc, sql, count, like, inArray } from "drizzle-orm";
+import { eq, and, or, desc, sql, count, sum, like, inArray, gte, lte } from "drizzle-orm";
 import {
   vendors, InsertVendor, purchaseOrders, InsertPurchaseOrder, purchaseOrderItems,
   shipments, purchaseOrderRawMaterials,
@@ -6,6 +6,8 @@ import {
   vendorRfqs, InsertVendorRfq, vendorQuotes, InsertVendorQuote,
   vendorRfqEmails, InsertVendorRfqEmail, vendorRfqInvitations, InsertVendorRfqInvitation,
   products, rawMaterials,
+  vendorNegotiations, InsertVendorNegotiation,
+  negotiationRounds, InsertNegotiationRound,
 } from "../../drizzle/schema";
 import { getDb } from "./connection";
 
@@ -711,6 +713,112 @@ export async function generateVendorRfqNumber() {
   const db = await getDb();
   if (!db) return `RFQ-${Date.now()}`;
   const result = await db.select({ count: sql<number>`COUNT(*)` }).from(vendorRfqs);
-  const count = result[0]?.count || 0;
-  return `RFQ-${String(count + 1).padStart(6, '0')}`;
+  const cnt = result[0]?.count || 0;
+  return `RFQ-${String(cnt + 1).padStart(6, '0')}`;
+}
+
+// ============================================
+// VENDOR NEGOTIATIONS
+// ============================================
+
+export async function createVendorNegotiation(data: InsertVendorNegotiation) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(vendorNegotiations).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getVendorNegotiations(filters?: { vendorId?: number; status?: string; type?: string; companyId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.vendorId) conditions.push(eq(vendorNegotiations.vendorId, filters.vendorId));
+  if (filters?.status) conditions.push(eq(vendorNegotiations.status, filters.status as any));
+  if (filters?.type) conditions.push(eq(vendorNegotiations.type, filters.type as any));
+  if (filters?.companyId) conditions.push(eq(vendorNegotiations.companyId, filters.companyId));
+  if (conditions.length > 0) {
+    return db.select().from(vendorNegotiations).where(and(...conditions)).orderBy(desc(vendorNegotiations.updatedAt));
+  }
+  return db.select().from(vendorNegotiations).orderBy(desc(vendorNegotiations.updatedAt));
+}
+
+export async function getVendorNegotiationById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(vendorNegotiations).where(eq(vendorNegotiations.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getVendorNegotiationStats(companyId?: number) {
+  const db = await getDb();
+  if (!db) return { total: 0, active: 0, accepted: 0, totalSavings: "0" };
+
+  const conditions: any[] = [];
+  if (companyId) conditions.push(eq(vendorNegotiations.companyId, companyId));
+
+  const [stats] = await db.select({
+    total: count(),
+    active: sum(sql`CASE WHEN status IN ('in_progress', 'counter_offered', 'ready') THEN 1 ELSE 0 END`),
+    accepted: sum(sql`CASE WHEN status = 'accepted' THEN 1 ELSE 0 END`),
+    totalSavings: sum(vendorNegotiations.estimatedSavings),
+  }).from(vendorNegotiations).where(conditions.length > 0 ? and(...conditions) : undefined);
+
+  return {
+    total: Number(stats?.total ?? 0),
+    active: Number(stats?.active ?? 0),
+    accepted: Number(stats?.accepted ?? 0),
+    totalSavings: String(stats?.totalSavings ?? "0"),
+  };
+}
+
+export async function getVendorSpendingHistory(vendorId: number, months = 12) {
+  const db = await getDb();
+  if (!db) return [];
+  const startDate = new Date();
+  startDate.setMonth(startDate.getMonth() - months);
+
+  return db.select({
+    totalAmount: sum(purchaseOrders.totalAmount),
+    orderCount: count(),
+  }).from(purchaseOrders)
+    .where(and(
+      eq(purchaseOrders.vendorId, vendorId),
+      gte(purchaseOrders.createdAt, startDate)
+    ))
+    .groupBy(sql`YEAR(${purchaseOrders.createdAt}), MONTH(${purchaseOrders.createdAt})`)
+    .orderBy(desc(purchaseOrders.createdAt));
+}
+
+export async function updateVendorNegotiation(id: number, data: Partial<InsertVendorNegotiation>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(vendorNegotiations).set(data).where(eq(vendorNegotiations.id, id));
+}
+
+// ============================================
+// NEGOTIATION ROUNDS
+// ============================================
+
+export async function createNegotiationRound(data: InsertNegotiationRound) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(negotiationRounds).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getNegotiationRounds(negotiationId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(negotiationRounds)
+    .where(eq(negotiationRounds.negotiationId, negotiationId))
+    .orderBy(negotiationRounds.roundNumber);
+}
+
+export async function getNextRoundNumber(negotiationId: number) {
+  const db = await getDb();
+  if (!db) return 1;
+  const [result] = await db.select({ maxRound: sql<number>`MAX(${negotiationRounds.roundNumber})` })
+    .from(negotiationRounds)
+    .where(eq(negotiationRounds.negotiationId, negotiationId));
+  return (result?.maxRound || 0) + 1;
 }

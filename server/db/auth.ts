@@ -580,3 +580,14 @@ export async function getUserEffectivePermissions(userId: number): Promise<strin
 
   return Array.from(allPerms);
 }
+
+// ============================================
+// GOOGLE OAUTH TOKEN BY USER ID
+// ============================================
+
+export async function getGoogleOAuthTokenByUserId(userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(googleOAuthTokens).where(eq(googleOAuthTokens.userId, userId)).limit(1);
+  return result[0] || null;
+}

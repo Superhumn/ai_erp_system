@@ -1,4 +1,4 @@
-import { eq, and, or, desc, sql, lte, isNull } from "drizzle-orm";
+import { eq, and, or, desc, sql, lte, gte, isNull, count } from "drizzle-orm";
 import {
   inboundEmails, InsertInboundEmail, emailAttachments, InsertEmailAttachment,
   parsedDocuments, InsertParsedDocument, parsedDocumentLineItems, InsertParsedDocumentLineItem,
@@ -562,7 +562,7 @@ export async function findInboundEmailByMessageId(messageId: string) {
 export async function getUncategorizedEmails(limit: number = 100) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const result = await db.select().from(inboundEmails)
     .where(
       or(
@@ -578,8 +578,515 @@ export async function getUncategorizedEmails(limit: number = 100) {
     )
     .orderBy(desc(inboundEmails.receivedAt))
     .limit(limit);
-  
+
   return result;
 }
 
+// ============================================
+// EMAIL CREDENTIALS
+// ============================================
 
+export async function getEmailCredentials(userId?: number, companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select().from(emailCredentials);
+  const conditions = [];
+
+  if (userId) conditions.push(eq(emailCredentials.userId, userId));
+  if (companyId) conditions.push(eq(emailCredentials.companyId, companyId));
+
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as typeof query;
+  }
+
+  return query.orderBy(desc(emailCredentials.createdAt));
+}
+
+export async function getEmailCredentialById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const [result] = await db.select().from(emailCredentials).where(eq(emailCredentials.id, id));
+  return result || null;
+}
+
+export async function createEmailCredential(data: {
+  userId: number;
+  companyId?: number;
+  name: string;
+  provider: 'gmail' | 'outlook' | 'yahoo' | 'icloud' | 'custom';
+  email: string;
+  imapHost?: string;
+  imapPort?: number;
+  imapSecure?: boolean;
+  imapUsername?: string;
+  imapPassword?: string;
+  accessToken?: string;
+  refreshToken?: string;
+  tokenExpiresAt?: Date;
+  scanFolder?: string;
+  scanUnreadOnly?: boolean;
+  markAsRead?: boolean;
+  maxEmailsPerScan?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const [result] = await db.insert(emailCredentials).values(data);
+  return { id: result.insertId };
+}
+
+export async function updateEmailCredential(id: number, data: Partial<{
+  name: string;
+  imapHost: string;
+  imapPort: number;
+  imapSecure: boolean;
+  imapUsername: string;
+  imapPassword: string;
+  accessToken: string;
+  refreshToken: string;
+  tokenExpiresAt: Date;
+  scanFolder: string;
+  scanUnreadOnly: boolean;
+  markAsRead: boolean;
+  maxEmailsPerScan: number;
+  isActive: boolean;
+  lastScanAt: Date;
+  lastScanStatus: 'success' | 'failed' | 'partial';
+  lastScanError: string | null;
+  emailsScanned: number;
+}>) {
+  const db = await getDb();
+  if (!db) return;
+
+  await db.update(emailCredentials).set(data).where(eq(emailCredentials.id, id));
+}
+
+export async function deleteEmailCredential(id: number) {
+  const db = await getDb();
+  if (!db) return;
+
+  await db.delete(scheduledEmailScans).where(eq(scheduledEmailScans.credentialId, id));
+  await db.delete(emailScanLogs).where(eq(emailScanLogs.credentialId, id));
+  await db.delete(emailCredentials).where(eq(emailCredentials.id, id));
+}
+
+// ============================================
+// IMAP CREDENTIALS
+// ============================================
+
+export async function createImapCredential(data: InsertImapCredential) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(imapCredentials).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getImapCredentials(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(imapCredentials)
+    .where(eq(imapCredentials.userId, userId))
+    .orderBy(desc(imapCredentials.createdAt));
+}
+
+export async function getImapCredentialById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(imapCredentials).where(eq(imapCredentials.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function updateImapCredential(id: number, data: Partial<InsertImapCredential>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(imapCredentials).set(data).where(eq(imapCredentials.id, id));
+}
+
+export async function deleteImapCredential(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(imapCredentials).where(eq(imapCredentials.id, id));
+}
+
+// ============================================
+// SCHEDULED SCANS
+// ============================================
+
+export async function getScheduledScans(credentialId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select().from(scheduledEmailScans);
+  if (credentialId) {
+    query = query.where(eq(scheduledEmailScans.credentialId, credentialId)) as typeof query;
+  }
+
+  return query.orderBy(desc(scheduledEmailScans.createdAt));
+}
+
+export async function createScheduledScan(data: {
+  credentialId: number;
+  companyId?: number;
+  intervalMinutes?: number;
+  isEnabled?: boolean;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const nextRunAt = new Date(Date.now() + (data.intervalMinutes || 15) * 60 * 1000);
+
+  const [result] = await db.insert(scheduledEmailScans).values({
+    ...data,
+    nextRunAt,
+  });
+  return { id: result.insertId };
+}
+
+export async function updateScheduledScan(id: number, data: Partial<{
+  isEnabled: boolean;
+  intervalMinutes: number;
+  lastRunAt: Date;
+  nextRunAt: Date;
+  lastRunStatus: 'success' | 'failed' | 'running';
+  lastRunError: string | null;
+  lastRunEmailsFound: number;
+  totalRuns: number;
+  totalEmailsProcessed: number;
+}>) {
+  const db = await getDb();
+  if (!db) return;
+
+  await db.update(scheduledEmailScans).set(data).where(eq(scheduledEmailScans.id, id));
+}
+
+export async function deleteScheduledScan(id: number) {
+  const db = await getDb();
+  if (!db) return;
+
+  await db.delete(scheduledEmailScans).where(eq(scheduledEmailScans.id, id));
+}
+
+export async function getScanLogs(credentialId: number, limit = 20) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db.select()
+    .from(emailScanLogs)
+    .where(eq(emailScanLogs.credentialId, credentialId))
+    .orderBy(desc(emailScanLogs.startedAt))
+    .limit(limit);
+}
+
+// ============================================
+// EMAIL TEMPLATES
+// ============================================
+
+export async function createEmailTemplate(data: InsertEmailTemplate) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(emailTemplates).values(data as any);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function getEmailTemplates(filters?: { templateType?: string; isActive?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(emailTemplates);
+  const conditions = [];
+  if (filters?.templateType) conditions.push(eq(emailTemplates.templateType, filters.templateType as any));
+  if (filters?.isActive !== undefined) conditions.push(eq(emailTemplates.isActive, filters.isActive));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(emailTemplates.createdAt));
+}
+
+export async function updateEmailTemplate(id: number, data: Partial<{
+  name: string;
+  subject: string;
+  bodyTemplate: string;
+  isDefault: boolean;
+  isActive: boolean;
+}>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(emailTemplates).set(data as any).where(eq(emailTemplates.id, id));
+}
+
+// ============================================
+// EMAIL EVENTS (Webhook tracking)
+// ============================================
+
+export async function createEmailEvent(data: {
+  messageId?: number;
+  providerMessageId?: string;
+  eventType: string;
+  eventData?: any;
+  provider?: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(sentEmails).values({
+    toEmail: '',
+    fromEmail: '',
+    subject: `event:${data.eventType}`,
+    status: 'sent' as any,
+    messageId: data.providerMessageId,
+    metadata: JSON.stringify({ eventType: data.eventType, eventData: data.eventData, provider: data.provider, linkedMessageId: data.messageId }),
+  } as any);
+  return { id: result[0].insertId };
+}
+
+export async function getEmailEventsByMessageId(messageId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(sentEmails)
+    .where(sql`JSON_EXTRACT(metadata, '$.linkedMessageId') = ${messageId}`)
+    .orderBy(desc(sentEmails.createdAt));
+}
+
+export async function getEmailEventsByProviderMessageId(providerMessageId: string) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(sentEmails)
+    .where(eq(sentEmails.messageId, providerMessageId))
+    .orderBy(desc(sentEmails.createdAt));
+}
+
+export async function getRecentEmailEvents(limit = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(sentEmails)
+    .where(sql`JSON_EXTRACT(metadata, '$.eventType') IS NOT NULL`)
+    .orderBy(desc(sentEmails.createdAt))
+    .limit(limit);
+}
+
+// ============================================
+// EMAIL MESSAGES
+// ============================================
+
+export async function createEmailMessage(data: {
+  toEmail: string;
+  toName?: string;
+  fromEmail: string;
+  fromName?: string;
+  subject: string;
+  bodyHtml?: string;
+  bodyText?: string;
+  status?: string;
+  sentBy?: number;
+  idempotencyKey?: string;
+  providerMessageId?: string;
+  metadata?: any;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(sentEmails).values({
+    ...data,
+    status: (data.status || 'queued') as any,
+    messageId: data.providerMessageId,
+  } as any);
+  return { id: result[0].insertId };
+}
+
+export async function getEmailMessages(filters?: { status?: string; limit?: number; offset?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(sentEmails.status, filters.status as any));
+
+  let query = db.select().from(sentEmails);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as typeof query;
+  }
+  return query.orderBy(desc(sentEmails.createdAt)).limit(filters?.limit || 100);
+}
+
+export async function getEmailMessageById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(sentEmails).where(eq(sentEmails.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function getEmailMessageByIdempotencyKey(key: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(sentEmails)
+    .where(sql`JSON_EXTRACT(metadata, '$.idempotencyKey') = ${key}`)
+    .limit(1);
+  return result[0] || null;
+}
+
+export async function getEmailMessageByProviderMessageId(providerMessageId: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(sentEmails)
+    .where(eq(sentEmails.messageId, providerMessageId))
+    .limit(1);
+  return result[0] || null;
+}
+
+export async function getEmailMessageStats() {
+  const db = await getDb();
+  if (!db) return { total: 0, sent: 0, delivered: 0, failed: 0, queued: 0 };
+
+  const stats = await db.select({
+    status: sentEmails.status,
+    count: count(),
+  }).from(sentEmails).groupBy(sentEmails.status);
+
+  const result = { total: 0, sent: 0, delivered: 0, failed: 0, queued: 0 };
+  for (const row of stats) {
+    const c = Number(row.count);
+    result.total += c;
+    if (row.status === 'sent') result.sent = c;
+    else if (row.status === 'delivered') result.delivered = c;
+    else if (row.status === 'failed') result.failed = c;
+    else if (row.status === 'queued') result.queued = c;
+  }
+  return result;
+}
+
+export async function getQueuedEmailMessages(limit = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(sentEmails)
+    .where(eq(sentEmails.status, 'queued' as any))
+    .orderBy(sentEmails.createdAt)
+    .limit(limit);
+}
+
+export async function updateEmailMessage(id: number, data: Partial<{
+  status: string;
+  messageId: string;
+  sentAt: Date;
+  deliveredAt: Date;
+  errorMessage: string;
+  metadata: any;
+}>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(sentEmails).set(data as any).where(eq(sentEmails.id, id));
+}
+
+export async function updateEmailMessageStatus(id: number, status: string, errorMessage?: string) {
+  const db = await getDb();
+  if (!db) return;
+
+  const updates: any = { status };
+  if (status === 'sent') updates.sentAt = new Date();
+  else if (status === 'delivered') updates.deliveredAt = new Date();
+  if (errorMessage) updates.errorMessage = errorMessage;
+
+  await db.update(sentEmails).set(updates).where(eq(sentEmails.id, id));
+}
+
+export async function incrementEmailMessageRetry(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(sentEmails).set({
+    status: 'queued' as any,
+  }).where(eq(sentEmails.id, id));
+}
+
+// ============================================
+// TRANSACTIONAL EMAIL TEMPLATES
+// ============================================
+
+export async function createTransactionalEmailTemplate(data: {
+  name: string;
+  subject: string;
+  bodyTemplate: string;
+  description?: string;
+  variables?: string[];
+  isActive?: boolean;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(emailTemplates).values({
+    name: data.name,
+    subject: data.subject,
+    bodyTemplate: data.bodyTemplate,
+    templateType: 'transactional' as any,
+    isActive: data.isActive ?? true,
+  } as any);
+  return { id: result[0].insertId };
+}
+
+export async function getTransactionalEmailTemplates(filters?: { isActive?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(emailTemplates.templateType, 'transactional' as any)];
+  if (filters?.isActive !== undefined) conditions.push(eq(emailTemplates.isActive, filters.isActive));
+  return db.select().from(emailTemplates).where(and(...conditions)).orderBy(desc(emailTemplates.createdAt));
+}
+
+export async function getTransactionalEmailTemplateById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(emailTemplates)
+    .where(and(eq(emailTemplates.id, id), eq(emailTemplates.templateType, 'transactional' as any)))
+    .limit(1);
+  return result[0] || null;
+}
+
+export async function getTransactionalEmailTemplateByName(name: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(emailTemplates)
+    .where(and(eq(emailTemplates.name, name), eq(emailTemplates.templateType, 'transactional' as any)))
+    .limit(1);
+  return result[0] || null;
+}
+
+export async function updateTransactionalEmailTemplate(id: number, data: Partial<{
+  name: string;
+  subject: string;
+  bodyTemplate: string;
+  description: string;
+  isActive: boolean;
+}>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailTemplates).set(data as any).where(
+    and(eq(emailTemplates.id, id), eq(emailTemplates.templateType, 'transactional' as any))
+  );
+}
+
+export async function deleteTransactionalEmailTemplate(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(emailTemplates).where(
+    and(eq(emailTemplates.id, id), eq(emailTemplates.templateType, 'transactional' as any))
+  );
+}
+
+// ============================================
+// EMAIL ATTACHMENT & CATEGORY UPDATES
+// ============================================
+
+export async function updateEmailAttachment(id: number, data: Partial<{
+  extractedText: string;
+  metadata: any;
+  isProcessed: boolean;
+}>) {
+  const db = await getDb();
+  if (!db) return;
+
+  await db.update(emailAttachments).set(data).where(eq(emailAttachments.id, id));
+}
+
+export async function updateEmailCategory(id: number, data: {
+  category: 'receipt' | 'purchase_order' | 'invoice' | 'shipping_confirmation' | 'freight_quote' | 'delivery_notification' | 'order_confirmation' | 'payment_confirmation' | 'general';
+  categoryConfidence?: string;
+  priority?: 'high' | 'medium' | 'low';
+  suggestedAction?: string;
+}) {
+  const db = await getDb();
+  if (!db) return;
+
+  await db.update(inboundEmails).set(data).where(eq(inboundEmails.id, id));
+}

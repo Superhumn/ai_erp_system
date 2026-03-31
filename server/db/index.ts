@@ -14,3 +14,4 @@ export * from "./projects";
 export * from "./dataRoom";
 export * from "./ai";
 export * from "./system";
+export * from "./edi";

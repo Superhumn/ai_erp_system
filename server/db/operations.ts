@@ -1235,3 +1235,54 @@ export async function runInventoryReconciliation(channel: 'shopify' | 'amazon' |
   }
 }
 
+// ============================================
+// SHOPIFY STORE UPSERT
+// ============================================
+
+export async function upsertShopifyStore(data: InsertShopifyStore) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  if (data.storeDomain) {
+    const existing = await db.select().from(shopifyStores)
+      .where(eq(shopifyStores.storeDomain, data.storeDomain)).limit(1);
+    if (existing.length > 0) {
+      await db.update(shopifyStores).set(data).where(eq(shopifyStores.id, existing[0].id));
+      return { id: existing[0].id };
+    }
+  }
+  const result = await db.insert(shopifyStores).values(data);
+  return { id: result[0].insertId };
+}
+
+// ============================================
+// WAREHOUSE LOOKUP BY NAME
+// ============================================
+
+export async function getWarehouseByName(name: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(warehouses)
+    .where(like(warehouses.name, `%${name}%`))
+    .limit(1);
+  return result[0];
+}
+
+// ============================================
+// INVENTORY TRANSFER CREATION
+// ============================================
+
+export async function createInventoryTransfer(data: Omit<InsertInventoryTransfer, 'transferNumber'>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const transferNumber = `TRF-${Date.now().toString(36).toUpperCase()}`;
+  const result = await db.insert(inventoryTransfers).values({ ...data, transferNumber } as any);
+  return { id: result[0].insertId, transferNumber };
+}
+
+export async function createInventoryTransferItem(data: InsertInventoryTransferItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(inventoryTransferItems).values(data);
+  return { id: result[0].insertId };
+}

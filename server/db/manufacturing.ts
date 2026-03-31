@@ -720,3 +720,13 @@ export async function convertSuggestedPoToActualPo(suggestedPoId: number, approv
   }
   return { poId, poNumber };
 }
+
+// ============================================
+// RAW MATERIALS - GET ALL
+// ============================================
+
+export async function getAllRawMaterials() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(rawMaterials).orderBy(rawMaterials.name);
+}
