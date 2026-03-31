@@ -276,7 +276,7 @@ export async function recordCogs(params: {
   for (const consumed of result.layerBreakdown) {
     const layer = result.remainingLayers.find((l) => l.layerId === consumed.layerId);
     const newRemaining = layer?.remainingQuantity ?? 0;
-    await db.updateInventoryCostLayer(consumed.layerId, {
+    await (db as any).updateInventoryCostLayer(consumed.layerId, {
       remainingQuantity: newRemaining.toFixed(4),
       status: newRemaining <= 0 ? "depleted" : "active",
     });
@@ -293,7 +293,7 @@ export async function recordCogs(params: {
       : null;
 
   // Create COGS record
-  const cogsResult = await db.createCogsRecord({
+  const cogsResult = await (db as any).createCogsRecord({
     companyId: params.companyId,
     productId: params.productId,
     warehouseId: params.warehouseId,
@@ -360,7 +360,7 @@ export async function generateCogsPeriodSummary(params: {
   periodStart: Date;
   periodEnd: Date;
 }) {
-  const records = await db.getCogsRecords({
+  const records = await (db as any).getCogsRecords({
     companyId: params.companyId,
     productId: params.productId,
     startDate: params.periodStart,
@@ -384,7 +384,7 @@ export async function generateCogsPeriodSummary(params: {
     totalRevenue > 0 ? (grossMargin / totalRevenue) * 100 : 0;
 
   // Check for existing record (upsert behavior)
-  const existingRecords = await db.getCogsPeriodSummaries({
+  const existingRecords = await (db as any).getCogsPeriodSummaries({
     companyId: params.companyId,
     productId: params.productId,
     periodType: params.periodType,
@@ -402,11 +402,11 @@ export async function generateCogsPeriodSummary(params: {
   };
 
   if (existingRecords.length > 0) {
-    await db.updateCogsPeriodSummaryRecord(existingRecords[0].id, summaryData);
+    await (db as any).updateCogsPeriodSummaryRecord(existingRecords[0].id, summaryData);
     return { id: existingRecords[0].id };
   }
 
-  return db.createCogsPeriodSummaryRecord({
+  return (db as any).createCogsPeriodSummaryRecord({
     companyId: params.companyId,
     productId: params.productId,
     periodType: params.periodType,

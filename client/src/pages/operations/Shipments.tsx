@@ -76,7 +76,8 @@ export default function Shipments() {
     },
   });
 
-  const filteredShipments = shipments?.filter((shipment: Shipment) => {
+  const allShipments = (shipments || []) as Shipment[];
+  const filteredShipments = allShipments.filter((shipment: Shipment) => {
     const matchesSearch =
       shipment.shipmentNumber.toLowerCase().includes(search.toLowerCase()) ||
       shipment.trackingNumber?.toLowerCase().includes(search.toLowerCase()) ||
@@ -110,9 +111,9 @@ export default function Shipments() {
   };
 
   // Calculate summary stats
-  const inTransitCount = shipments?.filter((s: Shipment) => s.status === "in_transit").length || 0;
-  const deliveredCount = shipments?.filter((s: Shipment) => s.status === "delivered").length || 0;
-  const pendingCount = shipments?.filter((s: Shipment) => s.status === "pending").length || 0;
+  const inTransitCount = allShipments.filter((s: Shipment) => s.status === "in_transit").length;
+  const deliveredCount = allShipments.filter((s: Shipment) => s.status === "delivered").length;
+  const pendingCount = allShipments.filter((s: Shipment) => s.status === "pending").length;
 
   return (
     <div className="space-y-6 animate-fade-in">

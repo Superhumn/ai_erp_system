@@ -85,7 +85,8 @@ export default function Projects() {
     },
   });
 
-  const filteredProjects = projects?.filter((project: Project) => {
+  const allProjects = (projects || []) as Project[];
+  const filteredProjects = allProjects.filter((project: Project) => {
     const matchesSearch =
       project.name.toLowerCase().includes(search.toLowerCase()) ||
       project.projectNumber.toLowerCase().includes(search.toLowerCase());
@@ -121,9 +122,9 @@ export default function Projects() {
   };
 
   // Calculate summary stats
-  const activeCount = projects?.filter((p: Project) => p.status === "active").length || 0;
-  const completedCount = projects?.filter((p: Project) => p.status === "completed").length || 0;
-  const totalBudget = projects?.reduce((sum: number, p: Project) => sum + parseFloat(p.budget || "0"), 0) || 0;
+  const activeCount = allProjects.filter((p: Project) => p.status === "active").length;
+  const completedCount = allProjects.filter((p: Project) => p.status === "completed").length;
+  const totalBudget = allProjects.reduce((sum: number, p: Project) => sum + parseFloat(p.budget || "0"), 0);
 
   return (
     <div className="space-y-6 animate-fade-in">

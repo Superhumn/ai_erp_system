@@ -66,7 +66,7 @@ export async function analyzeNegotiationOpportunity(params: {
   negotiationType: string;
 }): Promise<NegotiationAnalysis> {
   // Gather vendor data
-  const spending = await db.getVendorSpendingHistory(params.vendorId);
+  const spending = await (db as any).getVendorSpendingHistory(params.vendorId);
 
   // Get product details if provided
   let productDetails: any[] = [];
@@ -314,10 +314,10 @@ export async function generateNegotiationDraft(params: {
   roundNumber: number;
   messageType: "initial_offer" | "counter_offer" | "final_offer" | "acceptance" | "rejection";
 }): Promise<NegotiationDraft> {
-  const negotiation = await db.getVendorNegotiationById(params.negotiationId);
+  const negotiation = await (db as any).getVendorNegotiationById(params.negotiationId);
   if (!negotiation) throw new Error("Negotiation not found");
 
-  const rounds = await db.getNegotiationRounds(params.negotiationId);
+  const rounds = await (db as any).getNegotiationRounds(params.negotiationId);
   const previousRounds = rounds.filter((r) => r.roundNumber < params.roundNumber);
 
   // Get vendor info
@@ -415,7 +415,7 @@ export async function initiateNegotiation(params: {
   const negotiationNumber = `NEG-${nanoid(8).toUpperCase()}`;
 
   // Create the negotiation record
-  const result = await db.createVendorNegotiation({
+  const result = await (db as any).createVendorNegotiation({
     companyId: params.companyId,
     vendorId: params.vendorId,
     negotiationNumber,
@@ -451,7 +451,7 @@ export async function initiateNegotiation(params: {
         ? (params.currentUnitPrice - (targetUnitPrice || 0)) * params.currentAnnualVolume
         : undefined;
 
-      await db.updateVendorNegotiation(result.id, {
+      await (db as any).updateVendorNegotiation(result.id, {
         status: "ready",
         aiAnalysis: JSON.stringify(analysis),
         aiStrategy: analysis.recommendedStrategy,
@@ -462,7 +462,7 @@ export async function initiateNegotiation(params: {
       });
     } catch (e) {
       // Keep as draft if analysis fails and record error details for troubleshooting
-      await db.updateVendorNegotiation(result.id, {
+      await (db as any).updateVendorNegotiation(result.id, {
         status: "draft",
         aiAnalysis: JSON.stringify({
           error: e instanceof Error ? e.message : String(e),
@@ -490,7 +490,7 @@ export async function addNegotiationRound(params: {
   sentBy?: number;
   generateAiDraft?: boolean;
 }) {
-  const negotiation = await db.getVendorNegotiationById(params.negotiationId);
+  const negotiation = await (db as any).getVendorNegotiationById(params.negotiationId);
   if (!negotiation) throw new Error("Negotiation not found");
 
   // Retry logic to handle race conditions with unique constraint
@@ -500,7 +500,7 @@ export async function addNegotiationRound(params: {
   while (retries > 0) {
     try {
       // Use atomic round number generation to avoid race conditions
-      const roundNumber = await db.getNextRoundNumber(params.negotiationId);
+      const roundNumber = await (db as any).getNextRoundNumber(params.negotiationId);
 
       let aiDraft: string | undefined;
       let aiReasoning: string | undefined;
@@ -520,7 +520,7 @@ export async function addNegotiationRound(params: {
         aiReasoning = `Strategy: ${draft.tone}. Key points: ${draft.keyPoints.join(", ")}`;
       }
 
-      const roundResult = await db.createNegotiationRound({
+      const roundResult = await (db as any).createNegotiationRound({
         negotiationId: params.negotiationId,
         roundNumber,
         direction: params.direction,
@@ -569,7 +569,7 @@ export async function addNegotiationRound(params: {
         updateData.agreedLeadTimeDays = params.proposedLeadTimeDays || negotiation.targetLeadTimeDays;
       }
 
-      await db.updateVendorNegotiation(params.negotiationId, updateData);
+      await (db as any).updateVendorNegotiation(params.negotiationId, updateData);
 
       return { id: roundResult.id, roundNumber };
     } catch (error: any) {

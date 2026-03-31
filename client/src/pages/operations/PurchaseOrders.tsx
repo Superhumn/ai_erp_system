@@ -31,7 +31,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SelectWithCreate } from "@/components/ui/select-with-create";
-import { ClipboardList, Plus, Search, Loader2, Sparkles, Send } from "lucide-react";
+import { ClipboardList, Plus, Search, Loader2, Sparkles, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -146,6 +146,50 @@ export default function PurchaseOrders() {
     received: "bg-green-500/10 text-green-600",
     cancelled: "bg-red-500/10 text-red-600",
   };
+
+  const resetForm = () => {
+    setFormData({ vendorId: 0, expectedDeliveryDate: "", notes: "" });
+    setLineItems([]);
+  };
+
+  const addLineItem = () => {
+    setLineItems([...lineItems, { description: "", quantity: "1", unitPrice: "0", totalAmount: "0" }]);
+  };
+
+  const removeLineItem = (index: number) => {
+    setLineItems(lineItems.filter((_, i) => i !== index));
+  };
+
+  const updateLineItem = (index: number, field: string, value: string) => {
+    const updated = [...lineItems];
+    (updated[index] as any)[field] = value;
+    const qty = parseFloat(updated[index].quantity) || 0;
+    const price = parseFloat(updated[index].unitPrice) || 0;
+    updated[index].totalAmount = (qty * price).toFixed(2);
+    setLineItems(updated);
+  };
+
+  const selectProduct = (index: number, productIdStr: string) => {
+    const product = products?.find((p) => p.id.toString() === productIdStr);
+    if (product) {
+      const updated = [...lineItems];
+      updated[index] = {
+        ...updated[index],
+        productId: product.id,
+        description: product.name || "",
+        unitPrice: product.unitPrice || "0",
+        totalAmount: ((parseFloat(updated[index].quantity) || 1) * parseFloat(product.unitPrice || "0")).toFixed(2),
+      };
+      setLineItems(updated);
+    }
+  };
+
+  const calculateTotals = () => {
+    const subtotal = lineItems.reduce((sum, item) => sum + parseFloat(item.totalAmount || "0"), 0);
+    return { subtotal, total: subtotal };
+  };
+
+  const totals = calculateTotals();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
