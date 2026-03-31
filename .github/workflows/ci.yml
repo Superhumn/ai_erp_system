@@ -35,6 +35,9 @@ jobs:
       - name: Type check
         run: pnpm run check
 
+      - name: Strict type check (incremental)
+        run: pnpm run check:strict
+
   test:
     name: Test
     runs-on: ubuntu-latest

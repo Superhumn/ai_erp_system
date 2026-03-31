@@ -312,12 +312,12 @@ export async function getCrmPipelines(type?: string) {
   const db = await getDb();
   if (!db) return [];
 
-  let query = db.select().from(crmPipelines).where(eq(crmPipelines.isActive, true));
+  const conditions = [eq(crmPipelines.isActive, true)];
   if (type) {
-    query = query.where(eq(crmPipelines.type, type as any)) as any;
+    conditions.push(eq(crmPipelines.type, type as typeof crmPipelines.type.enumValues[number]));
   }
 
-  return query.orderBy(crmPipelines.name);
+  return db.select().from(crmPipelines).where(and(...conditions)).orderBy(crmPipelines.name);
 }
 
 export async function getCrmPipelineById(id: number) {
@@ -510,6 +510,8 @@ export async function processVCardCapture(captureId: number, vcardData: string, 
   } else {
     contactId = await createCrmContact({
       ...parsedData,
+      firstName: parsedData.firstName ?? "Unknown",
+      fullName: parsedData.fullName ?? parsedData.firstName ?? "Unknown",
       source: "iphone_bump",
       capturedBy,
       captureData: JSON.stringify({ vcardData, captureId }),

@@ -346,7 +346,7 @@ export async function getUsersByRoles(roles: string[]) {
   if (!db) return [];
   return db.select().from(users).where(
     and(
-      inArray(users.role, roles),
+      inArray(users.role, roles as typeof users.role.enumValues),
       eq(users.isActive, true)
     )
   );
