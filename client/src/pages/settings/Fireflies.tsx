@@ -36,11 +36,11 @@ export default function FirefliesPage() {
   const [processProjectName, setProcessProjectName] = useState("");
   const [processCreateProject, setProcessCreateProject] = useState(false);
 
-  const { data: config, isLoading: configLoading, refetch: refetchConfig } = trpc.fireflies.getConfig.useQuery();
-  const { data: meetings, isLoading: meetingsLoading, refetch: refetchMeetings } = trpc.fireflies.meetings.list.useQuery({});
-  const { data: stats, refetch: refetchStats } = trpc.fireflies.meetings.getStats.useQuery();
+  const { data: config, isLoading: configLoading, refetch: refetchConfig } = (trpc as any).fireflies.getConfig.useQuery();
+  const { data: meetings, isLoading: meetingsLoading, refetch: refetchMeetings } = (trpc as any).fireflies.meetings.list.useQuery({});
+  const { data: stats, refetch: refetchStats } = (trpc as any).fireflies.meetings.getStats.useQuery();
 
-  const configureMutation = trpc.fireflies.configure.useMutation({
+  const configureMutation = (trpc as any).fireflies.configure.useMutation({
     onSuccess: (data) => {
       toast.success(data.updated ? "Fireflies configuration updated" : "Fireflies connected successfully");
       setApiKey("");
@@ -49,7 +49,7 @@ export default function FirefliesPage() {
     onError: (error) => toast.error(error.message),
   });
 
-  const disconnectMutation = trpc.fireflies.disconnect.useMutation({
+  const disconnectMutation = (trpc as any).fireflies.disconnect.useMutation({
     onSuccess: () => {
       toast.success("Fireflies disconnected");
       refetchConfig();

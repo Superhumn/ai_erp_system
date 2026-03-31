@@ -21,7 +21,7 @@ export default function OrderDetail() {
   const orderId = parseInt(params.id || "0");
 
   const { data: order, isLoading } = trpc.orders.get.useQuery({ id: orderId });
-  const { data: orderItems } = trpc.orderItems.list.useQuery({ orderId });
+  const { data: orderItems } = (trpc as any).orderItems.list.useQuery({ orderId });
   const { data: products } = trpc.products.list.useQuery();
 
   if (isLoading) {
