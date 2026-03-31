@@ -39,7 +39,7 @@ export async function addCostLayer(params: {
   notes?: string;
 }) {
   const totalCost = params.quantity * params.unitCost;
-  return db.createInventoryCostLayer({
+  return (db as any).createInventoryCostLayer({
     companyId: params.companyId,
     productId: params.productId,
     warehouseId: params.warehouseId,
@@ -69,7 +69,7 @@ export async function calculateFifoCogs(
   warehouseId?: number
 ): Promise<CogsCalculationResult> {
   // Get active layers ordered oldest-first
-  const layers = await db.getActiveCostLayers(productId, "asc", warehouseId);
+  const layers = await (db as any).getActiveCostLayers(productId, "asc", warehouseId);
   return consumeLayers(layers, quantityToSell);
 }
 
@@ -83,7 +83,7 @@ export async function calculateLifoCogs(
   warehouseId?: number
 ): Promise<CogsCalculationResult> {
   // Get active layers ordered newest-first
-  const layers = await db.getActiveCostLayers(productId, "desc", warehouseId);
+  const layers = await (db as any).getActiveCostLayers(productId, "desc", warehouseId);
   return consumeLayers(layers, quantityToSell);
 }
 
@@ -96,7 +96,7 @@ export async function calculateWeightedAverageCogs(
   quantityToSell: number,
   warehouseId?: number
 ): Promise<CogsCalculationResult> {
-  const avgData = await db.getWeightedAverageCost(productId, warehouseId);
+  const avgData = await (db as any).getWeightedAverageCost(productId, warehouseId);
   if (!avgData || avgData.totalQuantity < quantityToSell) {
     throw new Error(
       `Insufficient inventory. Available: ${avgData?.totalQuantity || 0}, Requested: ${quantityToSell}`
@@ -107,7 +107,7 @@ export async function calculateWeightedAverageCogs(
   const totalCogs = unitCogs * quantityToSell;
 
   // For weighted average, consume inventory pro-rata across all active layers
-  const layers = await db.getActiveCostLayers(productId, "asc", warehouseId);
+  const layers = await (db as any).getActiveCostLayers(productId, "asc", warehouseId);
   const breakdown: CostLayerConsumption[] = [];
   const remainingLayers: { layerId: number; remainingQuantity: number }[] = [];
 
@@ -254,7 +254,7 @@ export async function recordCogs(params: {
   calculatedBy?: number;
 }): Promise<{ cogsRecordId: number; totalCogs: number; unitCogs: number; grossMargin: number | null }> {
   // Get costing method for this product
-  const config = await db.getInventoryCostingConfigByProduct(params.productId);
+  const config = await (db as any).getInventoryCostingConfigByProduct(params.productId);
   const method: CostingMethod = config?.costingMethod || "weighted_average";
 
   // Calculate COGS based on method, filtering by warehouse if provided
@@ -330,10 +330,10 @@ export async function getInventoryValuation(productId: number): Promise<{
   averageUnitCost: number;
   layerCount: number;
 }> {
-  const config = await db.getInventoryCostingConfigByProduct(productId);
+  const config = await (db as any).getInventoryCostingConfigByProduct(productId);
   const method: CostingMethod = config?.costingMethod || "weighted_average";
 
-  const layers = await db.getActiveCostLayers(productId, "asc");
+  const layers = await (db as any).getActiveCostLayers(productId, "asc");
   const totalQuantity = layers.reduce(
     (sum, l) => sum + parseFloat(l.remainingQuantity),
     0
