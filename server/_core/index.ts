@@ -97,9 +97,9 @@ async function startServer() {
   // Periodically clean up stale rate limit entries
   setInterval(() => {
     const now = Date.now();
-    for (const [ip, entry] of rateLimitMap) {
+    Array.from(rateLimitMap.entries()).forEach(([ip, entry]) => {
       if (now > entry.resetTime) rateLimitMap.delete(ip);
-    }
+    });
   }, RATE_LIMIT_WINDOW_MS);
 
   // ============================================
@@ -154,7 +154,8 @@ async function startServer() {
           if (providerMessageId) {
             const message = await db.getEmailMessageByProviderMessageId(providerMessageId);
             if (message) {
-              await db.createEmailEvent({ ...emailEvent, emailMessageId: message.id });
+              const { id: _eventId, ...eventData } = emailEvent;
+              await db.createEmailEvent({ ...eventData, emailMessageId: message.id });
               const newStatus = sendgridProvider.mapEventToStatus(providerEventType);
               if (newStatus) await db.updateEmailMessageStatus(message.id, newStatus);
             }
@@ -192,11 +193,11 @@ async function startServer() {
   };
 
   app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), (req, res) => 
-    handleShopifyWebhook(req, res, 'orders')
+    handleShopifyWebhook(req, res)
   );
 
   app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), (req, res) =>
-    handleShopifyWebhook(req, res, 'inventory')
+    handleShopifyWebhook(req, res)
   );
 
   // ============================================

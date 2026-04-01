@@ -892,7 +892,7 @@ export const notificationPreferences = mysqlTable("notification_preferences", {
 export const integrationConfigs = mysqlTable("integration_configs", {
   id: int("id").autoincrement().primaryKey(),
   companyId: int("companyId"),
-  type: mysqlEnum("type", ["quickbooks", "shopify", "stripe", "slack", "email", "webhook"]).notNull(),
+  type: mysqlEnum("type", ["quickbooks", "shopify", "stripe", "slack", "email", "webhook", "airtable"]).notNull(),
   name: varchar("name", { length: 255 }).notNull(),
   config: json("config"),
   credentials: json("credentials"),
@@ -3549,7 +3549,7 @@ export const crmContacts = mysqlTable("crm_contacts", {
 
   // CRM classification
   contactType: mysqlEnum("contactType", ["lead", "prospect", "customer", "partner", "investor", "donor", "vendor", "other"]).default("lead").notNull(),
-  source: mysqlEnum("source", ["iphone_bump", "whatsapp", "linkedin_scan", "business_card", "website", "referral", "event", "cold_outreach", "import", "manual"]).default("manual").notNull(),
+  source: mysqlEnum("source", ["iphone_bump", "whatsapp", "linkedin_scan", "business_card", "website", "referral", "event", "cold_outreach", "import", "manual", "fireflies"]).default("manual").notNull(),
   status: mysqlEnum("status", ["active", "inactive", "unsubscribed", "bounced"]).default("active").notNull(),
 
   // Sales/Fundraising context
@@ -5118,3 +5118,101 @@ export const negotiationRounds = mysqlTable("negotiation_rounds", {
 });
 export type NegotiationRound = typeof negotiationRounds.$inferSelect;
 export type InsertNegotiationRound = typeof negotiationRounds.$inferInsert;
+
+// ============================================
+// FIREFLIES CONFIG
+// ============================================
+
+export const firefliesConfigs = mysqlTable("fireflies_configs", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  apiKey: varchar("apiKey", { length: 512 }).notNull(),
+  autoCreateContacts: boolean("autoCreateContacts").default(false),
+  autoCreateTasks: boolean("autoCreateTasks").default(false),
+  autoCreateProjects: boolean("autoCreateProjects").default(false),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type FirefliesConfig = typeof firefliesConfigs.$inferSelect;
+export type InsertFirefliesConfig = typeof firefliesConfigs.$inferInsert;
+
+// ============================================
+// DUE DILIGENCE TEMPLATES
+// ============================================
+
+export const dueDiligenceTemplates = mysqlTable("due_diligence_templates", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  isPublic: boolean("isPublic").default(false),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type DueDiligenceTemplate = typeof dueDiligenceTemplates.$inferSelect;
+export type InsertDueDiligenceTemplate = typeof dueDiligenceTemplates.$inferInsert;
+
+// ============================================
+// TRANSACTIONAL EMAIL SYSTEM
+// ============================================
+
+export const transactionalEmailTemplates = mysqlTable("transactional_email_templates", {
+  id: int("id").autoincrement().primaryKey(),
+  name: mysqlEnum("name", ["QUOTE", "PO", "SHIPMENT", "ALERT", "RFQ", "INVOICE", "PAYMENT_REMINDER", "WELCOME", "GENERAL"]).notNull(),
+  providerTemplateId: varchar("providerTemplateId", { length: 128 }).notNull(),
+  description: text("description"),
+  variablesSchema: json("variablesSchema"),
+  defaultSubject: varchar("defaultSubject", { length: 512 }),
+  isActive: boolean("isActive").default(true),
+  createdBy: int("createdBy"),
+  updatedBy: int("updatedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type TransactionalEmailTemplate = typeof transactionalEmailTemplates.$inferSelect;
+export type InsertTransactionalEmailTemplate = typeof transactionalEmailTemplates.$inferInsert;
+
+export const emailMessages = mysqlTable("email_messages", {
+  id: int("id").autoincrement().primaryKey(),
+  toEmail: varchar("toEmail", { length: 320 }).notNull(),
+  toName: varchar("toName", { length: 255 }),
+  fromEmail: varchar("fromEmail", { length: 320 }),
+  fromName: varchar("fromName", { length: 255 }),
+  replyTo: varchar("replyTo", { length: 320 }),
+  subject: varchar("subject", { length: 512 }).notNull(),
+  templateName: mysqlEnum("templateName", ["QUOTE", "PO", "SHIPMENT", "ALERT", "RFQ", "INVOICE", "PAYMENT_REMINDER", "WELCOME", "GENERAL"]),
+  payloadJson: json("payloadJson"),
+  idempotencyKey: varchar("idempotencyKey", { length: 255 }),
+  status: mysqlEnum("status", ["queued", "sending", "sent", "failed", "bounced", "delivered", "opened", "clicked"]).default("queued").notNull(),
+  providerMessageId: varchar("providerMessageId", { length: 255 }),
+  retryCount: int("retryCount").default(0),
+  maxRetries: int("maxRetries").default(3),
+  nextRetryAt: timestamp("nextRetryAt"),
+  errorJson: json("errorJson"),
+  relatedEntityType: varchar("relatedEntityType", { length: 64 }),
+  relatedEntityId: int("relatedEntityId"),
+  triggeredBy: int("triggeredBy"),
+  aiGenerated: boolean("aiGenerated").default(false),
+  scheduledAt: timestamp("scheduledAt"),
+  sentAt: timestamp("sentAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type EmailMessage = typeof emailMessages.$inferSelect;
+export type InsertEmailMessage = typeof emailMessages.$inferInsert;
+
+export const emailEvents = mysqlTable("email_events", {
+  id: int("id").autoincrement().primaryKey(),
+  emailMessageId: int("emailMessageId"),
+  providerMessageId: varchar("providerMessageId", { length: 255 }),
+  providerEventType: varchar("providerEventType", { length: 64 }).notNull(),
+  providerTimestamp: timestamp("providerTimestamp"),
+  email: varchar("email", { length: 320 }),
+  rawEventJson: json("rawEventJson"),
+  reason: text("reason"),
+  bounceType: varchar("bounceType", { length: 64 }),
+  processedAt: timestamp("processedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type EmailEvent = typeof emailEvents.$inferSelect;
+export type InsertEmailEvent = typeof emailEvents.$inferInsert;

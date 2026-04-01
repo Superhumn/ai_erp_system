@@ -30,6 +30,7 @@ import { listTranscripts, getTranscript, extractParticipants, parseActionItems, 
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
 import { purchaseOrderTextEndpoints, shipmentTextEndpoints, paymentTextEndpoints, workOrderTextEndpoints, inventoryTextEndpoints } from "./naturalLanguageRouterExtensions";
+import type { InsertDataRoomDriveSyncConfig } from "../drizzle/schema";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -1037,7 +1038,7 @@ export const appRouter = router({
 
         // Create audit logs for each updated item
         for (const result of results.filter(r => r.success)) {
-          await createAuditLog(ctx.user.id, 'bulk_update', 'inventory', result.id);
+          await createAuditLog(ctx.user.id, 'update', 'inventory', result.id);
         }
 
         // Check for low stock alerts on quantity adjustments
@@ -1528,7 +1529,7 @@ export const appRouter = router({
           subtotal: z.string(),
           totalAmount: z.string(),
           suggested: z.boolean(),
-          isPriceEstimated: z.boolean().optional(),
+          isPriceEstimated: z.boolean().default(false),
         }),
         sendEmail: z.boolean().default(false),
       }))
@@ -1661,7 +1662,6 @@ export const appRouter = router({
       }),
     // Natural language text-to-PO (V2 endpoints, keep existing createFromText/parseText unchanged)
     createFromTextV2: purchaseOrderTextEndpoints.createFromText,
-    parseTextV2: purchaseOrderTextEndpoints.parseText,
   }),
 
   // ============================================
@@ -2209,7 +2209,7 @@ export const appRouter = router({
     list: protectedProcedure
       .input(z.object({
         companyId: z.number().optional(),
-        status: z.string().optional(),
+        status: z.enum(["not_started", "in_progress", "completed", "on_hold"]).optional(),
       }).optional())
       .query(({ input }) => db.getInvestmentGrantChecklists(input)),
     get: protectedProcedure
@@ -3939,7 +3939,7 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
           userId: ctx.user.id,
           userName: ctx.user.name || 'User',
           userRole: ctx.user.role,
-          companyId: ctx.user.companyId,
+          companyId: (ctx.user as any).companyId,
         };
 
         const result = await processAIAgentRequest(
@@ -3961,7 +3961,7 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
           userId: ctx.user.id,
           userName: ctx.user.name || 'User',
           userRole: ctx.user.role,
-          companyId: ctx.user.companyId,
+          companyId: (ctx.user as any).companyId,
         };
 
         return getQuickAnalysis(input.dataType, agentContext);
@@ -3973,7 +3973,7 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
         userId: ctx.user.id,
         userName: ctx.user.name || 'User',
         userRole: ctx.user.role,
-        companyId: ctx.user.companyId,
+        companyId: (ctx.user as any).companyId,
       };
 
       return getSystemOverview(agentContext);
@@ -3985,7 +3985,7 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
         userId: ctx.user.id,
         userName: ctx.user.name || 'User',
         userRole: ctx.user.role,
-        companyId: ctx.user.companyId,
+        companyId: (ctx.user as any).companyId,
       };
 
       return getPendingActions(agentContext);
@@ -4000,11 +4000,11 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
       const suggestions: { type: string; title: string; description: string; priority: string }[] = [];
 
       // Check for low inventory
-      if (metrics?.lowStockItems && metrics.lowStockItems > 0) {
+      if ((metrics as any)?.lowStockItems && (metrics as any).lowStockItems > 0) {
         suggestions.push({
           type: 'inventory',
           title: 'Low Stock Alert',
-          description: `${metrics.lowStockItems} items are running low on stock`,
+          description: `${(metrics as any).lowStockItems} items are running low on stock`,
           priority: 'high',
         });
       }
@@ -4030,11 +4030,11 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
       }
 
       // Check for overdue invoices
-      if (metrics?.overdueInvoices && metrics.overdueInvoices > 0) {
+      if ((metrics as any)?.overdueInvoices && (metrics as any).overdueInvoices > 0) {
         suggestions.push({
           type: 'finance',
           title: 'Overdue Invoices',
-          description: `${metrics.overdueInvoices} invoices are past due`,
+          description: `${(metrics as any).overdueInvoices} invoices are past due`,
           priority: 'high',
         });
       }
@@ -8315,9 +8315,9 @@ Ask if they received the original request and if they can provide a quote.`;
                 if (existingProduct) {
                   await db.updateProduct(existingProduct.id, {
                     name: product.title,
-                    price: product.variants[0]?.price || '0',
+                    unitPrice: product.variants[0]?.price || '0',
                     description: product.body_html?.replace(/<[^>]*>/g, '') || '',
-                    isActive: product.status === 'active',
+                    status: product.status === 'active' ? 'active' : 'inactive',
                   });
                   totalUpdated++;
                 } else {
@@ -8325,10 +8325,9 @@ Ask if they received the original request and if they can provide a quote.`;
                     name: product.title,
                     sku: product.variants[0]?.sku || `SHOP-${product.id}`,
                     description: product.body_html?.replace(/<[^>]*>/g, '') || '',
-                    price: product.variants[0]?.price || '0',
-                    isActive: product.status === 'active',
+                    unitPrice: product.variants[0]?.price || '0',
+                    status: product.status === 'active' ? 'active' : 'inactive',
                     category: product.product_type || 'General',
-                    source: 'shopify',
                   });
                   totalImported++;
                 }
@@ -11087,7 +11086,7 @@ Ask if they received the original request and if they can provide a quote.`;
           try {
             // Get Google OAuth token for the user configured for sync (or current user as fallback)
             const syncUserId = config.syncUserId || ctx.user.id;
-            const token = await db.getGoogleOAuthTokenByUserId(syncUserId);
+            const token = await db.getGoogleOAuthToken(syncUserId);
             if (!token) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected. Please connect your Google account first.' });
             }
@@ -11148,7 +11147,7 @@ Ask if they received the original request and if they can provide a quote.`;
       listDriveFolders: protectedProcedure
         .input(z.object({ parentId: z.string().optional() }))
         .query(async ({ input, ctx }) => {
-          const token = await db.getGoogleOAuthTokenByUserId(ctx.user.id);
+          const token = await db.getGoogleOAuthToken(ctx.user.id);
           if (!token) {
             throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected' });
           }
@@ -13999,7 +13998,7 @@ Ask if they received the original request and if they can provide a quote.`;
           totalTransactions: z.number().optional(),
           successfulTransactions: z.number().optional(),
           failedTransactions: z.number().optional(),
-          avgProcessingTimeSeconds: z.number().optional(),
+          avgProcessingTimeSeconds: z.string().optional(),
           onTimeAckPercentage: z.string().optional(),
           onTimeShipPercentage: z.string().optional(),
           fillRatePercentage: z.string().optional(),
@@ -14104,11 +14103,10 @@ Ask if they received the original request and if they can provide a quote.`;
           title: t.title,
           date: t.date ? new Date(t.date) : new Date(),
           duration: t.duration,
-          participants: fullTranscript ? extractParticipants(fullTranscript) : [],
-          transcript: fullTranscript?.transcript_text || null,
-          summary: fullTranscript?.summary || null,
-          actionItems: fullTranscript ? parseActionItems(fullTranscript) : [],
-          status: 'pending',
+          participants: fullTranscript ? JSON.stringify(extractParticipants(fullTranscript)) : null,
+          transcript: fullTranscript?.transcript_url || null,
+          summary: fullTranscript?.summary ? JSON.stringify(fullTranscript.summary) : null,
+          actionItemsRaw: fullTranscript ? JSON.stringify(parseActionItems(fullTranscript)) : null,
         });
         synced++;
       }
@@ -14137,7 +14135,8 @@ Ask if they received the original request and if they can provide a quote.`;
             if (p.email) {
               try {
                 await db.createCrmContact({
-                  name: p.name || p.email.split('@')[0],
+                  firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
+                  fullName: p.name || p.email.split('@')[0],
                   email: p.email,
                   source: 'fireflies',
                 });
@@ -14150,6 +14149,7 @@ Ask if they received the original request and if they can provide a quote.`;
         // Create project if requested
         if (input.createProject) {
           const project = await db.createProject({
+            projectNumber: `FF-${Date.now()}`,
             name: input.projectName || meeting.title || 'Untitled Meeting Project',
             status: 'planning',
             createdBy: ctx.user.id,
@@ -14158,13 +14158,13 @@ Ask if they received the original request and if they can provide a quote.`;
         }
 
         // Create tasks from action items
-        if (input.createTasks && Array.isArray(meeting.actionItems)) {
-          for (const item of meeting.actionItems as Array<{ text: string }>) {
+        if (input.createTasks && Array.isArray(meeting.actionItemsRaw)) {
+          for (const item of (meeting.actionItemsRaw ? JSON.parse(meeting.actionItemsRaw) : []) as Array<{ text: string }>) {
             if (projectId) {
               await db.createProjectTask({
                 projectId,
-                title: item.text,
-                status: 'pending',
+                name: item.text,
+                status: 'todo',
               });
               tasksCreated++;
             }
@@ -14177,11 +14177,8 @@ Ask if they received the original request and if they can provide a quote.`;
           : 'pending';
 
         await db.updateFirefliesMeeting(input.meetingId, {
-          status,
-          contactsCreated,
-          tasksCreated,
-          projectId,
-        });
+          aiSummary: JSON.stringify({ status, contactsCreated, tasksCreated, projectId }),
+        } as any);
 
         return { contactsCreated, tasksCreated, projectId };
       }),
@@ -14198,7 +14195,8 @@ Ask if they received the original request and if they can provide a quote.`;
             if (p.email) {
               try {
                 await db.createCrmContact({
-                  name: p.name || p.email.split('@')[0],
+                  firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
+                  fullName: p.name || p.email.split('@')[0],
                   email: p.email,
                   source: 'fireflies',
                 });
@@ -14207,7 +14205,7 @@ Ask if they received the original request and if they can provide a quote.`;
             }
           }
         }
-        await db.updateFirefliesMeeting(meeting.id, { status: 'fully_processed' });
+        await db.updateFirefliesMeeting(meeting.id, { aiSummary: 'fully_processed' } as any);
         processed++;
       }
       return { processed, contactsCreated, tasksCreated, projectsCreated };

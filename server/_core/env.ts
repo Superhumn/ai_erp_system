@@ -42,6 +42,9 @@ export const ENV = {
   twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER ?? "",
   // Airtable integration
   airtablePersonalAccessToken: process.env.AIRTABLE_PERSONAL_ACCESS_TOKEN ?? "",
+  // Forge API (image generation / data API)
+  forgeApiUrl: process.env.FORGE_API_URL ?? "",
+  forgeApiKey: process.env.FORGE_API_KEY ?? "",
 };
 
 /**
