@@ -4652,6 +4652,7 @@ export const firefliesMeetings = mysqlTable("fireflies_meetings", {
   actionItemsRaw: text("actionItemsRaw"),
   videoUrl: text("videoUrl"),
   audioUrl: text("audioUrl"),
+  status: mysqlEnum("status", ["pending", "contacts_created", "tasks_created", "fully_processed"]).default("pending"),
   crmContactId: int("crmContactId"),
   linkedEntityType: varchar("linkedEntityType", { length: 64 }),
   linkedEntityId: int("linkedEntityId"),
