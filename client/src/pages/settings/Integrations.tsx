@@ -1040,10 +1040,10 @@ export default function IntegrationsPage() {
                       </ul>
                       <Button
                         onClick={() => {
-                          if (quickbooksAuthUrl?.url) {
-                            window.location.href = quickbooksAuthUrl.url;
+                          if ((quickbooksAuthUrl as any)?.url) {
+                            window.location.href = (quickbooksAuthUrl as any).url;
                           } else {
-                            toast.error(quickbooksAuthUrl?.error || "QuickBooks OAuth not configured");
+                            toast.error((quickbooksAuthUrl as any)?.error || "QuickBooks OAuth not configured");
                           }
                         }}
                       >

@@ -2506,6 +2506,42 @@ export const appRouter = router({
       await db.clearSyncHistory();
       return { success: true };
     }),
+
+    // Shopify sub-router for OAuth and store management
+    shopify: router({
+      initiateOAuth: protectedProcedure
+        .input(z.object({ shopDomain: z.string().min(1) }))
+        .mutation(async ({ input, ctx }) => {
+          const { ENV } = await import('./_core/env');
+          const clientId = ENV.shopifyClientId;
+          if (!clientId) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Shopify OAuth not configured. Add SHOPIFY_CLIENT_ID in Settings → Secrets.' });
+          }
+          let shopDomain = input.shopDomain.trim().toLowerCase();
+          if (!shopDomain.endsWith('.myshopify.com')) shopDomain = `${shopDomain}.myshopify.com`;
+          const state = `${Date.now()}-${ctx.user.id}-${(ctx.user as any).companyId || 0}-${shopDomain}`;
+          const redirectUri = encodeURIComponent(`${ENV.appUrl || ''}/api/oauth/shopify/callback`);
+          const scopes = 'read_products,write_products,read_orders,write_orders,read_inventory,write_inventory,read_customers,write_customers';
+          const authUrl = `https://${shopDomain}/admin/oauth/authorize?client_id=${clientId}&scope=${scopes}&redirect_uri=${redirectUri}&state=${state}`;
+          return { authUrl };
+        }),
+      disconnect: protectedProcedure
+        .input(z.object({ storeId: z.number() }))
+        .mutation(async ({ input }) => {
+          await db.updateShopifyStore(input.storeId, { isEnabled: false });
+          await db.createSyncLog({ integration: 'shopify', action: 'disconnect', status: 'success', details: `Disconnected store ${input.storeId}` });
+          return { success: true };
+        }),
+      testConnection: protectedProcedure
+        .input(z.object({ storeId: z.number() }))
+        .mutation(async ({ input }) => {
+          const store = await db.getShopifyStoreById(input.storeId);
+          if (!store || !store.accessToken) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Store not found or not connected' });
+          const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/shop.json`, { headers: { 'X-Shopify-Access-Token': store.accessToken } });
+          if (!response.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: `Shopify API error: ${response.status}` });
+          return { success: true, message: 'Connected to Shopify successfully' };
+        }),
+    }),
   }),
 
   // ============================================
@@ -6349,6 +6385,35 @@ Provide a brief status summary, any missing documents, and next steps.`;
           }
         }
         return db.getCustomsDocuments(input.clearanceId);
+      }),
+
+    uploadCustomsDocument: vendorProcedure
+      .input(z.object({
+        clearanceId: z.number(),
+        documentType: z.string(),
+        name: z.string(),
+        fileData: z.string(),
+        mimeType: z.string(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { storagePut } = await import('./_core/storage');
+        const { nanoid } = await import('nanoid');
+        const buffer = Buffer.from(input.fileData, 'base64');
+        const fileKey = `vendor/${ctx.user.linkedVendorId || 'unknown'}/customs/${input.clearanceId}/${nanoid()}-${input.name}`;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType);
+        const result = await db.createDocument({
+          name: input.name,
+          type: input.documentType as any,
+          category: 'legal',
+          fileUrl: url,
+          fileKey,
+          mimeType: input.mimeType,
+          fileSize: buffer.length,
+          uploadedBy: ctx.user.id,
+          referenceType: 'customs_clearance',
+          referenceId: input.clearanceId,
+        });
+        return { id: result.id, url };
       }),
   }),
 
@@ -13380,11 +13445,49 @@ Ask if they received the original request and if they can provide a quote.`;
           return { success: true };
         }),
     }),
+    // --- INVESTORS & FUNDRAISING ---
+    listInvestors: protectedProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(({ input }) => db.getInvestors(input?.companyId)),
+    createInvestor: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        email: z.string().email().optional(),
+        phone: z.string().optional(),
+        company: z.string().optional(),
+        title: z.string().optional(),
+        type: z.enum(["angel", "vc", "family_office", "strategic", "accelerator", "other"]).default("angel"),
+        status: z.enum(["lead", "contacted", "interested", "committed", "invested", "passed"]).default("lead"),
+        priority: z.enum(["low", "medium", "high", "critical"]).default("medium"),
+        linkedinUrl: z.string().optional(),
+        website: z.string().optional(),
+        source: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(({ input }) => db.createInvestor(input as any)),
+    listCampaigns: protectedProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(({ input }) => db.getFundraisingCampaigns(input?.companyId)),
+    createCampaign: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        targetAmount: z.string().optional(),
+        minimumInvestment: z.string().optional(),
+        valuation: z.string().optional(),
+        roundType: z.enum(["pre_seed", "seed", "series_a", "series_b", "series_c", "bridge", "other"]).default("seed"),
+        equityOffered: z.string().optional(),
+        status: z.enum(["planning", "active", "paused", "closed", "cancelled"]).default("planning"),
+        notes: z.string().optional(),
+      }))
+      .mutation(({ input }) => db.createFundraisingCampaign(input as any)),
+    listInvestments: protectedProcedure
+      .input(z.object({ investorId: z.number().optional() }).optional())
+      .query(({ input }) => db.getInvestorInvestments(input?.investorId)),
+    listReminders: protectedProcedure
+      .input(z.object({ status: z.string().optional(), dueBefore: z.date().optional() }).optional())
+      .query(({ input }) => db.getFundraisingReminders(input ? { status: input.status } : undefined)),
   }),
-
-  // ============================================
-  // INVENTORY COSTING & COGS
-  // ============================================
   inventoryCosting: router({
     // Costing config per product
     configs: router({
@@ -14058,10 +14161,12 @@ Ask if they received the original request and if they can provide a quote.`;
       if (!config) return null;
       return {
         isConnected: true,
+        configured: true,
         autoCreateContacts: config.autoCreateContacts,
         autoCreateTasks: config.autoCreateTasks,
         autoCreateProjects: config.autoCreateProjects,
         lastSyncAt: config.lastSyncAt,
+        config: { apiKey: '***' },
       };
     }),
     configure: protectedProcedure
@@ -14083,7 +14188,9 @@ Ask if they received the original request and if they can provide a quote.`;
       await db.deleteFirefliesConfig(ctx.user.id);
       return { success: true };
     }),
-    syncMeetings: protectedProcedure.mutation(async ({ ctx }) => {
+    syncMeetings: protectedProcedure
+      .input(z.object({}).optional())
+      .mutation(async ({ ctx }) => {
       const config = await db.getFirefliesConfig(ctx.user.id);
       if (!config) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fireflies not configured' });
@@ -14182,7 +14289,13 @@ Ask if they received the original request and if they can provide a quote.`;
 
         return { contactsCreated, tasksCreated, projectId };
       }),
-    processAllPending: protectedProcedure.mutation(async ({ ctx }) => {
+    processAllPending: protectedProcedure
+      .input(z.object({
+        createContacts: z.boolean().optional(),
+        createTasks: z.boolean().optional(),
+        createProjects: z.boolean().optional(),
+      }).optional())
+      .mutation(async ({ ctx }) => {
       const meetings = await db.getFirefliesMeetings({ status: 'pending' });
       let processed = 0;
       let contactsCreated = 0;
@@ -14214,7 +14327,10 @@ Ask if they received the original request and if they can provide a quote.`;
       list: protectedProcedure
         .input(z.object({ status: z.string().optional() }).optional())
         .query(({ input }) => db.getFirefliesMeetings(input || undefined)),
-      getStats: protectedProcedure.query(() => db.getFirefliesMeetingStats()),
+      getStats: protectedProcedure.query(async () => {
+        const stats = await db.getFirefliesMeetingStats();
+        return { ...stats, contactsCreated: 0, tasksCreated: 0 };
+      }),
     }),
   }),
 });

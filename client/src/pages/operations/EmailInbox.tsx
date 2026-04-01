@@ -284,7 +284,7 @@ export default function EmailInbox() {
   // AI Email Reply mutations
   const generateReplyMutation = trpc.aiAgent.generateEmailReply.useMutation({
     onSuccess: (result) => {
-      setGeneratedReply(result);
+      setGeneratedReply(result as any);
       setShowAiReplyDialog(true);
       setIsGeneratingReply(false);
     },

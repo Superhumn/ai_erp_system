@@ -130,7 +130,7 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
     return <div className="text-center py-12 text-muted-foreground">Checklist not found</div>;
   }
 
-  const items = (checklist.items || []) as ChecklistItem[];
+  const items = (checklist.items || []) as unknown as ChecklistItem[];
   const completedCount = items.filter((i) => i.status === "completed").length;
   const totalCount = items.length;
   const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
@@ -291,7 +291,7 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
                         </div>
                         <Select
                           value={item.status}
-                          onValueChange={(value) => handleStatusChange(item.id, value)}
+                          onValueChange={(value) => handleStatusChange(item.id, value as ChecklistItem["status"])}
                         >
                           <SelectTrigger className="w-[140px] h-8 text-xs">
                             <div className="flex items-center gap-1.5">
@@ -348,7 +348,7 @@ export default function InvestmentGrantChecklist() {
     return <ChecklistDetail checklistId={selectedId} onBack={() => setSelectedId(null)} />;
   }
 
-  const filteredChecklists = checklists?.filter((c: Checklist) =>
+  const filteredChecklists = (checklists as Checklist[] | undefined)?.filter((c) =>
     c.name.toLowerCase().includes(search.toLowerCase())
   );
 

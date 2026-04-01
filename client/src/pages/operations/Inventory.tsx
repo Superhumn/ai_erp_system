@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -27,8 +28,9 @@ import {
   ArrowUpDown,
   MapPin,
   Target,
+  Plus,
 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 
 type InventoryItem = {
   id: number;
@@ -46,6 +48,7 @@ export default function Inventory() {
   const [selectedRows, setSelectedRows] = useState<Set<number | string>>(new Set());
   const [bulkActionDialogOpen, setBulkActionDialogOpen] = useState(false);
   const [currentBulkAction, setCurrentBulkAction] = useState<BulkActionType>(null);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   // Form states for bulk actions
   const [quantityAdjustment, setQuantityAdjustment] = useState<string>("0");
@@ -53,7 +56,6 @@ export default function Inventory() {
   const [newReorderLevel, setNewReorderLevel] = useState<string>("");
   const [newReorderQuantity, setNewReorderQuantity] = useState<string>("");
 
-  const { toast } = useToast();
   const utils = trpc.useUtils();
 
   const { data: inventory, isLoading } = trpc.inventory.list.useQuery();
@@ -61,21 +63,14 @@ export default function Inventory() {
 
   const bulkUpdateMutation = trpc.inventory.bulkUpdate.useMutation({
     onSuccess: (data) => {
-      toast({
-        title: "Bulk Update Complete",
-        description: `Successfully updated ${data.totalUpdated} item(s).${data.totalFailed > 0 ? ` ${data.totalFailed} item(s) failed.` : ''}`,
-      });
+      toast.success(`Successfully updated ${data.totalUpdated} item(s).${data.totalFailed > 0 ? ` ${data.totalFailed} item(s) failed.` : ''}`);
       setSelectedRows(new Set());
       setBulkActionDialogOpen(false);
       resetFormStates();
       utils.inventory.list.invalidate();
     },
     onError: (error) => {
-      toast({
-        title: "Bulk Update Failed",
-        description: error.message,
-        variant: "destructive",
-      });
+      toast.error(error.message);
     },
   });
 
@@ -210,11 +205,7 @@ export default function Inventory() {
         break;
       case 'change_location':
         if (!selectedWarehouseId) {
-          toast({
-            title: "Select a location",
-            description: "Please select a warehouse location.",
-            variant: "destructive",
-          });
+          toast.error("Please select a warehouse location.");
           return;
         }
         bulkUpdateMutation.mutate({

@@ -5217,3 +5217,140 @@ export const emailEvents = mysqlTable("email_events", {
 });
 export type EmailEvent = typeof emailEvents.$inferSelect;
 export type InsertEmailEvent = typeof emailEvents.$inferInsert;
+
+// ============================================
+// AGENT RUN TRACKING
+// ============================================
+
+export const agentRuns = mysqlTable("agent_runs", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId"),
+  companyId: int("companyId"),
+  goal: text("goal").notNull(),
+  maxIterations: int("maxIterations").default(20).notNull(),
+  context: text("context"),
+  status: mysqlEnum("status", ["running", "completed", "failed", "max_iterations"]).default("running").notNull(),
+  iterations: int("iterations").default(0).notNull(),
+  summary: text("summary"),
+  errorMessage: text("errorMessage"),
+  totalTokensUsed: int("totalTokensUsed").default(0).notNull(),
+  totalDurationMs: int("totalDurationMs"),
+  toolCallCount: int("toolCallCount").default(0).notNull(),
+  messageHistory: text("messageHistory"),
+  startedAt: timestamp("startedAt").defaultNow().notNull(),
+  completedAt: timestamp("completedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type AgentRun = typeof agentRuns.$inferSelect;
+export type InsertAgentRun = typeof agentRuns.$inferInsert;
+
+export const agentRunSteps = mysqlTable("agent_run_steps", {
+  id: int("id").autoincrement().primaryKey(),
+  runId: int("runId").notNull().references(() => agentRuns.id),
+  iteration: int("iteration").notNull(),
+  toolName: varchar("toolName", { length: 128 }),
+  toolInput: text("toolInput"),
+  toolResult: text("toolResult"),
+  assistantMessage: text("assistantMessage"),
+  stopReason: varchar("stopReason", { length: 64 }),
+  tokensUsed: int("tokensUsed"),
+  durationMs: int("durationMs"),
+  isError: boolean("isError").default(false).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type AgentRunStep = typeof agentRunSteps.$inferSelect;
+export type InsertAgentRunStep = typeof agentRunSteps.$inferInsert;
+
+export const agentCallLogs = mysqlTable("agent_call_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  contactType: varchar("contactType", { length: 32 }).notNull(),
+  contactId: int("contactId").notNull(),
+  contactName: varchar("contactName", { length: 255 }).notNull(),
+  phoneNumber: varchar("phoneNumber", { length: 32 }).notNull(),
+  direction: mysqlEnum("direction", ["inbound", "outbound"]).default("outbound").notNull(),
+  status: mysqlEnum("status", ["initiated", "ringing", "in_progress", "completed", "failed", "no_answer"]).default("initiated").notNull(),
+  purpose: text("purpose"),
+  twilioCallSid: varchar("twilioCallSid", { length: 64 }),
+  crmInteractionId: int("crmInteractionId"),
+  duration: int("duration"),
+  recordingUrl: text("recordingUrl"),
+  transcript: text("transcript"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type AgentCallLog = typeof agentCallLogs.$inferSelect;
+export type InsertAgentCallLog = typeof agentCallLogs.$inferInsert;
+
+// ============================================
+// CRM INVESTORS & FUNDRAISING
+// ============================================
+
+export const investors = mysqlTable("investors", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  email: varchar("email", { length: 320 }),
+  phone: varchar("phone", { length: 32 }),
+  company: varchar("company", { length: 255 }),
+  title: varchar("title", { length: 128 }),
+  type: mysqlEnum("type", ["angel", "vc", "family_office", "strategic", "accelerator", "other"]).default("angel").notNull(),
+  status: mysqlEnum("status", ["lead", "contacted", "interested", "committed", "invested", "passed"]).default("lead").notNull(),
+  priority: mysqlEnum("priority", ["low", "medium", "high", "critical"]).default("medium").notNull(),
+  linkedinUrl: text("linkedinUrl"),
+  website: text("website"),
+  source: varchar("source", { length: 128 }),
+  notes: text("notes"),
+  investedAt: timestamp("investedAt"),
+  followUpDate: timestamp("followUpDate"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type Investor = typeof investors.$inferSelect;
+export type InsertInvestor = typeof investors.$inferInsert;
+
+export const fundraisingCampaigns = mysqlTable("fundraising_campaigns", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  targetAmount: decimal("targetAmount", { precision: 18, scale: 2 }),
+  raisedAmount: decimal("raisedAmount", { precision: 18, scale: 2 }).default("0"),
+  minimumInvestment: decimal("minimumInvestment", { precision: 18, scale: 2 }),
+  valuation: decimal("valuation", { precision: 18, scale: 2 }),
+  roundType: mysqlEnum("roundType", ["pre_seed", "seed", "series_a", "series_b", "series_c", "bridge", "other"]).default("seed").notNull(),
+  equityOffered: decimal("equityOffered", { precision: 5, scale: 2 }),
+  status: mysqlEnum("status", ["planning", "active", "paused", "closed", "cancelled"]).default("planning").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type FundraisingCampaign = typeof fundraisingCampaigns.$inferSelect;
+export type InsertFundraisingCampaign = typeof fundraisingCampaigns.$inferInsert;
+
+export const investorInvestments = mysqlTable("investor_investments", {
+  id: int("id").autoincrement().primaryKey(),
+  investorId: int("investorId").notNull().references(() => investors.id),
+  campaignId: int("campaignId").references(() => fundraisingCampaigns.id),
+  amount: decimal("amount", { precision: 18, scale: 2 }).notNull(),
+  currency: varchar("currency", { length: 8 }).default("USD"),
+  investedAt: timestamp("investedAt").defaultNow().notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type InvestorInvestment = typeof investorInvestments.$inferSelect;
+export type InsertInvestorInvestment = typeof investorInvestments.$inferInsert;
+
+export const fundraisingReminders = mysqlTable("fundraising_reminders", {
+  id: int("id").autoincrement().primaryKey(),
+  investorId: int("investorId").notNull().references(() => investors.id),
+  title: varchar("title", { length: 255 }).notNull(),
+  dueDate: timestamp("dueDate").notNull(),
+  status: mysqlEnum("status", ["pending", "completed", "cancelled"]).default("pending").notNull(),
+  priority: mysqlEnum("priority", ["low", "medium", "high", "critical"]).default("medium").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type FundraisingReminder = typeof fundraisingReminders.$inferSelect;
+export type InsertFundraisingReminder = typeof fundraisingReminders.$inferInsert;

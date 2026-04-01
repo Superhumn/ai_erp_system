@@ -208,24 +208,24 @@ export default function DocumentImport() {
             });
 
             setParsedPO({
-              ...result.purchaseOrder,
+              ...(result.purchaseOrder as any),
               lineItems: matchedItems.map((item: any) => ({
                 ...item,
                 matchedMaterialId: item.rawMaterialId,
                 matchedMaterialName: item.rawMaterialId ? item.description : undefined,
               })),
-            });
+            } as any);
           } catch (matchError) {
             console.error("[DocumentImport] Material matching error:", matchError);
             // Still show the PO without material matching
             setParsedPO({
-              ...result.purchaseOrder,
-              lineItems: result.purchaseOrder.lineItems.map((item: any) => ({
+              ...(result.purchaseOrder as any),
+              lineItems: (result.purchaseOrder.lineItems as any[]).map((item: any) => ({
                 ...item,
                 matchedMaterialId: undefined,
                 matchedMaterialName: undefined,
               })),
-            });
+            } as any);
           }
           setUploadType("po");
           setShowPreview(true);
@@ -237,32 +237,32 @@ export default function DocumentImport() {
             });
 
             setParsedVendorInvoice({
-              ...result.vendorInvoice,
+              ...(result.vendorInvoice as any),
               lineItems: matchedItems.map((item: any) => ({
                 ...item,
                 matchedMaterialId: item.rawMaterialId,
                 matchedMaterialName: item.rawMaterialId ? item.description : undefined,
               })),
-            });
+            } as any);
           } catch (matchError) {
             console.error("[DocumentImport] Material matching error:", matchError);
             setParsedVendorInvoice({
-              ...result.vendorInvoice,
-              lineItems: result.vendorInvoice.lineItems.map((item: any) => ({
+              ...(result.vendorInvoice as any),
+              lineItems: (result.vendorInvoice.lineItems as any[]).map((item: any) => ({
                 ...item,
                 matchedMaterialId: undefined,
                 matchedMaterialName: undefined,
               })),
-            });
+            } as any);
           }
           setUploadType("vendor_invoice");
           setShowPreview(true);
         } else if (result.documentType === "freight_invoice" && result.freightInvoice) {
-          setParsedFreight(result.freightInvoice);
+          setParsedFreight(result.freightInvoice as any);
           setUploadType("freight");
           setShowPreview(true);
         } else if (result.documentType === "customs_document" && result.customsDocument) {
-          setParsedCustoms(result.customsDocument);
+          setParsedCustoms(result.customsDocument as any);
           setUploadType("customs");
           setShowPreview(true);
         } else {

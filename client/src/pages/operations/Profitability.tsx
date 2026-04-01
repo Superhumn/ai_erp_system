@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { trpc } from "../../lib/trpc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
@@ -19,26 +18,16 @@ export default function Profitability() {
   });
 
   // Check QuickBooks connection
-  const { data: qbStatus } = useQuery({
-    queryKey: ['quickbooks-connection'],
-    queryFn: () => trpc.quickbooks.getConnectionStatus.query(),
-  });
+  const { data: qbStatus } = trpc.quickbooks.getConnectionStatus.useQuery();
 
   // Fetch product profitability data
-  const { data: profitabilityData, isLoading: profitabilityLoading } = useQuery({
-    queryKey: ['profitability', dateRange.from, dateRange.to],
-    queryFn: () => trpc.cogs.profitability.query({
-      startDate: dateRange.from,
-      endDate: dateRange.to
-    }),
-    enabled: !!dateRange.from && !!dateRange.to
-  });
+  const { data: profitabilityData, isLoading: profitabilityLoading } = trpc.cogs.profitability.useQuery(
+    { startDate: dateRange.from, endDate: dateRange.to },
+    { enabled: !!dateRange.from && !!dateRange.to }
+  );
 
   // Fetch inventory valuation
-  const { data: valuationData, isLoading: valuationLoading } = useQuery({
-    queryKey: ['inventory-valuation'],
-    queryFn: () => trpc.cogs.valuation.query()
-  });
+  const { data: valuationData, isLoading: valuationLoading } = trpc.cogs.valuation.useQuery();
 
   // Calculate summary metrics
   const summary = profitabilityData?.reduce(
@@ -79,7 +68,7 @@ export default function Profitability() {
           <div className="flex items-center gap-3">
             <h1 className="text-3xl font-bold">Profitability & COGS Tracking</h1>
             {qbStatus?.connected ? (
-              <Badge variant="success" className="gap-1">
+              <Badge variant="default" className="gap-1 bg-green-500 text-white">
                 <DollarSign className="h-3 w-3" />
                 QuickBooks Connected
               </Badge>

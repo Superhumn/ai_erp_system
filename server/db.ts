@@ -122,6 +122,11 @@ import {
   transactionalEmailTemplates, InsertTransactionalEmailTemplate,
   emailMessages, InsertEmailMessage,
   emailEvents, InsertEmailEvent,
+  // Agent run tracking
+  agentRuns, agentRunSteps, agentCallLogs,
+  // CRM investors & fundraising
+  investors, InsertInvestor, fundraisingCampaigns, InsertFundraisingCampaign,
+  investorInvestments, InsertInvestorInvestment, fundraisingReminders, InsertFundraisingReminder,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -4321,6 +4326,18 @@ export async function updateShopifyStore(id: number, data: Partial<InsertShopify
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(shopifyStores).set(data).where(eq(shopifyStores.id, id));
+}
+
+export async function upsertShopifyStore(domain: string, data: Partial<InsertShopifyStore>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = await getShopifyStoreByDomain(domain);
+  if (existing) {
+    await db.update(shopifyStores).set(data).where(eq(shopifyStores.id, existing.id));
+    return { id: existing.id };
+  }
+  const result = await db.insert(shopifyStores).values({ storeDomain: domain, storeName: domain, ...data } as InsertShopifyStore);
+  return { id: result[0].insertId };
 }
 
 // Webhook Events
@@ -10157,11 +10174,15 @@ export async function getCogsDashboardStats(companyId?: number) {
   const totalCogs = records.reduce((s, r) => s + parseFloat(r.totalCogs || "0"), 0);
   const totalRevenue = records.reduce((s, r) => s + parseFloat(r.totalRevenue || "0"), 0);
   const grossProfit = totalRevenue - totalCogs;
+  const totalQuantitySold = records.reduce((s, r) => s + parseFloat(r.quantitySold || "0"), 0);
+  const grossMarginPercent = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
   return {
     totalCogs,
     totalRevenue,
     grossProfit,
-    grossMargin: totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0,
+    grossMargin: grossMarginPercent,
+    grossMarginPercent,
+    totalQuantitySold,
     recordCount: records.length,
   };
 }
@@ -10424,9 +10445,9 @@ export async function getQueuedEmailMessages(limit: number = 10) {
 
 export async function getEmailMessageStats() {
   const db = await getDb();
-  if (!db) return { queued: 0, sent: 0, failed: 0, total: 0 };
+  if (!db) return { queued: 0, sent: 0, failed: 0, delivered: 0, bounced: 0, total: 0 };
   const all = await db.select({ count: count(), status: emailMessages.status }).from(emailMessages).groupBy(emailMessages.status);
-  const stats: Record<string, number> = {};
+  const stats: Record<string, number> = { queued: 0, sent: 0, failed: 0, delivered: 0, bounced: 0 };
   let total = 0;
   for (const row of all) {
     if (row.status) stats[row.status] = Number(row.count);
@@ -10458,4 +10479,52 @@ export async function getRecentEmailEvents(limit: number = 100) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(emailEvents).orderBy(desc(emailEvents.createdAt)).limit(limit);
+}
+
+// ============================================
+// CRM INVESTORS & FUNDRAISING
+// ============================================
+
+export async function getInvestors(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) return db.select().from(investors).where(eq(investors.companyId, companyId));
+  return db.select().from(investors);
+}
+
+export async function createInvestor(data: InsertInvestor) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(investors).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getFundraisingCampaigns(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) return db.select().from(fundraisingCampaigns).where(eq(fundraisingCampaigns.companyId, companyId));
+  return db.select().from(fundraisingCampaigns);
+}
+
+export async function createFundraisingCampaign(data: InsertFundraisingCampaign) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(fundraisingCampaigns).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getInvestorInvestments(investorId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (investorId) return db.select().from(investorInvestments).where(eq(investorInvestments.investorId, investorId));
+  return db.select().from(investorInvestments);
+}
+
+export async function getFundraisingReminders(filters?: { status?: string; investorId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.investorId) conditions.push(eq(fundraisingReminders.investorId, filters.investorId));
+  if (conditions.length > 0) return db.select().from(fundraisingReminders).where(and(...conditions));
+  return db.select().from(fundraisingReminders);
 }

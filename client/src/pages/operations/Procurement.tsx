@@ -141,6 +141,7 @@ function ProcurementStatsCard({ title, icon: Icon, type }: { title: string; icon
 
 // Purchase Orders Tab
 function PurchaseOrdersTab({ searchTerm }: { searchTerm: string }) {
+  const { canSeeCosts } = useCostVisibility();
   const { data: pos, isLoading } = trpc.purchaseOrders.list.useQuery();
   const { data: vendors } = trpc.vendors.list.useQuery();
   const [createOpen, setCreateOpen] = useState(false);
@@ -460,6 +461,7 @@ function VendorsTab({ searchTerm }: { searchTerm: string }) {
 
 // Raw Materials Tab
 function RawMaterialsTab({ searchTerm }: { searchTerm: string }) {
+  const { canSeeCosts } = useCostVisibility();
   const { data: materials, isLoading } = trpc.rawMaterials.list.useQuery();
   const { data: vendors } = trpc.vendors.list.useQuery();
   const [createOpen, setCreateOpen] = useState(false);
