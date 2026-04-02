@@ -97,8 +97,26 @@ import {
   // Investment grant checklists
   investmentGrantChecklists, investmentGrantItems,
   InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
+  // Transactional email system
+  transactionalEmailTemplates, transactionalEmailMessages, transactionalEmailEvents,
+  InsertTransactionalEmailTemplate, InsertTransactionalEmailMessage, InsertTransactionalEmailEvent,
+  // Vendor negotiations
+  vendorNegotiations, negotiationRounds,
+  InsertVendorNegotiation, InsertNegotiationRound,
+  // Inventory costing
+  inventoryCostingConfigs, inventoryCostLayers,
+  InsertInventoryCostingConfig, InsertInventoryCostLayer,
+  // QuickBooks sync
+  quickbooksAccounts, quickbooksItems, quickbooksAccountMappings,
+  InsertQuickBooksAccount, InsertQuickBooksItem, InsertQuickBooksAccountMapping,
+  // COGS / Freight
+  cogsTransactions, freightCostAllocations,
+  InsertCogsTransaction, InsertFreightCostAllocation,
   // Fireflies meetings
   firefliesMeetings, firefliesConfigs,
+  // EDI tables
+  ediTradingPartners, ediDocumentMaps, ediTransactions, ediTransactionItems,
+  ediProductCrosswalks, ediShipToLocations, ediSettings, ediControlNumbers, ediComplianceScorecards,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -9332,5 +9350,1052 @@ export async function getFirefliesMeetingStats() {
     pending: pending[0]?.count || 0,
     processed: processed[0]?.count || 0,
   };
+}
+
+// ============================================
+// TRANSACTIONAL EMAIL SYSTEM
+// ============================================
+
+export async function getEmailMessageStats() {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({
+      status: transactionalEmailMessages.status,
+      count: count(),
+    })
+    .from(transactionalEmailMessages)
+    .groupBy(transactionalEmailMessages.status);
+  return rows;
+}
+
+export async function getTransactionalEmailTemplates() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(transactionalEmailTemplates).orderBy(desc(transactionalEmailTemplates.createdAt));
+}
+
+export async function getTransactionalEmailTemplateById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(transactionalEmailTemplates).where(eq(transactionalEmailTemplates.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function getTransactionalEmailTemplateByName(name: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(transactionalEmailTemplates).where(eq(transactionalEmailTemplates.name, name as any)).limit(1);
+  return result[0] || null;
+}
+
+export async function createTransactionalEmailTemplate(data: InsertTransactionalEmailTemplate) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(transactionalEmailTemplates).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateTransactionalEmailTemplate(id: number, data: Partial<InsertTransactionalEmailTemplate>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(transactionalEmailTemplates).set(data).where(eq(transactionalEmailTemplates.id, id));
+}
+
+export async function deleteTransactionalEmailTemplate(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(transactionalEmailTemplates).where(eq(transactionalEmailTemplates.id, id));
+}
+
+export async function getEmailMessages(filters?: {
+  status?: string;
+  templateName?: string;
+  toEmail?: string;
+  relatedEntityType?: string;
+  relatedEntityId?: number;
+  fromDate?: Date;
+  toDate?: Date;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(transactionalEmailMessages.status, filters.status as any));
+  if (filters?.templateName) conditions.push(eq(transactionalEmailMessages.templateName, filters.templateName));
+  if (filters?.toEmail) conditions.push(eq(transactionalEmailMessages.toEmail, filters.toEmail));
+  if (filters?.relatedEntityType) conditions.push(eq(transactionalEmailMessages.relatedEntityType, filters.relatedEntityType));
+  if (filters?.relatedEntityId) conditions.push(eq(transactionalEmailMessages.relatedEntityId, filters.relatedEntityId));
+  if (filters?.fromDate) conditions.push(gte(transactionalEmailMessages.createdAt, filters.fromDate));
+  if (filters?.toDate) conditions.push(lte(transactionalEmailMessages.createdAt, filters.toDate));
+
+  let query = db.select().from(transactionalEmailMessages);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  query = query.orderBy(desc(transactionalEmailMessages.createdAt)) as any;
+  if (filters?.limit) query = query.limit(filters.limit) as any;
+  if (filters?.offset) query = query.offset(filters.offset) as any;
+  return query;
+}
+
+export async function getEmailMessageById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(transactionalEmailMessages).where(eq(transactionalEmailMessages.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function getEmailEventsByMessageId(emailMessageId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(transactionalEmailEvents).where(eq(transactionalEmailEvents.emailMessageId, emailMessageId)).orderBy(desc(transactionalEmailEvents.createdAt));
+}
+
+export async function getEmailMessageByProviderMessageId(providerMessageId: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(transactionalEmailMessages).where(eq(transactionalEmailMessages.providerMessageId, providerMessageId)).limit(1);
+  return result[0] || null;
+}
+
+export async function updateEmailMessage(id: number, data: Partial<InsertTransactionalEmailMessage>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(transactionalEmailMessages).set(data).where(eq(transactionalEmailMessages.id, id));
+}
+
+export async function getEmailEventsByProviderMessageId(providerMessageId: string) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(transactionalEmailEvents).where(eq(transactionalEmailEvents.providerMessageId, providerMessageId)).orderBy(desc(transactionalEmailEvents.createdAt));
+}
+
+export async function getRecentEmailEvents(limit: number = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(transactionalEmailEvents).orderBy(desc(transactionalEmailEvents.createdAt)).limit(limit);
+}
+
+export async function getQueuedEmailMessages(limit: number = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(transactionalEmailMessages)
+    .where(eq(transactionalEmailMessages.status, "queued"))
+    .orderBy(asc(transactionalEmailMessages.scheduledAt), asc(transactionalEmailMessages.createdAt))
+    .limit(limit);
+}
+
+// ============================================
+// QUICKBOOKS SYNC
+// ============================================
+
+export async function syncQuickBooksAccounts(companyId: number, accountsData: Array<{
+  quickbooksAccountId: string;
+  name: string;
+  accountType?: string;
+  accountSubType?: string;
+  classification?: string;
+  fullyQualifiedName?: string;
+  active?: boolean;
+  currentBalance?: string;
+  currency?: string;
+}>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  for (const account of accountsData) {
+    const existing = await db
+      .select()
+      .from(quickbooksAccounts)
+      .where(
+        and(
+          eq(quickbooksAccounts.quickbooksAccountId, account.quickbooksAccountId),
+          eq(quickbooksAccounts.companyId, companyId)
+        )
+      )
+      .limit(1);
+
+    if (existing.length > 0) {
+      await db
+        .update(quickbooksAccounts)
+        .set({ ...account, lastSyncedAt: new Date() })
+        .where(eq(quickbooksAccounts.id, existing[0].id));
+    } else {
+      await db.insert(quickbooksAccounts).values({
+        companyId,
+        ...account,
+        lastSyncedAt: new Date(),
+      });
+    }
+  }
+
+  return { synced: accountsData.length };
+}
+
+export async function syncQuickBooksItems(companyId: number, itemsData: Array<{
+  quickbooksItemId: string;
+  name: string;
+  productId?: number;
+  sku?: string;
+  type?: string;
+  description?: string;
+  unitPrice?: string;
+  purchaseCost?: string;
+  quantityOnHand?: string;
+  incomeAccountId?: string;
+  expenseAccountId?: string;
+  assetAccountId?: string;
+  active?: boolean;
+}>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  for (const item of itemsData) {
+    const existing = await db
+      .select()
+      .from(quickbooksItems)
+      .where(
+        and(
+          eq(quickbooksItems.quickbooksItemId, item.quickbooksItemId),
+          eq(quickbooksItems.companyId, companyId)
+        )
+      )
+      .limit(1);
+
+    if (existing.length > 0) {
+      await db
+        .update(quickbooksItems)
+        .set({ ...item, lastSyncedAt: new Date() })
+        .where(eq(quickbooksItems.id, existing[0].id));
+    } else {
+      await db.insert(quickbooksItems).values({
+        companyId,
+        ...item,
+        lastSyncedAt: new Date(),
+      });
+    }
+  }
+
+  return { synced: itemsData.length };
+}
+
+export async function getQuickBooksAccountsByType(companyId: number, classification: string) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(quickbooksAccounts)
+    .where(
+      and(
+        eq(quickbooksAccounts.companyId, companyId),
+        eq(quickbooksAccounts.classification, classification)
+      )
+    )
+    .orderBy(quickbooksAccounts.name);
+}
+
+export async function getQuickBooksAccountMappings(companyId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(quickbooksAccountMappings)
+    .where(eq(quickbooksAccountMappings.companyId, companyId))
+    .orderBy(quickbooksAccountMappings.mappingType);
+}
+
+export async function upsertQuickBooksAccountMapping(data: {
+  companyId: number;
+  mappingType: InsertQuickBooksAccountMapping["mappingType"];
+  quickbooksAccountId: string;
+  erpCategoryName?: string;
+  isDefault?: boolean;
+  notes?: string;
+  createdBy?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const existing = await db
+    .select()
+    .from(quickbooksAccountMappings)
+    .where(
+      and(
+        eq(quickbooksAccountMappings.companyId, data.companyId),
+        eq(quickbooksAccountMappings.mappingType, data.mappingType)
+      )
+    )
+    .limit(1);
+
+  if (existing.length > 0) {
+    await db
+      .update(quickbooksAccountMappings)
+      .set({
+        quickbooksAccountId: data.quickbooksAccountId,
+        erpCategoryName: data.erpCategoryName,
+        isDefault: data.isDefault,
+        notes: data.notes,
+      })
+      .where(eq(quickbooksAccountMappings.id, existing[0].id));
+    return { id: existing[0].id, updated: true };
+  } else {
+    const result = await db.insert(quickbooksAccountMappings).values(data);
+    return { id: result[0].insertId, updated: false };
+  }
+}
+
+// ============================================
+// COGS / PROFITABILITY
+// ============================================
+
+export async function recordCOGSSale(
+  salesOrderId: number,
+  salesOrderLineId: number,
+  productId: number,
+  warehouseId: number,
+  quantitySold: number,
+  revenueAmount: number,
+  freightCostAllocatedVal?: number,
+  customsCostAllocatedVal?: number,
+  insuranceCostAllocatedVal?: number,
+  otherCostAllocatedVal?: number
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Get current average cost from inventory
+  const inv = await db
+    .select({ averageCost: inventory.averageCost })
+    .from(inventory)
+    .where(
+      and(
+        eq(inventory.productId, productId),
+        eq(inventory.warehouseId, warehouseId)
+      )
+    )
+    .limit(1);
+
+  const unitCost = parseFloat(inv[0]?.averageCost ?? "0");
+  const productCost = unitCost * quantitySold;
+  const freight = freightCostAllocatedVal ?? 0;
+  const customs = customsCostAllocatedVal ?? 0;
+  const insurance = insuranceCostAllocatedVal ?? 0;
+  const other = otherCostAllocatedVal ?? 0;
+  const totalCOGS = productCost + freight + customs + insurance + other;
+  const grossProfit = revenueAmount - totalCOGS;
+
+  const txnNumber = `COGS-${Date.now()}`;
+
+  const result = await db.insert(cogsTransactions).values({
+    transactionNumber: txnNumber,
+    salesOrderId,
+    salesOrderLineId,
+    productId,
+    warehouseId,
+    quantitySold: String(quantitySold),
+    unitCost: String(unitCost),
+    productCost: String(productCost),
+    freightCostAllocated: String(freight),
+    customsCostAllocated: String(customs),
+    insuranceCostAllocated: String(insurance),
+    otherCostAllocated: String(other),
+    totalCOGS: String(totalCOGS),
+    revenueAmount: String(revenueAmount),
+    grossProfit: String(grossProfit),
+  });
+
+  return { id: result[0].insertId, totalCOGS, grossProfit };
+}
+
+export async function getCOGSTransactions(filters?: {
+  salesOrderId?: number;
+  productId?: number;
+  startDate?: Date;
+  endDate?: Date;
+}, limit?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.salesOrderId) conditions.push(eq(cogsTransactions.salesOrderId, filters.salesOrderId));
+  if (filters?.productId) conditions.push(eq(cogsTransactions.productId, filters.productId));
+  if (filters?.startDate) conditions.push(gte(cogsTransactions.transactionDate, filters.startDate));
+  if (filters?.endDate) conditions.push(lte(cogsTransactions.transactionDate, filters.endDate));
+
+  let query = db.select().from(cogsTransactions);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  query = query.orderBy(desc(cogsTransactions.transactionDate)) as any;
+  if (limit) query = query.limit(limit) as any;
+  return query;
+}
+
+export async function getProductProfitability(productId?: number, startDate?: Date, endDate?: Date) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (productId) conditions.push(eq(cogsTransactions.productId, productId));
+  if (startDate) conditions.push(gte(cogsTransactions.transactionDate, startDate));
+  if (endDate) conditions.push(lte(cogsTransactions.transactionDate, endDate));
+
+  let query = db
+    .select({
+      productId: cogsTransactions.productId,
+      totalRevenue: sum(cogsTransactions.revenueAmount),
+      totalCOGS: sum(cogsTransactions.totalCOGS),
+      totalGrossProfit: sum(cogsTransactions.grossProfit),
+      transactionCount: count(),
+    })
+    .from(cogsTransactions);
+
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+
+  return query.groupBy(cogsTransactions.productId);
+}
+
+export async function getInventoryValuation(warehouseId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (warehouseId) conditions.push(eq(inventory.warehouseId, warehouseId));
+
+  let query = db
+    .select({
+      productId: inventory.productId,
+      productName: products.name,
+      sku: products.sku,
+      warehouseId: inventory.warehouseId,
+      quantity: inventory.quantity,
+      averageCost: inventory.averageCost,
+      totalValue: sql<string>`SUM(CAST(${inventory.quantity} AS DECIMAL(15,4)) * CAST(${inventory.averageCost} AS DECIMAL(15,4)))`,
+    })
+    .from(inventory)
+    .leftJoin(products, eq(inventory.productId, products.id));
+
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+
+  return query.groupBy(inventory.productId, products.name, products.sku, inventory.warehouseId, inventory.quantity, inventory.averageCost);
+}
+
+export async function allocateFreightCosts(
+  purchaseOrderId: number,
+  shipmentId: number,
+  totalFreightCost: number,
+  totalCustomsDuties: number = 0,
+  totalInsuranceCost: number = 0,
+  totalHandlingFees: number = 0,
+  allocationMethod: "weight" | "volume" | "quantity" | "value" | "manual",
+  userId: number
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Get PO items
+  const poItems = await db
+    .select()
+    .from(purchaseOrderItems)
+    .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
+
+  if (poItems.length === 0) return { allocated: 0 };
+
+  // Calculate total quantity for proportional allocation
+  const totalQuantity = poItems.reduce((acc, item) => acc + parseFloat(item.quantity), 0);
+
+  const allocations = [];
+  for (const item of poItems) {
+    const qty = parseFloat(item.quantity);
+    const proportion = totalQuantity > 0 ? qty / totalQuantity : 0;
+
+    const freightCost = totalFreightCost * proportion;
+    const customsDuties = totalCustomsDuties * proportion;
+    const insuranceCost = totalInsuranceCost * proportion;
+    const handlingFees = totalHandlingFees * proportion;
+    const totalAllocatedCost = freightCost + customsDuties + insuranceCost + handlingFees;
+
+    const result = await db.insert(freightCostAllocations).values({
+      purchaseOrderId,
+      shipmentId,
+      productId: item.productId!,
+      quantity: item.quantity,
+      freightCost: String(freightCost.toFixed(2)),
+      customsDuties: String(customsDuties.toFixed(2)),
+      insuranceCost: String(insuranceCost.toFixed(2)),
+      handlingFees: String(handlingFees.toFixed(2)),
+      totalAllocatedCost: String(totalAllocatedCost.toFixed(2)),
+      allocationMethod,
+      createdBy: userId,
+    });
+    allocations.push({ id: result[0].insertId, productId: item.productId, totalAllocatedCost });
+  }
+
+  return { allocated: allocations.length, allocations };
+}
+
+export async function updateInventoryCostBasis(
+  productId: number,
+  warehouseId: number,
+  receivedQuantity: number,
+  unitCost: number
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Get current inventory record
+  const current = await db
+    .select()
+    .from(inventory)
+    .where(
+      and(
+        eq(inventory.productId, productId),
+        eq(inventory.warehouseId, warehouseId)
+      )
+    )
+    .limit(1);
+
+  if (current.length === 0) {
+    throw new Error(`Inventory record not found for product ${productId} in warehouse ${warehouseId}`);
+  }
+
+  const currentQty = parseFloat(current[0].quantity);
+  const currentAvgCost = parseFloat(current[0].averageCost ?? "0");
+
+  // Weighted average formula: (currentQty * currentAvgCost + receivedQty * unitCost) / (currentQty + receivedQty)
+  const totalQty = currentQty + receivedQuantity;
+  const newAvgCost = totalQty > 0
+    ? (currentQty * currentAvgCost + receivedQuantity * unitCost) / totalQty
+    : unitCost;
+  const newTotalCostBasis = totalQty * newAvgCost;
+
+  await db
+    .update(inventory)
+    .set({
+      averageCost: String(newAvgCost.toFixed(4)),
+      totalCostBasis: String(newTotalCostBasis.toFixed(2)),
+    })
+    .where(eq(inventory.id, current[0].id));
+
+  return { newAverageCost: newAvgCost, newTotalCostBasis };
+}
+
+// ============================================
+// VENDOR NEGOTIATIONS
+// ============================================
+
+export async function getVendorNegotiations(filters?: {
+  companyId?: number;
+  vendorId?: number;
+  status?: string;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(vendorNegotiations.companyId, filters.companyId));
+  if (filters?.vendorId) conditions.push(eq(vendorNegotiations.vendorId, filters.vendorId));
+  if (filters?.status) conditions.push(eq(vendorNegotiations.status, filters.status as any));
+
+  let query = db.select().from(vendorNegotiations);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  return query.orderBy(desc(vendorNegotiations.createdAt));
+}
+
+export async function getVendorNegotiationById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(vendorNegotiations).where(eq(vendorNegotiations.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function getNegotiationRounds(negotiationId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(negotiationRounds)
+    .where(eq(negotiationRounds.negotiationId, negotiationId))
+    .orderBy(asc(negotiationRounds.roundNumber));
+}
+
+export async function updateVendorNegotiation(id: number, data: Partial<InsertVendorNegotiation>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(vendorNegotiations).set(data).where(eq(vendorNegotiations.id, id));
+}
+
+export async function getVendorNegotiationStats(companyId?: number) {
+  const db = await getDb();
+  if (!db) return { total: 0, byStatus: [], averageSavings: 0 };
+
+  const conditions: any[] = [];
+  if (companyId) conditions.push(eq(vendorNegotiations.companyId, companyId));
+
+  // Count by status
+  let statusQuery = db
+    .select({
+      status: vendorNegotiations.status,
+      count: count(),
+    })
+    .from(vendorNegotiations);
+  if (conditions.length > 0) {
+    statusQuery = statusQuery.where(and(...conditions)) as any;
+  }
+  const byStatus = await statusQuery.groupBy(vendorNegotiations.status);
+
+  const total = byStatus.reduce((acc, row) => acc + row.count, 0);
+
+  // Average savings for completed negotiations
+  const completedConditions = [...conditions, eq(vendorNegotiations.status, "completed")];
+  const savingsRows = await db
+    .select({
+      avgSavings: sql<string>`AVG(CAST(${vendorNegotiations.currentPrice} AS DECIMAL(15,2)) - CAST(${vendorNegotiations.bestOffer} AS DECIMAL(15,2)))`,
+    })
+    .from(vendorNegotiations)
+    .where(and(...completedConditions));
+
+  const averageSavings = parseFloat(savingsRows[0]?.avgSavings ?? "0");
+
+  return { total, byStatus, averageSavings };
+}
+
+// ============================================
+// INVENTORY COSTING
+// ============================================
+
+export async function getInventoryCostingConfigs(filters?: {
+  companyId?: number;
+  productId?: number;
+  isActive?: boolean;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(inventoryCostingConfigs.companyId, filters.companyId));
+  if (filters?.productId) conditions.push(eq(inventoryCostingConfigs.productId, filters.productId));
+  if (filters?.isActive !== undefined) conditions.push(eq(inventoryCostingConfigs.isActive, filters.isActive));
+
+  let query = db.select().from(inventoryCostingConfigs);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  return query.orderBy(desc(inventoryCostingConfigs.createdAt));
+}
+
+export async function getInventoryCostingConfigByProduct(productId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db
+    .select()
+    .from(inventoryCostingConfigs)
+    .where(eq(inventoryCostingConfigs.productId, productId))
+    .limit(1);
+  return result[0] || null;
+}
+
+export async function createInventoryCostingConfig(data: InsertInventoryCostingConfig) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(inventoryCostingConfigs).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateInventoryCostingConfig(id: number, data: Partial<InsertInventoryCostingConfig>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(inventoryCostingConfigs).set(data).where(eq(inventoryCostingConfigs.id, id));
+}
+
+export async function getInventoryCostLayers(filters?: {
+  productId?: number;
+  warehouseId?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.productId) conditions.push(eq(inventoryCostLayers.productId, filters.productId));
+  if (filters?.warehouseId) conditions.push(eq(inventoryCostLayers.warehouseId, filters.warehouseId));
+
+  let query = db.select().from(inventoryCostLayers);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  return query.orderBy(desc(inventoryCostLayers.createdAt));
+}
+
+export async function getWeightedAverageCost(productId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const result = await db
+    .select({
+      totalCostValue: sql<string>`SUM(CAST(${inventoryCostLayers.remainingQuantity} AS DECIMAL(15,4)) * CAST(${inventoryCostLayers.unitCost} AS DECIMAL(15,4)))`,
+      totalQuantity: sql<string>`SUM(CAST(${inventoryCostLayers.remainingQuantity} AS DECIMAL(15,4)))`,
+    })
+    .from(inventoryCostLayers)
+    .where(eq(inventoryCostLayers.productId, productId));
+
+  const totalCost = parseFloat(result[0]?.totalCostValue ?? "0");
+  const totalQty = parseFloat(result[0]?.totalQuantity ?? "0");
+
+  if (totalQty === 0) return { weightedAverageCost: 0, totalQuantity: 0 };
+
+  return {
+    weightedAverageCost: totalCost / totalQty,
+    totalQuantity: totalQty,
+  };
+}
+
+export async function getCogsRecords(filters?: {
+  salesOrderId?: number;
+  productId?: number;
+  warehouseId?: number;
+  startDate?: Date;
+  endDate?: Date;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.salesOrderId) conditions.push(eq(cogsTransactions.salesOrderId, filters.salesOrderId));
+  if (filters?.productId) conditions.push(eq(cogsTransactions.productId, filters.productId));
+  if (filters?.warehouseId) conditions.push(eq(cogsTransactions.warehouseId, filters.warehouseId));
+  if (filters?.startDate) conditions.push(gte(cogsTransactions.transactionDate, filters.startDate));
+  if (filters?.endDate) conditions.push(lte(cogsTransactions.transactionDate, filters.endDate));
+
+  let query = db.select().from(cogsTransactions);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  query = query.orderBy(desc(cogsTransactions.transactionDate)) as any;
+  if (filters?.limit) query = query.limit(filters.limit) as any;
+  if (filters?.offset) query = query.offset(filters.offset) as any;
+  return query;
+}
+
+export async function getCogsSummary(filters?: {
+  productId?: number;
+  startDate?: Date;
+  endDate?: Date;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.productId) conditions.push(eq(cogsTransactions.productId, filters.productId));
+  if (filters?.startDate) conditions.push(gte(cogsTransactions.transactionDate, filters.startDate));
+  if (filters?.endDate) conditions.push(lte(cogsTransactions.transactionDate, filters.endDate));
+
+  let query = db
+    .select({
+      productId: cogsTransactions.productId,
+      totalRevenue: sum(cogsTransactions.revenueAmount),
+      totalCOGS: sum(cogsTransactions.totalCOGS),
+      totalProductCost: sum(cogsTransactions.productCost),
+      totalFreightCost: sum(cogsTransactions.freightCostAllocated),
+      totalCustomsCost: sum(cogsTransactions.customsCostAllocated),
+      totalGrossProfit: sum(cogsTransactions.grossProfit),
+      transactionCount: count(),
+    })
+    .from(cogsTransactions);
+
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+
+  return query.groupBy(cogsTransactions.productId);
+}
+
+export async function getCogsDashboardStats(companyId?: number) {
+  const db = await getDb();
+  if (!db) return { totalRevenue: 0, totalCOGS: 0, totalGrossProfit: 0, transactionCount: 0, avgMargin: 0 };
+
+  const result = await db
+    .select({
+      totalRevenue: sum(cogsTransactions.revenueAmount),
+      totalCOGS: sum(cogsTransactions.totalCOGS),
+      totalGrossProfit: sum(cogsTransactions.grossProfit),
+      transactionCount: count(),
+    })
+    .from(cogsTransactions);
+
+  const totalRevenue = parseFloat(result[0]?.totalRevenue ?? "0");
+  const totalCOGS = parseFloat(result[0]?.totalCOGS ?? "0");
+  const totalGrossProfit = parseFloat(result[0]?.totalGrossProfit ?? "0");
+  const transactionCount = result[0]?.transactionCount ?? 0;
+  const avgMargin = totalRevenue > 0 ? (totalGrossProfit / totalRevenue) * 100 : 0;
+
+  return { totalRevenue, totalCOGS, totalGrossProfit, transactionCount, avgMargin };
+}
+
+// ============================================
+// EDI (Electronic Data Interchange)
+// ============================================
+
+export async function getEdiDashboardStats() {
+  const db = await getDb();
+  if (!db) return { totalPartners: 0, activePartners: 0, totalTransactions: 0, transactionsByStatus: {}, recentTransactions: [] };
+
+  const totalPartners = await db.select({ count: count() }).from(ediTradingPartners);
+  const activePartners = await db.select({ count: count() }).from(ediTradingPartners).where(eq(ediTradingPartners.status, 'active'));
+  const totalTransactions = await db.select({ count: count() }).from(ediTransactions);
+
+  const received = await db.select({ count: count() }).from(ediTransactions).where(eq(ediTransactions.status, 'received'));
+  const processing = await db.select({ count: count() }).from(ediTransactions).where(eq(ediTransactions.status, 'processing'));
+  const processed = await db.select({ count: count() }).from(ediTransactions).where(eq(ediTransactions.status, 'processed'));
+  const errorCount = await db.select({ count: count() }).from(ediTransactions).where(eq(ediTransactions.status, 'error'));
+  const acknowledged = await db.select({ count: count() }).from(ediTransactions).where(eq(ediTransactions.status, 'acknowledged'));
+
+  const recentTransactions = await db.select().from(ediTransactions).orderBy(desc(ediTransactions.createdAt)).limit(10);
+
+  return {
+    totalPartners: totalPartners[0]?.count || 0,
+    activePartners: activePartners[0]?.count || 0,
+    totalTransactions: totalTransactions[0]?.count || 0,
+    transactionsByStatus: {
+      received: received[0]?.count || 0,
+      processing: processing[0]?.count || 0,
+      processed: processed[0]?.count || 0,
+      error: errorCount[0]?.count || 0,
+      acknowledged: acknowledged[0]?.count || 0,
+    },
+    recentTransactions,
+  };
+}
+
+export async function getEdiTradingPartners(filters?: { companyId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(ediTradingPartners);
+  if (filters?.companyId) {
+    query = query.where(eq(ediTradingPartners.companyId, filters.companyId)) as any;
+  }
+  return query.orderBy(desc(ediTradingPartners.createdAt));
+}
+
+export async function getEdiTradingPartnerById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(ediTradingPartners).where(eq(ediTradingPartners.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function createEdiTradingPartner(data: typeof ediTradingPartners.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediTradingPartners).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEdiTradingPartner(id: number, data: Partial<typeof ediTradingPartners.$inferInsert>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediTradingPartners).set(data).where(eq(ediTradingPartners.id, id));
+}
+
+export async function deleteEdiTradingPartner(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(ediTradingPartners).where(eq(ediTradingPartners.id, id));
+}
+
+export async function getEdiDocumentMaps(tradingPartnerId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(ediDocumentMaps);
+  if (tradingPartnerId) {
+    query = query.where(eq(ediDocumentMaps.tradingPartnerId, tradingPartnerId)) as any;
+  }
+  return query.orderBy(desc(ediDocumentMaps.createdAt));
+}
+
+export async function getEdiDocumentMapById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(ediDocumentMaps).where(eq(ediDocumentMaps.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function createEdiDocumentMap(data: typeof ediDocumentMaps.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediDocumentMaps).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEdiDocumentMap(id: number, data: Partial<typeof ediDocumentMaps.$inferInsert>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediDocumentMaps).set(data).where(eq(ediDocumentMaps.id, id));
+}
+
+export async function getEdiTransactions(filters?: { tradingPartnerId?: number; status?: string; direction?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.tradingPartnerId) {
+    conditions.push(eq(ediTransactions.tradingPartnerId, filters.tradingPartnerId));
+  }
+  if (filters?.status) {
+    conditions.push(eq(ediTransactions.status, filters.status as any));
+  }
+  if (filters?.direction) {
+    conditions.push(eq(ediTransactions.direction, filters.direction as any));
+  }
+  let query = db.select().from(ediTransactions);
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+  return query.orderBy(desc(ediTransactions.createdAt));
+}
+
+export async function getEdiTransactionById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(ediTransactions).where(eq(ediTransactions.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function getEdiTransactionWithItems(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const transaction = await db.select().from(ediTransactions).where(eq(ediTransactions.id, id)).limit(1);
+  if (!transaction[0]) return null;
+  const items = await db.select().from(ediTransactionItems).where(eq(ediTransactionItems.transactionId, id)).orderBy(asc(ediTransactionItems.lineNumber));
+  return { ...transaction[0], items };
+}
+
+export async function getEdiProductCrosswalks(tradingPartnerId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(ediProductCrosswalks);
+  if (tradingPartnerId) {
+    query = query.where(eq(ediProductCrosswalks.tradingPartnerId, tradingPartnerId)) as any;
+  }
+  return query.orderBy(desc(ediProductCrosswalks.createdAt));
+}
+
+export async function createEdiProductCrosswalk(data: typeof ediProductCrosswalks.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediProductCrosswalks).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEdiProductCrosswalk(id: number, data: Partial<typeof ediProductCrosswalks.$inferInsert>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediProductCrosswalks).set(data).where(eq(ediProductCrosswalks.id, id));
+}
+
+export async function deleteEdiProductCrosswalk(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(ediProductCrosswalks).where(eq(ediProductCrosswalks.id, id));
+}
+
+export async function getEdiShipToLocations(tradingPartnerId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(ediShipToLocations);
+  if (tradingPartnerId) {
+    query = query.where(eq(ediShipToLocations.tradingPartnerId, tradingPartnerId)) as any;
+  }
+  return query.orderBy(desc(ediShipToLocations.createdAt));
+}
+
+export async function createEdiShipToLocation(data: typeof ediShipToLocations.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediShipToLocations).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEdiShipToLocation(id: number, data: Partial<typeof ediShipToLocations.$inferInsert>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediShipToLocations).set(data).where(eq(ediShipToLocations.id, id));
+}
+
+export async function getEdiSettings(companyId?: number) {
+  const db = await getDb();
+  if (!db) return null;
+  let query = db.select().from(ediSettings);
+  if (companyId) {
+    query = query.where(eq(ediSettings.companyId, companyId)) as any;
+  }
+  const result = await query.limit(1);
+  return result[0] || null;
+}
+
+export async function upsertEdiSettings(data: typeof ediSettings.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = data.companyId ? await getEdiSettings(data.companyId) : null;
+  if (existing) {
+    await db.update(ediSettings).set({ ...data, updatedAt: new Date() }).where(eq(ediSettings.id, existing.id));
+    return { id: existing.id, updated: true };
+  }
+  const result = await db.insert(ediSettings).values(data);
+  return { id: result[0].insertId, updated: false };
+}
+
+export async function getNextControlNumber(tradingPartnerId: number, type: "isa" | "gs" | "st") {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Try to find existing record
+  const existing = await db.select().from(ediControlNumbers)
+    .where(and(eq(ediControlNumbers.tradingPartnerId, tradingPartnerId), eq(ediControlNumbers.type, type)))
+    .limit(1);
+
+  if (existing[0]) {
+    const nextNumber = (existing[0].lastControlNumber || 0) + 1;
+    await db.update(ediControlNumbers)
+      .set({ lastControlNumber: nextNumber, updatedAt: new Date() })
+      .where(eq(ediControlNumbers.id, existing[0].id));
+    return nextNumber;
+  }
+
+  // Create new record starting at 1
+  await db.insert(ediControlNumbers).values({
+    tradingPartnerId,
+    type,
+    lastControlNumber: 1,
+  });
+  return 1;
+}
+
+export async function getEdiComplianceScorecards(tradingPartnerId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(ediComplianceScorecards);
+  if (tradingPartnerId) {
+    query = query.where(eq(ediComplianceScorecards.tradingPartnerId, tradingPartnerId)) as any;
+  }
+  return query.orderBy(desc(ediComplianceScorecards.createdAt));
+}
+
+export async function createEdiComplianceScorecard(data: typeof ediComplianceScorecards.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediComplianceScorecards).values(data);
+  return { id: result[0].insertId };
 }
 

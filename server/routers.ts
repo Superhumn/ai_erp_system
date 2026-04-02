@@ -10849,7 +10849,7 @@ Ask if they received the original request and if they can provide a quote.`;
           try {
             // Get Google OAuth token for the user configured for sync (or current user as fallback)
             const syncUserId = config.syncUserId || ctx.user.id;
-            const token = await db.getGoogleOAuthTokenByUserId(syncUserId);
+            const token = await db.getGoogleOAuthToken(syncUserId);
             if (!token) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected. Please connect your Google account first.' });
             }
@@ -10910,7 +10910,7 @@ Ask if they received the original request and if they can provide a quote.`;
       listDriveFolders: protectedProcedure
         .input(z.object({ parentId: z.string().optional() }))
         .query(async ({ input, ctx }) => {
-          const token = await db.getGoogleOAuthTokenByUserId(ctx.user.id);
+          const token = await db.getGoogleOAuthToken(ctx.user.id);
           if (!token) {
             throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected' });
           }
