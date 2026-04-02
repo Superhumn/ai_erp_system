@@ -42,6 +42,12 @@ export const ENV = {
   twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER ?? "",
   // Airtable integration
   airtablePersonalAccessToken: process.env.AIRTABLE_PERSONAL_ACCESS_TOKEN ?? "",
+  // Messaging Gateway
+  twilioWhatsappNumber: process.env.TWILIO_WHATSAPP_NUMBER ?? "",
+  twilioWebhookSecret: process.env.TWILIO_WEBHOOK_SECRET ?? "",
+  googleChatWebhookToken: process.env.GOOGLE_CHAT_WEBHOOK_TOKEN ?? "",
+  googleChatServiceAccountKey: process.env.GOOGLE_CHAT_SERVICE_ACCOUNT_KEY ?? "",
+  googleChatProjectId: process.env.GOOGLE_CHAT_PROJECT_ID ?? "",
 };
 
 /**

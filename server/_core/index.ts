@@ -16,6 +16,7 @@ import * as db from "../db";
 import { startEmailQueueWorker } from "../emailQueueWorker";
 import { startOrchestrator } from "../supplyChainOrchestrator";
 import { startScheduler } from "../aiAgentScheduler";
+import { registerMessagingWebhooks } from "../messagingWebhooks";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -114,6 +115,9 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   // Auth routes (login, register)
   registerOAuthRoutes(app);
+
+  // Messaging webhook routes (SMS, WhatsApp, Google Chat)
+  registerMessagingWebhooks(app);
 
   // Health check endpoint
   app.get('/api/health', (_req, res) => {

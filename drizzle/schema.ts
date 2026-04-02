@@ -4736,6 +4736,83 @@ export const firefliesMeetings = mysqlTable("fireflies_meetings", {
 export type FirefliesMeeting = typeof firefliesMeetings.$inferSelect;
 export type InsertFirefliesMeeting = typeof firefliesMeetings.$inferInsert;
 
+// ============================================
+// MESSAGING GATEWAY - Natural Language Messaging
+// ============================================
+
+// Messaging channel configurations (per-company)
+export const messagingChannels = mysqlTable("messaging_channels", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
+  channel: mysqlEnum("channel", ["sms", "whatsapp", "google_chat"]).notNull(),
+  isEnabled: boolean("isEnabled").default(true),
+  // Channel-specific config (JSON): phone numbers, webhook URLs, bot tokens, etc.
+  config: text("config"),
+  // Mapping: which phone/chat ID maps to which user
+  defaultUserId: int("defaultUserId").references(() => users.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type MessagingChannel = typeof messagingChannels.$inferSelect;
+export type InsertMessagingChannel = typeof messagingChannels.$inferInsert;
+
+// Inbound/outbound message log for all NL messaging channels
+export const messagingLogs = mysqlTable("messaging_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
+  userId: int("userId").references(() => users.id),
+  channel: mysqlEnum("channel", ["sms", "whatsapp", "google_chat"]).notNull(),
+  direction: mysqlEnum("direction", ["inbound", "outbound"]).notNull(),
+
+  // Sender/recipient identifiers
+  senderIdentifier: varchar("senderIdentifier", { length: 255 }).notNull(), // phone number, chat space ID, etc.
+  recipientIdentifier: varchar("recipientIdentifier", { length: 255 }),
+
+  // Message content
+  rawMessage: text("rawMessage").notNull(),
+  // AI interpretation results
+  interpretedIntent: varchar("interpretedIntent", { length: 128 }),  // e.g. "create_po", "check_inventory", "get_invoice_status"
+  interpretedEntities: text("interpretedEntities"), // JSON of extracted entities
+  aiResponse: text("aiResponse"), // The AI-generated response sent back
+  confidence: decimal("confidence", { precision: 5, scale: 4 }),
+
+  // Execution tracking
+  agentRunId: int("agentRunId"),
+  actionTaken: text("actionTaken"), // Summary of what the system did
+  actionSuccess: boolean("actionSuccess"),
+  errorMessage: text("errorMessage"),
+
+  // External message IDs
+  externalMessageId: varchar("externalMessageId", { length: 255 }),
+  conversationId: varchar("conversationId", { length: 255 }),
+
+  // Metadata
+  metadata: text("metadata"), // JSON
+  processedAt: timestamp("processedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type MessagingLog = typeof messagingLogs.$inferSelect;
+export type InsertMessagingLog = typeof messagingLogs.$inferInsert;
+
+// Phone/chat identity to user mapping
+export const messagingIdentities = mysqlTable("messaging_identities", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").references(() => companies.id),
+  userId: int("userId").notNull().references(() => users.id),
+  channel: mysqlEnum("channel", ["sms", "whatsapp", "google_chat"]).notNull(),
+  identifier: varchar("identifier", { length: 255 }).notNull(), // phone number or chat user ID
+  displayName: varchar("displayName", { length: 255 }),
+  isVerified: boolean("isVerified").default(false),
+  isActive: boolean("isActive").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type MessagingIdentity = typeof messagingIdentities.$inferSelect;
+export type InsertMessagingIdentity = typeof messagingIdentities.$inferInsert;
+
 // Fireflies integration config (per-company)
 export const firefliesConfigs = mysqlTable("fireflies_configs", {
   id: int("id").autoincrement().primaryKey(),

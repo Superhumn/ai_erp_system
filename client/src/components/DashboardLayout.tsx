@@ -160,6 +160,7 @@ const menuGroups = [
     items: [
       { icon: Users, label: "Team", path: "/settings/team" },
       { icon: Plug, label: "Integrations", path: "/settings/integrations" },
+      { icon: MessageSquare, label: "Messaging", path: "/settings/messaging" },
       { icon: Mic, label: "Fireflies", path: "/settings/fireflies" },
       { icon: FileSpreadsheet, label: "Import Data", path: "/import" },
       { icon: Settings, label: "Settings", path: "/settings" },

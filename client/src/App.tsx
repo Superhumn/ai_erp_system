@@ -97,6 +97,7 @@ import TransactionalEmails from "./pages/settings/TransactionalEmails";
 import Fireflies from "./pages/settings/Fireflies";
 import QuickBooksIntegration from "./pages/settings/QuickBooksIntegration";
 import ShopifySettings from "./pages/settings/ShopifySettings";
+import Messaging from "./pages/settings/Messaging";
 
 // Projects
 import Projects from "./pages/projects/Projects";
@@ -155,6 +156,7 @@ function Router() {
         <Route path="/settings/fireflies" component={Fireflies} />
         <Route path="/settings/quickbooks" component={QuickBooksIntegration} />
         <Route path="/settings/shopify" component={ShopifySettings} />
+        <Route path="/settings/messaging" component={Messaging} />
 
         {/* Finance */}
         <Route path="/finance/accounts" component={Accounts} />

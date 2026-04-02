@@ -30,6 +30,7 @@ import { listTranscripts, getTranscript, extractParticipants, parseActionItems, 
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
 import { purchaseOrderTextEndpoints, shipmentTextEndpoints, paymentTextEndpoints, workOrderTextEndpoints, inventoryTextEndpoints } from "./naturalLanguageRouterExtensions";
+import { messagingRouter } from "./messagingRouter";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -191,6 +192,9 @@ export const appRouter = router({
 
   // Reasoning Agent
   agent: agentRouter,
+
+  // Natural Language Messaging Gateway (SMS / WhatsApp / Google Chat)
+  messaging: messagingRouter,
 
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),

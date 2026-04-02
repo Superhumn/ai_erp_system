@@ -99,6 +99,9 @@ import {
   InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
   // Fireflies meetings
   firefliesMeetings, firefliesConfigs,
+  // Messaging gateway
+  messagingChannels, messagingLogs, messagingIdentities,
+  InsertMessagingChannel, InsertMessagingLog, InsertMessagingIdentity,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -9338,5 +9341,141 @@ export async function getFirefliesMeetingStats() {
     pending: pending[0]?.count || 0,
     processed: processed[0]?.count || 0,
   };
+}
+
+// ============================================
+// MESSAGING GATEWAY
+// ============================================
+
+export async function getMessagingChannels(filters?: { companyId?: number; channel?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(messagingChannels);
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(messagingChannels.companyId, filters.companyId));
+  if (filters?.channel) conditions.push(eq(messagingChannels.channel, filters.channel as any));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query;
+}
+
+export async function upsertMessagingChannel(data: InsertMessagingChannel) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // Check for existing
+  const conditions = [eq(messagingChannels.channel, data.channel)];
+  if (data.companyId) conditions.push(eq(messagingChannels.companyId, data.companyId));
+  const existing = await db.select().from(messagingChannels).where(and(...conditions)).limit(1);
+  if (existing.length > 0) {
+    await db.update(messagingChannels).set(data).where(eq(messagingChannels.id, existing[0].id));
+    return existing[0].id;
+  }
+  const result = await db.insert(messagingChannels).values(data);
+  return result[0].insertId;
+}
+
+export async function updateMessagingChannel(id: number, data: Partial<InsertMessagingChannel>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(messagingChannels).set(data).where(eq(messagingChannels.id, id));
+}
+
+export async function createMessagingLog(data: InsertMessagingLog) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(messagingLogs).values(data);
+  return result[0].insertId;
+}
+
+export async function getMessagingLogs(filters?: {
+  companyId?: number;
+  channel?: string;
+  senderIdentifier?: string;
+  direction?: string;
+  actionTaken?: string;
+  limit?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(messagingLogs).orderBy(desc(messagingLogs.createdAt));
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(messagingLogs.companyId, filters.companyId));
+  if (filters?.channel) conditions.push(eq(messagingLogs.channel, filters.channel as any));
+  if (filters?.senderIdentifier) conditions.push(eq(messagingLogs.senderIdentifier, filters.senderIdentifier));
+  if (filters?.direction) conditions.push(eq(messagingLogs.direction, filters.direction as any));
+  if (filters?.actionTaken) conditions.push(eq(messagingLogs.actionTaken, filters.actionTaken));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.limit(filters?.limit || 50);
+}
+
+export async function getMessagingLogStats(companyId?: number) {
+  const db = await getDb();
+  if (!db) return { total: 0, successful: 0, failed: 0, byChannel: {} };
+  const conditions = companyId ? [eq(messagingLogs.companyId, companyId)] : [];
+  const total = await db.select({ count: count() }).from(messagingLogs).where(conditions.length ? and(...conditions) : undefined);
+  const successful = await db.select({ count: count() }).from(messagingLogs).where(
+    and(...conditions, eq(messagingLogs.actionSuccess, true))
+  );
+  const failed = await db.select({ count: count() }).from(messagingLogs).where(
+    and(...conditions, eq(messagingLogs.actionSuccess, false))
+  );
+  return {
+    total: total[0]?.count || 0,
+    successful: successful[0]?.count || 0,
+    failed: failed[0]?.count || 0,
+  };
+}
+
+export async function getMessagingIdentities(filters?: {
+  companyId?: number;
+  userId?: number;
+  channel?: string;
+  identifier?: string;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  let query = db.select().from(messagingIdentities);
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(messagingIdentities.companyId, filters.companyId));
+  if (filters?.userId) conditions.push(eq(messagingIdentities.userId, filters.userId));
+  if (filters?.channel) conditions.push(eq(messagingIdentities.channel, filters.channel as any));
+  if (filters?.identifier) conditions.push(eq(messagingIdentities.identifier, filters.identifier));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query;
+}
+
+export async function upsertMessagingIdentity(data: InsertMessagingIdentity) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = await db.select().from(messagingIdentities)
+    .where(and(
+      eq(messagingIdentities.channel, data.channel),
+      eq(messagingIdentities.identifier, data.identifier),
+    )).limit(1);
+  if (existing.length > 0) {
+    await db.update(messagingIdentities).set(data).where(eq(messagingIdentities.id, existing[0].id));
+    return existing[0].id;
+  }
+  const result = await db.insert(messagingIdentities).values(data);
+  return result[0].insertId;
+}
+
+export async function deleteMessagingIdentity(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(messagingIdentities).where(eq(messagingIdentities.id, id));
+}
+
+export async function getUserByPhone(phone: string) {
+  const db = await getDb();
+  if (!db) return null;
+  // Normalize phone for matching (strip spaces, dashes)
+  const normalized = phone.replace(/[\s\-()]/g, "");
+  const result = await db.select().from(users).where(
+    or(
+      eq(users.phone as any, phone),
+      eq(users.phone as any, normalized),
+    )
+  ).limit(1);
+  return result[0] || null;
 }
 
