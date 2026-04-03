@@ -241,7 +241,81 @@ function consumeLayers(
 }
 
 /**
- * Main entry point: Calculate and record COGS for a sale
+ * Weighted average layer consumption using pre-fetched (and locked) layers.
+ * Distributes the quantity to sell proportionally across all active layers
+ * using the weighted average unit cost.
+ */
+function consumeLayersWeightedAverage(
+  layers: any[],
+  quantityToSell: number
+): CogsCalculationResult {
+  const totalQuantity = layers.reduce(
+    (sum, l) => sum + parseFloat(l.remainingQuantity),
+    0
+  );
+  if (totalQuantity < quantityToSell) {
+    throw new Error(
+      `Insufficient inventory. Available: ${totalQuantity}, Requested: ${quantityToSell}`
+    );
+  }
+
+  const totalValue = layers.reduce(
+    (sum, l) => sum + parseFloat(l.remainingQuantity) * parseFloat(l.unitCost),
+    0
+  );
+  const unitCogs = totalQuantity > 0 ? totalValue / totalQuantity : 0;
+  const totalCogs = unitCogs * quantityToSell;
+
+  const sellFraction = quantityToSell / totalQuantity;
+  const breakdown: CostLayerConsumption[] = [];
+  const remainingLayers: { layerId: number; remainingQuantity: number }[] = [];
+  let remainingToAllocate = quantityToSell;
+
+  for (let index = 0; index < layers.length; index++) {
+    const layer = layers[index];
+    const layerQty = parseFloat(layer.remainingQuantity);
+
+    if (remainingToAllocate <= 0) {
+      if (layerQty > 0) {
+        remainingLayers.push({ layerId: layer.id, remainingQuantity: layerQty });
+      }
+      continue;
+    }
+
+    let consumed = layerQty * sellFraction;
+    if (consumed > layerQty) consumed = layerQty;
+    if (consumed > remainingToAllocate) consumed = remainingToAllocate;
+    if (index === layers.length - 1) consumed = Math.min(layerQty, remainingToAllocate);
+    if (consumed < 0) consumed = 0;
+
+    const leftover = layerQty - consumed;
+
+    if (consumed > 0) {
+      breakdown.push({
+        layerId: layer.id,
+        quantityConsumed: consumed,
+        unitCost: unitCogs,
+        totalCost: consumed * unitCogs,
+      });
+    }
+
+    if (leftover > 0) {
+      remainingLayers.push({ layerId: layer.id, remainingQuantity: leftover });
+    }
+
+    remainingToAllocate -= consumed;
+  }
+
+  return { totalCogs, unitCogs, layerBreakdown: breakdown, remainingLayers };
+}
+
+/**
+ * Main entry point: Calculate and record COGS for a sale.
+ *
+ * All layer reads, layer updates, and the COGS insert are wrapped in a
+ * single database transaction with SELECT … FOR UPDATE row-level locking.
+ * This prevents concurrent calls from over-consuming the same cost layers
+ * (which would cause negative remaining quantities and incorrect COGS).
  */
 export async function recordCogs(params: {
   companyId?: number;
@@ -253,71 +327,88 @@ export async function recordCogs(params: {
   unitRevenue?: number;
   calculatedBy?: number;
 }): Promise<{ cogsRecordId: number; totalCogs: number; unitCogs: number; grossMargin: number | null }> {
-  // Get costing method for this product
+  // Fetch costing config outside the transaction (read-only, no locking needed)
   const config = await db.getInventoryCostingConfigByProduct(params.productId);
   const method: CostingMethod = config?.costingMethod || "weighted_average";
 
-  // Calculate COGS based on method, filtering by warehouse if provided
-  let result: CogsCalculationResult;
-  switch (method) {
-    case "fifo":
-      result = await calculateFifoCogs(params.productId, params.quantitySold, params.warehouseId);
-      break;
-    case "lifo":
-      result = await calculateLifoCogs(params.productId, params.quantitySold, params.warehouseId);
-      break;
-    case "weighted_average":
-    default:
-      result = await calculateWeightedAverageCogs(params.productId, params.quantitySold, params.warehouseId);
-      break;
-  }
+  return db.dbTransaction(async (tx) => {
+    // Lock the relevant cost layer rows for the duration of the transaction.
+    // Using FOR UPDATE prevents concurrent recordCogs calls from reading the
+    // same layers and over-consuming them before any update is committed.
+    const lockedLayers = await db.getActiveCostLayersForUpdate(
+      params.productId,
+      method === "lifo" ? "desc" : "asc",
+      params.warehouseId,
+      tx,
+    );
 
-  // Update consumed cost layers
-  for (const consumed of result.layerBreakdown) {
-    const layer = result.remainingLayers.find((l) => l.layerId === consumed.layerId);
-    const newRemaining = layer?.remainingQuantity ?? 0;
-    await db.updateInventoryCostLayer(consumed.layerId, {
-      remainingQuantity: newRemaining.toFixed(4),
-      status: newRemaining <= 0 ? "depleted" : "active",
-    });
-  }
+    // Calculate COGS in-memory using the locked layer snapshot
+    let result: CogsCalculationResult;
+    switch (method) {
+      case "fifo":
+      case "lifo":
+        result = consumeLayers(lockedLayers, params.quantitySold);
+        break;
+      case "weighted_average":
+      default:
+        result = consumeLayersWeightedAverage(lockedLayers, params.quantitySold);
+        break;
+    }
 
-  // Calculate margin
-  const totalRevenue = params.unitRevenue
-    ? params.unitRevenue * params.quantitySold
-    : null;
-  const grossMargin = totalRevenue !== null ? totalRevenue - result.totalCogs : null;
-  const grossMarginPercent =
-    totalRevenue !== null && totalRevenue > 0
-      ? (grossMargin! / totalRevenue) * 100
+    // Update each consumed cost layer within the same transaction
+    for (const consumed of result.layerBreakdown) {
+      const layer = result.remainingLayers.find((l) => l.layerId === consumed.layerId);
+      const newRemaining = layer?.remainingQuantity ?? 0;
+      await db.updateInventoryCostLayer(
+        consumed.layerId,
+        {
+          remainingQuantity: newRemaining.toFixed(4),
+          status: newRemaining <= 0 ? "depleted" : "active",
+        },
+        tx,
+      );
+    }
+
+    // Calculate gross margin
+    const totalRevenue = params.unitRevenue
+      ? params.unitRevenue * params.quantitySold
       : null;
+    const grossMargin = totalRevenue !== null ? totalRevenue - result.totalCogs : null;
+    const grossMarginPercent =
+      totalRevenue !== null && totalRevenue > 0
+        ? (grossMargin! / totalRevenue) * 100
+        : null;
 
-  // Create COGS record
-  const cogsResult = await db.createCogsRecord({
-    companyId: params.companyId,
-    productId: params.productId,
-    warehouseId: params.warehouseId,
-    orderId: params.orderId,
-    salesOrderLineId: params.salesOrderLineId,
-    costingMethod: method,
-    quantitySold: params.quantitySold.toString(),
-    unitCogs: result.unitCogs.toFixed(4),
-    totalCogs: result.totalCogs.toFixed(2),
-    unitRevenue: params.unitRevenue?.toFixed(2),
-    totalRevenue: totalRevenue?.toFixed(2),
-    grossMargin: grossMargin?.toFixed(2),
-    grossMarginPercent: grossMarginPercent?.toFixed(4),
-    periodDate: new Date(),
-    layerBreakdown: JSON.stringify(result.layerBreakdown),
-    calculatedBy: params.calculatedBy,
+    // Insert the COGS record within the same transaction
+    const cogsResult = await db.createCogsRecord(
+      {
+        companyId: params.companyId,
+        productId: params.productId,
+        warehouseId: params.warehouseId,
+        orderId: params.orderId,
+        salesOrderLineId: params.salesOrderLineId,
+        costingMethod: method,
+        quantitySold: params.quantitySold.toString(),
+        unitCogs: result.unitCogs.toFixed(4),
+        totalCogs: result.totalCogs.toFixed(2),
+        unitRevenue: params.unitRevenue?.toFixed(2),
+        totalRevenue: totalRevenue?.toFixed(2),
+        grossMargin: grossMargin?.toFixed(2),
+        grossMarginPercent: grossMarginPercent?.toFixed(4),
+        periodDate: new Date(),
+        layerBreakdown: JSON.stringify(result.layerBreakdown),
+        calculatedBy: params.calculatedBy,
+      },
+      tx,
+    );
+
+    return {
+      cogsRecordId: cogsResult.id,
+      totalCogs: result.totalCogs,
+      unitCogs: result.unitCogs,
+      grossMargin,
+    };
   });
-
-  return {
-    cogsRecordId: cogsResult.id,
-    totalCogs: result.totalCogs,
-    unitCogs: result.unitCogs,
-    grossMargin,
-  };
 }
 
 /**

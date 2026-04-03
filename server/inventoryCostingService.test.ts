@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock the database module
 vi.mock('./db', () => ({
   getActiveCostLayers: vi.fn(),
+  getActiveCostLayersForUpdate: vi.fn(),
   getWeightedAverageCost: vi.fn(),
   updateInventoryCostLayer: vi.fn(),
   createCogsRecord: vi.fn(),
@@ -12,6 +13,8 @@ vi.mock('./db', () => ({
   getCogsPeriodSummaries: vi.fn(),
   createCogsPeriodSummaryRecord: vi.fn(),
   updateCogsPeriodSummaryRecord: vi.fn(),
+  // dbTransaction: executes the callback synchronously with a fake tx object
+  dbTransaction: vi.fn().mockImplementation(async (fn: (tx: any) => Promise<any>) => fn({})),
 }));
 
 // Import after mocking
@@ -252,7 +255,7 @@ describe('Inventory Costing Service', () => {
           status: 'active',
         },
       ];
-      vi.mocked(db.getActiveCostLayers).mockResolvedValue(mockLayers as any);
+      vi.mocked(db.getActiveCostLayersForUpdate).mockResolvedValue(mockLayers as any);
       vi.mocked(db.getInventoryCostingConfigByProduct).mockResolvedValue({
         id: 1,
         productId: 100,
@@ -268,10 +271,11 @@ describe('Inventory Costing Service', () => {
 
       expect(result.totalCogs).toBe(300);
       expect(result.grossMargin).toBe(300);
-      expect(db.updateInventoryCostLayer).toHaveBeenCalledWith(1, {
-        remainingQuantity: '20.0000', // 50 - 30
-        status: 'active',
-      });
+      expect(db.updateInventoryCostLayer).toHaveBeenCalledWith(
+        1,
+        { remainingQuantity: '20.0000', status: 'active' },
+        expect.anything(), // tx object
+      );
       expect(db.createCogsRecord).toHaveBeenCalled();
     });
 
@@ -286,7 +290,7 @@ describe('Inventory Costing Service', () => {
           status: 'active',
         },
       ];
-      vi.mocked(db.getActiveCostLayers).mockResolvedValue(mockLayers as any);
+      vi.mocked(db.getActiveCostLayersForUpdate).mockResolvedValue(mockLayers as any);
       vi.mocked(db.getInventoryCostingConfigByProduct).mockResolvedValue({
         id: 1,
         productId: 100,
@@ -300,10 +304,11 @@ describe('Inventory Costing Service', () => {
         unitRevenue: 20,
       });
 
-      expect(db.updateInventoryCostLayer).toHaveBeenCalledWith(1, {
-        remainingQuantity: '0.0000',
-        status: 'depleted',
-      });
+      expect(db.updateInventoryCostLayer).toHaveBeenCalledWith(
+        1,
+        { remainingQuantity: '0.0000', status: 'depleted' },
+        expect.anything(), // tx object
+      );
     });
 
     it('should use default weighted_average when no costing config exists', async () => {
@@ -317,12 +322,7 @@ describe('Inventory Costing Service', () => {
           status: 'active',
         },
       ];
-      vi.mocked(db.getWeightedAverageCost).mockResolvedValue({
-        averageCost: 10,
-        totalQuantity: 50,
-        totalValue: 500,
-      } as any);
-      vi.mocked(db.getActiveCostLayers).mockResolvedValue(mockLayers as any);
+      vi.mocked(db.getActiveCostLayersForUpdate).mockResolvedValue(mockLayers as any);
       vi.mocked(db.getInventoryCostingConfigByProduct).mockResolvedValue(null);
       vi.mocked(db.createCogsRecord).mockResolvedValue({ id: 1 } as any);
 
@@ -333,6 +333,44 @@ describe('Inventory Costing Service', () => {
 
       expect(result.totalCogs).toBe(300);
       expect(db.createCogsRecord).toHaveBeenCalled();
+    });
+
+    it('should execute layer reads, updates and COGS insert within a single transaction', async () => {
+      const mockLayers = [
+        {
+          id: 1,
+          productId: 100,
+          remainingQuantity: '50',
+          unitCost: '10.00',
+          layerDate: new Date('2026-01-01'),
+          status: 'active',
+        },
+      ];
+      vi.mocked(db.getActiveCostLayersForUpdate).mockResolvedValue(mockLayers as any);
+      vi.mocked(db.getInventoryCostingConfigByProduct).mockResolvedValue({
+        id: 1,
+        productId: 100,
+        costingMethod: 'fifo',
+      } as any);
+      vi.mocked(db.createCogsRecord).mockResolvedValue({ id: 1 } as any);
+
+      await recordCogs({ productId: 100, quantitySold: 10 });
+
+      // Verify that the transaction wrapper was used
+      expect(db.dbTransaction).toHaveBeenCalledOnce();
+      // Verify that the locked read (FOR UPDATE) was used instead of the plain read
+      expect(db.getActiveCostLayersForUpdate).toHaveBeenCalledOnce();
+      expect(db.getActiveCostLayers).not.toHaveBeenCalled();
+      // Verify that the layer update and COGS insert were called with a tx argument
+      expect(db.updateInventoryCostLayer).toHaveBeenCalledWith(
+        expect.any(Number),
+        expect.any(Object),
+        expect.anything(), // tx object
+      );
+      expect(db.createCogsRecord).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.anything(), // tx object
+      );
     });
   });
 
@@ -348,7 +386,7 @@ describe('Inventory Costing Service', () => {
           status: 'active',
         },
       ];
-      vi.mocked(db.getActiveCostLayers).mockResolvedValue(mockLayers as any);
+      vi.mocked(db.getActiveCostLayersForUpdate).mockResolvedValue(mockLayers as any);
       vi.mocked(db.getInventoryCostingConfigByProduct).mockResolvedValue({
         id: 1,
         productId: 100,
