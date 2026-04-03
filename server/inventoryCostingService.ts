@@ -272,16 +272,6 @@ export async function recordCogs(params: {
       break;
   }
 
-  // Update consumed cost layers
-  for (const consumed of result.layerBreakdown) {
-    const layer = result.remainingLayers.find((l) => l.layerId === consumed.layerId);
-    const newRemaining = layer?.remainingQuantity ?? 0;
-    await db.updateInventoryCostLayer(consumed.layerId, {
-      remainingQuantity: newRemaining.toFixed(4),
-      status: newRemaining <= 0 ? "depleted" : "active",
-    });
-  }
-
   // Calculate margin
   const totalRevenue = params.unitRevenue
     ? params.unitRevenue * params.quantitySold
@@ -292,24 +282,38 @@ export async function recordCogs(params: {
       ? (grossMargin! / totalRevenue) * 100
       : null;
 
-  // Create COGS record
-  const cogsResult = await db.createCogsRecord({
-    companyId: params.companyId,
-    productId: params.productId,
-    warehouseId: params.warehouseId,
-    orderId: params.orderId,
-    salesOrderLineId: params.salesOrderLineId,
-    costingMethod: method,
-    quantitySold: params.quantitySold.toString(),
-    unitCogs: result.unitCogs.toFixed(4),
-    totalCogs: result.totalCogs.toFixed(2),
-    unitRevenue: params.unitRevenue?.toFixed(2),
-    totalRevenue: totalRevenue?.toFixed(2),
-    grossMargin: grossMargin?.toFixed(2),
-    grossMarginPercent: grossMarginPercent?.toFixed(4),
-    periodDate: new Date(),
-    layerBreakdown: JSON.stringify(result.layerBreakdown),
-    calculatedBy: params.calculatedBy,
+  // Wrap the layer updates and COGS record creation in a single transaction
+  // to prevent concurrent calls from over-consuming cost layers
+  const cogsResult = await db.withTransaction(async (tx) => {
+    // Update consumed cost layers within the transaction
+    for (const consumed of result.layerBreakdown) {
+      const layer = result.remainingLayers.find((l) => l.layerId === consumed.layerId);
+      const newRemaining = layer?.remainingQuantity ?? 0;
+      await tx.updateInventoryCostLayer(consumed.layerId, {
+        remainingQuantity: newRemaining.toFixed(4),
+        status: newRemaining <= 0 ? "depleted" : "active",
+      });
+    }
+
+    // Create COGS record within the same transaction
+    return tx.createCogsRecord({
+      companyId: params.companyId,
+      productId: params.productId,
+      warehouseId: params.warehouseId,
+      orderId: params.orderId,
+      salesOrderLineId: params.salesOrderLineId,
+      costingMethod: method,
+      quantitySold: params.quantitySold.toString(),
+      unitCogs: result.unitCogs.toFixed(4),
+      totalCogs: result.totalCogs.toFixed(2),
+      unitRevenue: params.unitRevenue?.toFixed(2),
+      totalRevenue: totalRevenue?.toFixed(2),
+      grossMargin: grossMargin?.toFixed(2),
+      grossMarginPercent: grossMarginPercent?.toFixed(4),
+      periodDate: new Date(),
+      layerBreakdown: JSON.stringify(result.layerBreakdown),
+      calculatedBy: params.calculatedBy,
+    });
   });
 
   return {
