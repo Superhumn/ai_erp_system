@@ -2229,9 +2229,6 @@ export const appRouter = router({
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const result = await db.createInvestmentGrantChecklist({ ...input, createdBy: ctx.user.id });
-        await createAuditLog(ctx.user.id, 'create', 'investmentGrantChecklist', result.id, input.name);
-
         // Auto-populate default checklist items
         const defaultItems = [
           { category: "entity_entry_setup" as const, taskName: "MISA foreign investment license", sortOrder: 1, startMonth: 1, durationMonths: 2 },
@@ -2255,9 +2252,11 @@ export const appRouter = router({
           { category: "grant_disbursement" as const, taskName: "Final drawdown (production start)", sortOrder: 19, startMonth: 22, durationMonths: 2 },
         ];
 
-        for (const item of defaultItems) {
-          await db.createInvestmentGrantItem({ ...item, checklistId: result.id });
-        }
+        const result = await db.createInvestmentGrantChecklistWithItems(
+          { ...input, createdBy: ctx.user.id },
+          defaultItems,
+        );
+        await createAuditLog(ctx.user.id, 'create', 'investmentGrantChecklist', result.id, input.name);
 
         return result;
       }),

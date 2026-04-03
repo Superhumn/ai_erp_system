@@ -1368,6 +1368,27 @@ export async function createInvestmentGrantChecklist(data: InsertInvestmentGrant
   return { id: result[0].insertId };
 }
 
+export async function createInvestmentGrantChecklistWithItems(
+  data: InsertInvestmentGrantChecklist,
+  items: Omit<InsertInvestmentGrantItem, "checklistId">[],
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  return db.transaction(async (tx) => {
+    const result = await tx.insert(investmentGrantChecklists).values(data);
+    const checklistId = result[0].insertId;
+
+    if (items.length > 0) {
+      await tx.insert(investmentGrantItems).values(
+        items.map((item) => ({ ...item, checklistId })),
+      );
+    }
+
+    return { id: checklistId };
+  });
+}
+
 export async function updateInvestmentGrantChecklist(id: number, data: Partial<InsertInvestmentGrantChecklist>) {
   const db = await getDb();
   if (!db) return;
