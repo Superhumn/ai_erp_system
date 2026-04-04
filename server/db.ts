@@ -9340,3 +9340,27 @@ export async function getFirefliesMeetingStats() {
   };
 }
 
+
+
+// ==========================================
+// TRANSACTION SUPPORT
+// ==========================================
+
+export async function withTransaction<T>(
+    fn: (tx: any) => Promise<T>
+  ): Promise<T> {
+    const db = await getDb();
+    if (!db) throw new Error("Database not available");
+    return db.transaction(async (drizzleTx) => {
+          const txScope = {
+                  updateInventoryCostLayer: async (id: number, data: any) => {
+                            await drizzleTx.execute(sql`UPDATE inventory_cost_layers SET remaining_quantity = ${data.remainingQuantity}, status = ${data.status}, updated_at = NOW() WHERE id = ${id}`);
+                  },
+                  createCogsRecord: async (data: any) => {
+                            const result = await drizzleTx.execute(sql`INSERT INTO cogs_records (company_id, product_id, warehouse_id, order_id, sales_order_line_id, costing_method, quantity_sold, unit_cogs, total_cogs, unit_revenue, total_revenue, gross_margin, gross_margin_percent, period_date, layer_breakdown, calculated_by) VALUES (${data.companyId}, ${data.productId}, ${data.warehouseId}, ${data.orderId}, ${data.salesOrderLineId}, ${data.costingMethod}, ${data.quantitySold}, ${data.unitCogs}, ${data.totalCogs}, ${data.unitRevenue}, ${data.totalRevenue}, ${data.grossMargin}, ${data.grossMarginPercent}, ${data.periodDate}, ${data.layerBreakdown}, ${data.calculatedBy})`);
+                            return { id: (result as any)[0]?.insertId ?? 0 };
+                  },
+          };
+          return fn(txScope);
+    });
+}
