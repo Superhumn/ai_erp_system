@@ -4750,3 +4750,154 @@ export const firefliesConfigs = mysqlTable("fireflies_configs", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
+
+// ============================================
+// INVENTORY COSTING & COGS
+// ============================================
+
+export const inventoryCostingConfig = mysqlTable("inventoryCostingConfig", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  productId: int("productId").notNull(),
+  costingMethod: mysqlEnum("costingMethod", ["fifo", "lifo", "weighted_average"]).default("weighted_average").notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  effectiveDate: timestamp("effectiveDate"),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InventoryCostingConfig = typeof inventoryCostingConfig.$inferSelect;
+export type InsertInventoryCostingConfig = typeof inventoryCostingConfig.$inferInsert;
+
+export const inventoryCostLayers = mysqlTable("inventoryCostLayers", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  productId: int("productId").notNull(),
+  warehouseId: int("warehouseId"),
+  purchaseOrderId: int("purchaseOrderId"),
+  lotId: int("lotId"),
+  layerDate: timestamp("layerDate").notNull(),
+  originalQuantity: decimal("originalQuantity", { precision: 15, scale: 4 }).notNull(),
+  remainingQuantity: decimal("remainingQuantity", { precision: 15, scale: 4 }).notNull(),
+  unitCost: decimal("unitCost", { precision: 15, scale: 4 }).notNull(),
+  totalCost: decimal("totalCost", { precision: 15, scale: 2 }).notNull(),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  status: mysqlEnum("status", ["active", "depleted"]).default("active").notNull(),
+  referenceType: varchar("referenceType", { length: 64 }),
+  referenceId: int("referenceId"),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InventoryCostLayer = typeof inventoryCostLayers.$inferSelect;
+export type InsertInventoryCostLayer = typeof inventoryCostLayers.$inferInsert;
+
+export const cogsRecords = mysqlTable("cogsRecords", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  productId: int("productId").notNull(),
+  warehouseId: int("warehouseId"),
+  orderId: int("orderId"),
+  salesOrderLineId: int("salesOrderLineId"),
+  costingMethod: mysqlEnum("costingMethod", ["fifo", "lifo", "weighted_average"]).notNull(),
+  quantitySold: decimal("quantitySold", { precision: 15, scale: 4 }).notNull(),
+  unitCogs: decimal("unitCogs", { precision: 15, scale: 4 }).notNull(),
+  totalCogs: decimal("totalCogs", { precision: 15, scale: 2 }).notNull(),
+  unitRevenue: decimal("unitRevenue", { precision: 15, scale: 2 }),
+  totalRevenue: decimal("totalRevenue", { precision: 15, scale: 2 }),
+  grossMargin: decimal("grossMargin", { precision: 15, scale: 2 }),
+  grossMarginPercent: decimal("grossMarginPercent", { precision: 8, scale: 4 }),
+  periodDate: timestamp("periodDate").notNull(),
+  layerBreakdown: json("layerBreakdown"),
+  calculatedBy: int("calculatedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CogsRecord = typeof cogsRecords.$inferSelect;
+export type InsertCogsRecord = typeof cogsRecords.$inferInsert;
+
+export const cogsPeriodSummary = mysqlTable("cogsPeriodSummary", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  productId: int("productId"),
+  periodType: mysqlEnum("periodType", ["daily", "weekly", "monthly", "quarterly", "yearly"]).notNull(),
+  periodStart: timestamp("periodStart").notNull(),
+  periodEnd: timestamp("periodEnd").notNull(),
+  totalQuantitySold: decimal("totalQuantitySold", { precision: 15, scale: 4 }).notNull(),
+  totalCogs: decimal("totalCogs", { precision: 15, scale: 2 }).notNull(),
+  totalRevenue: decimal("totalRevenue", { precision: 15, scale: 2 }).notNull(),
+  averageUnitCogs: decimal("averageUnitCogs", { precision: 15, scale: 4 }),
+  grossMargin: decimal("grossMargin", { precision: 15, scale: 2 }),
+  grossMarginPercent: decimal("grossMarginPercent", { precision: 8, scale: 4 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CogsPeriodSummary = typeof cogsPeriodSummary.$inferSelect;
+export type InsertCogsPeriodSummary = typeof cogsPeriodSummary.$inferInsert;
+
+// ============================================
+// VENDOR NEGOTIATIONS
+// ============================================
+
+export const vendorNegotiations = mysqlTable("vendorNegotiations", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  vendorId: int("vendorId").notNull(),
+  negotiationNumber: varchar("negotiationNumber", { length: 64 }).notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  type: mysqlEnum("type", ["price_reduction", "volume_discount", "payment_terms", "lead_time", "contract_renewal", "new_contract"]).notNull(),
+  status: mysqlEnum("status", ["draft", "ready", "in_progress", "counter_offered", "analyzing", "accepted", "rejected", "expired"]).default("draft").notNull(),
+  priority: mysqlEnum("priority", ["low", "medium", "high"]).default("medium").notNull(),
+  productIds: text("productIds"),
+  rawMaterialIds: text("rawMaterialIds"),
+  currentUnitPrice: decimal("currentUnitPrice", { precision: 15, scale: 4 }),
+  currentPaymentTerms: int("currentPaymentTerms"),
+  currentLeadTimeDays: int("currentLeadTimeDays"),
+  currentMinOrderAmount: decimal("currentMinOrderAmount", { precision: 15, scale: 2 }),
+  currentAnnualVolume: decimal("currentAnnualVolume", { precision: 15, scale: 2 }),
+  targetUnitPrice: decimal("targetUnitPrice", { precision: 15, scale: 4 }),
+  targetPaymentTerms: int("targetPaymentTerms"),
+  targetLeadTimeDays: int("targetLeadTimeDays"),
+  estimatedSavings: decimal("estimatedSavings", { precision: 15, scale: 2 }),
+  estimatedSavingsPercent: decimal("estimatedSavingsPercent", { precision: 8, scale: 4 }),
+  aiAnalysis: text("aiAnalysis"),
+  aiStrategy: text("aiStrategy"),
+  aiConfidenceScore: decimal("aiConfidenceScore", { precision: 5, scale: 2 }),
+  initiatedBy: int("initiatedBy"),
+  completedAt: timestamp("completedAt"),
+  expiresAt: timestamp("expiresAt"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type VendorNegotiation = typeof vendorNegotiations.$inferSelect;
+export type InsertVendorNegotiation = typeof vendorNegotiations.$inferInsert;
+
+export const negotiationRounds = mysqlTable("negotiationRounds", {
+  id: int("id").autoincrement().primaryKey(),
+  negotiationId: int("negotiationId").notNull(),
+  roundNumber: int("roundNumber").notNull(),
+  direction: mysqlEnum("direction", ["outbound", "inbound"]).notNull(),
+  messageType: mysqlEnum("messageType", ["initial_offer", "counter_offer", "acceptance", "rejection", "info_request", "final_offer"]).notNull(),
+  proposedUnitPrice: decimal("proposedUnitPrice", { precision: 15, scale: 4 }),
+  proposedPaymentTerms: int("proposedPaymentTerms"),
+  proposedLeadTimeDays: int("proposedLeadTimeDays"),
+  proposedMinOrderAmount: decimal("proposedMinOrderAmount", { precision: 15, scale: 2 }),
+  proposedVolume: decimal("proposedVolume", { precision: 15, scale: 2 }),
+  messageContent: text("messageContent"),
+  aiGeneratedDraft: text("aiGeneratedDraft"),
+  aiReasoning: text("aiReasoning"),
+  sentAt: timestamp("sentAt"),
+  receivedAt: timestamp("receivedAt"),
+  sentBy: int("sentBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type NegotiationRound = typeof negotiationRounds.$inferSelect;
+export type InsertNegotiationRound = typeof negotiationRounds.$inferInsert;
