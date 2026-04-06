@@ -370,7 +370,7 @@ export async function recordCogs(params: {
     }
 
     // Calculate gross margin
-    const totalRevenue = params.unitRevenue
+    const totalRevenue = params.unitRevenue != null
       ? params.unitRevenue * params.quantitySold
       : null;
     const grossMargin = totalRevenue !== null ? totalRevenue - result.totalCogs : null;
