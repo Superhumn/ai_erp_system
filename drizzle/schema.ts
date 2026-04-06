@@ -4783,8 +4783,8 @@ export type InsertCogsRecord = typeof cogsRecords.$inferInsert;
 
 export const cogsPeriodSummary = mysqlTable("cogsPeriodSummary", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId"),
-  productId: int("productId"),
+  companyId: int("companyId").notNull(),
+  productId: int("productId").notNull(),
   periodType: mysqlEnum("periodType", ["daily", "weekly", "monthly", "quarterly", "yearly"]).notNull(),
   periodStart: timestamp("periodStart").notNull(),
   periodEnd: timestamp("periodEnd").notNull(),
@@ -5076,7 +5076,9 @@ export const ediControlNumbers = mysqlTable("edi_control_numbers", {
   controlNumberType: mysqlEnum("controlNumberType", ["isa", "gs", "st"]).notNull(),
   lastUsedNumber: int("lastUsedNumber").default(0).notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (table) => ({
+  uniquePartnerControlType: uniqueIndex("idx_edi_control_partner_type").on(table.tradingPartnerId, table.controlNumberType),
+}));
 
 export type EdiControlNumber = typeof ediControlNumbers.$inferSelect;
 export type InsertEdiControlNumber = typeof ediControlNumbers.$inferInsert;

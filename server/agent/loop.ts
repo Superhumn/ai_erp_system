@@ -10,7 +10,16 @@ import { ENV } from "../_core/env";
 
 const client = new Anthropic();
 const DEFAULT_MAX_ITERATIONS = 20;
-const AGENT_MODEL = ENV.llmModel || "claude-sonnet-4-20250514";
+const DEFAULT_AGENT_MODEL = "claude-sonnet-4-20250514";
+
+function resolveAgentModel(): string {
+  const configured = ENV.llmModel;
+  if (!configured) return DEFAULT_AGENT_MODEL;
+  if (configured.startsWith("claude-")) return configured;
+  return DEFAULT_AGENT_MODEL;
+}
+
+const AGENT_MODEL = resolveAgentModel();
 
 /**
  * Core reasoning loop. Sends the goal to Claude, dispatches tool calls,

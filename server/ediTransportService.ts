@@ -292,7 +292,8 @@ export async function sendViaAs2(
  * Test connectivity to a trading partner using their configured transport
  */
 export async function testConnection(partnerId: number): Promise<ConnectionTestResult> {
-  const partner = await db.getEdiTradingPartnerById(partnerId);
+  let partner;
+  try { partner = await db.getEdiTradingPartnerById(partnerId); } catch { return { success: false, message: "Partner not found" }; }
   if (!partner) return { success: false, message: "Partner not found" };
 
   switch (partner.connectionType) {
@@ -320,7 +321,8 @@ export async function deliverOutbound(
   transactionSetCode: string,
   controlNumber: string
 ): Promise<TransportResult> {
-  const partner = await db.getEdiTradingPartnerById(partnerId);
+  let partner;
+  try { partner = await db.getEdiTradingPartnerById(partnerId); } catch { return { success: false, message: "Partner not found" }; }
   if (!partner) return { success: false, message: "Partner not found" };
 
   const filename = `${transactionSetCode}_${controlNumber}_${Date.now()}.edi`;
@@ -451,19 +453,22 @@ export async function handleEdiWebhook(
   // Try to determine the trading partner
   let partnerId: number | undefined;
 
-  if (senderIsaId) {
-    const partner = await db.getEdiTradingPartnerByIsaId(senderIsaId);
-    if (partner) partnerId = partner.id;
-  }
-
-  // If no partner found by header, try to extract from ISA segment
-  if (!partnerId) {
-    const isaMatch = rawContent.match(/ISA\*[^*]*\*[^*]*\*[^*]*\*[^*]*\*[^*]*\*([^*]*?)\s*\*/);
-    if (isaMatch) {
-      const extractedIsaId = isaMatch[1].trim();
-      const partner = await db.getEdiTradingPartnerByIsaId(extractedIsaId);
+  try {
+    if (senderIsaId) {
+      const partner = await db.getEdiTradingPartnerByIsaId(senderIsaId);
       if (partner) partnerId = partner.id;
     }
+
+    if (!partnerId) {
+      const isaMatch = rawContent.match(/ISA\*[^*]*\*[^*]*\*[^*]*\*[^*]*\*[^*]*\*([^*]*?)\s*\*/);
+      if (isaMatch) {
+        const extractedIsaId = isaMatch[1].trim();
+        const partner = await db.getEdiTradingPartnerByIsaId(extractedIsaId);
+        if (partner) partnerId = partner.id;
+      }
+    }
+  } catch {
+    return { success: false, message: "Could not identify trading partner from EDI content or headers" };
   }
 
   if (!partnerId) {

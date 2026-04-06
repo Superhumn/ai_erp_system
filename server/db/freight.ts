@@ -1,4 +1,4 @@
-import { eq, and, or, desc, count } from "drizzle-orm";
+import { eq, and, or, desc, count, sql } from "drizzle-orm";
 import {
   freightCarriers, InsertFreightCarrier, freightRfqs, InsertFreightRfq,
   freightQuotes, InsertFreightQuote, freightEmails, InsertFreightEmail,
@@ -76,12 +76,11 @@ export async function getFreightRfqById(id: number) {
 export async function createFreightRfq(data: Omit<InsertFreightRfq, 'rfqNumber'>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
-  // Generate RFQ number
-  const countResult = await db.select({ count: count() }).from(freightRfqs);
-  const rfqCount = countResult[0]?.count || 0;
-  const rfqNumber = `RFQ-${new Date().getFullYear()}-${String(rfqCount + 1).padStart(5, '0')}`;
-  
+
+  const [maxResult] = await db.select({ maxId: sql<number>`COALESCE(MAX(${freightRfqs.id}), 0) + 1` }).from(freightRfqs);
+  const nextNum = maxResult?.maxId ?? 1;
+  const rfqNumber = `RFQ-${new Date().getFullYear()}-${String(nextNum).padStart(5, '0')}`;
+
   const result = await db.insert(freightRfqs).values({ ...data, rfqNumber } as InsertFreightRfq);
   return { id: result[0].insertId, rfqNumber };
 }
@@ -433,8 +432,6 @@ export async function createDocumentImportLog(data: DocumentImportLog) {
   });
 }
 
-import { sql } from "drizzle-orm";
-
 export async function getDocumentImportLogs(limit: number = 50) {
   const db = await getDb();
   if (!db) return [];
@@ -451,8 +448,8 @@ export async function getDocumentImportLogs(limit: number = 50) {
       fileName: importData.fileName || log.entityName || 'Unknown',
       documentType: log.entityType?.replace('document_import_', '') || 'unknown',
       status: importData.status || (log.action === 'create' ? 'completed' : 'pending'),
-      recordsCreated: importData.recordsCreated || 0,
-      recordsUpdated: importData.recordsUpdated || 0,
+      recordsCreated: importData.createdRecords || 0,
+      recordsUpdated: importData.updatedRecords || 0,
       createdAt: log.createdAt,
       importData,
     };

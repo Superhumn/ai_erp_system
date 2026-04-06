@@ -856,7 +856,8 @@ export async function generateOutboundEdi(
   sourceData: Edi855Acknowledgment | Edi810Invoice | Edi856ShipNotice,
   controlNumber?: string
 ): Promise<{ transactionId: number; rawContent: string }> {
-  const partner = await db.getEdiTradingPartnerById(tradingPartnerId);
+  let partner;
+  try { partner = await db.getEdiTradingPartnerById(tradingPartnerId); } catch { throw new Error("Trading partner not found"); }
   if (!partner) throw new Error("Trading partner not found");
 
   // Load our company EDI settings

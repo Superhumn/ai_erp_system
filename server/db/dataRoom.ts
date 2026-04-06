@@ -237,7 +237,7 @@ export async function getVisitorByEmail(dataRoomId: number, email: string) {
   const db = await getDb();
   if (!db) return null;
   const result = await db.select().from(dataRoomVisitors)
-    .where(and(eq(dataRoomVisitors.dataRoomId, dataRoomId), eq(dataRoomVisitors.email, email)))
+    .where(and(eq(dataRoomVisitors.dataRoomId, dataRoomId), eq(dataRoomVisitors.email, email.toLowerCase())))
     .limit(1);
   return result[0] || null;
 }

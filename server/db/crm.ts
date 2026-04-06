@@ -92,6 +92,10 @@ export async function updateCrmContact(id: number, data: Partial<InsertCrmContac
 export async function deleteCrmContact(id: number) {
   const db = await getDb();
   if (!db) return;
+  await db.delete(crmContactTags).where(eq(crmContactTags.contactId, id));
+  await db.delete(crmInteractions).where(eq(crmInteractions.contactId, id));
+  await db.delete(whatsappMessages).where(eq(whatsappMessages.contactId, id));
+  await db.delete(crmDeals).where(eq(crmDeals.contactId, id));
   await db.delete(crmContacts).where(eq(crmContacts.id, id));
 }
 

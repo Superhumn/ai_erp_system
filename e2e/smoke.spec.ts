@@ -8,5 +8,5 @@ test("login page loads", async ({ page }) => {
 test("redirects unauthenticated users to login", async ({ page }) => {
   await page.goto("/");
   // Should redirect to login or show login page
-  await expect(page.locator("text=Sign In, text=Log In, text=Login").first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator("text=/Sign In|Log In|Login/i").first()).toBeVisible({ timeout: 10_000 });
 });

@@ -177,7 +177,7 @@ export async function getEdiProductCrosswalks(tradingPartnerId?: number) {
       and(eq(ediProductCrosswalks.tradingPartnerId, tradingPartnerId), eq(ediProductCrosswalks.isActive, true))
     ).orderBy(ediProductCrosswalks.buyerPartNumber);
   }
-  return db.select().from(ediProductCrosswalks).orderBy(ediProductCrosswalks.buyerPartNumber);
+  return db.select().from(ediProductCrosswalks).where(eq(ediProductCrosswalks.isActive, true)).orderBy(ediProductCrosswalks.buyerPartNumber);
 }
 
 export async function getEdiProductCrosswalkByBuyerPart(tradingPartnerId: number, buyerPartNumber: string) {
@@ -312,23 +312,29 @@ export async function getNextControlNumber(
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const [existing] = await db.select().from(ediControlNumbers).where(
-    and(eq(ediControlNumbers.tradingPartnerId, tradingPartnerId), eq(ediControlNumbers.controlNumberType, controlNumberType))
-  );
+  const result = await db.update(ediControlNumbers)
+    .set({ lastUsedNumber: sql`${ediControlNumbers.lastUsedNumber} + 1` })
+    .where(
+      and(eq(ediControlNumbers.tradingPartnerId, tradingPartnerId), eq(ediControlNumbers.controlNumberType, controlNumberType))
+    );
+
+  const affectedRows = (result as any)[0]?.affectedRows ?? (result as any).rowsAffected ?? 0;
 
   let nextNumber: number;
-  if (existing) {
-    nextNumber = existing.lastUsedNumber + 1;
-    await db.update(ediControlNumbers)
-      .set({ lastUsedNumber: nextNumber })
-      .where(eq(ediControlNumbers.id, existing.id));
-  } else {
+  if (affectedRows === 0) {
     nextNumber = 1;
     await db.insert(ediControlNumbers).values({
       tradingPartnerId,
       controlNumberType,
       lastUsedNumber: nextNumber,
+    }).onDuplicateKeyUpdate({
+      set: { lastUsedNumber: sql`${ediControlNumbers.lastUsedNumber} + 1` },
     });
+  } else {
+    const [row] = await db.select().from(ediControlNumbers).where(
+      and(eq(ediControlNumbers.tradingPartnerId, tradingPartnerId), eq(ediControlNumbers.controlNumberType, controlNumberType))
+    );
+    nextNumber = row.lastUsedNumber;
   }
 
   const padLen = controlNumberType === "isa" ? 9 : controlNumberType === "st" ? 4 : 6;

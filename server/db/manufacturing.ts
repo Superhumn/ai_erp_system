@@ -20,12 +20,16 @@ import { getDb } from "./connection";
 export async function getBillOfMaterials(filters?: { productId?: number; status?: string }) {
   const db = await getDb();
   if (!db) return [];
-  let query = db.select().from(billOfMaterials).orderBy(desc(billOfMaterials.updatedAt));
+  const conditions = [];
   if (filters?.productId) {
-    query = query.where(eq(billOfMaterials.productId, filters.productId)) as typeof query;
+    conditions.push(eq(billOfMaterials.productId, filters.productId));
   }
   if (filters?.status) {
-    query = query.where(eq(billOfMaterials.status, filters.status as any)) as typeof query;
+    conditions.push(eq(billOfMaterials.status, filters.status as any));
+  }
+  const query = db.select().from(billOfMaterials).orderBy(desc(billOfMaterials.updatedAt));
+  if (conditions.length > 0) {
+    return query.where(and(...conditions));
   }
   return query;
 }
@@ -96,12 +100,16 @@ export async function deleteBomComponent(id: number) {
 export async function getRawMaterials(filters?: { status?: string; category?: string }) {
   const db = await getDb();
   if (!db) return [];
-  let query = db.select().from(rawMaterials).orderBy(rawMaterials.name);
+  const conditions = [];
   if (filters?.status) {
-    query = query.where(eq(rawMaterials.status, filters.status as any)) as typeof query;
+    conditions.push(eq(rawMaterials.status, filters.status as any));
   }
   if (filters?.category) {
-    query = query.where(eq(rawMaterials.category, filters.category)) as typeof query;
+    conditions.push(eq(rawMaterials.category, filters.category));
+  }
+  const query = db.select().from(rawMaterials).orderBy(rawMaterials.name);
+  if (conditions.length > 0) {
+    return query.where(and(...conditions));
   }
   return query;
 }
@@ -212,7 +220,14 @@ export async function calculateBomCosts(bomId: number) {
 export async function getWorkOrders(filters?: { status?: string; warehouseId?: number }) {
   const db = await getDb();
   if (!db) return [];
-  const result = await db.select({
+  const conditions = [];
+  if (filters?.status) {
+    conditions.push(eq(workOrders.status, filters.status as any));
+  }
+  if (filters?.warehouseId) {
+    conditions.push(eq(workOrders.warehouseId, filters.warehouseId));
+  }
+  let query = db.select({
     id: workOrders.id, companyId: workOrders.companyId,
     workOrderNumber: workOrders.workOrderNumber, bomId: workOrders.bomId,
     productId: workOrders.productId, warehouseId: workOrders.warehouseId,
@@ -225,8 +240,11 @@ export async function getWorkOrders(filters?: { status?: string; warehouseId?: n
     productName: products.name, productSku: products.sku,
   })
     .from(workOrders)
-    .leftJoin(products, eq(workOrders.productId, products.id))
-    .orderBy(desc(workOrders.createdAt));
+    .leftJoin(products, eq(workOrders.productId, products.id));
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as typeof query;
+  }
+  const result = await query.orderBy(desc(workOrders.createdAt));
   return result.map(row => ({
     ...row,
     product: row.productName ? { name: row.productName, sku: row.productSku } : null,
@@ -308,12 +326,16 @@ export async function generateWorkOrderMaterialsFromBom(workOrderId: number, bom
 export async function getRawMaterialInventory(filters?: { rawMaterialId?: number; warehouseId?: number }) {
   const db = await getDb();
   if (!db) return [];
-  let query = db.select().from(rawMaterialInventory);
+  const conditions = [];
   if (filters?.rawMaterialId) {
-    query = query.where(eq(rawMaterialInventory.rawMaterialId, filters.rawMaterialId)) as typeof query;
+    conditions.push(eq(rawMaterialInventory.rawMaterialId, filters.rawMaterialId));
   }
   if (filters?.warehouseId) {
-    query = query.where(eq(rawMaterialInventory.warehouseId, filters.warehouseId)) as typeof query;
+    conditions.push(eq(rawMaterialInventory.warehouseId, filters.warehouseId));
+  }
+  const query = db.select().from(rawMaterialInventory);
+  if (conditions.length > 0) {
+    return query.where(and(...conditions));
   }
   return query;
 }
@@ -508,7 +530,19 @@ export async function consumeWorkOrderMaterials(workOrderId: number, performedBy
       status: consumeQty >= requiredQty ? 'consumed' : 'partial',
     });
   }
-  await updateWorkOrder(workOrderId, { status: 'completed', actualEndDate: new Date() });
+  const updatedMaterials = await getWorkOrderMaterials(workOrderId);
+  const allFullyConsumed = updatedMaterials.every(
+    m => m.status === 'consumed' || m.status === 'pending'
+  );
+  const hasShortageOrPartial = updatedMaterials.some(
+    m => m.status === 'shortage' || m.status === 'partial'
+  );
+
+  if (allFullyConsumed) {
+    await updateWorkOrder(workOrderId, { status: 'completed', actualEndDate: new Date() });
+  } else if (hasShortageOrPartial) {
+    await updateWorkOrder(workOrderId, { status: 'in_progress' });
+  }
 }
 
 // ============================================

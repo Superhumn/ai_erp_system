@@ -27,7 +27,7 @@ export async function getDisputes(filters?: { companyId?: number; status?: strin
 }
 export async function getDisputeById(id: number) { const db = await getDb(); if (!db) return undefined; const result = await db.select().from(disputes).where(eq(disputes.id, id)).limit(1); return result[0]; }
 export async function createDispute(data: InsertDispute) { const db = await getDb(); if (!db) throw new Error("Database not available"); const result = await db.insert(disputes).values(data); return { id: result[0].insertId }; }
-export async function updateDispute(id: number, data: Partial<InsertDispute>) { const db = await getDb(); if (!db) return; await db.update(disputes).set(data).where(eq(disputes.id, id)); }
+export async function updateDispute(id: number, data: Partial<InsertDispute>) { const db = await getDb(); if (!db) throw new Error("Database not available"); await db.update(disputes).set(data).where(eq(disputes.id, id)); }
 export async function getDocuments(filters?: { companyId?: number; type?: string; referenceType?: string; referenceId?: number }) {
   const db = await getDb(); if (!db) return [];
   const conditions = [];
@@ -39,4 +39,4 @@ export async function getDocuments(filters?: { companyId?: number; type?: string
   return db.select().from(documents).orderBy(desc(documents.createdAt));
 }
 export async function createDocument(data: InsertDocument) { const db = await getDb(); if (!db) throw new Error("Database not available"); const result = await db.insert(documents).values(data); return { id: result[0].insertId }; }
-export async function deleteDocument(id: number) { const db = await getDb(); if (!db) return; await db.delete(documents).where(eq(documents.id, id)); }
+export async function deleteDocument(id: number) { const db = await getDb(); if (!db) throw new Error("Database not available"); await db.delete(documents).where(eq(documents.id, id)); }

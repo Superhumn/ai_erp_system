@@ -205,7 +205,7 @@ export async function upsertGoogleOAuthToken(data: InsertGoogleOAuthToken) {
     await db.update(googleOAuthTokens)
       .set({
         accessToken: data.accessToken,
-        refreshToken: data.refreshToken || existing.refreshToken,
+        refreshToken: data.refreshToken ?? existing.refreshToken,
         expiresAt: data.expiresAt,
         scope: data.scope,
         googleEmail: data.googleEmail,
@@ -377,7 +377,7 @@ export async function createTeamInvitation(data: Omit<InsertTeamInvitation, 'inv
   const db = await getDb();
   if (!db) return null;
 
-  const inviteCode = `INV-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+  const inviteCode = `INV-${Date.now().toString(36).toUpperCase()}-${crypto.randomUUID().replace(/-/g, '').substring(0, 8).toUpperCase()}`;
 
   const result = await db.insert(teamInvitations).values({
     ...data,
