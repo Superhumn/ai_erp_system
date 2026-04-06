@@ -293,7 +293,11 @@ export async function sendViaAs2(
  */
 export async function testConnection(partnerId: number): Promise<ConnectionTestResult> {
   let partner;
-  try { partner = await db.getEdiTradingPartnerById(partnerId); } catch { return { success: false, message: "Partner not found" }; }
+  try {
+    partner = await db.getEdiTradingPartnerById(partnerId);
+  } catch (error: any) {
+    return { success: false, message: `Partner lookup failed: ${error.message}` };
+  }
   if (!partner) return { success: false, message: "Partner not found" };
 
   switch (partner.connectionType) {
@@ -322,7 +326,11 @@ export async function deliverOutbound(
   controlNumber: string
 ): Promise<TransportResult> {
   let partner;
-  try { partner = await db.getEdiTradingPartnerById(partnerId); } catch { return { success: false, message: "Partner not found" }; }
+  try {
+    partner = await db.getEdiTradingPartnerById(partnerId);
+  } catch (error: any) {
+    return { success: false, message: `Partner lookup failed: ${error.message}` };
+  }
   if (!partner) return { success: false, message: "Partner not found" };
 
   const filename = `${transactionSetCode}_${controlNumber}_${Date.now()}.edi`;
@@ -467,8 +475,8 @@ export async function handleEdiWebhook(
         if (partner) partnerId = partner.id;
       }
     }
-  } catch {
-    return { success: false, message: "Could not identify trading partner from EDI content or headers" };
+  } catch (error: any) {
+    return { success: false, message: `Partner lookup failed: ${error.message}` };
   }
 
   if (!partnerId) {

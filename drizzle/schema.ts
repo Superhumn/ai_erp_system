@@ -4783,8 +4783,8 @@ export type InsertCogsRecord = typeof cogsRecords.$inferInsert;
 
 export const cogsPeriodSummary = mysqlTable("cogsPeriodSummary", {
   id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId").notNull(),
-  productId: int("productId").notNull(),
+  companyId: int("companyId"),
+  productId: int("productId"),
   periodType: mysqlEnum("periodType", ["daily", "weekly", "monthly", "quarterly", "yearly"]).notNull(),
   periodStart: timestamp("periodStart").notNull(),
   periodEnd: timestamp("periodEnd").notNull(),
