@@ -304,7 +304,8 @@ class SupplyChainOrchestrator {
           FROM inventory
           WHERE CAST(quantity AS DECIMAL) - CAST(reservedQuantity AS DECIMAL) < CAST(reorderLevel AS DECIMAL)
         `);
-        return (((lowStockResult as unknown as any[])[0]?.count || 0) > 0);
+        const lowStockRows = (lowStockResult as unknown as any[][])[0];
+        return ((lowStockRows?.[0]?.count || 0) > 0);
 
       case "pending_approvals":
         // Check pending approval count
