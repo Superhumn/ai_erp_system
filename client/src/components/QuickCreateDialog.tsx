@@ -18,11 +18,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Plus, Building, Package, FileText, Wrench, Box, Users, MapPin, Layers } from "lucide-react";
+import { Loader2, Plus, Building, Package, FileText, Wrench, Box, Users, MapPin, Layers, ShoppingCart } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 
-type EntityType = "vendor" | "material" | "bom" | "workOrder" | "rfq" | "product" | "customer" | "inventory" | "location";
+type EntityType = "vendor" | "material" | "bom" | "workOrder" | "rfq" | "product" | "customer" | "inventory" | "location" | "purchaseOrder";
 
 // Product select field component
 function ProductSelectField({ value, onChange }: { value?: number; onChange: (value: number) => void }) {
@@ -157,6 +157,30 @@ function WarehouseSelectField({ value, onChange }: { value?: number; onChange: (
   );
 }
 
+function VendorSelectField({ value, onChange }: { value?: number; onChange: (value: number) => void }) {
+  const { data: vendorsList } = trpc.vendors.list.useQuery();
+  return (
+    <Select
+      value={value?.toString() || ""}
+      onValueChange={(v) => onChange(parseInt(v))}
+    >
+      <SelectTrigger>
+        <SelectValue placeholder="Select a vendor..." />
+      </SelectTrigger>
+      <SelectContent>
+        {vendorsList?.map((vendor: any) => (
+          <SelectItem key={vendor.id} value={vendor.id.toString()}>
+            {vendor.name}
+          </SelectItem>
+        ))}
+        {(!vendorsList || vendorsList.length === 0) && (
+          <div className="p-2 text-sm text-muted-foreground text-center">No vendors found</div>
+        )}
+      </SelectContent>
+    </Select>
+  );
+}
+
 interface QuickCreateDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -172,7 +196,7 @@ const entityConfig: Record<EntityType, {
   fields: Array<{
     name: string;
     label: string;
-    type: "text" | "email" | "number" | "textarea" | "select" | "productSelect" | "bomSelect" | "warehouseSelect";
+    type: "text" | "email" | "number" | "textarea" | "select" | "productSelect" | "bomSelect" | "warehouseSelect" | "vendorSelect";
     placeholder?: string;
     required?: boolean;
     options?: Array<{ value: string; label: string }>;
@@ -304,6 +328,16 @@ const entityConfig: Record<EntityType, {
       ]},
       { name: "address", label: "Address", type: "textarea", placeholder: "123 Industrial Blvd, City, State" },
       { name: "capacity", label: "Capacity (units)", type: "number", placeholder: "10000" },
+    ],
+  },
+  purchaseOrder: {
+    title: "Create New Purchase Order",
+    description: "Create a purchase order for a vendor",
+    icon: <ShoppingCart className="h-5 w-5" />,
+    fields: [
+      { name: "vendorId", label: "Vendor", type: "vendorSelect", required: true },
+      { name: "totalAmount", label: "Total Amount", type: "text", placeholder: "1000.00", required: true },
+      { name: "notes", label: "Notes", type: "textarea", placeholder: "Order notes..." },
     ],
   },
 };
@@ -440,6 +474,19 @@ export function QuickCreateDialog({
     },
   });
 
+  const createPurchaseOrder = trpc.purchaseOrders.create.useMutation({
+    onSuccess: (data) => {
+      toast.success("Purchase order created successfully");
+      utils.purchaseOrders.list.invalidate();
+      onCreated?.(data);
+      onOpenChange(false);
+      setFormData({});
+    },
+    onError: (error) => {
+      toast.error(`Failed to create purchase order: ${error.message}`);
+    },
+  });
+
   const handleSubmit = useCallback(async () => {
     setIsSubmitting(true);
     try {
@@ -530,11 +577,24 @@ export function QuickCreateDialog({
             notes: formData.capacity ? `Capacity: ${formData.capacity} units` : undefined,
           });
           break;
+        case "purchaseOrder":
+          if (!formData.vendorId) {
+            toast.error("Please select a vendor");
+            return;
+          }
+          await createPurchaseOrder.mutateAsync({
+            vendorId: formData.vendorId,
+            orderDate: new Date(),
+            subtotal: formData.totalAmount || "0",
+            totalAmount: formData.totalAmount || "0",
+            notes: formData.notes || undefined,
+          });
+          break;
       }
     } finally {
       setIsSubmitting(false);
     }
-  }, [entityType, formData, createVendor, createMaterial, createBom, createWorkOrder, createProduct, createCustomer, createInventory, createWarehouse]);
+  }, [entityType, formData, createVendor, createMaterial, createBom, createWorkOrder, createProduct, createCustomer, createInventory, createWarehouse, createPurchaseOrder]);
 
   const handleFieldChange = (name: string, value: any) => {
     setFormData((prev) => ({ ...prev, [name]: value }));
@@ -545,7 +605,7 @@ export function QuickCreateDialog({
     .every((f) => {
       const value = formData[f.name];
       // For select fields (productSelect, bomSelect), check for truthy value
-      if (f.type === 'productSelect' || f.type === 'bomSelect' || f.type === 'warehouseSelect' || f.type === 'select') {
+      if (f.type === 'productSelect' || f.type === 'bomSelect' || f.type === 'warehouseSelect' || f.type === 'vendorSelect' || f.type === 'select') {
         return value !== undefined && value !== null && value !== '';
       }
       // For text fields, check for non-empty string
@@ -607,6 +667,11 @@ export function QuickCreateDialog({
                 />
               ) : field.type === "warehouseSelect" ? (
                 <WarehouseSelectField
+                  value={formData[field.name]}
+                  onChange={(value) => handleFieldChange(field.name, value)}
+                />
+              ) : field.type === "vendorSelect" ? (
+                <VendorSelectField
                   value={formData[field.name]}
                   onChange={(value) => handleFieldChange(field.name, value)}
                 />
