@@ -455,7 +455,7 @@ async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any
       const allInventory = await db.select().from(inventory);
       const lowStockItems = allInventory.filter(i => parseFloat(i.quantity?.toString() || "0") < 10);
       const totalValue = allInventory.reduce((sum, i) => {
-        return sum + (parseFloat(i.quantity?.toString() || "0") * parseFloat((i as any).unitCost?.toString() || "0"));
+        return sum + (parseFloat(i.quantity?.toString() || "0") * parseFloat(i.averageCost?.toString() || "0"));
       }, 0);
 
       return {
@@ -895,12 +895,9 @@ async function executeManageCopacker(params: any, ctx: AIAgentContext): Promise<
 
   switch (action) {
     case "list": {
-      // Copackers are vendors with category = 'copacker' or 'manufacturer'
       const allVendors = await db.select().from(vendors);
       const copackers = allVendors.filter(v =>
-        (v as any).category === "copacker" ||
-        (v as any).category === "manufacturer" ||
-        (v as any).category === "contract_manufacturer"
+        v.type === "contractor" || v.type === "service"
       );
       return { copackers, total: copackers.length };
     }
