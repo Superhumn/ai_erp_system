@@ -157,7 +157,7 @@ export default function QuickBooksIntegration() {
         <div className="flex gap-2">
           <Button
             variant="outline"
-            onClick={() => syncAccountsMutation.mutate()}
+            onClick={() => syncAccountsMutation.mutate({})}
             disabled={syncAccountsMutation.isPending}
           >
             <RefreshCw className={`mr-2 h-4 w-4 ${syncAccountsMutation.isPending ? 'animate-spin' : ''}`} />
@@ -165,7 +165,7 @@ export default function QuickBooksIntegration() {
           </Button>
           <Button
             variant="outline"
-            onClick={() => syncItemsMutation.mutate()}
+            onClick={() => syncItemsMutation.mutate({})}
             disabled={syncItemsMutation.isPending}
           >
             <RefreshCw className={`mr-2 h-4 w-4 ${syncItemsMutation.isPending ? 'animate-spin' : ''}`} />
