@@ -207,7 +207,7 @@ export default function TransactionalEmailsPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Bounced</CardDescription>
-            <CardTitle className="text-2xl text-orange-500">{0}</CardTitle>
+            <CardTitle className="text-2xl text-orange-500">{stats?.bounced || 0}</CardTitle>
           </CardHeader>
         </Card>
       </div>
@@ -565,7 +565,7 @@ export default function TransactionalEmailsPage() {
                         </TableCell>
                         <TableCell>{event.recipientEmail}</TableCell>
                         <TableCell className="font-mono text-xs">{event.providerMessageId}</TableCell>
-                        <TableCell className="max-w-xs truncate text-sm">-</TableCell>
+                        <TableCell className="max-w-xs truncate text-sm">{(event.metadata as any)?.reason || "-"}</TableCell>
                         <TableCell className="text-sm">
                           {event.timestamp ? new Date(event.timestamp).toLocaleString() : "-"}
                         </TableCell>
