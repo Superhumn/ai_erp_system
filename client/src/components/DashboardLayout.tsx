@@ -72,6 +72,7 @@ import {
   Plus,
   Calculator,
   Handshake,
+  FlaskConical,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -105,6 +106,7 @@ const menuGroups = [
       { icon: Target, label: "Campaigns", path: "/crm/campaigns" },
       { icon: DollarSign, label: "Accounts", path: "/finance/accounts" },
       { icon: TrendingUp, label: "Transactions", path: "/finance/transactions" },
+      { icon: FlaskConical, label: "R&D Tax Credit", path: "/finance/rd-tax-credit" },
     ],
   },
   {

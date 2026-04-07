@@ -19,6 +19,7 @@ import Accounts from "./pages/finance/Accounts";
 import Invoices from "./pages/finance/Invoices";
 import Payments from "./pages/finance/Payments";
 import Transactions from "./pages/finance/Transactions";
+import RdTaxCredit from "./pages/finance/RdTaxCredit";
 
 // Sales
 import Orders from "./pages/sales/Orders";
@@ -161,6 +162,7 @@ function Router() {
         <Route path="/finance/invoices" component={Invoices} />
         <Route path="/finance/payments" component={Payments} />
         <Route path="/finance/transactions" component={Transactions} />
+        <Route path="/finance/rd-tax-credit" component={RdTaxCredit} />
 
         {/* Sales */}
         <Route path="/sales/orders/:id" component={OrderDetail} />
