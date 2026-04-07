@@ -73,8 +73,8 @@ export async function scoreSuppliers(params?: {
       ]);
 
       const deliveredPOs = pos.filter(po => po.status === "received" || po.status === "partial");
-      const totalPOs = pos.length;
-      const onTimeRate = totalPOs > 0 ? deliveredPOs.length / totalPOs : 0;
+      const terminalPOs = pos.filter(po => po.status === "received" || po.status === "partial" || po.status === "cancelled");
+      const onTimeRate = terminalPOs.length > 0 ? deliveredPOs.length / terminalPOs.length : 0;
 
       return {
         vendor,

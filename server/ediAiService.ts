@@ -107,7 +107,7 @@ Respond ONLY with valid JSON:
       transactionId: t.id,
       type: "failed_transaction",
       severity: "medium" as const,
-      description: `EDI transaction ${t.id} ${t.status} (${t.transactionType})`,
+      description: `EDI transaction ${t.id} ${t.status} (${t.transactionSetCode})`,
       affectedPartner: String(t.tradingPartnerId),
       recommendation: "Investigate and retry transaction",
     })),
@@ -146,7 +146,7 @@ ${ediPartners.slice(0, 20).map(p => {
   }).join("\n") || "No partners"}
 
 RECENT ERROR TRANSACTIONS:
-${ediTransactions.filter(t => t.status === "error" || t.status === "rejected").slice(0, 15).map(t => `- TX#${t.id}: Type:${t.transactionType} Partner:${t.tradingPartnerId} Error:${t.errorMessage || 'N/A'}`).join("\n") || "No errors"}
+${ediTransactions.filter(t => t.status === "error" || t.status === "rejected").slice(0, 15).map(t => `- TX#${t.id}: Type:${t.transactionSetCode} Partner:${t.tradingPartnerId} Error:${t.errorMessage || 'N/A'}`).join("\n") || "No errors"}
 
 Predict which partners/transaction types are likely to experience errors next.
 
