@@ -10024,6 +10024,7 @@ export async function getEmailMessageStats() {
     sent: sql<number>`SUM(CASE WHEN ${emailMessages.status} = 'sent' THEN 1 ELSE 0 END)`,
     delivered: sql<number>`SUM(CASE WHEN ${emailMessages.status} = 'delivered' THEN 1 ELSE 0 END)`,
     failed: sql<number>`SUM(CASE WHEN ${emailMessages.status} = 'failed' THEN 1 ELSE 0 END)`,
+    bounced: sql<number>`SUM(CASE WHEN ${emailMessages.status} = 'bounced' THEN 1 ELSE 0 END)`,
   }).from(emailMessages);
   return stats[0] || null;
 }

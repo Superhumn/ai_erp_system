@@ -777,7 +777,7 @@ export default function OperationsHub() {
       <QuickCreateDialog
         open={showPoDialog}
         onOpenChange={setShowPoDialog}
-        entityType={"purchaseOrder" as any}
+        entityType="purchaseOrder"
         onCreated={() => refetchPos()}
       />
       <QuickCreateDialog
