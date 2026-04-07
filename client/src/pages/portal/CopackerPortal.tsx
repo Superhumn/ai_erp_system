@@ -87,7 +87,7 @@ export default function CopackerPortal() {
 
   // --- Shipping document upload ---
   const [showShipDocUpload, setShowShipDocUpload] = useState(false);
-  const [shipDocType, setShipDocType] = useState<string>("bill_of_lading");
+  const [shipDocType, setShipDocType] = useState<string>("other");
   const [shipDocName, setShipDocName] = useState("");
   const [shipDocDescription, setShipDocDescription] = useState("");
   const [shipDocShipmentId, setShipDocShipmentId] = useState<string>("");
@@ -302,7 +302,7 @@ export default function CopackerPortal() {
 
   // ---- Shipping doc upload ----
   const resetShipDocForm = () => {
-    setShipDocType("bill_of_lading");
+    setShipDocType("other");
     setShipDocName("");
     setShipDocDescription("");
     setShipDocShipmentId("");
@@ -314,16 +314,20 @@ export default function CopackerPortal() {
       toast.error("Please select a file to upload");
       return;
     }
+    if (!shipDocShipmentId) {
+      toast.error("Please select a shipment");
+      return;
+    }
     const buffer = await shipDocFile.arrayBuffer();
     const fileData = btoa(String.fromCharCode(...new Uint8Array(buffer)));
 
     uploadShippingDoc.mutate({
-      shipmentId: shipDocShipmentId ? parseInt(shipDocShipmentId) : undefined,
-      documentType: shipDocType as any,
+      shipmentId: parseInt(shipDocShipmentId),
+      documentType: shipDocType as "invoice" | "receipt" | "contract" | "legal" | "report" | "hr" | "other",
       name: shipDocName || shipDocFile.name,
       fileData,
       mimeType: shipDocFile.type,
-    } as any);
+    });
   };
 
   // ---- Stats ----
@@ -1247,13 +1251,12 @@ export default function CopackerPortal() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="bill_of_lading">Bill of Lading</SelectItem>
-                  <SelectItem value="packing_list">Packing List</SelectItem>
-                  <SelectItem value="commercial_invoice">Commercial Invoice</SelectItem>
-                  <SelectItem value="proof_of_delivery">Proof of Delivery</SelectItem>
-                  <SelectItem value="weight_certificate">Weight Certificate</SelectItem>
-                  <SelectItem value="inspection_report">Inspection Report</SelectItem>
-                  <SelectItem value="customs_declaration">Customs Declaration</SelectItem>
+                  <SelectItem value="invoice">Invoice</SelectItem>
+                  <SelectItem value="receipt">Receipt</SelectItem>
+                  <SelectItem value="contract">Contract</SelectItem>
+                  <SelectItem value="legal">Legal</SelectItem>
+                  <SelectItem value="report">Report</SelectItem>
+                  <SelectItem value="hr">HR</SelectItem>
                   <SelectItem value="other">Other</SelectItem>
                 </SelectContent>
               </Select>
