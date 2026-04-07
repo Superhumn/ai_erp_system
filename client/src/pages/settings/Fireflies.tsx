@@ -38,7 +38,13 @@ export default function FirefliesPage() {
 
   const { data: config, isLoading: configLoading, refetch: refetchConfig } = trpc.fireflies.getConfig.useQuery();
   const { data: meetings, isLoading: meetingsLoading, refetch: refetchMeetings } = trpc.fireflies.meetings.list.useQuery();
-  const stats = (config as any)?.stats;
+  const stats = meetings ? {
+    total: meetings.length,
+    pending: meetings.filter((m: any) => m.status === "pending").length,
+    processed: meetings.filter((m: any) => m.status === "fully_processed").length,
+    contactsCreated: meetings.reduce((sum: number, m: any) => sum + (m.contactsCreated || 0), 0),
+    tasksCreated: meetings.reduce((sum: number, m: any) => sum + (m.tasksCreated || 0), 0),
+  } : null;
 
   const configureMutation = trpc.fireflies.configure.useMutation({
     onSuccess: (data) => {
@@ -157,7 +163,7 @@ export default function FirefliesPage() {
             Sync meeting transcripts and auto-generate tasks, projects, and CRM contacts
           </p>
         </div>
-        {(config as any)?.configured && (
+        {config?.enabled && (
           <div className="flex gap-2">
             <Button
               variant="outline"
@@ -189,7 +195,7 @@ export default function FirefliesPage() {
       </div>
 
       {/* Stats Cards */}
-      {(config as any)?.configured && stats && (
+      {config?.enabled && stats && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <Card>
             <CardContent className="pt-4 pb-4">
@@ -224,10 +230,10 @@ export default function FirefliesPage() {
         </div>
       )}
 
-      <Tabs defaultValue={(config as any)?.configured ? "meetings" : "setup"}>
+      <Tabs defaultValue={config?.enabled ? "meetings" : "setup"}>
         <TabsList>
           <TabsTrigger value="setup"><Settings className="h-4 w-4 mr-1" /> Setup</TabsTrigger>
-          {(config as any)?.configured && (
+          {config?.enabled && (
             <TabsTrigger value="meetings"><Mic className="h-4 w-4 mr-1" /> Meetings</TabsTrigger>
           )}
         </TabsList>
@@ -237,7 +243,7 @@ export default function FirefliesPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                {(config as any)?.configured ? (
+                {config?.enabled ? (
                   <CheckCircle2 className="h-5 w-5 text-green-500" />
                 ) : (
                   <XCircle className="h-5 w-5 text-gray-400" />
@@ -253,7 +259,7 @@ export default function FirefliesPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              {(config as any)?.configured && (
+              {config?.enabled && (
                 <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
                   <div className="flex items-center gap-2 text-green-700 font-medium">
                     <CheckCircle2 className="h-4 w-4" />
@@ -276,7 +282,7 @@ export default function FirefliesPage() {
 
               <div className="space-y-4">
                 <div>
-                  <Label htmlFor="apiKey">{(config as any)?.configured ? "Update" : ""} Fireflies API Key</Label>
+                  <Label htmlFor="apiKey">{config?.enabled ? "Update" : ""} Fireflies API Key</Label>
                   <div className="flex gap-2 mt-1">
                     <Input
                       id="apiKey"
@@ -289,7 +295,7 @@ export default function FirefliesPage() {
                       {configureMutation.isPending ? (
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                       ) : null}
-                      {(config as any)?.configured ? "Update" : "Connect"}
+                      {config?.enabled ? "Update" : "Connect"}
                     </Button>
                   </div>
                 </div>
@@ -319,7 +325,7 @@ export default function FirefliesPage() {
                   </div>
                 </div>
 
-                {(config as any)?.configured && (
+                {config?.enabled && (
                   <div className="pt-4 border-t">
                     <Button variant="destructive" size="sm" onClick={() => disconnectMutation.mutate()} disabled={disconnectMutation.isPending}>
                       Disconnect Fireflies
@@ -332,7 +338,7 @@ export default function FirefliesPage() {
         </TabsContent>
 
         {/* Meetings Tab */}
-        {(config as any)?.configured && (
+        {config?.enabled && (
           <TabsContent value="meetings">
             <Card>
               <CardHeader>
