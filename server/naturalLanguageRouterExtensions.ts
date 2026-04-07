@@ -330,7 +330,6 @@ export const inventoryTextEndpoints = {
         }
         
         // Create inventory transfer
-        const transferNumber = generateNumber('TRF');
         const transfer = await db.createTransfer({
           fromWarehouseId: fromWarehouse.id,
           toWarehouseId: toWarehouse.id,
@@ -339,7 +338,7 @@ export const inventoryTextEndpoints = {
           notes: parsed.notes || undefined,
           requestedBy: ctx.user.id,
         });
-        
+
         // Create transfer items
         for (const item of parsed.items || []) {
           // Find material/product
@@ -349,19 +348,19 @@ export const inventoryTextEndpoints = {
           } catch (err) {
             console.warn('Failed to find/create material:', err);
           }
-          
+
           await db.addTransferItem({
             transferId: transfer.id,
             productId: productId!,
             requestedQuantity: item.quantity.toString(),
           });
         }
-        
-        await createAuditLog(ctx.user.id, 'create', 'inventoryTransfer', transfer.id, transferNumber, null, { source: 'text', originalText: input.text });
-        
+
+        await createAuditLog(ctx.user.id, 'create', 'inventoryTransfer', transfer.id, transfer.transferNumber, null, { source: 'text', originalText: input.text });
+
         return {
           transferId: transfer.id,
-          transferNumber,
+          transferNumber: transfer.transferNumber,
           parsed,
         };
       } catch (error) {
