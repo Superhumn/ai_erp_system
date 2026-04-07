@@ -87,11 +87,12 @@ export async function testSftpConnection(partnerId: number): Promise<ConnectionT
       serverInfo: `Working directory: ${serverInfo}`,
     };
   } catch (error: any) {
+    console.error(`[EDI Transport] SFTP connection test failed for partner ${partnerId}:`, error);
     return {
       success: false,
-      message: `Connection failed: ${error.message}`,
+      message: "Connection failed: unable to reach SFTP server",
       latencyMs: Date.now() - startTime,
-      error: error.code || error.message,
+      error: error.code || "SFTP_CONNECTION_ERROR",
     };
   }
 }
@@ -153,13 +154,15 @@ export async function pollSftpForInbound(
           // Archive move is best-effort
         }
       } catch (error: any) {
-        result.errors.push(`Error processing ${file.name}: ${error.message}`);
+        console.error(`[EDI Transport] Error processing file ${file.name}:`, error);
+        result.errors.push(`Error processing ${file.name}`);
       }
     }
 
     await sftp.end();
   } catch (error: any) {
-    result.errors.push(`SFTP connection error: ${error.message}`);
+    console.error(`[EDI Transport] SFTP connection error for partner ${partnerId}:`, error);
+    result.errors.push("SFTP connection error");
   }
 
   return result;
@@ -204,7 +207,8 @@ export async function sendViaSftp(
       remoteFilePath: remotePath,
     };
   } catch (error: any) {
-    return { success: false, message: `SFTP delivery failed: ${error.message}`, error: error.message };
+    console.error(`[EDI Transport] SFTP delivery failed for partner ${partnerId}:`, error);
+    return { success: false, message: "SFTP delivery failed", error: error.code || "SFTP_DELIVERY_ERROR" };
   }
 }
 
@@ -233,11 +237,12 @@ export async function testAs2Connection(partnerId: number): Promise<ConnectionTe
       serverInfo: response.headers.get("server") || undefined,
     };
   } catch (error: any) {
+    console.error(`[EDI Transport] AS2 connection test failed for partner ${partnerId}:`, error);
     return {
       success: false,
-      message: `AS2 endpoint unreachable: ${error.message}`,
+      message: "AS2 endpoint unreachable",
       latencyMs: Date.now() - startTime,
-      error: error.message,
+      error: error.code || "AS2_CONNECTION_ERROR",
     };
   }
 }
@@ -280,7 +285,8 @@ export async function sendViaAs2(
       bytesTransferred: Buffer.byteLength(content),
     };
   } catch (error: any) {
-    return { success: false, message: `AS2 delivery failed: ${error.message}`, error: error.message };
+    console.error(`[EDI Transport] AS2 delivery failed for partner ${partnerId}:`, error);
+    return { success: false, message: "AS2 delivery failed", error: error.code || "AS2_DELIVERY_ERROR" };
   }
 }
 
@@ -296,7 +302,8 @@ export async function testConnection(partnerId: number): Promise<ConnectionTestR
   try {
     partner = await db.getEdiTradingPartnerById(partnerId);
   } catch (error: any) {
-    return { success: false, message: `Partner lookup failed: ${error.message}` };
+    console.error(`[EDI Transport] Partner lookup failed for testConnection(${partnerId}):`, error);
+    return { success: false, message: "Partner lookup failed" };
   }
   if (!partner) return { success: false, message: "Partner not found" };
 
@@ -329,7 +336,8 @@ export async function deliverOutbound(
   try {
     partner = await db.getEdiTradingPartnerById(partnerId);
   } catch (error: any) {
-    return { success: false, message: `Partner lookup failed: ${error.message}` };
+    console.error(`[EDI Transport] Partner lookup failed for deliverOutbound(${partnerId}):`, error);
+    return { success: false, message: "Partner lookup failed" };
   }
   if (!partner) return { success: false, message: "Partner not found" };
 
@@ -476,7 +484,8 @@ export async function handleEdiWebhook(
       }
     }
   } catch (error: any) {
-    return { success: false, message: `Partner lookup failed: ${error.message}` };
+    console.error("[EDI Transport] Partner lookup failed in webhook handler:", error);
+    return { success: false, message: "Partner lookup failed" };
   }
 
   if (!partnerId) {
@@ -487,7 +496,8 @@ export async function handleEdiWebhook(
     const result = await processInboundEdi(rawContent, partnerId);
     return { success: true, transactionId: result.transactionId, message: result.message };
   } catch (error: any) {
-    return { success: false, message: `Processing error: ${error.message}` };
+    console.error(`[EDI Transport] Webhook processing error for partner ${partnerId}:`, error);
+    return { success: false, message: "Processing error" };
   }
 }
 
