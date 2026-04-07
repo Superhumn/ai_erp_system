@@ -101,13 +101,13 @@ Respond ONLY with valid JSON:
   }
 
   // Fallback
-  const failedTransactions = ediTransactions.filter(t => t.status === "failed" || t.status === "error");
+  const failedTransactions = ediTransactions.filter(t => t.status === "error" || t.status === "rejected");
   return {
     anomalies: failedTransactions.slice(0, 10).map(t => ({
       transactionId: t.id,
       type: "failed_transaction",
       severity: "medium" as const,
-      description: `EDI transaction ${t.id} failed (${t.transactionType})`,
+      description: `EDI transaction ${t.id} ${t.status} (${t.transactionType})`,
       affectedPartner: String(t.tradingPartnerId),
       recommendation: "Investigate and retry transaction",
     })),
@@ -131,7 +131,7 @@ export async function predictEdiErrors(): Promise<EdiErrorPrediction> {
   for (const t of ediTransactions) {
     const pId = String(t.tradingPartnerId);
     totalByPartner[pId] = (totalByPartner[pId] || 0) + 1;
-    if (t.status === "failed" || t.status === "error") {
+    if (t.status === "error" || t.status === "rejected") {
       errorsByPartner[pId] = (errorsByPartner[pId] || 0) + 1;
     }
   }
@@ -146,7 +146,7 @@ ${ediPartners.slice(0, 20).map(p => {
   }).join("\n") || "No partners"}
 
 RECENT ERROR TRANSACTIONS:
-${ediTransactions.filter(t => t.status === "failed" || t.status === "error").slice(0, 15).map(t => `- TX#${t.id}: Type:${t.transactionType} Partner:${t.tradingPartnerId} Error:${t.errorMessage || 'N/A'}`).join("\n") || "No errors"}
+${ediTransactions.filter(t => t.status === "error" || t.status === "rejected").slice(0, 15).map(t => `- TX#${t.id}: Type:${t.transactionType} Partner:${t.tradingPartnerId} Error:${t.errorMessage || 'N/A'}`).join("\n") || "No errors"}
 
 Predict which partners/transaction types are likely to experience errors next.
 

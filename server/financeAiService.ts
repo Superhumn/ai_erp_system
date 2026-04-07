@@ -202,7 +202,7 @@ export async function forecastRevenue(params?: {
   // Gather historical data
   const invoices = await db.getInvoices({ companyId: params?.companyId });
   const transactions = await db.getTransactions({ companyId: params?.companyId });
-  const orders = await db.getOrders();
+  const orders = await db.getOrders({ companyId: params?.companyId });
 
   // Aggregate by month
   const monthlyRevenue: Record<string, number> = {};
@@ -401,10 +401,11 @@ Respond ONLY with valid JSON:
 
 export async function classifyTransactions(params: {
   transactionIds: number[];
+  companyId?: number;
 }): Promise<TransactionClassification> {
-  const allTransactions = await db.getTransactions();
+  const allTransactions = await db.getTransactions({ companyId: params.companyId });
   const targetTransactions = allTransactions.filter(t => params.transactionIds.includes(t.id));
-  const accounts = await db.getAccounts();
+  const accounts = await db.getAccounts(params.companyId);
 
   if (targetTransactions.length === 0) {
     return { classifications: [] };

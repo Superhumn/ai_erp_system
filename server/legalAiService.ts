@@ -306,7 +306,7 @@ export async function checkCompliance(params?: {
 }): Promise<ComplianceCheck> {
   const contracts = await db.getContracts({ companyId: params?.companyId });
   const activeContracts = contracts.filter(c => c.status === "active");
-  const documents = await db.getDocuments({});
+  const documents = await db.getDocuments({ companyId: params?.companyId });
 
   const prompt = `Assess compliance status across the organization's contract portfolio.
 

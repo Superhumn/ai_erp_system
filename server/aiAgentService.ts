@@ -415,7 +415,7 @@ const AI_TOOLS: Tool[] = [
               "manufacturing_yield", "quality_forecast", "production_optimization", "predictive_maintenance",
               "contract_analysis", "dispute_prediction", "compliance_check",
               "project_risks", "effort_estimation", "resource_allocation",
-              "edi_anomalies", "supplier_scoring"
+              "edi_anomalies", "edi_error_prediction", "supplier_scoring"
             ],
             description: "Type of AI analysis to run",
           },
@@ -1261,38 +1261,38 @@ async function executeTool(toolName: string, params: any, ctx: AIAgentContext): 
   }
 }
 
-async function executeRunAiAnalytics(params: any, _ctx: AIAgentContext): Promise<any> {
+async function executeRunAiAnalytics(params: any, ctx: AIAgentContext): Promise<any> {
   const { analysisType, entityId } = params;
+  const companyId = ctx.companyId;
 
-  // Dynamic imports to avoid circular dependencies
   switch (analysisType) {
     case "finance_anomalies": {
       const { detectFinancialAnomalies } = await import("./financeAiService");
-      return detectFinancialAnomalies();
+      return detectFinancialAnomalies({ companyId });
     }
     case "revenue_forecast": {
       const { forecastRevenue } = await import("./financeAiService");
-      return forecastRevenue();
+      return forecastRevenue({ companyId });
     }
     case "cash_flow_prediction": {
       const { predictCashFlow } = await import("./financeAiService");
-      return predictCashFlow();
+      return predictCashFlow({ companyId });
     }
     case "hr_attrition": {
       const { predictAttrition } = await import("./hrAiService");
-      return predictAttrition();
+      return predictAttrition({ companyId });
     }
     case "compensation_benchmark": {
       const { benchmarkCompensation } = await import("./hrAiService");
-      return benchmarkCompensation();
+      return benchmarkCompensation({ companyId });
     }
     case "performance_analysis": {
       const { analyzePerformance } = await import("./hrAiService");
-      return analyzePerformance();
+      return analyzePerformance({ companyId });
     }
     case "workforce_plan": {
       const { planWorkforce } = await import("./hrAiService");
-      return planWorkforce();
+      return planWorkforce({ companyId });
     }
     case "manufacturing_yield": {
       const { predictYield } = await import("./manufacturingAiService");
@@ -1317,15 +1317,15 @@ async function executeRunAiAnalytics(params: any, _ctx: AIAgentContext): Promise
     }
     case "dispute_prediction": {
       const { predictDisputes } = await import("./legalAiService");
-      return predictDisputes();
+      return predictDisputes({ companyId });
     }
     case "compliance_check": {
       const { checkCompliance } = await import("./legalAiService");
-      return checkCompliance();
+      return checkCompliance({ companyId });
     }
     case "project_risks": {
       const { predictProjectRisks } = await import("./projectsAiService");
-      return predictProjectRisks(entityId ? { projectId: entityId } : undefined);
+      return predictProjectRisks(entityId ? { companyId, projectId: entityId } : { companyId });
     }
     case "effort_estimation": {
       if (!entityId) return { error: "projectId required for effort estimation" };
@@ -1334,15 +1334,19 @@ async function executeRunAiAnalytics(params: any, _ctx: AIAgentContext): Promise
     }
     case "resource_allocation": {
       const { optimizeResourceAllocation } = await import("./projectsAiService");
-      return optimizeResourceAllocation();
+      return optimizeResourceAllocation({ companyId });
     }
     case "edi_anomalies": {
       const { detectEdiAnomalies } = await import("./ediAiService");
       return detectEdiAnomalies();
     }
+    case "edi_error_prediction": {
+      const { predictEdiErrors } = await import("./ediAiService");
+      return predictEdiErrors();
+    }
     case "supplier_scoring": {
       const { scoreSuppliers } = await import("./supplierScoringService");
-      return scoreSuppliers();
+      return scoreSuppliers({ companyId });
     }
     default:
       return { error: `Unknown analysis type: ${analysisType}` };
@@ -1391,6 +1395,8 @@ export async function processAIAgentRequest(
 9. **Generate Reports**: Create various business reports.
 
 10. **Create Tasks**: Create tasks that require approval before execution.
+
+11. **Run AI Analytics**: Run AI-powered analytics including financial anomaly detection, revenue forecasting, cash flow prediction, HR attrition prediction, compensation benchmarking, workforce planning, manufacturing yield/quality prediction, production optimization, predictive maintenance, legal contract analysis, dispute prediction, compliance monitoring, project risk assessment, effort estimation, resource allocation, EDI anomaly detection, EDI error prediction, and supplier performance scoring.
 
 Current System Status:
 - Vendors: ${vendorCount[0]?.count || 0}

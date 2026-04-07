@@ -47,7 +47,7 @@ export async function scoreSuppliers(params?: {
   vendorIds?: number[];
   companyId?: number;
 }): Promise<SupplierScoreResult> {
-  const allVendors = await db.getVendors({ companyId: params?.companyId });
+  const allVendors = await db.getVendors(params?.companyId);
   const targetVendors = params?.vendorIds
     ? allVendors.filter(v => params.vendorIds!.includes(v.id))
     : allVendors;
@@ -65,22 +65,27 @@ export async function scoreSuppliers(params?: {
     onTimeRate: number;
   }> = [];
 
-  for (const vendor of targetVendors.slice(0, 30)) {
-    const spending = await db.getVendorSpendingHistory(vendor.id);
-    const pos = await db.getPurchaseOrders({ vendorId: vendor.id });
+  const metricsResults = await Promise.all(
+    targetVendors.slice(0, 30).map(async (vendor) => {
+      const [spending, pos] = await Promise.all([
+        db.getVendorSpendingHistory(vendor.id),
+        db.getPurchaseOrders({ vendorId: vendor.id }),
+      ]);
 
-    const deliveredPOs = pos.filter(po => po.status === "delivered" || po.status === "received");
-    // Simple on-time estimation based on available data
-    const onTimeRate = deliveredPOs.length > 0 ? 0.85 : 0; // Default 85% if they have deliveries
+      const deliveredPOs = pos.filter(po => po.status === "received" || po.status === "partial");
+      const totalPOs = pos.length;
+      const onTimeRate = totalPOs > 0 ? deliveredPOs.length / totalPOs : 0;
 
-    vendorMetrics.push({
-      vendor,
-      poCount: spending?.orderCount || 0,
-      totalSpend: spending?.totalSpend || 0,
-      avgOrderValue: spending?.avgOrderValue || 0,
-      onTimeRate,
-    });
-  }
+      return {
+        vendor,
+        poCount: spending?.orderCount || 0,
+        totalSpend: spending?.totalSpend || 0,
+        avgOrderValue: spending?.avgOrderValue || 0,
+        onTimeRate,
+      };
+    })
+  );
+  vendorMetrics.push(...metricsResults);
 
   const prompt = `Score these suppliers/vendors on a comprehensive performance framework.
 
