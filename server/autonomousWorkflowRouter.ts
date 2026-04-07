@@ -70,6 +70,8 @@ export const autonomousWorkflowRouter = router({
     }),
 
     initializeDefaults: opsOrAdminProcedure.mutation(async () => {
+      const orchestrator = getOrchestrator();
+      await orchestrator.configureDefaultWorkflows();
       return { success: true, initialized: true };
     }),
   }),
