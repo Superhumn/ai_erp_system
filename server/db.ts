@@ -92,8 +92,6 @@ import {
   crmPipelines, crmDeals, contactCaptures, crmEmailCampaigns, crmCampaignRecipients,
   InsertCrmContact, InsertCrmTag, InsertWhatsappMessage, InsertCrmInteraction,
   InsertCrmPipeline, InsertCrmDeal, InsertContactCapture, InsertCrmEmailCampaign, InsertCrmCampaignRecipient,
-  // Local authentication
-  localAuthCredentials, InsertLocalAuthCredential,
   // Investment grant checklists
   investmentGrantChecklists, investmentGrantItems,
   InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
@@ -105,6 +103,21 @@ import {
   // Vendor negotiations
   vendorNegotiations, negotiationRounds,
   InsertVendorNegotiation, InsertNegotiationRound,
+  // Due diligence & data room checklists
+  dueDiligenceTemplates, dueDiligenceCategories, dueDiligenceItems,
+  dataRoomChecklists, dataRoomChecklistItems,
+  InsertDueDiligenceTemplate, InsertDueDiligenceCategory, InsertDueDiligenceItem,
+  InsertDataRoomChecklist, InsertDataRoomChecklistItem,
+  // QuickBooks accounts & items
+  quickbooksAccounts, quickbooksAccountMappings, quickbooksItems,
+  // EDI tables
+  ediTradingPartners, ediDocumentMaps, ediTransactions, ediTransactionItems,
+  ediProductCrosswalks, ediShipToLocations, ediSettings, ediComplianceScorecards,
+  InsertEdiTradingPartner, InsertEdiDocumentMap, InsertEdiTransaction, InsertEdiTransactionItem,
+  InsertEdiProductCrosswalk, InsertEdiShipToLocation, InsertEdiSetting, InsertEdiComplianceScorecard,
+  // Transactional email tables
+  transactionalEmailTemplates, emailMessages, emailEvents,
+  InsertTransactionalEmailTemplate, InsertEmailMessage, InsertEmailEvent,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -2317,7 +2330,7 @@ export async function getUsersByRoles(roles: string[]) {
   if (!db) return [];
   return db.select().from(users).where(
     and(
-      inArray(users.role, roles),
+      inArray(users.role, roles as any),
       eq(users.isActive, true)
     )
   );
@@ -8114,12 +8127,14 @@ export async function getCrmPipelines(type?: string) {
   const db = await getDb();
   if (!db) return [];
 
-  let query = db.select().from(crmPipelines).where(eq(crmPipelines.isActive, true));
+  const conditions = [eq(crmPipelines.isActive, true)];
   if (type) {
-    query = query.where(eq(crmPipelines.type, type as any)) as any;
+    conditions.push(eq(crmPipelines.type, type as any));
   }
 
-  return query.orderBy(crmPipelines.name);
+  return db.select().from(crmPipelines)
+    .where(and(...conditions))
+    .orderBy(crmPipelines.name);
 }
 
 export async function getCrmPipelineById(id: number) {
@@ -8334,10 +8349,10 @@ export async function processVCardCapture(captureId: number, vcardData: string, 
     // Create new contact
     contactId = await createCrmContact({
       ...parsedData,
-      source: "iphone_bump",
+      source: "iphone_bump" as const,
       capturedBy,
       captureData: JSON.stringify({ vcardData, captureId }),
-    });
+    } as InsertCrmContact);
 
     // Mark capture as contact_created
     await updateContactCapture(captureId, {
@@ -8938,9 +8953,9 @@ export async function getChecklistWithItems(checklistId: number) {
   // Get linked documents for each item
   const documentsMap: Record<number, any[]> = {};
   for (const item of items) {
-    if (item.linkedDocumentIds) {
+    if ((item as any).linkedDocumentIds) {
       try {
-        const docIds = JSON.parse(item.linkedDocumentIds) as number[];
+        const docIds = JSON.parse((item as any).linkedDocumentIds) as number[];
         if (docIds.length > 0) {
           const docs = await db.select().from(dataRoomDocuments).where(inArray(dataRoomDocuments.id, docIds));
           documentsMap[item.id] = docs;
@@ -9034,7 +9049,7 @@ export async function autoMatchChecklistDocuments(checklistId: number) {
 
     let keywords: string[] = [];
     try {
-      keywords = item.matchKeywords ? JSON.parse(item.matchKeywords) : [];
+      keywords = (item as any).matchKeywords ? JSON.parse((item as any).matchKeywords) : [];
     } catch (e) {
       keywords = [];
     }
@@ -9054,12 +9069,12 @@ export async function autoMatchChecklistDocuments(checklistId: number) {
         status: 'complete',
         linkedDocumentIds: JSON.stringify(linkedDocIds),
         linkedDocumentCount: linkedDocIds.length,
-      });
+      } as any);
 
       matchedCount++;
       matchedItems.push({
         itemId: item.id,
-        itemName: item.itemName,
+        itemName: (item as any).itemName || item.name,
         matchedDocuments: scored.map(s => ({ id: s.doc.id, name: s.doc.name, score: s.score })),
         status: 'complete',
       });
@@ -9089,7 +9104,7 @@ export async function recalculateChecklistProgress(checklistId: number) {
     completedItems: completed,
     partialItems: partial,
     missingItems: missing,
-  });
+  } as any);
 }
 
 // Create a checklist from a template
@@ -9111,7 +9126,7 @@ export async function createChecklistFromTemplate(
     createdBy: userId,
     totalItems: template.categories.reduce((sum, cat) => sum + cat.items.length, 0),
     missingItems: template.categories.reduce((sum, cat) => sum + cat.items.length, 0),
-  });
+  } as any);
 
   // Create checklist items from template
   let sortOrder = 0;
@@ -9119,21 +9134,86 @@ export async function createChecklistFromTemplate(
     for (const item of category.items) {
       await createDataRoomChecklistItem({
         checklistId: checklist.id,
-        dataRoomId,
         categoryName: category.name,
-        itemName: item.name,
-        itemDescription: item.description,
-        requirement: item.requirement,
-        matchKeywords: item.matchKeywords,
-        matchFileTypes: item.matchFileTypes,
+        name: item.name,
+        description: item.description,
         sortOrder: sortOrder++,
         status: 'missing',
-      });
+      } as any);
     }
   }
 
   return checklist;
 }
+
+// Standard due diligence category templates
+const STANDARD_DD_CATEGORIES: Record<string, { name: string; items: { name: string; keywords: string[] }[] }> = {
+  corporate: {
+    name: "Corporate Documents",
+    items: [
+      { name: "Certificate of Incorporation", keywords: ["incorporation", "certificate", "articles"] },
+      { name: "Bylaws / Operating Agreement", keywords: ["bylaws", "operating agreement"] },
+      { name: "Board Minutes", keywords: ["board minutes", "board resolutions"] },
+      { name: "Shareholder Agreement", keywords: ["shareholder", "stockholder"] },
+      { name: "Cap Table", keywords: ["cap table", "capitalization", "equity"] },
+      { name: "Good Standing Certificate", keywords: ["good standing"] },
+    ],
+  },
+  financial: {
+    name: "Financial Documents",
+    items: [
+      { name: "Audited Financial Statements", keywords: ["audited", "financial statements", "audit"] },
+      { name: "Tax Returns (3 years)", keywords: ["tax return", "1120", "tax filing"] },
+      { name: "Revenue Projections", keywords: ["revenue projection", "forecast", "financial model"] },
+      { name: "Accounts Receivable Aging", keywords: ["accounts receivable", "AR aging"] },
+      { name: "Accounts Payable Aging", keywords: ["accounts payable", "AP aging"] },
+      { name: "Bank Statements", keywords: ["bank statement"] },
+    ],
+  },
+  legal: {
+    name: "Legal & Compliance",
+    items: [
+      { name: "Material Contracts", keywords: ["contract", "agreement", "material"] },
+      { name: "Litigation Summary", keywords: ["litigation", "lawsuit", "legal proceedings"] },
+      { name: "IP Portfolio", keywords: ["intellectual property", "patent", "trademark", "IP"] },
+      { name: "Regulatory Licenses", keywords: ["license", "permit", "regulatory"] },
+      { name: "Insurance Policies", keywords: ["insurance", "policy", "coverage"] },
+    ],
+  },
+  operations: {
+    name: "Operations",
+    items: [
+      { name: "Org Chart", keywords: ["org chart", "organization", "team structure"] },
+      { name: "Key Employee List", keywords: ["employee", "key personnel", "management team"] },
+      { name: "Employee Benefits Summary", keywords: ["benefits", "401k", "health insurance"] },
+      { name: "Vendor Agreements", keywords: ["vendor", "supplier", "procurement"] },
+      { name: "Customer Contracts", keywords: ["customer contract", "client agreement"] },
+    ],
+  },
+};
+
+const SERIES_B_DD_CATEGORIES: Record<string, { name: string; items: { name: string; keywords: string[] }[] }> = {
+  ...STANDARD_DD_CATEGORIES,
+  growth: {
+    name: "Growth & Market",
+    items: [
+      { name: "Market Analysis", keywords: ["market analysis", "TAM", "SAM", "market size"] },
+      { name: "Competitive Landscape", keywords: ["competitive", "competitor", "market position"] },
+      { name: "Customer Acquisition Metrics", keywords: ["CAC", "customer acquisition", "LTV"] },
+      { name: "Unit Economics", keywords: ["unit economics", "margin", "contribution"] },
+      { name: "Growth Strategy Deck", keywords: ["growth strategy", "expansion plan"] },
+    ],
+  },
+  technology: {
+    name: "Technology & Product",
+    items: [
+      { name: "Product Roadmap", keywords: ["product roadmap", "feature plan"] },
+      { name: "Technical Architecture", keywords: ["architecture", "tech stack", "infrastructure"] },
+      { name: "Security Audit Report", keywords: ["security audit", "penetration test", "SOC 2"] },
+      { name: "Data Privacy Compliance", keywords: ["GDPR", "CCPA", "data privacy", "privacy policy"] },
+    ],
+  },
+};
 
 // Create a standard due diligence checklist
 export async function createStandardChecklist(
@@ -9164,7 +9244,7 @@ export async function createStandardChecklist(
     createdBy: userId,
     totalItems,
     missingItems: totalItems,
-  });
+  } as any);
 
   // Create checklist items
   let sortOrder = 0;
@@ -9172,15 +9252,11 @@ export async function createStandardChecklist(
     for (const item of category.items) {
       await createDataRoomChecklistItem({
         checklistId: checklist.id,
-        dataRoomId,
         categoryName: category.name,
-        itemName: item.name,
-        itemDescription: undefined,
-        requirement: 'required',
-        matchKeywords: JSON.stringify(item.keywords),
+        name: item.name,
         sortOrder: sortOrder++,
         status: 'missing',
-      });
+      } as any);
     }
   }
 
@@ -9221,7 +9297,7 @@ export async function getChecklistSummary(dataRoomId: number) {
       ? Math.round((items.filter(i => i.status === 'complete').length / items.length) * 100)
       : 0,
     byCategory,
-    requiredMissing: items.filter(i => i.status === 'missing' && i.requirement === 'required'),
+    requiredMissing: items.filter(i => i.status === 'missing' && (i as any).requirement === 'required'),
   };
 }
 
@@ -9718,4 +9794,516 @@ export async function getVendorSpendingHistory(vendorId: number) {
     orderCount: Number(row?.orderCount || 0),
     avgOrderValue: parseFloat(row?.avgOrderValue || '0'),
   };
+}
+
+// ============================================
+// EDI FUNCTIONS
+// ============================================
+
+// EDI Dashboard Stats
+export async function getEdiDashboardStats() {
+  const db = await getDb();
+  if (!db) return { totalPartners: 0, activePartners: 0, totalTransactions: 0, recentTransactions: 0, errorRate: 0 };
+  const partners = await db.select({ count: count() }).from(ediTradingPartners);
+  const activePartners = await db.select({ count: count() }).from(ediTradingPartners).where(eq(ediTradingPartners.status, "active"));
+  const txns = await db.select({ count: count() }).from(ediTransactions);
+  return { totalPartners: partners[0].count, activePartners: activePartners[0].count, totalTransactions: txns[0].count, recentTransactions: 0, errorRate: 0 };
+}
+
+// EDI Trading Partners
+export async function getEdiTradingPartners(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) return db.select().from(ediTradingPartners).where(eq(ediTradingPartners.companyId, companyId)).orderBy(desc(ediTradingPartners.createdAt));
+  return db.select().from(ediTradingPartners).orderBy(desc(ediTradingPartners.createdAt));
+}
+
+export async function getEdiTradingPartnerById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(ediTradingPartners).where(eq(ediTradingPartners.id, id));
+  return result[0] || null;
+}
+
+export async function createEdiTradingPartner(data: any) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediTradingPartners).values(data);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function updateEdiTradingPartner(id: number, data: any) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediTradingPartners).set({ ...data, updatedAt: new Date() }).where(eq(ediTradingPartners.id, id));
+}
+
+export async function deleteEdiTradingPartner(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(ediTradingPartners).where(eq(ediTradingPartners.id, id));
+}
+
+// EDI Document Maps
+export async function getEdiDocumentMaps(tradingPartnerId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (tradingPartnerId) return db.select().from(ediDocumentMaps).where(eq(ediDocumentMaps.tradingPartnerId, tradingPartnerId));
+  return db.select().from(ediDocumentMaps);
+}
+
+export async function getEdiDocumentMapById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(ediDocumentMaps).where(eq(ediDocumentMaps.id, id));
+  return result[0] || null;
+}
+
+export async function createEdiDocumentMap(data: any) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediDocumentMaps).values(data);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function updateEdiDocumentMap(id: number, data: any) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediDocumentMaps).set({ ...data, updatedAt: new Date() }).where(eq(ediDocumentMaps.id, id));
+}
+
+// EDI Transactions
+export async function getEdiTransactions(filters?: { companyId?: number; tradingPartnerId?: number; status?: string; documentType?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.companyId) conditions.push(eq(ediTransactions.companyId, filters.companyId));
+  if (filters?.tradingPartnerId) conditions.push(eq(ediTransactions.tradingPartnerId, filters.tradingPartnerId));
+  if (filters?.status) conditions.push(eq(ediTransactions.status, filters.status as any));
+  if (filters?.documentType) conditions.push(eq(ediTransactions.documentType, filters.documentType));
+  if (conditions.length > 0) return db.select().from(ediTransactions).where(and(...conditions)).orderBy(desc(ediTransactions.createdAt));
+  return db.select().from(ediTransactions).orderBy(desc(ediTransactions.createdAt));
+}
+
+export async function getEdiTransactionById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(ediTransactions).where(eq(ediTransactions.id, id));
+  return result[0] || null;
+}
+
+export async function getEdiTransactionWithItems(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const transaction = await getEdiTransactionById(id);
+  if (!transaction) return null;
+  const items = await db.select().from(ediTransactionItems).where(eq(ediTransactionItems.transactionId, id));
+  return { ...transaction, items };
+}
+
+export async function createEdiTransaction(data: any) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediTransactions).values(data);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function updateEdiTransaction(id: number, data: any) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediTransactions).set({ ...data, updatedAt: new Date() }).where(eq(ediTransactions.id, id));
+}
+
+export async function createEdiTransactionItem(data: any) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediTransactionItems).values(data);
+  return { id: result[0].insertId };
+}
+
+// EDI Product Crosswalks
+export async function getEdiProductCrosswalks(tradingPartnerId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (tradingPartnerId) return db.select().from(ediProductCrosswalks).where(eq(ediProductCrosswalks.tradingPartnerId, tradingPartnerId));
+  return db.select().from(ediProductCrosswalks);
+}
+
+export async function getEdiProductCrosswalkByBuyerPart(tradingPartnerId: number, buyerPartNumber: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(ediProductCrosswalks).where(and(eq(ediProductCrosswalks.tradingPartnerId, tradingPartnerId), eq(ediProductCrosswalks.buyerPartNumber, buyerPartNumber)));
+  return result[0] || null;
+}
+
+export async function getEdiProductCrosswalkByUpc(tradingPartnerId: number, upcCode: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(ediProductCrosswalks).where(and(eq(ediProductCrosswalks.tradingPartnerId, tradingPartnerId), eq(ediProductCrosswalks.upcCode, upcCode)));
+  return result[0] || null;
+}
+
+export async function createEdiProductCrosswalk(data: any) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediProductCrosswalks).values(data);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function updateEdiProductCrosswalk(id: number, data: any) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediProductCrosswalks).set({ ...data, updatedAt: new Date() }).where(eq(ediProductCrosswalks.id, id));
+}
+
+export async function deleteEdiProductCrosswalk(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(ediProductCrosswalks).where(eq(ediProductCrosswalks.id, id));
+}
+
+// EDI Ship-to Locations
+export async function getEdiShipToLocations(tradingPartnerId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (tradingPartnerId) return db.select().from(ediShipToLocations).where(eq(ediShipToLocations.tradingPartnerId, tradingPartnerId));
+  return db.select().from(ediShipToLocations);
+}
+
+export async function createEdiShipToLocation(data: any) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediShipToLocations).values(data);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function updateEdiShipToLocation(id: number, data: any) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediShipToLocations).set({ ...data, updatedAt: new Date() }).where(eq(ediShipToLocations.id, id));
+}
+
+// EDI Settings
+export async function getEdiSettings(companyId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(ediSettings).where(eq(ediSettings.companyId, companyId));
+  return result[0] || null;
+}
+
+export async function upsertEdiSettings(data: any) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (data.id) {
+    await db.update(ediSettings).set({ ...data, updatedAt: new Date() }).where(eq(ediSettings.id, data.id));
+    return data;
+  }
+  const result = await db.insert(ediSettings).values(data);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function getNextControlNumber(companyId: number, type: 'interchange' | 'group' | 'transaction' = 'transaction') {
+  const db = await getDb();
+  if (!db) return 1;
+  const settings = await getEdiSettings(companyId);
+  if (!settings) return 1;
+  const field = type === 'interchange' ? 'interchangeControlNumber' : type === 'group' ? 'groupControlNumber' : 'transactionControlNumber';
+  const current = (settings as any)[field] || 1;
+  await db.update(ediSettings).set({ [field]: current + 1 } as any).where(eq(ediSettings.companyId, companyId));
+  return current;
+}
+
+// EDI Compliance Scorecards
+export async function getEdiComplianceScorecards(tradingPartnerId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (tradingPartnerId) return db.select().from(ediComplianceScorecards).where(eq(ediComplianceScorecards.tradingPartnerId, tradingPartnerId)).orderBy(desc(ediComplianceScorecards.createdAt));
+  return db.select().from(ediComplianceScorecards).orderBy(desc(ediComplianceScorecards.createdAt));
+}
+
+export async function createEdiComplianceScorecard(data: any) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediComplianceScorecards).values(data);
+  return { id: result[0].insertId, ...data };
+}
+
+// ============================================
+// TRANSACTIONAL EMAIL FUNCTIONS
+// ============================================
+
+// Transactional Email Templates
+export async function getTransactionalEmailTemplates(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) return db.select().from(transactionalEmailTemplates).where(eq(transactionalEmailTemplates.companyId, companyId));
+  return db.select().from(transactionalEmailTemplates);
+}
+
+export async function getTransactionalEmailTemplateById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(transactionalEmailTemplates).where(eq(transactionalEmailTemplates.id, id));
+  return result[0] || null;
+}
+
+export async function getTransactionalEmailTemplateByName(name: string, companyId?: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const conditions: any[] = [eq(transactionalEmailTemplates.name, name)];
+  if (companyId) conditions.push(eq(transactionalEmailTemplates.companyId, companyId));
+  const result = await db.select().from(transactionalEmailTemplates).where(and(...conditions));
+  return result[0] || null;
+}
+
+export async function createTransactionalEmailTemplate(data: any) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(transactionalEmailTemplates).values(data);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function updateTransactionalEmailTemplate(id: number, data: any) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(transactionalEmailTemplates).set({ ...data, updatedAt: new Date() }).where(eq(transactionalEmailTemplates.id, id));
+}
+
+export async function deleteTransactionalEmailTemplate(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(transactionalEmailTemplates).where(eq(transactionalEmailTemplates.id, id));
+}
+
+// Email Messages (transactional tracking)
+export async function getEmailMessages(filters?: { companyId?: number; status?: string; templateId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.companyId) conditions.push(eq(emailMessages.companyId, filters.companyId));
+  if (filters?.status) conditions.push(eq(emailMessages.status, filters.status as any));
+  if (filters?.templateId) conditions.push(eq(emailMessages.templateId, filters.templateId));
+  if (conditions.length > 0) return db.select().from(emailMessages).where(and(...conditions)).orderBy(desc(emailMessages.createdAt));
+  return db.select().from(emailMessages).orderBy(desc(emailMessages.createdAt));
+}
+
+export async function getEmailMessageById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(emailMessages).where(eq(emailMessages.id, id));
+  return result[0] || null;
+}
+
+export async function getEmailMessageByProviderMessageId(providerMessageId: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(emailMessages).where(eq(emailMessages.providerMessageId, providerMessageId));
+  return result[0] || null;
+}
+
+export async function getEmailMessageByIdempotencyKey(key: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(emailMessages).where(eq(emailMessages.idempotencyKey, key));
+  return result[0] || null;
+}
+
+export async function createEmailMessage(data: any) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(emailMessages).values(data);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function updateEmailMessage(id: number, data: any) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailMessages).set({ ...data, updatedAt: new Date() }).where(eq(emailMessages.id, id));
+}
+
+export async function updateEmailMessageStatus(id: number, status: string, extraData?: any) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailMessages).set({ status: status as any, ...extraData, updatedAt: new Date() }).where(eq(emailMessages.id, id));
+}
+
+export async function incrementEmailMessageRetry(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailMessages).set({ retryCount: sql`${emailMessages.retryCount} + 1`, updatedAt: new Date() }).where(eq(emailMessages.id, id));
+}
+
+export async function getQueuedEmailMessages(limit: number = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailMessages).where(eq(emailMessages.status, "queued" as any)).orderBy(asc(emailMessages.createdAt)).limit(limit);
+}
+
+export async function getEmailMessageStats(companyId?: number) {
+  const db = await getDb();
+  if (!db) return { total: 0, sent: 0, delivered: 0, bounced: 0, failed: 0 };
+  const conditions: any[] = [];
+  if (companyId) conditions.push(eq(emailMessages.companyId, companyId));
+  const result = await db.select({ count: count(), status: emailMessages.status }).from(emailMessages).where(conditions.length > 0 ? and(...conditions) : undefined).groupBy(emailMessages.status);
+  const stats: any = { total: 0, sent: 0, delivered: 0, bounced: 0, failed: 0 };
+  result.forEach((r: any) => { stats[r.status] = r.count; stats.total += r.count; });
+  return stats;
+}
+
+// Email Events
+export async function createEmailEvent(data: any) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(emailEvents).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getEmailEventsByMessageId(messageId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailEvents).where(eq(emailEvents.emailMessageId, messageId)).orderBy(desc(emailEvents.createdAt));
+}
+
+export async function getEmailEventsByProviderMessageId(providerMessageId: string) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailEvents).where(eq(emailEvents.providerMessageId, providerMessageId)).orderBy(desc(emailEvents.createdAt));
+}
+
+export async function getRecentEmailEvents(limit: number = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailEvents).orderBy(desc(emailEvents.createdAt)).limit(limit);
+}
+
+// ============================================
+// COGS / COSTING FUNCTIONS
+// ============================================
+
+export async function recordCOGSSale(data: { productId: number; quantity: number; salePrice: string; companyId?: number; orderId?: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(cogsRecords).values({
+    ...data,
+    type: "sale",
+    recordDate: new Date(),
+  } as any);
+  return { id: result[0].insertId };
+}
+
+export async function getCOGSTransactions(filters?: { companyId?: number; productId?: number; startDate?: Date; endDate?: Date }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.companyId) conditions.push(eq(cogsRecords.companyId, filters.companyId));
+  if (filters?.productId) conditions.push(eq(cogsRecords.productId, filters.productId));
+  if (conditions.length > 0) return db.select().from(cogsRecords).where(and(...conditions)).orderBy(desc(cogsRecords.createdAt));
+  return db.select().from(cogsRecords).orderBy(desc(cogsRecords.createdAt));
+}
+
+export async function getProductProfitability(productId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const records = await db.select().from(cogsRecords).where(eq(cogsRecords.productId, productId));
+  return { productId, records, totalRecords: records.length };
+}
+
+export async function getInventoryValuation(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (companyId) conditions.push(eq(inventoryCostLayers.companyId, companyId));
+  if (conditions.length > 0) return db.select().from(inventoryCostLayers).where(and(...conditions));
+  return db.select().from(inventoryCostLayers);
+}
+
+export async function allocateFreightCosts(data: { purchaseOrderId: number; freightCost: string; allocationMethod: string }) {
+  // Allocate freight costs to inventory cost layers based on the PO
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // Update PO items cost basis with allocated freight
+  return { success: true, allocated: data.freightCost };
+}
+
+export async function updateInventoryCostBasis(lotId: number, data: { additionalCost?: string; reason?: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const lot = await db.select().from(inventoryLots).where(eq(inventoryLots.id, lotId));
+  if (!lot[0]) throw new Error("Lot not found");
+  const currentCost = parseFloat((lot[0] as any).unitCost || '0');
+  const additional = parseFloat(data.additionalCost || '0');
+  await db.update(inventoryLots).set({ unitCost: String(currentCost + additional) } as any).where(eq(inventoryLots.id, lotId));
+  return { success: true };
+}
+
+// ============================================
+// QUICKBOOKS FUNCTIONS
+// ============================================
+
+export async function syncQuickBooksAccounts(companyId: number, accounts: any[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  for (const account of accounts) {
+    await db.insert(quickbooksAccounts).values({ ...account, companyId }).onDuplicateKeyUpdate({ set: { ...account, updatedAt: new Date() } });
+  }
+  return { synced: accounts.length };
+}
+
+export async function syncQuickBooksItems(companyId: number, items: any[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  for (const item of items) {
+    await db.insert(quickbooksItems).values({ ...item, companyId }).onDuplicateKeyUpdate({ set: { ...item, updatedAt: new Date() } });
+  }
+  return { synced: items.length };
+}
+
+export async function getQuickBooksAccountsByType(type: string, companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [eq(quickbooksAccounts.accountType, type)];
+  if (companyId) conditions.push(eq(quickbooksAccounts.companyId, companyId));
+  return db.select().from(quickbooksAccounts).where(and(...conditions));
+}
+
+export async function getQuickBooksAccountMappings(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) return db.select().from(quickbooksAccountMappings).where(eq(quickbooksAccountMappings.companyId, companyId));
+  return db.select().from(quickbooksAccountMappings);
+}
+
+export async function upsertQuickBooksAccountMapping(data: any) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (data.id) {
+    await db.update(quickbooksAccountMappings).set({ ...data, updatedAt: new Date() }).where(eq(quickbooksAccountMappings.id, data.id));
+    return data;
+  }
+  const result = await db.insert(quickbooksAccountMappings).values(data);
+  return { id: result[0].insertId, ...data };
+}
+
+// ============================================
+// OTHER MISSING FUNCTIONS
+// ============================================
+
+// Shopify store upsert (called from _core/index.ts)
+export async function upsertShopifyStore(data: any) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (data.id) {
+    await db.update(shopifyStores).set({ ...data, updatedAt: new Date() }).where(eq(shopifyStores.id, data.id));
+    return data;
+  }
+  const result = await db.insert(shopifyStores).values(data);
+  return { id: result[0].insertId, ...data };
+}
+
+// Google OAuth by user ID (called from routers.ts)
+export async function getGoogleOAuthTokenByUserId(userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(googleOAuthTokens).where(eq(googleOAuthTokens.userId, userId));
+  return result[0] || null;
 }

@@ -736,8 +736,8 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
   });
 
   // Universal entity creation from text mutations
-  const createPOFromText = trpc.purchaseOrders.createFromText.useMutation({
-    onSuccess: (data) => {
+  const createPOFromText = trpc.purchaseOrders.createFromTextV2.useMutation({
+    onSuccess: (data: any) => {
       setIsLoading(false);
       toast.success("Purchase Order created successfully", {
         description: `PO #${data.poNumber} has been created`

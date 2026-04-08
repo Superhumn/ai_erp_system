@@ -77,7 +77,7 @@ export default function IntegrationsPage() {
     },
   });
 
-  const shopifyInitiateOAuthMutation = trpc.integrations.shopify.initiateOAuth.useMutation({
+  const shopifyInitiateOAuthMutation = (trpc.integrations as any).shopify.initiateOAuth.useMutation({
     onSuccess: (data) => {
       // Redirect to Shopify OAuth page
       window.location.href = data.authUrl;
@@ -88,7 +88,7 @@ export default function IntegrationsPage() {
     },
   });
 
-  const shopifyDisconnectMutation = trpc.integrations.shopify.disconnect.useMutation({
+  const shopifyDisconnectMutation = (trpc.integrations as any).shopify.disconnect.useMutation({
     onSuccess: () => {
       toast.success("Store disconnected successfully");
       refetch();
@@ -98,7 +98,7 @@ export default function IntegrationsPage() {
     },
   });
 
-  const shopifyTestConnectionMutation = trpc.integrations.shopify.testConnection.useMutation({
+  const shopifyTestConnectionMutation = (trpc.integrations as any).shopify.testConnection.useMutation({
     onSuccess: (data) => {
       toast.success(data.message);
     },
@@ -1040,10 +1040,10 @@ export default function IntegrationsPage() {
                       </ul>
                       <Button
                         onClick={() => {
-                          if (quickbooksAuthUrl?.url) {
-                            window.location.href = quickbooksAuthUrl.url;
+                          if ((quickbooksAuthUrl as any)?.url) {
+                            window.location.href = (quickbooksAuthUrl as any).url;
                           } else {
-                            toast.error(quickbooksAuthUrl?.error || "QuickBooks OAuth not configured");
+                            toast.error((quickbooksAuthUrl as any)?.error || "QuickBooks OAuth not configured");
                           }
                         }}
                       >

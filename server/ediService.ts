@@ -784,8 +784,8 @@ export async function processInboundEdi(
 export async function convertEdi850ToOrder(transactionId: number): Promise<{ orderId: number; orderNumber: string }> {
   const txn = await db.getEdiTransactionWithItems(transactionId);
   if (!txn) throw new Error("EDI transaction not found");
-  if (txn.transactionSetCode !== "850") throw new Error("Transaction is not an 850 PO");
-  if (txn.orderId) throw new Error("Transaction already converted to order");
+  if ((txn as any).transactionSetCode !== "850") throw new Error("Transaction is not an 850 PO");
+  if ((txn as any).orderId) throw new Error("Transaction already converted to order");
 
   const partner = await db.getEdiTradingPartnerById(txn.tradingPartnerId);
   if (!partner) throw new Error("Trading partner not found");
@@ -794,7 +794,7 @@ export async function convertEdi850ToOrder(transactionId: number): Promise<{ ord
 
   // Calculate totals
   const items = txn.items || [];
-  const subtotal = items.reduce((sum, item) => sum + parseFloat(item.totalAmount?.toString() || "0"), 0);
+  const subtotal = items.reduce((sum, item) => sum + parseFloat((item as any).totalAmount?.toString() || "0"), 0);
 
   const shippingAddress = JSON.stringify({
     name: parsedPo.shipToName,
@@ -808,7 +808,7 @@ export async function convertEdi850ToOrder(transactionId: number): Promise<{ ord
   // Create a sales order (integrates with the full sales workflow)
   const salesOrderResult = await db.createSalesOrder({
     source: "api", // EDI-originated order (enum doesn't have "edi" yet)
-    customerId: partner.customerId || undefined,
+    customerId: (partner as any).customerId || undefined,
     status: "confirmed",
     fulfillmentStatus: "unfulfilled",
     paymentStatus: "pending",
@@ -832,7 +832,7 @@ export async function convertEdi850ToOrder(transactionId: number): Promise<{ ord
       quantity: item.quantity.toString(),
       fulfilledQuantity: "0",
       unitPrice: item.unitPrice?.toString() || "0",
-      totalPrice: item.totalAmount?.toString() || "0",
+      totalPrice: (item as any).totalAmount?.toString() || "0",
       unit: item.unitOfMeasure || "EA",
     });
   }
@@ -860,27 +860,27 @@ export async function generateOutboundEdi(
   if (!partner) throw new Error("Trading partner not found");
 
   // Load our company EDI settings
-  const settings = await db.getEdiSettings();
+  const settings = await db.getEdiSettings(partner.companyId || 1);
 
   // Auto-generate control number if not provided
   if (!controlNumber) {
-    controlNumber = await db.getNextControlNumber(tradingPartnerId, "isa");
+    controlNumber = await db.getNextControlNumber(tradingPartnerId, "interchange");
   }
 
   // Use company settings for sender IDs, fall back to partner config for backwards compat
   const ourIsaId = settings?.isaId || "OURCOMPANY";
   const ourIsaQualifier = settings?.isaQualifier || "ZZ";
-  const ourGsId = settings?.gsApplicationCode || "OURAPP";
+  const ourGsId = (settings as any)?.gsApplicationCode || "OURAPP";
 
   const config: EdiEnvelopeConfig = {
     senderId: ourIsaId,
     senderQualifier: ourIsaQualifier,
-    receiverId: partner.isaId,
-    receiverQualifier: partner.isaQualifier,
+    receiverId: (partner as any).isaId,
+    receiverQualifier: (partner as any).isaQualifier,
     gsSenderId: ourGsId,
-    gsReceiverId: partner.gsId,
+    gsReceiverId: (partner as any).gsId,
     controlNumber,
-    isTest: partner.testMode || false,
+    isTest: (partner as any).testMode || false,
     version: "004010",
   };
 
@@ -911,8 +911,8 @@ export async function generateOutboundEdi(
     rawContent,
     parsedData: JSON.stringify(sourceData),
     status: "processed",
-    ackRequired: partner.requiresFunctionalAck || false,
-    ackStatus: partner.requiresFunctionalAck ? "pending" : undefined,
+    ackRequired: (partner as any).requiresFunctionalAck || false,
+    ackStatus: (partner as any).requiresFunctionalAck ? "pending" : undefined,
     processedAt: new Date(),
   });
 
@@ -929,27 +929,27 @@ async function sendAuto997(
   tradingPartnerId: number,
   envelope: ParsedEdiEnvelope
 ): Promise<void> {
-  const settings = await db.getEdiSettings();
-  if (settings && !settings.autoSend997) return;
-
   const partner = await db.getEdiTradingPartnerById(tradingPartnerId);
   if (!partner) return;
 
-  const controlNumber = await db.getNextControlNumber(tradingPartnerId, "isa");
+  const settings = await db.getEdiSettings(partner.companyId || 1);
+  if (settings && !(settings as any).autoSend997) return;
+
+  const controlNumber = await db.getNextControlNumber(tradingPartnerId, "interchange");
 
   const ourIsaId = settings?.isaId || "OURCOMPANY";
   const ourIsaQualifier = settings?.isaQualifier || "ZZ";
-  const ourGsId = settings?.gsApplicationCode || "OURAPP";
+  const ourGsId = (settings as any)?.gsApplicationCode || "OURAPP";
 
   const config: EdiEnvelopeConfig = {
     senderId: ourIsaId,
     senderQualifier: ourIsaQualifier,
-    receiverId: partner.isaId,
-    receiverQualifier: partner.isaQualifier,
+    receiverId: (partner as any).isaId,
+    receiverQualifier: (partner as any).isaQualifier,
     gsSenderId: ourGsId,
-    gsReceiverId: partner.gsId,
+    gsReceiverId: (partner as any).gsId,
     controlNumber,
-    isTest: partner.testMode || false,
+    isTest: (partner as any).testMode || false,
     version: "004010",
   };
 

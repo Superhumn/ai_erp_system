@@ -131,7 +131,7 @@ export default function TradingPartners() {
       ediContactEmail: (formData.get("ediContactEmail") as string) || undefined,
       ediContactPhone: (formData.get("ediContactPhone") as string) || undefined,
       notes: (formData.get("notes") as string) || undefined,
-    });
+    } as any);
   };
 
   if (isLoading) {
@@ -143,7 +143,8 @@ export default function TradingPartners() {
   }
 
   // Detail view for a selected partner
-  if (selectedPartnerId && selectedPartner) {
+  const sp = selectedPartner as any;
+  if (selectedPartnerId && sp) {
     return (
       <div className="p-6 space-y-6">
         <div className="flex items-center gap-4">
@@ -152,21 +153,21 @@ export default function TradingPartners() {
             Back
           </Button>
           <div>
-            <h1 className="text-2xl font-bold">{selectedPartner.name}</h1>
+            <h1 className="text-2xl font-bold">{sp.name}</h1>
             <p className="text-muted-foreground">
-              {selectedPartner.partnerType} &middot; ISA: {selectedPartner.isaId} &middot; GS: {selectedPartner.gsId}
+              {sp.partnerType} &middot; ISA: {sp.isaId} &middot; GS: {sp.gsId}
             </p>
           </div>
           <Badge
             className={
-              selectedPartner.status === "active" ? "bg-green-50 text-green-700 border-green-200" :
-              selectedPartner.status === "testing" ? "bg-yellow-50 text-yellow-700 border-yellow-200" :
-              selectedPartner.status === "onboarding" ? "bg-blue-50 text-blue-700 border-blue-200" :
+              sp.status === "active" ? "bg-green-50 text-green-700 border-green-200" :
+              sp.status === "testing" ? "bg-yellow-50 text-yellow-700 border-yellow-200" :
+              sp.status === "onboarding" ? "bg-blue-50 text-blue-700 border-blue-200" :
               "bg-gray-50 text-gray-700 border-gray-200"
             }
             variant="outline"
           >
-            {selectedPartner.status}
+            {sp.status}
           </Badge>
         </div>
 
@@ -190,15 +191,15 @@ export default function TradingPartners() {
                 <CardContent className="space-y-3">
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <span className="text-muted-foreground">Type:</span>
-                    <span className="font-medium">{selectedPartner.connectionType?.toUpperCase()}</span>
+                    <span className="font-medium">{sp.connectionType?.toUpperCase()}</span>
                     <span className="text-muted-foreground">Host:</span>
-                    <span className="font-mono text-xs">{selectedPartner.connectionHost || "-"}</span>
+                    <span className="font-mono text-xs">{sp.connectionHost || "-"}</span>
                     <span className="text-muted-foreground">Port:</span>
-                    <span>{selectedPartner.connectionPort || "-"}</span>
+                    <span>{sp.connectionPort || "-"}</span>
                     <span className="text-muted-foreground">AS2 ID:</span>
-                    <span className="font-mono text-xs">{selectedPartner.as2Id || "-"}</span>
+                    <span className="font-mono text-xs">{sp.as2Id || "-"}</span>
                     <span className="text-muted-foreground">Test Mode:</span>
-                    <span>{selectedPartner.testMode ? "Yes" : "No"}</span>
+                    <span>{sp.testMode ? "Yes" : "No"}</span>
                   </div>
                 </CardContent>
               </Card>
@@ -213,15 +214,15 @@ export default function TradingPartners() {
                 <CardContent className="space-y-3">
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <span className="text-muted-foreground">ISA ID:</span>
-                    <span className="font-mono">{selectedPartner.isaId}</span>
+                    <span className="font-mono">{sp.isaId}</span>
                     <span className="text-muted-foreground">ISA Qualifier:</span>
-                    <span className="font-mono">{selectedPartner.isaQualifier}</span>
+                    <span className="font-mono">{sp.isaQualifier}</span>
                     <span className="text-muted-foreground">GS ID:</span>
-                    <span className="font-mono">{selectedPartner.gsId}</span>
+                    <span className="font-mono">{sp.gsId}</span>
                     <span className="text-muted-foreground">Requires FA (997):</span>
-                    <span>{selectedPartner.requiresFunctionalAck ? "Yes" : "No"}</span>
+                    <span>{sp.requiresFunctionalAck ? "Yes" : "No"}</span>
                     <span className="text-muted-foreground">ACK Timeout:</span>
-                    <span>{selectedPartner.ackTimeoutHours || 24}h</span>
+                    <span>{sp.ackTimeoutHours || 24}h</span>
                   </div>
                 </CardContent>
               </Card>
@@ -236,11 +237,11 @@ export default function TradingPartners() {
                 <CardContent className="space-y-3">
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <span className="text-muted-foreground">Contact:</span>
-                    <span>{selectedPartner.ediContactName || "-"}</span>
+                    <span>{sp.ediContactName || "-"}</span>
                     <span className="text-muted-foreground">Email:</span>
-                    <span>{selectedPartner.ediContactEmail || "-"}</span>
+                    <span>{sp.ediContactEmail || "-"}</span>
                     <span className="text-muted-foreground">Phone:</span>
-                    <span>{selectedPartner.ediContactPhone || "-"}</span>
+                    <span>{sp.ediContactPhone || "-"}</span>
                   </div>
                 </CardContent>
               </Card>
@@ -251,31 +252,31 @@ export default function TradingPartners() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex gap-2">
-                    {selectedPartner.status !== "active" && (
-                      <Button size="sm" onClick={() => updatePartner.mutate({ id: selectedPartner.id, status: "active" })}>
+                    {sp.status !== "active" && (
+                      <Button size="sm" onClick={() => updatePartner.mutate({ id: sp.id, status: "active" })}>
                         Activate
                       </Button>
                     )}
-                    {selectedPartner.status !== "testing" && (
-                      <Button size="sm" variant="outline" onClick={() => updatePartner.mutate({ id: selectedPartner.id, status: "testing" })}>
+                    {sp.status !== "testing" && (
+                      <Button size="sm" variant="outline" onClick={() => updatePartner.mutate({ id: sp.id, status: "testing" })}>
                         Set to Testing
                       </Button>
                     )}
-                    {selectedPartner.status !== "inactive" && (
-                      <Button size="sm" variant="destructive" onClick={() => updatePartner.mutate({ id: selectedPartner.id, status: "inactive" })}>
+                    {sp.status !== "inactive" && (
+                      <Button size="sm" variant="destructive" onClick={() => updatePartner.mutate({ id: sp.id, status: "inactive" })}>
                         Deactivate
                       </Button>
                     )}
                   </div>
-                  {selectedPartner.testMode && (
-                    <Button size="sm" variant="outline" onClick={() => updatePartner.mutate({ id: selectedPartner.id, testMode: false })}>
+                  {sp.testMode && (
+                    <Button size="sm" variant="outline" onClick={() => updatePartner.mutate({ id: sp.id, testMode: false } as any)}>
                       Switch to Production Mode
                     </Button>
                   )}
-                  {selectedPartner.notes && (
+                  {sp.notes && (
                     <div className="mt-3">
                       <p className="text-sm text-muted-foreground">Notes:</p>
-                      <p className="text-sm">{selectedPartner.notes}</p>
+                      <p className="text-sm">{sp.notes}</p>
                     </div>
                   )}
                 </CardContent>
@@ -293,7 +294,7 @@ export default function TradingPartners() {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => testConnection.mutate({ partnerId: selectedPartner.id })}
+                      onClick={() => testConnection.mutate({ partnerId: sp.id })}
                       disabled={testConnection.isPending}
                     >
                       {testConnection.isPending ? (
@@ -303,11 +304,11 @@ export default function TradingPartners() {
                       )}
                       Test Connection
                     </Button>
-                    {(selectedPartner.connectionType === "sftp" || selectedPartner.connectionType === "van") && (
+                    {(sp.connectionType === "sftp" || sp.connectionType === "van") && (
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => pollPartner.mutate({ partnerId: selectedPartner.id })}
+                        onClick={() => pollPartner.mutate({ partnerId: sp.id })}
                         disabled={pollPartner.isPending}
                       >
                         {pollPartner.isPending ? (
@@ -376,7 +377,7 @@ export default function TradingPartners() {
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {partnerCrosswalks.map((cw) => (
+                      {partnerCrosswalks.map((cw: any) => (
                         <tr key={cw.id} className="hover:bg-muted/50">
                           <td className="py-2 text-sm font-mono">{cw.buyerPartNumber || "-"}</td>
                           <td className="py-2 text-sm font-mono">{cw.vendorPartNumber || "-"}</td>
@@ -418,7 +419,7 @@ export default function TradingPartners() {
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {partnerLocations.map((loc) => (
+                      {partnerLocations.map((loc: any) => (
                         <tr key={loc.id} className="hover:bg-muted/50">
                           <td className="py-2 text-sm font-mono font-medium">{loc.locationCode}</td>
                           <td className="py-2 text-sm">{loc.name}</td>
@@ -465,7 +466,7 @@ export default function TradingPartners() {
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {partnerScorecards.map((sc) => (
+                      {partnerScorecards.map((sc: any) => (
                         <tr key={sc.id} className="hover:bg-muted/50">
                           <td className="py-2 text-sm">
                             {new Date(sc.periodStart).toLocaleDateString()} - {new Date(sc.periodEnd).toLocaleDateString()}
@@ -650,7 +651,7 @@ export default function TradingPartners() {
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {partners.map((partner) => (
+                {partners.map((partner: any) => (
                   <tr key={partner.id} className="hover:bg-muted/50 cursor-pointer" onClick={() => setSelectedPartnerId(partner.id)}>
                     <td className="py-3">
                       <div className="flex items-center gap-2">

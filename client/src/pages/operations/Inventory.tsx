@@ -27,8 +27,10 @@ import {
   ArrowUpDown,
   MapPin,
   Target,
+  Plus,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { Badge } from "@/components/ui/badge";
 
 type InventoryItem = {
   id: number;
@@ -46,6 +48,7 @@ export default function Inventory() {
   const [selectedRows, setSelectedRows] = useState<Set<number | string>>(new Set());
   const [bulkActionDialogOpen, setBulkActionDialogOpen] = useState(false);
   const [currentBulkAction, setCurrentBulkAction] = useState<BulkActionType>(null);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   // Form states for bulk actions
   const [quantityAdjustment, setQuantityAdjustment] = useState<string>("0");
@@ -60,8 +63,8 @@ export default function Inventory() {
   const { data: warehouses } = trpc.warehouses.list.useQuery();
 
   const bulkUpdateMutation = trpc.inventory.bulkUpdate.useMutation({
-    onSuccess: (data) => {
-      toast({
+    onSuccess: (data: any) => {
+      (toast as any)({
         title: "Bulk Update Complete",
         description: `Successfully updated ${data.totalUpdated} item(s).${data.totalFailed > 0 ? ` ${data.totalFailed} item(s) failed.` : ''}`,
       });
@@ -70,8 +73,8 @@ export default function Inventory() {
       resetFormStates();
       utils.inventory.list.invalidate();
     },
-    onError: (error) => {
-      toast({
+    onError: (error: any) => {
+      (toast as any)({
         title: "Bulk Update Failed",
         description: error.message,
         variant: "destructive",
@@ -210,7 +213,7 @@ export default function Inventory() {
         break;
       case 'change_location':
         if (!selectedWarehouseId) {
-          toast({
+          (toast as any)({
             title: "Select a location",
             description: "Please select a warehouse location.",
             variant: "destructive",

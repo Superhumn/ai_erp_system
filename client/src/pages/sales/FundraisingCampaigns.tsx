@@ -39,9 +39,9 @@ export default function FundraisingCampaigns() {
     notes: "",
   });
 
-  const { data: campaigns, isLoading, refetch } = trpc.crm.listCampaigns.useQuery();
-  
-  const createCampaign = trpc.crm.createCampaign.useMutation({
+  const { data: campaigns, isLoading, refetch } = (trpc.crm as any).listCampaigns.useQuery();
+
+  const createCampaign = (trpc.crm as any).createCampaign.useMutation({
     onSuccess: () => {
       toast.success("Campaign created successfully");
       setIsOpen(false);

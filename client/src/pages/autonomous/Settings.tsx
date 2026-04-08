@@ -73,7 +73,7 @@ export default function AutonomousSettings() {
     onError: (err) => toast.error(err.message),
   });
 
-  const initializeDefaultsMutation = trpc.autonomousWorkflows.orchestrator.initializeDefaults.useMutation({
+  const initializeDefaultsMutation = (trpc.autonomousWorkflows.orchestrator as any).initializeDefaults.useMutation({
     onSuccess: () => {
       workflowsQuery.refetch();
       toast.success("Default workflows initialized");
@@ -305,9 +305,9 @@ export default function AutonomousSettings() {
                               checked={workflow.isActive}
                               onCheckedChange={() =>
                                 toggleWorkflowMutation.mutate({
-                                  workflowId: workflow.id,
+                                  id: workflow.id,
                                   isActive: !workflow.isActive
-                                })
+                                } as any)
                               }
                             />
                             <span className={workflow.isActive ? "text-green-600" : "text-muted-foreground"}>

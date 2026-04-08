@@ -41,7 +41,8 @@ export default function InventoryManagementHub() {
   const [editingCell, setEditingCell] = useState<{ id: number; field: string } | null>(null);
   const [editValue, setEditValue] = useState("");
 
-  const { data: inventory, isLoading, refetch } = trpc.inventoryManagement.list.useQuery();
+  const { data: inventoryRaw, isLoading, refetch } = trpc.inventoryManagement.list.useQuery();
+  const inventory = inventoryRaw as any[] | undefined;
   const updateMutation = trpc.inventoryManagement.update.useMutation({
     onSuccess: () => {
       toast.success("Updated successfully");

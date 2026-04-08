@@ -88,31 +88,31 @@ export default function InventoryCosting() {
   // Mutations
   const createConfigMutation = trpc.inventoryCosting.configs.create.useMutation({
     onSuccess: () => {
-      toast({ title: "Costing Method Configured", description: "Product costing method has been set." });
+      (toast as any)({ title: "Costing Method Configured", description: "Product costing method has been set." });
       setConfigDialogOpen(false);
       resetConfigForm();
       utils.inventoryCosting.configs.list.invalidate();
     },
-    onError: (error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+    onError: (error: any) => {
+      (toast as any)({ title: "Error", description: error.message, variant: "destructive" });
     },
   });
 
   const createLayerMutation = trpc.inventoryCosting.layers.create.useMutation({
     onSuccess: () => {
-      toast({ title: "Cost Layer Added", description: "Inventory cost layer has been recorded." });
+      (toast as any)({ title: "Cost Layer Added", description: "Inventory cost layer has been recorded." });
       setLayerDialogOpen(false);
       resetLayerForm();
       utils.inventoryCosting.layers.list.invalidate();
     },
-    onError: (error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+    onError: (error: any) => {
+      (toast as any)({ title: "Error", description: error.message, variant: "destructive" });
     },
   });
 
   const recordCogsMutation = trpc.inventoryCosting.cogs.record.useMutation({
-    onSuccess: (data) => {
-      toast({
+    onSuccess: (data: any) => {
+      (toast as any)({
         title: "COGS Recorded",
         description: `Total COGS: $${data.totalCogs.toFixed(2)} | Unit COGS: $${data.unitCogs.toFixed(4)}${data.grossMargin !== null ? ` | Margin: $${data.grossMargin.toFixed(2)}` : ""}`,
       });
@@ -122,8 +122,8 @@ export default function InventoryCosting() {
       utils.inventoryCosting.cogs.dashboard.invalidate();
       utils.inventoryCosting.layers.list.invalidate();
     },
-    onError: (error) => {
-      toast({ title: "COGS Calculation Failed", description: error.message, variant: "destructive" });
+    onError: (error: any) => {
+      (toast as any)({ title: "COGS Calculation Failed", description: error.message, variant: "destructive" });
     },
   });
 
@@ -201,7 +201,7 @@ export default function InventoryCosting() {
               ${cogsDashboard?.totalRevenue?.toFixed(2) || "0.00"}
             </div>
             <p className="text-xs text-muted-foreground">
-              {(cogsDashboard?.totalQuantitySold || 0).toFixed(0)} units sold
+              {((cogsDashboard as any)?.totalQuantitySold || cogsDashboard?.totalQuantity || 0).toFixed(0)} units sold
             </p>
           </CardContent>
         </Card>

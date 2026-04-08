@@ -30,93 +30,68 @@ export default function QuickBooksIntegration() {
   // Check connection status
   const { data: connectionStatus, isLoading: connectionLoading } = useQuery({
     queryKey: ['quickbooks-connection'],
-    queryFn: () => trpc.quickbooks.getConnectionStatus.query(),
+    queryFn: () => (trpc.quickbooks.getConnectionStatus as any).query(),
   });
 
   // Get QuickBooks accounts
   const { data: qbAccounts, isLoading: accountsLoading } = useQuery({
     queryKey: ['quickbooks-accounts'],
-    queryFn: () => trpc.quickbooks.getAccounts.query(),
+    queryFn: () => (trpc.quickbooks.getAccounts as any).query(),
     enabled: connectionStatus?.connected ?? false,
   });
 
   // Get current account mappings
   const { data: accountMappings, isLoading: mappingsLoading } = useQuery({
     queryKey: ['quickbooks-mappings'],
-    queryFn: () => trpc.quickbooks.getAccountMappings.query({}),
+    queryFn: () => (trpc.quickbooks.getAccountMappings as any).query({}),
     enabled: connectionStatus?.connected ?? false,
   });
 
   // Sync accounts mutation
   const syncAccountsMutation = useMutation({
-    mutationFn: () => trpc.quickbooks.syncAccounts.mutate({}),
-    onSuccess: (data) => {
-      toast({
-        title: "Accounts Synced",
-        description: data.message,
-      });
+    mutationFn: () => (trpc.quickbooks.syncAccounts as any).mutate({}),
+    onSuccess: (data: any) => {
+      toast.success("Accounts Synced", { description: data.message });
       queryClient.invalidateQueries({ queryKey: ['quickbooks-accounts'] });
     },
     onError: (error: any) => {
-      toast({
-        title: "Sync Failed",
-        description: error.message || "Failed to sync accounts from QuickBooks",
-        variant: "destructive",
-      });
+      toast.error("Sync Failed", { description: error.message || "Failed to sync accounts from QuickBooks" });
     },
   });
 
   // Sync items mutation
   const syncItemsMutation = useMutation({
-    mutationFn: () => trpc.quickbooks.syncItems.mutate({ type: 'Inventory' }),
-    onSuccess: (data) => {
-      toast({
-        title: "Items Synced",
-        description: data.message,
-      });
+    mutationFn: () => (trpc.quickbooks.syncItems as any).mutate({ type: 'Inventory' }),
+    onSuccess: (data: any) => {
+      toast.success("Items Synced", { description: data.message });
     },
     onError: (error: any) => {
-      toast({
-        title: "Sync Failed",
-        description: error.message || "Failed to sync items from QuickBooks",
-        variant: "destructive",
-      });
+      toast.error("Sync Failed", { description: error.message || "Failed to sync items from QuickBooks" });
     },
   });
 
   // Save mapping mutation
   const saveMappingMutation = useMutation({
     mutationFn: (data: { mappingType: string; quickbooksAccountId: string }) =>
-      trpc.quickbooks.upsertAccountMapping.mutate({
+      (trpc.quickbooks.upsertAccountMapping as any).mutate({
         mappingType: data.mappingType as any,
         quickbooksAccountId: data.quickbooksAccountId,
         isDefault: true,
       }),
     onSuccess: () => {
-      toast({
-        title: "Mapping Saved",
-        description: "Account mapping has been updated",
-      });
+      toast.success("Mapping Saved", { description: "Account mapping has been updated" });
       queryClient.invalidateQueries({ queryKey: ['quickbooks-mappings'] });
       setSelectedMappingType("");
       setSelectedAccountId("");
     },
     onError: (error: any) => {
-      toast({
-        title: "Save Failed",
-        description: error.message || "Failed to save account mapping",
-        variant: "destructive",
-      });
+      toast.error("Save Failed", { description: error.message || "Failed to save account mapping" });
     },
   });
 
   const handleSaveMapping = () => {
     if (!selectedMappingType || !selectedAccountId) {
-      toast({
-        title: "Missing Information",
-        description: "Please select both a mapping type and QuickBooks account",
-        variant: "destructive",
-      });
+      toast.error("Missing Information", { description: "Please select both a mapping type and QuickBooks account" });
       return;
     }
 
@@ -232,7 +207,7 @@ export default function QuickBooksIntegration() {
                           </TableCell>
                           <TableCell>
                             {account ? (
-                              <Badge variant="success" className="gap-1">
+                              <Badge variant="default" className="gap-1 bg-green-600">
                                 <Check className="h-3 w-3" />
                                 Configured
                               </Badge>
@@ -320,7 +295,7 @@ export default function QuickBooksIntegration() {
                       </p>
                     </div>
                   </div>
-                  <Badge variant="success">Active</Badge>
+                  <Badge variant="default" className="bg-green-600">Active</Badge>
                 </div>
 
                 <div className="flex items-center justify-between p-4 border rounded-lg">
@@ -333,7 +308,7 @@ export default function QuickBooksIntegration() {
                       </p>
                     </div>
                   </div>
-                  <Badge variant={accountMappings?.length ? "success" : "secondary"}>
+                  <Badge variant={accountMappings?.length ? "default" : "secondary"} className={accountMappings?.length ? "bg-green-600" : ""}>
                     {accountMappings?.length ? "Configured" : "Pending"}
                   </Badge>
                 </div>

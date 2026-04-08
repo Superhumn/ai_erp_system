@@ -4901,3 +4901,295 @@ export const negotiationRounds = mysqlTable("negotiationRounds", {
 
 export type NegotiationRound = typeof negotiationRounds.$inferSelect;
 export type InsertNegotiationRound = typeof negotiationRounds.$inferInsert;
+
+// ============================================
+// DUE DILIGENCE & DATA ROOM CHECKLISTS
+// ============================================
+
+export const dueDiligenceTemplates = mysqlTable("dueDiligenceTemplates", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  type: varchar("type", { length: 50 }),
+  isPublic: boolean("isPublic").default(true),
+  createdBy: int("createdBy"),
+  companyId: int("companyId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DueDiligenceTemplate = typeof dueDiligenceTemplates.$inferSelect;
+export type InsertDueDiligenceTemplate = typeof dueDiligenceTemplates.$inferInsert;
+
+export const dueDiligenceCategories = mysqlTable("dueDiligenceCategories", {
+  id: int("id").autoincrement().primaryKey(),
+  templateId: int("templateId").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  sortOrder: int("sortOrder").default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DueDiligenceCategory = typeof dueDiligenceCategories.$inferSelect;
+export type InsertDueDiligenceCategory = typeof dueDiligenceCategories.$inferInsert;
+
+export const dueDiligenceItems = mysqlTable("dueDiligenceItems", {
+  id: int("id").autoincrement().primaryKey(),
+  templateId: int("templateId").notNull(),
+  categoryId: int("categoryId").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  required: boolean("required").default(false),
+  sortOrder: int("sortOrder").default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DueDiligenceItem = typeof dueDiligenceItems.$inferSelect;
+export type InsertDueDiligenceItem = typeof dueDiligenceItems.$inferInsert;
+
+export const dataRoomChecklists = mysqlTable("dataRoomChecklists", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  templateId: int("templateId"),
+  status: varchar("status", { length: 50 }).default("active"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoomChecklist = typeof dataRoomChecklists.$inferSelect;
+export type InsertDataRoomChecklist = typeof dataRoomChecklists.$inferInsert;
+
+export const dataRoomChecklistItems = mysqlTable("dataRoomChecklistItems", {
+  id: int("id").autoincrement().primaryKey(),
+  checklistId: int("checklistId").notNull(),
+  categoryName: varchar("categoryName", { length: 255 }),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  status: varchar("status", { length: 50 }).default("pending"),
+  documentId: int("documentId"),
+  notes: text("notes"),
+  sortOrder: int("sortOrder").default(0),
+  completedBy: int("completedBy"),
+  completedAt: timestamp("completedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DataRoomChecklistItem = typeof dataRoomChecklistItems.$inferSelect;
+export type InsertDataRoomChecklistItem = typeof dataRoomChecklistItems.$inferInsert;
+
+// ============================================
+// EDI (ELECTRONIC DATA INTERCHANGE)
+// ============================================
+
+export const ediTradingPartners = mysqlTable("ediTradingPartners", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  ediId: varchar("ediId", { length: 100 }),
+  qualifierCode: varchar("qualifierCode", { length: 10 }),
+  type: varchar("type", { length: 50 }),
+  status: varchar("status", { length: 50 }).default("active"),
+  contactName: varchar("contactName", { length: 255 }),
+  contactEmail: varchar("contactEmail", { length: 255 }),
+  contactPhone: varchar("contactPhone", { length: 100 }),
+  address: text("address"),
+  protocols: text("protocols"),
+  documentTypes: text("documentTypes"),
+  lastTransactionAt: timestamp("lastTransactionAt"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EdiTradingPartner = typeof ediTradingPartners.$inferSelect;
+export type InsertEdiTradingPartner = typeof ediTradingPartners.$inferInsert;
+
+export const ediDocumentMaps = mysqlTable("ediDocumentMaps", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  tradingPartnerId: int("tradingPartnerId"),
+  documentType: varchar("documentType", { length: 10 }).notNull(),
+  direction: varchar("direction", { length: 10 }),
+  mappingConfig: text("mappingConfig"),
+  validationRules: text("validationRules"),
+  isActive: boolean("isActive").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EdiDocumentMap = typeof ediDocumentMaps.$inferSelect;
+export type InsertEdiDocumentMap = typeof ediDocumentMaps.$inferInsert;
+
+export const ediTransactions = mysqlTable("ediTransactions", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  tradingPartnerId: int("tradingPartnerId"),
+  documentType: varchar("documentType", { length: 10 }).notNull(),
+  direction: varchar("direction", { length: 10 }).notNull(),
+  controlNumber: varchar("controlNumber", { length: 50 }),
+  status: varchar("status", { length: 50 }).default("received"),
+  rawData: text("rawData"),
+  parsedData: text("parsedData"),
+  errorDetails: text("errorDetails"),
+  relatedOrderId: int("relatedOrderId"),
+  relatedInvoiceId: int("relatedInvoiceId"),
+  relatedShipmentId: int("relatedShipmentId"),
+  processedAt: timestamp("processedAt"),
+  acknowledgedAt: timestamp("acknowledgedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EdiTransaction = typeof ediTransactions.$inferSelect;
+export type InsertEdiTransaction = typeof ediTransactions.$inferInsert;
+
+export const ediTransactionItems = mysqlTable("ediTransactionItems", {
+  id: int("id").autoincrement().primaryKey(),
+  transactionId: int("transactionId").notNull(),
+  lineNumber: int("lineNumber"),
+  buyerPartNumber: varchar("buyerPartNumber", { length: 100 }),
+  vendorPartNumber: varchar("vendorPartNumber", { length: 100 }),
+  upcCode: varchar("upcCode", { length: 50 }),
+  description: varchar("description", { length: 500 }),
+  quantity: decimal("quantity", { precision: 10, scale: 2 }),
+  unitPrice: decimal("unitPrice", { precision: 10, scale: 2 }),
+  unitOfMeasure: varchar("unitOfMeasure", { length: 20 }),
+  productId: int("productId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type EdiTransactionItem = typeof ediTransactionItems.$inferSelect;
+export type InsertEdiTransactionItem = typeof ediTransactionItems.$inferInsert;
+
+export const ediProductCrosswalks = mysqlTable("ediProductCrosswalks", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  tradingPartnerId: int("tradingPartnerId"),
+  buyerPartNumber: varchar("buyerPartNumber", { length: 100 }),
+  vendorPartNumber: varchar("vendorPartNumber", { length: 100 }),
+  upcCode: varchar("upcCode", { length: 50 }),
+  productId: int("productId").notNull(),
+  description: varchar("description", { length: 500 }),
+  isActive: boolean("isActive").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EdiProductCrosswalk = typeof ediProductCrosswalks.$inferSelect;
+export type InsertEdiProductCrosswalk = typeof ediProductCrosswalks.$inferInsert;
+
+export const ediShipToLocations = mysqlTable("ediShipToLocations", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  tradingPartnerId: int("tradingPartnerId"),
+  locationCode: varchar("locationCode", { length: 100 }).notNull(),
+  name: varchar("name", { length: 255 }),
+  address: text("address"),
+  city: varchar("city", { length: 100 }),
+  state: varchar("state", { length: 50 }),
+  postalCode: varchar("postalCode", { length: 20 }),
+  country: varchar("country", { length: 50 }),
+  warehouseId: int("warehouseId"),
+  isActive: boolean("isActive").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EdiShipToLocation = typeof ediShipToLocations.$inferSelect;
+export type InsertEdiShipToLocation = typeof ediShipToLocations.$inferInsert;
+
+export const ediSettings = mysqlTable("ediSettings", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull(),
+  isaId: varchar("isaId", { length: 100 }),
+  isaQualifier: varchar("isaQualifier", { length: 10 }),
+  gsId: varchar("gsId", { length: 100 }),
+  functionalGroup: varchar("functionalGroup", { length: 10 }),
+  interchangeControlNumber: int("interchangeControlNumber").default(1),
+  groupControlNumber: int("groupControlNumber").default(1),
+  transactionControlNumber: int("transactionControlNumber").default(1),
+  testMode: boolean("testMode").default(true),
+  autoAcknowledge: boolean("autoAcknowledge").default(false),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EdiSetting = typeof ediSettings.$inferSelect;
+export type InsertEdiSetting = typeof ediSettings.$inferInsert;
+
+export const ediComplianceScorecards = mysqlTable("ediComplianceScorecards", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  tradingPartnerId: int("tradingPartnerId").notNull(),
+  period: varchar("period", { length: 20 }),
+  totalTransactions: int("totalTransactions").default(0),
+  successfulTransactions: int("successfulTransactions").default(0),
+  errorTransactions: int("errorTransactions").default(0),
+  averageProcessingTime: int("averageProcessingTime"),
+  complianceScore: decimal("complianceScore", { precision: 5, scale: 2 }),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type EdiComplianceScorecard = typeof ediComplianceScorecards.$inferSelect;
+export type InsertEdiComplianceScorecard = typeof ediComplianceScorecards.$inferInsert;
+
+// ============================================
+// TRANSACTIONAL EMAIL SYSTEM
+// ============================================
+
+export const transactionalEmailTemplates = mysqlTable("transactionalEmailTemplates", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  subject: varchar("subject", { length: 500 }).notNull(),
+  htmlBody: text("htmlBody").notNull(),
+  textBody: text("textBody"),
+  category: varchar("category", { length: 100 }),
+  isActive: boolean("isActive").default(true),
+  variables: text("variables"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type TransactionalEmailTemplate = typeof transactionalEmailTemplates.$inferSelect;
+export type InsertTransactionalEmailTemplate = typeof transactionalEmailTemplates.$inferInsert;
+
+export const emailMessages = mysqlTable("emailMessages", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  templateId: int("templateId"),
+  to: varchar("to", { length: 500 }).notNull(),
+  from: varchar("from", { length: 255 }),
+  subject: varchar("subject", { length: 500 }),
+  status: varchar("status", { length: 50 }).default("queued"),
+  providerMessageId: varchar("providerMessageId", { length: 255 }),
+  idempotencyKey: varchar("idempotencyKey", { length: 255 }),
+  metadata: text("metadata"),
+  retryCount: int("retryCount").default(0),
+  maxRetries: int("maxRetries").default(3),
+  errorMessage: text("errorMessage"),
+  sentAt: timestamp("sentAt"),
+  deliveredAt: timestamp("deliveredAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailMessage = typeof emailMessages.$inferSelect;
+export type InsertEmailMessage = typeof emailMessages.$inferInsert;
+
+export const emailEvents = mysqlTable("emailEvents", {
+  id: int("id").autoincrement().primaryKey(),
+  emailMessageId: int("emailMessageId"),
+  providerMessageId: varchar("providerMessageId", { length: 255 }),
+  eventType: varchar("eventType", { length: 50 }).notNull(),
+  eventData: text("eventData"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type EmailEvent = typeof emailEvents.$inferSelect;
+export type InsertEmailEvent = typeof emailEvents.$inferInsert;

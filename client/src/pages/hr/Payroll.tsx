@@ -48,7 +48,7 @@ export default function Payroll() {
 
   const { data: employees, isLoading } = trpc.employees.list.useQuery();
 
-  const filteredEmployees = employees?.filter((emp: Employee) => {
+  const filteredEmployees = (employees as unknown as Employee[])?.filter((emp: Employee) => {
     const fullName = `${emp.firstName} ${emp.lastName}`.toLowerCase();
     const matchesSearch = fullName.includes(search.toLowerCase()) || emp.email?.toLowerCase().includes(search.toLowerCase());
     const matchesType = typeFilter === "all" || emp.employmentType === typeFilter;
@@ -63,7 +63,7 @@ export default function Payroll() {
   };
 
   // Calculate summary stats
-  const activeEmployees = employees?.filter((e: Employee) => e.status === "active") || [];
+  const activeEmployees = (employees as unknown as Employee[])?.filter((e: Employee) => e.status === "active") || [];
   const totalSalary = activeEmployees.reduce((sum: number, e: Employee) => {
     if (e.salaryFrequency === "annual") {
       return sum + parseFloat(e.salary || "0");
@@ -72,7 +72,7 @@ export default function Payroll() {
     }
     return sum;
   }, 0);
-  const avgSalary = activeEmployees.length > 0 ? totalSalary / activeEmployees.length : 0;
+  const avgSalary = activeEmployees.length > 0 ? Number(totalSalary) / activeEmployees.length : 0;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -121,7 +121,7 @@ export default function Payroll() {
               <Wallet className="h-4 w-4 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Monthly Payroll</span>
             </div>
-            <div className="text-2xl font-bold mt-2">{formatCurrency((totalSalary / 12).toString())}</div>
+            <div className="text-2xl font-bold mt-2">{formatCurrency((Number(totalSalary) / 12).toString())}</div>
           </CardContent>
         </Card>
       </div>
@@ -176,7 +176,7 @@ export default function Payroll() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredEmployees.map((emp: Employee) => (
+                {filteredEmployees?.map((emp: Employee) => (
                   <TableRow key={emp.id}>
                     <TableCell className="font-medium">
                       {emp.firstName} {emp.lastName}

@@ -101,8 +101,8 @@ export default function VendorNegotiations() {
 
   // Mutations
   const createMutation = trpc.vendorNegotiations.create.useMutation({
-    onSuccess: (data) => {
-      toast({
+    onSuccess: (data: any) => {
+      (toast as any)({
         title: "Negotiation Created",
         description: `Negotiation ${data.negotiationNumber} has been initiated.`,
       });
@@ -111,14 +111,14 @@ export default function VendorNegotiations() {
       utils.vendorNegotiations.list.invalidate();
       utils.vendorNegotiations.stats.invalidate();
     },
-    onError: (error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+    onError: (error: any) => {
+      (toast as any)({ title: "Error", description: error.message, variant: "destructive" });
     },
   });
 
   const addRoundMutation = trpc.vendorNegotiations.addRound.useMutation({
-    onSuccess: (data) => {
-      toast({
+    onSuccess: (data: any) => {
+      (toast as any)({
         title: "Round Recorded",
         description: `Round ${data.roundNumber} has been added to the negotiation.`,
       });
@@ -127,8 +127,8 @@ export default function VendorNegotiations() {
       utils.vendorNegotiations.get.invalidate();
       utils.vendorNegotiations.list.invalidate();
     },
-    onError: (error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+    onError: (error: any) => {
+      (toast as any)({ title: "Error", description: error.message, variant: "destructive" });
     },
   });
 
@@ -651,17 +651,17 @@ export default function VendorNegotiations() {
                     </div>
                     <div>
                       <p className="text-muted-foreground mb-1">Agreed</p>
-                      <p className="font-medium">Price: {selectedDetail.negotiation.agreedUnitPrice ? `$${parseFloat(selectedDetail.negotiation.agreedUnitPrice).toFixed(2)}` : "-"}</p>
+                      <p className="font-medium">Price: {(selectedDetail.negotiation as any).agreedUnitPrice ? `$${parseFloat((selectedDetail.negotiation as any).agreedUnitPrice).toFixed(2)}` : "-"}</p>
                       <p>
                         Terms:{" "}
-                        {selectedDetail.negotiation.agreedPaymentTerms
-                          ? `${selectedDetail.negotiation.agreedPaymentTerms} days`
+                        {(selectedDetail.negotiation as any).agreedPaymentTerms
+                          ? `${(selectedDetail.negotiation as any).agreedPaymentTerms} days`
                           : "-"}
                       </p>
                       <p>
                         Lead:{" "}
-                        {selectedDetail.negotiation.agreedLeadTimeDays
-                          ? `${selectedDetail.negotiation.agreedLeadTimeDays} days`
+                        {(selectedDetail.negotiation as any).agreedLeadTimeDays
+                          ? `${(selectedDetail.negotiation as any).agreedLeadTimeDays} days`
                           : "-"}
                       </p>
                     </div>

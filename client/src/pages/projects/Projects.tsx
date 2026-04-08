@@ -85,7 +85,7 @@ export default function Projects() {
     },
   });
 
-  const filteredProjects = projects?.filter((project: Project) => {
+  const filteredProjects = (projects as unknown as Project[])?.filter((project: Project) => {
     const matchesSearch =
       project.name.toLowerCase().includes(search.toLowerCase()) ||
       project.projectNumber.toLowerCase().includes(search.toLowerCase());
@@ -121,9 +121,9 @@ export default function Projects() {
   };
 
   // Calculate summary stats
-  const activeCount = projects?.filter((p: Project) => p.status === "active").length || 0;
-  const completedCount = projects?.filter((p: Project) => p.status === "completed").length || 0;
-  const totalBudget = projects?.reduce((sum: number, p: Project) => sum + parseFloat(p.budget || "0"), 0) || 0;
+  const activeCount = (projects as unknown as Project[])?.filter((p: Project) => p.status === "active").length || 0;
+  const completedCount = (projects as unknown as Project[])?.filter((p: Project) => p.status === "completed").length || 0;
+  const totalBudget = (projects as unknown as Project[])?.reduce((sum: number, p: Project) => sum + parseFloat(p.budget || "0"), 0) || 0;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -318,7 +318,7 @@ export default function Projects() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredProjects.map((project: Project) => (
+                {filteredProjects?.map((project: Project) => (
                   <TableRow key={project.id}>
                     <TableCell className="font-mono">{project.projectNumber}</TableCell>
                     <TableCell className="font-medium max-w-xs truncate">{project.name}</TableCell>

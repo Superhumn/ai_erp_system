@@ -130,7 +130,7 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
     return <div className="text-center py-12 text-muted-foreground">Checklist not found</div>;
   }
 
-  const items = (checklist.items || []) as ChecklistItem[];
+  const items = (checklist.items || []) as unknown as ChecklistItem[];
   const completedCount = items.filter((i) => i.status === "completed").length;
   const totalCount = items.length;
   const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
@@ -291,7 +291,7 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
                         </div>
                         <Select
                           value={item.status}
-                          onValueChange={(value) => handleStatusChange(item.id, value)}
+                          onValueChange={(value: any) => handleStatusChange(item.id, value as "completed" | "in_progress" | "not_started" | "blocked")}
                         >
                           <SelectTrigger className="w-[140px] h-8 text-xs">
                             <div className="flex items-center gap-1.5">
@@ -348,7 +348,7 @@ export default function InvestmentGrantChecklist() {
     return <ChecklistDetail checklistId={selectedId} onBack={() => setSelectedId(null)} />;
   }
 
-  const filteredChecklists = checklists?.filter((c: Checklist) =>
+  const filteredChecklists = (checklists as unknown as Checklist[])?.filter((c: Checklist) =>
     c.name.toLowerCase().includes(search.toLowerCase())
   );
 
@@ -481,7 +481,7 @@ export default function InvestmentGrantChecklist() {
         <Card>
           <CardContent className="pt-6">
             <div className="text-2xl font-bold text-blue-600">
-              {checklists?.filter((c: Checklist) => c.status === "in_progress").length || 0}
+              {(checklists as unknown as Checklist[])?.filter((c: Checklist) => c.status === "in_progress").length || 0}
             </div>
             <p className="text-xs text-muted-foreground">In Progress</p>
           </CardContent>
@@ -489,7 +489,7 @@ export default function InvestmentGrantChecklist() {
         <Card>
           <CardContent className="pt-6">
             <div className="text-2xl font-bold text-green-600">
-              {checklists?.filter((c: Checklist) => c.status === "completed").length || 0}
+              {(checklists as unknown as Checklist[])?.filter((c: Checklist) => c.status === "completed").length || 0}
             </div>
             <p className="text-xs text-muted-foreground">Completed</p>
           </CardContent>
@@ -533,7 +533,7 @@ export default function InvestmentGrantChecklist() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredChecklists.map((checklist: Checklist) => (
+                {filteredChecklists?.map((checklist: Checklist) => (
                   <TableRow
                     key={checklist.id}
                     className="cursor-pointer"

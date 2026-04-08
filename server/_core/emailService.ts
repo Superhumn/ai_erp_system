@@ -134,34 +134,34 @@ export async function sendQueuedEmail(emailMessageId: number): Promise<SendEmail
     await db.updateEmailMessageStatus(emailMessageId, "sending");
 
     // Get the template
-    const template = await db.getTransactionalEmailTemplateByName(message.templateName);
+    const template = await db.getTransactionalEmailTemplateByName((message as any).templateName);
     if (!template) {
-      await db.updateEmailMessageStatus(emailMessageId, "failed", undefined, {
-        message: `Template ${message.templateName} not found`,
+      await db.updateEmailMessageStatus(emailMessageId, "failed", {
+        message: `Template ${(message as any).templateName} not found`,
         code: "TEMPLATE_NOT_FOUND",
       });
       return {
         success: false,
-        error: `Template ${message.templateName} not found`,
+        error: `Template ${(message as any).templateName} not found`,
         shouldRetry: false,
       };
     }
 
     if (!template.isActive) {
-      await db.updateEmailMessageStatus(emailMessageId, "failed", undefined, {
-        message: `Template ${message.templateName} is not active`,
+      await db.updateEmailMessageStatus(emailMessageId, "failed", {
+        message: `Template ${(message as any).templateName} is not active`,
         code: "TEMPLATE_INACTIVE",
       });
       return {
         success: false,
-        error: `Template ${message.templateName} is not active`,
+        error: `Template ${(message as any).templateName} is not active`,
         shouldRetry: false,
       };
     }
 
     // Build dynamic template data
     const dynamicTemplateData = {
-      ...(message.payloadJson as Record<string, any> || {}),
+      ...((message as any).payloadJson as Record<string, any> || {}),
       // Add common variables
       app_url: ENV.publicAppUrl,
       current_year: new Date().getFullYear(),
@@ -169,16 +169,16 @@ export async function sendQueuedEmail(emailMessageId: number): Promise<SendEmail
 
     // Send via SendGrid
     const sendResult = await sendgrid.sendWithTemplate({
-      templateId: template.providerTemplateId,
+      templateId: (template as any).providerTemplateId,
       to: {
-        email: message.toEmail,
-        name: message.toName || undefined,
+        email: (message as any).toEmail,
+        name: (message as any).toName || undefined,
       },
       from: {
-        email: message.fromEmail,
-        name: message.fromName || undefined,
+        email: (message as any).fromEmail,
+        name: (message as any).fromName || undefined,
       },
-      replyTo: message.replyTo ? { email: message.replyTo } : undefined,
+      replyTo: (message as any).replyTo ? { email: (message as any).replyTo } : undefined,
       subject: message.subject,
       dynamicTemplateData,
       customArgs: {
@@ -215,7 +215,7 @@ export async function sendQueuedEmail(emailMessageId: number): Promise<SendEmail
         };
       } else {
         // Permanent error - mark as failed
-        await db.updateEmailMessageStatus(emailMessageId, "failed", undefined, sendResult.error);
+        await db.updateEmailMessageStatus(emailMessageId, "failed", sendResult.error);
 
         return {
           success: false,
