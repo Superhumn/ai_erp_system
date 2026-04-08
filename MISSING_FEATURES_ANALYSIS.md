@@ -52,46 +52,6 @@ These items must be configured before the system can run at all.
 - [ ] Set `IMAP_HOST`, `IMAP_PORT`, `IMAP_USER`, `IMAP_PASSWORD` in `.env`
 - **Without this:** Email inbox scanning, auto-categorization, and auto-reply features won't function
 
-### 2.3 QuickBooks Online
-- [ ] Create QuickBooks developer app at developer.intuit.com
-- [ ] Set `QUICKBOOKS_CLIENT_ID`, `QUICKBOOKS_CLIENT_SECRET`, `QUICKBOOKS_REDIRECT_URI`
-- [ ] Set `QUICKBOOKS_ENVIRONMENT` to `sandbox` or `production`
-- [ ] The TODO in `todo.md` still marks "QuickBooks Online sync integration" as incomplete
-- **Without this:** No two-way sync of customers, vendors, invoices, or chart of accounts with QuickBooks
-
-### 2.4 Shopify
-- [ ] Create Shopify app at partners.shopify.com
-- [ ] Set `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, `SHOPIFY_REDIRECT_URI`
-- [ ] Register webhook endpoints in Shopify admin:
-  - `https://yourdomain.com/webhooks/shopify/orders`
-  - `https://yourdomain.com/webhooks/shopify/inventory`
-- [ ] **Missing:** Shopify settings page for store configuration (UI pending per todo.md)
-- **Without this:** No order import, customer sync, or inventory sync with Shopify
-
-### 2.5 Google Workspace
-- [ ] Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
-- [ ] Set `GOOGLE_SHEETS_API_KEY` for Sheets import
-- [ ] Enable Google APIs: Drive, Sheets, Docs, Gmail
-- **Without this:** No Google Drive sync, Sheets import, Gmail integration, or Docs creation
-
-### 2.6 Stripe (Referenced but not implemented)
-- [ ] Stripe is listed as an integration in the README but no Stripe environment variables or implementation code exists
-- [ ] Needs: `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`
-- [ ] Needs: Payment processing endpoints, webhook handlers
-
-### 2.7 Slack (Referenced but not implemented)
-- [ ] Slack is listed as an integration in the README but no implementation exists
-- [ ] Needs: Slack app creation, bot token, webhook URL
-- [ ] Needs: Notification delivery to Slack channels
-
-### 2.8 HubSpot (Referenced but not implemented)
-- [ ] HubSpot CRM sync is referenced but no dedicated integration exists
-- [ ] Needs: HubSpot API key, sync logic for contacts/deals
-
-### 2.9 Airtable (Referenced but not implemented)
-- [ ] Airtable data sync is listed in README but no implementation exists
-
----
 
 ## 3. INCOMPLETE FEATURES (Code exists but partially implemented)
 
