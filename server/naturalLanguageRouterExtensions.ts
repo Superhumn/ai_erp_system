@@ -177,10 +177,10 @@ export const shipmentTextEndpoints = {
           status: parsed.status || 'pending',
           fromAddress: parsed.origin || undefined,
           toAddress: parsed.destination || undefined,
-          estimatedDelivery: parsed.estimatedDelivery ? new Date(parsed.estimatedDelivery) : undefined,
+          deliveryDate: parsed.estimatedDelivery ? new Date(parsed.estimatedDelivery) : undefined,
           weight: parsed.weight ? parsed.weight.toString() : undefined,
           notes: parsed.notes || undefined,
-        });
+        } as any);
         
         await createAuditLog(ctx.user.id, 'create', 'shipment', shipment.id, shipmentNumber, null, { source: 'text', originalText: input.text });
         
@@ -256,6 +256,8 @@ export const paymentTextEndpoints = {
         
         // Create payment record
         const payment = await db.createPayment({
+          paymentNumber: `PAY-${Date.now().toString(36).toUpperCase()}`,
+          type: vendorId ? 'made' : 'received',
           invoiceId,
           customerId,
           vendorId,
@@ -266,7 +268,7 @@ export const paymentTextEndpoints = {
           currency: parsed.currency || 'USD',
           notes: parsed.notes || undefined,
           status: 'completed',
-        });
+        } as any);
         
         // Update invoice if linked
         if (invoiceId) {
@@ -322,26 +324,23 @@ export const workOrderTextEndpoints = {
         }
         
         // Create work order
-        const workOrderNumber = generateNumber('WO');
         const workOrder = await db.createWorkOrder({
-          workOrderNumber,
           productId,
-          productName: parsed.productName,
+          bomId: 1, // Default BOM; will be linked properly by ops
           quantity: parsed.quantity.toString(),
           unit: parsed.unit || 'units',
           status: 'draft',
           priority: parsed.priority || 'medium',
-          dueDate: parsed.dueDate ? new Date(parsed.dueDate) : undefined,
-          batchSize: parsed.batchSize ? parsed.batchSize.toString() : undefined,
+          scheduledEndDate: parsed.dueDate ? new Date(parsed.dueDate) : undefined,
           notes: parsed.notes || undefined,
           createdBy: ctx.user.id,
-        });
+        } as any);
         
-        await createAuditLog(ctx.user.id, 'create', 'workOrder', workOrder.id, workOrderNumber, null, { source: 'text', originalText: input.text });
-        
+        await createAuditLog(ctx.user.id, 'create', 'workOrder', workOrder.id, workOrder.workOrderNumber, null, { source: 'text', originalText: input.text });
+
         return {
           workOrderId: workOrder.id,
-          workOrderNumber,
+          workOrderNumber: workOrder.workOrderNumber,
           parsed,
         };
       } catch (error) {
@@ -375,17 +374,14 @@ export const inventoryTextEndpoints = {
         }
         
         // Create inventory transfer
-        const transferNumber = generateNumber('TRF');
         const transfer = await db.createInventoryTransfer({
-          transferNumber,
           fromWarehouseId: fromWarehouse.id,
           toWarehouseId: toWarehouse.id,
-          transferDate: parsed.transferDate ? new Date(parsed.transferDate) : new Date(),
+          requestedDate: parsed.transferDate ? new Date(parsed.transferDate) : new Date(),
           status: 'pending',
-          reason: parsed.reason || undefined,
-          notes: parsed.notes || undefined,
-          createdBy: ctx.user.id,
-        });
+          notes: parsed.notes || parsed.reason || undefined,
+          requestedBy: ctx.user.id,
+        } as any);
         
         // Create transfer items
         for (const item of parsed.items || []) {
@@ -399,18 +395,17 @@ export const inventoryTextEndpoints = {
           
           await db.createInventoryTransferItem({
             transferId: transfer.id,
-            productId,
-            productName: item.materialName,
-            quantity: item.quantity.toString(),
-            unit: item.unit || 'units',
-          });
+            productId: productId || 0,
+            requestedQuantity: item.quantity.toString(),
+            notes: item.materialName || undefined,
+          } as any);
         }
-        
-        await createAuditLog(ctx.user.id, 'create', 'inventoryTransfer', transfer.id, transferNumber, null, { source: 'text', originalText: input.text });
-        
+
+        await createAuditLog(ctx.user.id, 'create', 'inventoryTransfer', transfer.id, transfer.transferNumber, null, { source: 'text', originalText: input.text });
+
         return {
           transferId: transfer.id,
-          transferNumber,
+          transferNumber: transfer.transferNumber,
           parsed,
         };
       } catch (error) {

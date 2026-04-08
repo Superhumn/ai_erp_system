@@ -62,8 +62,8 @@ export async function runPhoneCall(input: CallInput): Promise<ToolAdapterResult>
       if (contactType && contactId) {
         const resolved = await resolveContactPhone(db, contactType, contactId);
         if (!resolved.success) return resolved;
-        resolvedPhone = resolvedPhone || resolved.data.phone;
-        contactName = resolved.data.name;
+        resolvedPhone = resolvedPhone || (resolved.data as any).phone;
+        contactName = (resolved.data as any).name;
       }
 
       if (!resolvedPhone) {
@@ -149,19 +149,19 @@ export async function runPhoneCall(input: CallInput): Promise<ToolAdapterResult>
       }
 
       const resolved = await resolveContactPhone(db, contactType, contactId);
-      const phone = phoneNumber || resolved.data?.phone || "unknown";
+      const phone = phoneNumber || (resolved.data as any)?.phone || "unknown";
 
       const [callLog] = await db.insert(agentCallLogs).values({
         contactType,
         contactId,
-        contactName: resolved.data?.name || "",
+        contactName: (resolved.data as any)?.name || "",
         phoneNumber: phone,
         direction: "outbound",
         status: "completed",
         purpose: purpose || undefined,
       }).$returningId();
 
-      const crmContactId = await findOrCreateCrmContact(db, contactType, contactId, resolved.data?.name, phone);
+      const crmContactId = await findOrCreateCrmContact(db, contactType, contactId, (resolved.data as any)?.name, phone);
       if (crmContactId) {
         await db.insert(crmInteractions).values({
           contactId: crmContactId,

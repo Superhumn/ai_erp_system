@@ -148,7 +148,7 @@ export default function ReconciliationReport() {
   );
 }
 
-function ReconciliationRunRow({ run, getStatusBadge }: { run: any; getStatusBadge: (s: string) => JSX.Element }) {
+function ReconciliationRunRow({ run, getStatusBadge }: { run: any; getStatusBadge: (s: string) => React.ReactElement }) {
   const [expanded, setExpanded] = useState(false);
   const { data: detail } = trpc.reconciliation.getById.useQuery(
     { id: run.id },

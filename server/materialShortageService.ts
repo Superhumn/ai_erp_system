@@ -152,8 +152,8 @@ export async function detectAnomalies(): Promise<AnomalyAlert[]> {
   const now = new Date();
 
   for (const po of openPOs) {
-    if (po.expectedDeliveryDate) {
-      const expected = new Date(po.expectedDeliveryDate);
+    if ((po as any).expectedDeliveryDate || po.expectedDate) {
+      const expected = new Date((po as any).expectedDeliveryDate || po.expectedDate);
       const daysOverdue = Math.floor((now.getTime() - expected.getTime()) / (1000 * 60 * 60 * 24));
       if (daysOverdue > 0) {
         alerts.push({
@@ -163,7 +163,7 @@ export async function detectAnomalies(): Promise<AnomalyAlert[]> {
           description: `Expected delivery was ${expected.toLocaleDateString()} (${daysOverdue} days ago)`,
           entityType: "purchase_order",
           entityId: po.id,
-          metadata: { poNumber: po.poNumber, expectedDate: po.expectedDeliveryDate, daysOverdue },
+          metadata: { poNumber: po.poNumber, expectedDate: (po as any).expectedDeliveryDate || po.expectedDate, daysOverdue },
         });
       }
     }

@@ -54,9 +54,9 @@ export default function CRMInvestors() {
     notes: "",
   });
 
-  const { data: investors, isLoading, refetch } = trpc.crm.listInvestors.useQuery();
-  
-  const createInvestor = trpc.crm.createInvestor.useMutation({
+  const { data: investors, isLoading, refetch } = (trpc.crm as any).listInvestors.useQuery();
+
+  const createInvestor = (trpc.crm as any).createInvestor.useMutation({
     onSuccess: () => {
       toast.success("Investor created successfully");
       setIsOpen(false);

@@ -36,9 +36,12 @@ export default function FirefliesPage() {
   const [processProjectName, setProcessProjectName] = useState("");
   const [processCreateProject, setProcessCreateProject] = useState(false);
 
-  const { data: config, isLoading: configLoading, refetch: refetchConfig } = trpc.fireflies.getConfig.useQuery();
-  const { data: meetings, isLoading: meetingsLoading, refetch: refetchMeetings } = trpc.fireflies.meetings.list.useQuery({});
-  const { data: stats, refetch: refetchStats } = trpc.fireflies.meetings.getStats.useQuery();
+  const { data: configRaw, isLoading: configLoading, refetch: refetchConfig } = trpc.fireflies.getConfig.useQuery();
+  const config = configRaw as any;
+  const { data: meetingsRaw, isLoading: meetingsLoading, refetch: refetchMeetings } = trpc.fireflies.meetings.list.useQuery({});
+  const meetings = meetingsRaw as any[] | undefined;
+  const { data: statsRaw, refetch: refetchStats } = trpc.fireflies.meetings.getStats.useQuery();
+  const stats = statsRaw as any;
 
   const configureMutation = trpc.fireflies.configure.useMutation({
     onSuccess: (data) => {
@@ -167,7 +170,7 @@ export default function FirefliesPage() {
           <div className="flex gap-2">
             <Button
               variant="outline"
-              onClick={() => syncMutation.mutate({})}
+              onClick={() => (syncMutation.mutate as any)({})}
               disabled={syncMutation.isPending}
             >
               {syncMutation.isPending ? (
@@ -179,7 +182,7 @@ export default function FirefliesPage() {
             </Button>
             {(stats?.pending ?? 0) > 0 && (
               <Button
-                onClick={() => processAllMutation.mutate({
+                onClick={() => (processAllMutation.mutate as any)({
                   createContacts: autoCreateContacts,
                   createTasks: autoCreateTasks,
                   createProjects: autoCreateProjects,

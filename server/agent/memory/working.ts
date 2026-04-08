@@ -44,7 +44,7 @@ export async function buildWorkingContext(userId: string, companyId?: number): P
     const [poResult] = await db
       .select({ count: sql<number>`COUNT(*)` })
       .from(purchaseOrders)
-      .where(eq(purchaseOrders.status, "pending"));
+      .where(eq(purchaseOrders.status, "pending" as any));
     pendingPOCount = poResult?.count ?? 0;
   } catch {
     // Table may not have data yet

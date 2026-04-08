@@ -204,7 +204,7 @@ export default function DocumentImport() {
           // Match line items to materials
           try {
             const matchedItems = await matchMaterialsMutation.mutateAsync({
-              lineItems: result.purchaseOrder.lineItems,
+              lineItems: result.purchaseOrder.lineItems as any,
             });
 
             setParsedPO({
@@ -214,7 +214,7 @@ export default function DocumentImport() {
                 matchedMaterialId: item.rawMaterialId,
                 matchedMaterialName: item.rawMaterialId ? item.description : undefined,
               })),
-            });
+            } as any);
           } catch (matchError) {
             console.error("[DocumentImport] Material matching error:", matchError);
             // Still show the PO without material matching
@@ -225,7 +225,7 @@ export default function DocumentImport() {
                 matchedMaterialId: undefined,
                 matchedMaterialName: undefined,
               })),
-            });
+            } as any);
           }
           setUploadType("po");
           setShowPreview(true);
@@ -233,7 +233,7 @@ export default function DocumentImport() {
           // Match line items to materials for vendor invoices
           try {
             const matchedItems = await matchMaterialsMutation.mutateAsync({
-              lineItems: result.vendorInvoice.lineItems,
+              lineItems: result.vendorInvoice.lineItems as any,
             });
 
             setParsedVendorInvoice({
@@ -243,7 +243,7 @@ export default function DocumentImport() {
                 matchedMaterialId: item.rawMaterialId,
                 matchedMaterialName: item.rawMaterialId ? item.description : undefined,
               })),
-            });
+            } as any);
           } catch (matchError) {
             console.error("[DocumentImport] Material matching error:", matchError);
             setParsedVendorInvoice({
@@ -253,16 +253,16 @@ export default function DocumentImport() {
                 matchedMaterialId: undefined,
                 matchedMaterialName: undefined,
               })),
-            });
+            } as any);
           }
           setUploadType("vendor_invoice");
           setShowPreview(true);
         } else if (result.documentType === "freight_invoice" && result.freightInvoice) {
-          setParsedFreight(result.freightInvoice);
+          setParsedFreight(result.freightInvoice as any);
           setUploadType("freight");
           setShowPreview(true);
         } else if (result.documentType === "customs_document" && result.customsDocument) {
-          setParsedCustoms(result.customsDocument);
+          setParsedCustoms(result.customsDocument as any);
           setUploadType("customs");
           setShowPreview(true);
         } else {

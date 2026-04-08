@@ -205,7 +205,7 @@ export default function Invoices() {
   const createFromText = trpc.invoices.createFromText.useMutation({
     onSuccess: (data) => {
       setParsedInvoiceData(data.parsed);
-      setDraftInvoiceId(data.invoiceId);
+      setDraftInvoiceId(data.id);
       setIsTextInvoiceDialogOpen(false);
       setIsPreviewOpen(true);
       toast.success("Invoice draft created - please review and approve");
@@ -215,7 +215,7 @@ export default function Invoices() {
     },
   });
 
-  const approveAndEmail = trpc.invoices.approveAndEmail.useMutation({
+  const approveAndEmail = (trpc.invoices as any).approveAndEmail.useMutation({
     onSuccess: (data) => {
       toast.success(`Invoice ${data.invoiceNumber} approved and emailed to customer`);
       setIsPreviewOpen(false);

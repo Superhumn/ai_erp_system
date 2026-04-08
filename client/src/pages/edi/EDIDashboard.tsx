@@ -153,7 +153,7 @@ export default function EDIDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.pendingAcks || 0}</div>
+            <div className="text-2xl font-bold">{(stats as any)?.pendingAcks || 0}</div>
             <p className="text-xs text-muted-foreground">Awaiting response</p>
           </CardContent>
         </Card>
@@ -166,7 +166,7 @@ export default function EDIDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-600">{stats?.errorTransactions || 0}</div>
+            <div className="text-2xl font-bold text-red-600">{(stats as any)?.errorTransactions || 0}</div>
             <p className="text-xs text-muted-foreground">Needs attention</p>
           </CardContent>
         </Card>
@@ -248,11 +248,11 @@ export default function EDIDashboard() {
           </CardHeader>
           <CardContent className="space-y-3">
             {partners && partners.length > 0 ? (
-              partners.slice(0, 5).map((partner) => (
+              partners.slice(0, 5).map((partner: any) => (
                 <div key={partner.id} className="flex items-center justify-between border-b pb-2 last:border-0">
                   <div>
                     <p className="font-medium text-sm">{partner.name}</p>
-                    <p className="text-xs text-muted-foreground">{partner.partnerType} &middot; ISA: {partner.isaId}</p>
+                    <p className="text-xs text-muted-foreground">{(partner as any).partnerType} &middot; ISA: {(partner as any).isaId}</p>
                   </div>
                   <Badge
                     variant="outline"
@@ -303,12 +303,12 @@ export default function EDIDashboard() {
               </div>
               <div>
                 <span className="text-muted-foreground">GS App Code:</span>
-                <span className="ml-2 font-mono font-medium">{ediSettings.gsApplicationCode}</span>
+                <span className="ml-2 font-mono font-medium">{(ediSettings as any).gsApplicationCode}</span>
               </div>
               <div>
                 <span className="text-muted-foreground">Auto-997:</span>
-                <Badge variant="outline" className={ediSettings.autoSend997 ? "bg-green-50 text-green-700 ml-2" : "bg-gray-50 text-gray-700 ml-2"}>
-                  {ediSettings.autoSend997 ? "Enabled" : "Disabled"}
+                <Badge variant="outline" className={(ediSettings as any).autoSend997 ? "bg-green-50 text-green-700 ml-2" : "bg-gray-50 text-gray-700 ml-2"}>
+                  {(ediSettings as any).autoSend997 ? "Enabled" : "Disabled"}
                 </Badge>
               </div>
             </div>
@@ -335,16 +335,16 @@ export default function EDIDashboard() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="gsApplicationCode">GS Application Code</Label>
-                  <Input id="gsApplicationCode" name="gsApplicationCode" placeholder="Your GS ID" maxLength={15} required defaultValue={ediSettings?.gsApplicationCode || ""} />
+                  <Input id="gsApplicationCode" name="gsApplicationCode" placeholder="Your GS ID" maxLength={15} required defaultValue={(ediSettings as any)?.gsApplicationCode || ""} />
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="companyName">Company Name (for reference)</Label>
-                  <Input id="companyName" name="companyName" placeholder="Your Company Name" defaultValue={ediSettings?.companyName || ""} />
+                  <Input id="companyName" name="companyName" placeholder="Your Company Name" defaultValue={(ediSettings as any)?.companyName || ""} />
                 </div>
                 <div className="flex items-center space-x-2 pt-6">
-                  <Switch id="autoSend997" name="autoSend997" defaultChecked={ediSettings?.autoSend997 ?? true} />
+                  <Switch id="autoSend997" name="autoSend997" defaultChecked={(ediSettings as any)?.autoSend997 ?? true} />
                   <Label htmlFor="autoSend997">Auto-send 997 Functional Acknowledgments</Label>
                 </div>
               </div>
@@ -390,7 +390,7 @@ export default function EDIDashboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {recentTransactions.map((txn) => (
+                  {recentTransactions.map((txn: any) => (
                     <tr key={txn.id} className="hover:bg-muted/50">
                       <td className="py-3 text-sm">
                         <span className="font-mono font-medium">{txn.transactionSetCode}</span>
