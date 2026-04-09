@@ -1,7 +1,6 @@
 import { lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
@@ -11,6 +10,7 @@ import DashboardLayout from "./components/DashboardLayout";
 // Eagerly loaded pages (high-traffic, first paint)
 import Home from "./pages/Home";
 import { Login } from "./pages/Login";
+import NotFound from "@/pages/NotFound";
 
 // Lazy-loaded pages — split into separate chunks for smaller initial bundle
 const AIAssistant = lazy(() => import("./pages/AIAssistant"));
@@ -125,6 +125,9 @@ const DataRooms = lazy(() => import("./pages/DataRooms"));
 const DataRoomDetail = lazy(() => import("./pages/DataRoomDetail"));
 const DataRoomPublic = lazy(() => import("./pages/DataRoomPublic"));
 
+// Component Showcase
+const ComponentShowcase = lazy(() => import("./pages/ComponentShowcase"));
+
 // AI Agent
 const ApprovalQueue = lazy(() => import("./pages/ai/ApprovalQueue"));
 
@@ -144,7 +147,7 @@ const AutonomousSettings = lazy(() => import("./pages/autonomous/Settings"));
 
 function PageLoader() {
   return (
-    <div className="flex items-center justify-center h-64">
+    <div className="flex items-center justify-center h-full min-h-[200px]">
       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
     </div>
   );
@@ -193,6 +196,7 @@ function Router() {
 
           {/* CRM — deduplicated: /crm now points to CRMHub only */}
           <Route path="/crm/hub" component={CRMHub} />
+          <Route path="/crm/dashboard" component={CRMDashboard} />
           <Route path="/crm" component={CRMHub} />
 
           {/* Operations */}
@@ -280,6 +284,9 @@ function Router() {
           <Route path="/datarooms" component={DataRooms} />
           <Route path="/dataroom/:id" component={DataRoomDetail} />
 
+          {/* Component Showcase */}
+          <Route path="/showcase" component={ComponentShowcase} />
+
           {/* Fallback */}
           <Route path="/404" component={NotFound} />
           <Route component={NotFound} />
@@ -296,28 +303,18 @@ function App() {
         <AIAgentProvider>
           <TooltipProvider>
             <Toaster />
-            <Switch>
-              {/* Public routes (outside dashboard) */}
-              <Route path="/login" component={Login} />
-              {/* Public Data Room Access (outside dashboard) */}
-              <Route path="/share/:code">
-                {(params) => (
-                  <Suspense fallback={<PageLoader />}>
-                    <DataRoomPublic {...params} />
-                  </Suspense>
-                )}
-              </Route>
-              {/* Supplier Portal (public) */}
-              <Route path="/supplier-portal/:token">
-                {(params) => (
-                  <Suspense fallback={<PageLoader />}>
-                    <SupplierPortal {...params} />
-                  </Suspense>
-                )}
-              </Route>
-              {/* All other routes go through dashboard */}
-              <Route component={Router} />
-            </Switch>
+            <Suspense fallback={<PageLoader />}>
+              <Switch>
+                {/* Public routes (outside dashboard) */}
+                <Route path="/login" component={Login} />
+                {/* Public Data Room Access (outside dashboard) */}
+                <Route path="/share/:code" component={DataRoomPublic} />
+                {/* Supplier Portal (public) */}
+                <Route path="/supplier-portal/:token" component={SupplierPortal} />
+                {/* All other routes go through dashboard */}
+                <Route component={Router} />
+              </Switch>
+            </Suspense>
           </TooltipProvider>
         </AIAgentProvider>
       </ThemeProvider>

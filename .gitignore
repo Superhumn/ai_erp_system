@@ -137,3 +137,7 @@ validate_*.mjs
 !tsconfig.json
 !*.config.ts
 !*.config.js
+
+# Playwright
+test-results/
+playwright-report/

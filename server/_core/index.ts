@@ -78,43 +78,43 @@ async function startServer() {
   // ============================================
   // RATE LIMITING
   // ============================================
-  const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
-  const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
-  const RATE_LIMIT_MAX = 200; // requests per window
+  const apiLimiter = rateLimit({
+    windowMs: 60_000, // 1 minute
+    max: 200,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many requests. Please try again later." },
+  });
 
+  app.use("/api/", apiLimiter);
+
+  // CSRF protection: validate Origin header on state-changing requests
   app.use("/api/", (req, res, next) => {
-    const ip = req.ip || req.socket.remoteAddress || "unknown";
-    const now = Date.now();
-    const entry = rateLimitMap.get(ip);
+    // Safe methods don't need CSRF protection
+    if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
 
-    if (!entry || now > entry.resetTime) {
-      rateLimitMap.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
-      return next();
+    const origin = req.headers.origin || req.headers.referer;
+    if (!origin) {
+      return res.status(403).json({ error: "Missing Origin header" });
     }
 
-    entry.count++;
-    if (entry.count > RATE_LIMIT_MAX) {
-      res.setHeader("Retry-After", String(Math.ceil((entry.resetTime - now) / 1000)));
-      return res.status(429).json({ error: "Too many requests. Please try again later." });
+    // In production, validate origin matches our app URL
+    if (ENV.isProduction && ENV.publicAppUrl) {
+      try {
+        const allowedHost = new URL(ENV.publicAppUrl).host;
+        const requestHost = new URL(origin as string).host;
+        if (requestHost !== allowedHost) {
+          return res.status(403).json({ error: "Origin mismatch" });
+        }
+      } catch {
+        return res.status(403).json({ error: "Invalid Origin header" });
+      }
     }
 
     next();
   });
 
-  // Periodically clean up stale rate limit entries
-  setInterval(() => {
-    const now = Date.now();
-    Array.from(rateLimitMap.entries()).forEach(([ip, entry]) => {
-      if (now > entry.resetTime) rateLimitMap.delete(ip);
-    });
-  }, RATE_LIMIT_WINDOW_MS);
-
-  const oauthCallbackLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 20,
-    standardHeaders: true,
-    legacyHeaders: false,
-  });
+  // OAuth callback rate limiter is defined at module scope above
 
   // ============================================
   // HEALTH CHECK
@@ -403,6 +403,22 @@ async function startServer() {
       console.warn("[Startup] Server running in degraded mode - AI agent automation disabled");
     }
   });
+
+  function gracefulShutdown(signal: string) {
+    console.log(`[Shutdown] ${signal} received. Closing server...`);
+    server.close(() => {
+      console.log("[Shutdown] Server closed. Exiting.");
+      process.exit(0);
+    });
+    // Force exit after 10 seconds if connections don't drain
+    setTimeout(() => {
+      console.error("[Shutdown] Forced exit after timeout.");
+      process.exit(1);
+    }, 10_000);
+  }
+
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 }
 
 startServer().catch(console.error);
