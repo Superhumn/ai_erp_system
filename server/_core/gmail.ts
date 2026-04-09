@@ -25,7 +25,7 @@ export interface GmailMessage {
 }
 
 export interface GmailSendOptions {
-  to: string | string[];
+  to?: string | string[];
   subject: string;
   body: string;
   cc?: string | string[];
@@ -73,7 +73,7 @@ export function getGmailAuthUrl(userId: number): string {
  */
 function createMimeMessage(options: GmailSendOptions): string {
   const boundary = "----=_Part_" + Date.now();
-  const toAddresses = Array.isArray(options.to) ? options.to.join(", ") : options.to;
+  const toAddresses = options.to ? (Array.isArray(options.to) ? options.to.join(", ") : options.to) : "";
   const ccAddresses = options.cc ? (Array.isArray(options.cc) ? options.cc.join(", ") : options.cc) : null;
   const bccAddresses = options.bcc ? (Array.isArray(options.bcc) ? options.bcc.join(", ") : options.bcc) : null;
   

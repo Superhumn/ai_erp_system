@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { trpc } from "../../lib/trpc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Label } from "../../components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { AlertCircle, Check, RefreshCw, Settings, DollarSign } from "lucide-react";
-import { useToast } from "../../hooks/use-toast";
+import { toast } from "sonner";
 
 const MAPPING_TYPE_LABELS: Record<string, string> = {
   cogs_product: "COGS - Product Cost",
@@ -22,82 +22,70 @@ const MAPPING_TYPE_LABELS: Record<string, string> = {
 };
 
 export default function QuickBooksIntegration() {
-  const { toast } = useToast();
   const queryClient = useQueryClient();
+  const utils = trpc.useUtils();
   const [selectedMappingType, setSelectedMappingType] = useState<string>("");
   const [selectedAccountId, setSelectedAccountId] = useState<string>("");
 
   // Check connection status
-  const { data: connectionStatus, isLoading: connectionLoading } = useQuery({
-    queryKey: ['quickbooks-connection'],
-    queryFn: () => (trpc.quickbooks.getConnectionStatus as any).query(),
-  });
+  const { data: connectionStatus, isLoading: connectionLoading } = trpc.quickbooks.getConnectionStatus.useQuery();
 
   // Get QuickBooks accounts
-  const { data: qbAccounts, isLoading: accountsLoading } = useQuery({
-    queryKey: ['quickbooks-accounts'],
-    queryFn: () => (trpc.quickbooks.getAccounts as any).query(),
-    enabled: connectionStatus?.connected ?? false,
-  });
+  const { data: qbAccounts, isLoading: accountsLoading } = trpc.quickbooks.getAccounts.useQuery(
+    undefined,
+    { enabled: connectionStatus?.connected ?? false }
+  );
 
   // Get current account mappings
-  const { data: accountMappings, isLoading: mappingsLoading } = useQuery({
-    queryKey: ['quickbooks-mappings'],
-    queryFn: () => (trpc.quickbooks.getAccountMappings as any).query({}),
-    enabled: connectionStatus?.connected ?? false,
-  });
+  const { data: accountMappings, isLoading: mappingsLoading } = trpc.quickbooks.getAccountMappings.useQuery(
+    {},
+    { enabled: connectionStatus?.connected ?? false }
+  );
 
   // Sync accounts mutation
-  const syncAccountsMutation = useMutation({
-    mutationFn: () => (trpc.quickbooks.syncAccounts as any).mutate({}),
-    onSuccess: (data: any) => {
-      toast.success("Accounts Synced", { description: data.message });
-      queryClient.invalidateQueries({ queryKey: ['quickbooks-accounts'] });
+  const syncAccountsMutation = trpc.quickbooks.syncAccounts.useMutation({
+    onSuccess: (data) => {
+      toast.success(data.message);
+      utils.quickbooks.getAccounts.invalidate();
     },
     onError: (error: any) => {
-      toast.error("Sync Failed", { description: error.message || "Failed to sync accounts from QuickBooks" });
+      toast.error(error.message || "Failed to sync accounts from QuickBooks");
     },
   });
 
   // Sync items mutation
-  const syncItemsMutation = useMutation({
-    mutationFn: () => (trpc.quickbooks.syncItems as any).mutate({ type: 'Inventory' }),
-    onSuccess: (data: any) => {
-      toast.success("Items Synced", { description: data.message });
+  const syncItemsMutation = trpc.quickbooks.syncItems.useMutation({
+    onSuccess: (data) => {
+      toast.success(data.message);
     },
     onError: (error: any) => {
-      toast.error("Sync Failed", { description: error.message || "Failed to sync items from QuickBooks" });
+      toast.error(error.message || "Failed to sync items from QuickBooks");
     },
   });
 
   // Save mapping mutation
-  const saveMappingMutation = useMutation({
-    mutationFn: (data: { mappingType: string; quickbooksAccountId: string }) =>
-      (trpc.quickbooks.upsertAccountMapping as any).mutate({
-        mappingType: data.mappingType as any,
-        quickbooksAccountId: data.quickbooksAccountId,
-        isDefault: true,
-      }),
+  const saveMappingMutation = trpc.quickbooks.upsertAccountMapping.useMutation({
     onSuccess: () => {
-      toast.success("Mapping Saved", { description: "Account mapping has been updated" });
-      queryClient.invalidateQueries({ queryKey: ['quickbooks-mappings'] });
+      toast.success("Account mapping has been updated");
+      utils.quickbooks.getAccountMappings.invalidate();
       setSelectedMappingType("");
       setSelectedAccountId("");
     },
     onError: (error: any) => {
-      toast.error("Save Failed", { description: error.message || "Failed to save account mapping" });
+      toast.error(error.message || "Failed to save account mapping");
     },
   });
 
   const handleSaveMapping = () => {
     if (!selectedMappingType || !selectedAccountId) {
-      toast.error("Missing Information", { description: "Please select both a mapping type and QuickBooks account" });
+      toast.error("Please select both a mapping type and QuickBooks account");
       return;
     }
 
     saveMappingMutation.mutate({
-      mappingType: selectedMappingType,
+      mappingType: selectedMappingType as any,
       quickbooksAccountId: selectedAccountId,
+      isDefault: true,
     });
   };
 
@@ -145,7 +133,7 @@ export default function QuickBooksIntegration() {
         <div className="flex gap-2">
           <Button
             variant="outline"
-            onClick={() => syncAccountsMutation.mutate()}
+            onClick={() => syncAccountsMutation.mutate({})}
             disabled={syncAccountsMutation.isPending}
           >
             <RefreshCw className={`mr-2 h-4 w-4 ${syncAccountsMutation.isPending ? 'animate-spin' : ''}`} />
@@ -153,7 +141,7 @@ export default function QuickBooksIntegration() {
           </Button>
           <Button
             variant="outline"
-            onClick={() => syncItemsMutation.mutate()}
+            onClick={() => syncItemsMutation.mutate({})}
             disabled={syncItemsMutation.isPending}
           >
             <RefreshCw className={`mr-2 h-4 w-4 ${syncItemsMutation.isPending ? 'animate-spin' : ''}`} />
@@ -192,7 +180,7 @@ export default function QuickBooksIntegration() {
                   <TableBody>
                     {Object.entries(MAPPING_TYPE_LABELS).map(([type, label]) => {
                       const mapping = getMappingForType(type);
-                      const account = mapping?.quickbooksAccounts;
+                      const account = (mapping as any)?.quickbooksAccounts;
                       
                       return (
                         <TableRow key={type}>
@@ -207,7 +195,7 @@ export default function QuickBooksIntegration() {
                           </TableCell>
                           <TableCell>
                             {account ? (
-                              <Badge variant="default" className="gap-1 bg-green-600">
+                              <Badge variant="default" className="gap-1 bg-green-600 text-white">
                                 <Check className="h-3 w-3" />
                                 Configured
                               </Badge>
@@ -295,7 +283,7 @@ export default function QuickBooksIntegration() {
                       </p>
                     </div>
                   </div>
-                  <Badge variant="default" className="bg-green-600">Active</Badge>
+                  <Badge variant="default" className="bg-green-600 text-white">Active</Badge>
                 </div>
 
                 <div className="flex items-center justify-between p-4 border rounded-lg">
@@ -308,7 +296,7 @@ export default function QuickBooksIntegration() {
                       </p>
                     </div>
                   </div>
-                  <Badge variant={accountMappings?.length ? "default" : "secondary"} className={accountMappings?.length ? "bg-green-600" : ""}>
+                  <Badge variant={accountMappings?.length ? "default" : "secondary"} className={accountMappings?.length ? "bg-green-600 text-white" : ""}>
                     {accountMappings?.length ? "Configured" : "Pending"}
                   </Badge>
                 </div>

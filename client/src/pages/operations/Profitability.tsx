@@ -10,6 +10,7 @@ import { Badge } from "../../components/ui/badge";
 import { CalendarIcon, Download, TrendingUp, TrendingDown, DollarSign, Package, Truck, ExternalLink } from "lucide-react";
 import { format } from "date-fns";
 import { Link } from "wouter";
+import { formatCurrency } from "@/lib/format";
 
 export default function Profitability() {
   const [dateRange, setDateRange] = useState<{ from: Date | undefined; to: Date | undefined }>({
@@ -21,15 +22,13 @@ export default function Profitability() {
   const { data: qbStatus } = trpc.quickbooks.getConnectionStatus.useQuery();
 
   // Fetch product profitability data
-  const { data: profitabilityData, isLoading: profitabilityLoading } = (trpc.cogs as any).profitability.useQuery({
-    startDate: dateRange.from,
-    endDate: dateRange.to
-  }, {
-    enabled: !!dateRange.from && !!dateRange.to
-  });
+  const { data: profitabilityData, isLoading: profitabilityLoading } = trpc.cogs.profitability.useQuery(
+    { startDate: dateRange.from, endDate: dateRange.to },
+    { enabled: !!dateRange.from && !!dateRange.to }
+  );
 
   // Fetch inventory valuation
-  const { data: valuationData, isLoading: valuationLoading } = (trpc.cogs as any).valuation.useQuery();
+  const { data: valuationData, isLoading: valuationLoading } = trpc.cogs.valuation.useQuery();
 
   // Calculate summary metrics
   const summary = profitabilityData?.reduce(
@@ -50,14 +49,6 @@ export default function Profitability() {
     0
   ) || 0;
 
-  const formatCurrency = (value: number | string | null | undefined) => {
-    const num = Number(value) || 0;
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(num);
-  };
-
   const formatPercent = (value: number | string | null | undefined) => {
     const num = Number(value) || 0;
     return `${num.toFixed(2)}%`;
@@ -70,7 +61,7 @@ export default function Profitability() {
           <div className="flex items-center gap-3">
             <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Profitability & COGS Tracking</h1>
             {qbStatus?.connected ? (
-              <Badge variant="default" className="gap-1 bg-green-500">
+              <Badge variant="default" className="gap-1 bg-green-500 text-white">
                 <DollarSign className="h-3 w-3" />
                 QuickBooks Connected
               </Badge>

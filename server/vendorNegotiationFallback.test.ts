@@ -34,6 +34,16 @@ import {
   addNegotiationRound,
 } from "./vendorNegotiationService";
 
+// ─── Helper: create an array of PO-like objects that sum to a target spend ───
+function makePOs(totalSpend: number, count: number) {
+  if (count === 0) return [];
+  const amountEach = totalSpend / count;
+  return Array.from({ length: count }, (_, i) => ({
+    id: i + 1,
+    totalAmount: String(amountEach),
+  }));
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 
 describe("Vendor Negotiation Service – rule-based fallback analysis", () => {
@@ -44,7 +54,7 @@ describe("Vendor Negotiation Service – rule-based fallback analysis", () => {
   });
 
   it("returns standard defaults when spend and order count are low and no products", async () => {
-    mockGetVendorSpendingHistory.mockResolvedValue({ totalSpend: 10000, orderCount: 5 });
+    mockGetVendorSpendingHistory.mockResolvedValue(makePOs(10000, 5));
     mockGetProductById.mockResolvedValue(null);
 
     const result = await analyzeNegotiationOpportunity({
@@ -61,7 +71,7 @@ describe("Vendor Negotiation Service – rule-based fallback analysis", () => {
   });
 
   it("adds high-volume leverage point and sets 10% target when totalSpend > 100,000", async () => {
-    mockGetVendorSpendingHistory.mockResolvedValue({ totalSpend: 150000, orderCount: 5 });
+    mockGetVendorSpendingHistory.mockResolvedValue(makePOs(150000, 5));
 
     const result = await analyzeNegotiationOpportunity({
       vendorId: 1,
@@ -76,7 +86,7 @@ describe("Vendor Negotiation Service – rule-based fallback analysis", () => {
   });
 
   it("adds consistent-purchasing leverage point (but not high-volume) when 50,000 < totalSpend ≤ 100,000", async () => {
-    mockGetVendorSpendingHistory.mockResolvedValue({ totalSpend: 75000, orderCount: 5 });
+    mockGetVendorSpendingHistory.mockResolvedValue(makePOs(75000, 5));
 
     const result = await analyzeNegotiationOpportunity({
       vendorId: 1,
@@ -92,7 +102,7 @@ describe("Vendor Negotiation Service – rule-based fallback analysis", () => {
   });
 
   it("adds frequent-ordering leverage and increments target by 2 when orderCount > 20", async () => {
-    mockGetVendorSpendingHistory.mockResolvedValue({ totalSpend: 10000, orderCount: 25 });
+    mockGetVendorSpendingHistory.mockResolvedValue(makePOs(10000, 25));
 
     const result = await analyzeNegotiationOpportunity({
       vendorId: 1,
@@ -106,7 +116,7 @@ describe("Vendor Negotiation Service – rule-based fallback analysis", () => {
 
   it("caps target reduction at 15 even when both high-spend and high-order-count rules apply", async () => {
     // totalSpend > 100k → targetReduction = 10; orderCount > 20 → +2 → 12 (≤ 15 cap, so stays 12)
-    mockGetVendorSpendingHistory.mockResolvedValue({ totalSpend: 200000, orderCount: 30 });
+    mockGetVendorSpendingHistory.mockResolvedValue(makePOs(200000, 30));
 
     const result = await analyzeNegotiationOpportunity({
       vendorId: 1,
@@ -117,7 +127,7 @@ describe("Vendor Negotiation Service – rule-based fallback analysis", () => {
   });
 
   it("sets vendorDependency to high and adds bundling leverage when more than 3 products", async () => {
-    mockGetVendorSpendingHistory.mockResolvedValue({ totalSpend: 10000, orderCount: 5 });
+    mockGetVendorSpendingHistory.mockResolvedValue(makePOs(10000, 5));
     mockGetProductById
       .mockResolvedValueOnce({ id: 1, name: "P1" })
       .mockResolvedValueOnce({ id: 2, name: "P2" })
@@ -137,7 +147,7 @@ describe("Vendor Negotiation Service – rule-based fallback analysis", () => {
   });
 
   it("returns medium vendorDependency when exactly 3 products are provided", async () => {
-    mockGetVendorSpendingHistory.mockResolvedValue({ totalSpend: 10000, orderCount: 5 });
+    mockGetVendorSpendingHistory.mockResolvedValue(makePOs(10000, 5));
     mockGetProductById
       .mockResolvedValueOnce({ id: 1 })
       .mockResolvedValueOnce({ id: 2 })
@@ -154,7 +164,7 @@ describe("Vendor Negotiation Service – rule-based fallback analysis", () => {
   });
 
   it("uses volume-commitment recommended strategy when totalSpend > 50,000", async () => {
-    mockGetVendorSpendingHistory.mockResolvedValue({ totalSpend: 60000, orderCount: 5 });
+    mockGetVendorSpendingHistory.mockResolvedValue(makePOs(60000, 5));
 
     const result = await analyzeNegotiationOpportunity({
       vendorId: 1,
@@ -165,7 +175,7 @@ describe("Vendor Negotiation Service – rule-based fallback analysis", () => {
   });
 
   it("uses competitive-pricing recommended strategy when totalSpend ≤ 50,000", async () => {
-    mockGetVendorSpendingHistory.mockResolvedValue({ totalSpend: 30000, orderCount: 5 });
+    mockGetVendorSpendingHistory.mockResolvedValue(makePOs(30000, 5));
 
     const result = await analyzeNegotiationOpportunity({
       vendorId: 1,
@@ -177,7 +187,7 @@ describe("Vendor Negotiation Service – rule-based fallback analysis", () => {
 
   it("calculates confidence score correctly", async () => {
     // confidenceScore = Math.min(40 + orderCount*2 + (totalSpend>50000 ? 20 : 0), 85)
-    mockGetVendorSpendingHistory.mockResolvedValue({ totalSpend: 60000, orderCount: 10 });
+    mockGetVendorSpendingHistory.mockResolvedValue(makePOs(60000, 10));
 
     const result = await analyzeNegotiationOpportunity({
       vendorId: 1,
@@ -190,7 +200,7 @@ describe("Vendor Negotiation Service – rule-based fallback analysis", () => {
 
   it("caps confidence score at 85", async () => {
     // 40 + 30*2 + 20 = 100 → capped at 85
-    mockGetVendorSpendingHistory.mockResolvedValue({ totalSpend: 60000, orderCount: 30 });
+    mockGetVendorSpendingHistory.mockResolvedValue(makePOs(60000, 30));
 
     const result = await analyzeNegotiationOpportunity({
       vendorId: 1,

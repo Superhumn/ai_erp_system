@@ -5,21 +5,16 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { ArrowLeft, Package, Tag, DollarSign, Barcode, Layers } from "lucide-react";
 import { Link, useParams } from "wouter";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
 
 export default function ProductDetail() {
   const params = useParams<{ id: string }>();
   const productId = parseInt(params.id || "0");
 
-  const { data: product, isLoading } = trpc.products.get.useQuery({ id: productId });
-  const { data: inventory } = trpc.inventory.list.useQuery({ productId });
+  const { data: productRaw, isLoading } = trpc.products.get.useQuery({ id: productId });
+  const product = productRaw as any;
+  const { data: inventoryRaw } = trpc.inventory.list.useQuery({ productId });
+  const inventory = inventoryRaw as any[] | undefined;
 
   if (isLoading) {
     return (

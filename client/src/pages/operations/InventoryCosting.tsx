@@ -37,7 +37,7 @@ import {
   Calculator,
   Loader2,
 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 
 type CostingMethod = "fifo" | "lifo" | "weighted_average";
 
@@ -75,7 +75,6 @@ export default function InventoryCosting() {
   const [cogsQuantity, setCogsQuantity] = useState("");
   const [cogsRevenue, setCogsRevenue] = useState("");
 
-  const { toast } = useToast();
   const utils = trpc.useUtils();
 
   // Queries
@@ -88,42 +87,39 @@ export default function InventoryCosting() {
   // Mutations
   const createConfigMutation = trpc.inventoryCosting.configs.create.useMutation({
     onSuccess: () => {
-      (toast as any)({ title: "Costing Method Configured", description: "Product costing method has been set." });
+      toast.success("Product costing method has been set.");
       setConfigDialogOpen(false);
       resetConfigForm();
       utils.inventoryCosting.configs.list.invalidate();
     },
-    onError: (error: any) => {
-      (toast as any)({ title: "Error", description: error.message, variant: "destructive" });
+    onError: (error) => {
+      toast.error(error.message);
     },
   });
 
   const createLayerMutation = trpc.inventoryCosting.layers.create.useMutation({
     onSuccess: () => {
-      (toast as any)({ title: "Cost Layer Added", description: "Inventory cost layer has been recorded." });
+      toast.success("Inventory cost layer has been recorded.");
       setLayerDialogOpen(false);
       resetLayerForm();
       utils.inventoryCosting.layers.list.invalidate();
     },
-    onError: (error: any) => {
-      (toast as any)({ title: "Error", description: error.message, variant: "destructive" });
+    onError: (error) => {
+      toast.error(error.message);
     },
   });
 
   const recordCogsMutation = trpc.inventoryCosting.cogs.record.useMutation({
-    onSuccess: (data: any) => {
-      (toast as any)({
-        title: "COGS Recorded",
-        description: `Total COGS: $${data.totalCogs.toFixed(2)} | Unit COGS: $${data.unitCogs.toFixed(4)}${data.grossMargin !== null ? ` | Margin: $${data.grossMargin.toFixed(2)}` : ""}`,
-      });
+    onSuccess: (data) => {
+      toast.success(`Total COGS: $${data.totalCogs.toFixed(2)} | Unit COGS: $${data.unitCogs.toFixed(4)}${data.grossMargin !== null ? ` | Margin: $${data.grossMargin.toFixed(2)}` : ""}`);
       setCogsDialogOpen(false);
       resetCogsForm();
       utils.inventoryCosting.cogs.list.invalidate();
       utils.inventoryCosting.cogs.dashboard.invalidate();
       utils.inventoryCosting.layers.list.invalidate();
     },
-    onError: (error: any) => {
-      (toast as any)({ title: "COGS Calculation Failed", description: error.message, variant: "destructive" });
+    onError: (error) => {
+      toast.error(error.message);
     },
   });
 
@@ -201,7 +197,7 @@ export default function InventoryCosting() {
               ${cogsDashboard?.totalRevenue?.toFixed(2) || "0.00"}
             </div>
             <p className="text-xs text-muted-foreground">
-              {((cogsDashboard as any)?.totalQuantitySold || cogsDashboard?.totalQuantity || 0).toFixed(0)} units sold
+              {((cogsDashboard as any)?.totalQuantitySold || 0).toFixed(0)} units sold
             </p>
           </CardContent>
         </Card>
@@ -219,7 +215,7 @@ export default function InventoryCosting() {
               ${cogsDashboard?.grossMargin?.toFixed(2) || "0.00"}
             </div>
             <p className="text-xs text-muted-foreground">
-              {cogsDashboard?.grossMarginPercent?.toFixed(1) || "0.0"}% margin rate
+              {(cogsDashboard as any)?.grossMarginPercent?.toFixed(1) || "0.0"}% margin rate
             </p>
           </CardContent>
         </Card>

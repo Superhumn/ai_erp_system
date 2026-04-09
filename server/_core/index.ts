@@ -9,7 +9,7 @@ import { registerLocalAuthRoutes } from "./localAuth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { ENV, validateEmailConfig } from "./env";
+import { ENV, validateEmailConfig, validateCriticalConfig } from "./env";
 import * as sendgridProvider from "./sendgridProvider";
 import * as emailService from "./emailService";
 import * as db from "../db";
@@ -44,6 +44,8 @@ const oauthCallbackLimiter = rateLimit({
 });
 
 async function startServer() {
+  validateCriticalConfig();
+
   const emailConfigValidation = validateEmailConfig();
   if (!emailConfigValidation.valid) {
     console.warn("[Email Config] Warning: Some email configuration is missing:");
@@ -54,7 +56,8 @@ async function startServer() {
   const app = express();
   const server = createServer(app);
 
-  // =====================================  // SECURITY HEADERS
+  // ============================================
+  // SECURITY HEADERS
   // ============================================
   app.use((_req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -62,6 +65,10 @@ async function startServer() {
     res.setHeader("X-XSS-Protection", "1; mode=block");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    res.setHeader(
+      "Content-Security-Policy",
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"
+    );
     if (process.env.NODE_ENV === "production") {
       res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
     }
@@ -71,36 +78,43 @@ async function startServer() {
   // ============================================
   // RATE LIMITING
   // ============================================
-  const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
-  const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
-  const RATE_LIMIT_MAX = 200; // requests per window
+  const apiLimiter = rateLimit({
+    windowMs: 60_000, // 1 minute
+    max: 200,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many requests. Please try again later." },
+  });
 
+  app.use("/api/", apiLimiter);
+
+  // CSRF protection: validate Origin header on state-changing requests
   app.use("/api/", (req, res, next) => {
-    const ip = req.ip || req.socket.remoteAddress || "unknown";
-    const now = Date.now();
-    const entry = rateLimitMap.get(ip);
+    // Safe methods don't need CSRF protection
+    if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
 
-    if (!entry || now > entry.resetTime) {
-      rateLimitMap.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
-      return next();
+    const origin = req.headers.origin || req.headers.referer;
+    if (!origin) {
+      return res.status(403).json({ error: "Missing Origin header" });
     }
 
-    entry.count++;
-    if (entry.count > RATE_LIMIT_MAX) {
-      res.setHeader("Retry-After", String(Math.ceil((entry.resetTime - now) / 1000)));
-      return res.status(429).json({ error: "Too many requests. Please try again later." });
+    // In production, validate origin matches our app URL
+    if (ENV.isProduction && ENV.publicAppUrl) {
+      try {
+        const allowedHost = new URL(ENV.publicAppUrl).host;
+        const requestHost = new URL(origin as string).host;
+        if (requestHost !== allowedHost) {
+          return res.status(403).json({ error: "Origin mismatch" });
+        }
+      } catch {
+        return res.status(403).json({ error: "Invalid Origin header" });
+      }
     }
 
     next();
   });
 
-  // Periodically clean up stale rate limit entries
-  setInterval(() => {
-    const now = Date.now();
-    for (const [ip, entry] of rateLimitMap) {
-      if (now > entry.resetTime) rateLimitMap.delete(ip);
-    }
-  }, RATE_LIMIT_WINDOW_MS);
+  // OAuth callback rate limiter is defined at module scope above
 
   // ============================================
   // HEALTH CHECK
@@ -114,6 +128,7 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   // Auth routes (login, register)
   registerOAuthRoutes(app);
+  registerLocalAuthRoutes(app);
 
   // Health check endpoint
   app.get('/api/health', (_req, res) => {
@@ -150,14 +165,24 @@ async function startServer() {
           const providerMessageId = event.sg_message_id?.split('.')[0];
           const email = event.email;
           const timestamp = event.timestamp ? new Date(event.timestamp * 1000) : new Date();
-          const emailEvent = await (db as any).createEmailEvent({ providerEventType, providerMessageId, providerTimestamp: timestamp, rawEventJson: event, email, reason: event.reason || event.response || null, bounceType: event.type || null, processedAt: new Date() });
-          if (providerMessageId) {
-            const message = await (db as any).getEmailMessageByProviderMessageId(providerMessageId);
-            if (message) {
-              await (db as any).createEmailEvent({ ...emailEvent, emailMessageId: message.id });
-              const newStatus = sendgridProvider.mapEventToStatus(providerEventType);
-              if (newStatus) await (db as any).updateEmailMessageStatus(message.id, newStatus);
-            }
+          const metadata = { reason: event.reason || event.response, bounceType: event.type };
+
+          // Look up the linked message first to avoid inserting a bare row then a duplicate linked row
+          const message = providerMessageId ? await db.getEmailMessageByProviderMessageId(providerMessageId) : null;
+
+          // Insert a single event row, linking to the message when available
+          await db.createEmailEvent({
+            providerEventType,
+            providerTimestamp: timestamp,
+            providerMessageId,
+            emailMessageId: message?.id,
+            email,
+            rawEventJson: metadata,
+          } as any);
+
+          if (message) {
+            const newStatus = sendgridProvider.mapEventToStatus(providerEventType);
+            if (newStatus) await db.updateEmailMessageStatus(message.id, newStatus);
           }
         } catch (eventError) {
           console.error('[SendGrid Webhook] Error processing event:', eventError);
@@ -171,7 +196,7 @@ async function startServer() {
   });
   
   // Shopify webhooks
-  const handleShopifyWebhook = async (req: any, res: any) => {
+  const handleShopifyWebhook = async (req: any, res: any, _topic?: string) => {
     try {
       const rawBody = req.body.toString();
       const { processShopifyWebhook } = await import('./shopify');
@@ -237,12 +262,20 @@ async function startServer() {
   app.get('/api/google/callback', oauthCallbackLimiter, async (req, res) => {
     const { code, state } = req.query;
     if (!code || !state) return res.redirect('/import?error=missing_params');
-    const userId = parseInt(state as string, 10);
-    if (isNaN(userId) || userId <= 0) return res.redirect('/import?error=invalid_state');
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
     if (!clientId || !clientSecret) return res.redirect('/import?error=not_configured');
     try {
+      // Verify HMAC-signed state and authenticate session
+      const { verifySignedOAuthState } = await import('./crypto');
+      const stateData = verifySignedOAuthState(state as string);
+      if (!stateData) return res.redirect('/import?error=invalid_state');
+      const { sdk: authSdk } = await import('./sdk');
+      let user: any;
+      try { user = await authSdk.authenticateRequest(req); } catch { return res.redirect('/import?error=not_authenticated'); }
+      if (!user) return res.redirect('/import?error=not_authenticated');
+      if (stateData.userId !== user.id) return res.redirect('/import?error=user_mismatch');
+      const userId = user.id;
       const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -274,18 +307,17 @@ async function startServer() {
       let user: any;
       try { user = await sdk.authenticateRequest(req); } catch { return res.redirect('/settings/integrations?shopify_error=not_authenticated'); }
       if (!user) return res.redirect('/settings/integrations?shopify_error=not_authenticated');
-      const stateParts = (state as string).split(':');
-      if (stateParts.length < 4) return res.redirect('/settings/integrations?shopify_error=invalid_state');
-      const stateUserId = parseInt(stateParts[0]);
-      const stateCompanyId = stateParts[1] !== 'undefined' ? parseInt(stateParts[1]) : undefined;
-      const stateShop = stateParts[2];
-      const stateTimestamp = parseInt(stateParts[3]);
+      const { verifySignedOAuthState } = await import('./crypto');
+      const stateData = verifySignedOAuthState(state as string);
+      if (!stateData) return res.redirect('/settings/integrations?shopify_error=invalid_state');
+      const stateUserId = stateData.userId as number;
+      const stateCompanyId = stateData.companyId as number | undefined;
+      const stateShop = stateData.shop as string;
       if (stateUserId !== user.id) return res.redirect('/settings/integrations?shopify_error=user_mismatch');
       if (user.companyId && stateCompanyId !== user.companyId) return res.redirect('/settings/integrations?shopify_error=company_mismatch');
       let shopDomain = (shop as string).trim().toLowerCase();
       if (!shopDomain.endsWith('.myshopify.com')) return res.redirect('/settings/integrations?shopify_error=invalid_domain');
       if (stateShop !== shopDomain) return res.redirect('/settings/integrations?shopify_error=shop_mismatch');
-      if (Date.now() - stateTimestamp > 10 * 60 * 1000) return res.redirect('/settings/integrations?shopify_error=state_expired');
       const tokenResponse = await fetch(`https://${shopDomain}/admin/oauth/access_token`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code: code as string }) });
       if (!tokenResponse.ok) return res.redirect('/settings/integrations?shopify_error=token_exchange_failed');
       const tokenData = await tokenResponse.json();
@@ -296,7 +328,7 @@ async function startServer() {
       const { upsertShopifyStore, createSyncLog } = await import('../db');
       const { encrypt } = await import('../_core/crypto');
       const encryptedToken = encrypt(accessToken);
-      await upsertShopifyStore({ companyId: user.companyId || undefined, storeDomain: shopDomain, storeName: shopInfo.shop.name || shopDomain, accessToken: encryptedToken, apiVersion: '2024-01', isEnabled: true, syncInventory: true, syncOrders: true, inventoryAuthority: 'hybrid' });
+      await upsertShopifyStore(shopDomain, { storeDomain: shopDomain, storeName: shopInfo.shop.name || shopDomain, accessToken: encryptedToken, apiVersion: '2024-01', isEnabled: true, syncInventory: true, syncOrders: true, inventoryAuthority: 'hybrid' });
       await createSyncLog({ integration: 'shopify', action: 'store_connected', status: 'success', details: `Connected store: ${shopInfo.shop.name} (${shopDomain})` });
       res.redirect('/settings/integrations?shopify_success=connected&shop=' + encodeURIComponent(shopInfo.shop.name));
     } catch (error) {
@@ -372,6 +404,22 @@ async function startServer() {
       console.warn("[Startup] Server running in degraded mode - AI agent automation disabled");
     }
   });
+
+  function gracefulShutdown(signal: string) {
+    console.log(`[Shutdown] ${signal} received. Closing server...`);
+    server.close(() => {
+      console.log("[Shutdown] Server closed. Exiting.");
+      process.exit(0);
+    });
+    // Force exit after 10 seconds if connections don't drain
+    setTimeout(() => {
+      console.error("[Shutdown] Forced exit after timeout.");
+      process.exit(1);
+    }, 10_000);
+  }
+
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 }
 
 startServer().catch(console.error);

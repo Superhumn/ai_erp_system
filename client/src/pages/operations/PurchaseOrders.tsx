@@ -34,14 +34,8 @@ import { SelectWithCreate } from "@/components/ui/select-with-create";
 import { ClipboardList, Plus, Search, Loader2, Sparkles, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
+import { getStatusColor } from "@/lib/statusColors";
 
 type LineItem = {
   productId?: number;
@@ -87,13 +81,62 @@ export default function PurchaseOrders() {
   const { data: vendors } = trpc.vendors.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
   const utils = trpc.useUtils();
-  
+
+  const resetForm = () => {
+    setFormData({ vendorId: 0, expectedDeliveryDate: "", notes: "" });
+    setLineItems([]);
+  };
+
+  const calculateTotals = () => {
+    const subtotal = lineItems.reduce((sum, item) => {
+      return sum + (parseFloat(item.quantity || "0") * parseFloat(item.unitPrice || "0"));
+    }, 0);
+    return { subtotal, total: subtotal };
+  };
+
+  const totals = calculateTotals();
+
+  const addLineItem = () => {
+    setLineItems([...lineItems, { description: "", quantity: "1", unitPrice: "0", totalAmount: "0" }]);
+  };
+
+  const selectProduct = (index: number, productIdStr: string) => {
+    const productId = parseInt(productIdStr);
+    const product = products?.find(p => p.id === productId);
+    const updated = lineItems.map((item, i) => {
+      if (i !== index) return item;
+      const unitPrice = product?.unitPrice || "0";
+      const quantity = item.quantity || "1";
+      const totalAmount = (parseFloat(quantity) * parseFloat(unitPrice)).toFixed(2);
+      return { ...item, productId, description: product?.name || item.description, unitPrice, totalAmount };
+    });
+    setLineItems(updated);
+  };
+
+  const updateLineItem = (index: number, field: keyof LineItem, value: string) => {
+    const updated = lineItems.map((item, i) => {
+      if (i !== index) return item;
+      const newItem = { ...item, [field]: value };
+      if (field === "quantity" || field === "unitPrice") {
+        const qty = parseFloat(field === "quantity" ? value : item.quantity) || 0;
+        const price = parseFloat(field === "unitPrice" ? value : item.unitPrice) || 0;
+        newItem.totalAmount = (qty * price).toFixed(2);
+      }
+      return newItem;
+    });
+    setLineItems(updated);
+  };
+
+  const removeLineItem = (index: number) => {
+    setLineItems(lineItems.filter((_, i) => i !== index));
+  };
+
   const createPO = trpc.purchaseOrders.create.useMutation({
     onSuccess: () => {
       toast.success("Purchase order created successfully");
       setIsOpen(false);
       resetForm();
-      refetch();
+      utils.purchaseOrders.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -123,7 +166,7 @@ export default function PurchaseOrders() {
       setTextInput("");
       setPoPreview(null);
       setActiveAction(null);
-      refetch();
+      utils.purchaseOrders.list.invalidate();
     },
     onError: (error) => {
       toast.error(`Failed to create PO: ${error.message}`);
@@ -136,62 +179,6 @@ export default function PurchaseOrders() {
     const matchesStatus = statusFilter === "all" || po.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-
-  const statusColors: Record<string, string> = {
-    draft: "bg-gray-500/10 text-gray-600",
-    pending: "bg-amber-500/10 text-amber-600",
-    approved: "bg-blue-500/10 text-blue-600",
-    ordered: "bg-purple-500/10 text-purple-600",
-    partial: "bg-indigo-500/10 text-indigo-600",
-    received: "bg-green-500/10 text-green-600",
-    cancelled: "bg-red-500/10 text-red-600",
-  };
-
-  const resetForm = () => {
-    setFormData({ vendorId: 0, expectedDeliveryDate: "", notes: "" });
-    setLineItems([]);
-  };
-
-  const calculateTotals = () => {
-    const subtotal = lineItems.reduce((sum, item) => sum + parseFloat(item.totalAmount || "0"), 0);
-    return { subtotal, total: subtotal };
-  };
-
-  const totals = calculateTotals();
-
-  const addLineItem = () => {
-    setLineItems([...lineItems, { description: "", quantity: "1", unitPrice: "0", totalAmount: "0" }]);
-  };
-
-  const selectProduct = (index: number, value: string) => {
-    const product = products?.find((p: any) => p.id.toString() === value);
-    if (product) {
-      const newItems = [...lineItems];
-      newItems[index] = {
-        ...newItems[index],
-        productId: product.id,
-        description: product.name,
-        unitPrice: product.unitPrice || "0",
-        totalAmount: (parseFloat(newItems[index].quantity || "1") * parseFloat(product.unitPrice || "0")).toFixed(2),
-      };
-      setLineItems(newItems);
-    }
-  };
-
-  const updateLineItem = (index: number, field: keyof LineItem, value: string) => {
-    const newItems = [...lineItems];
-    (newItems[index] as any)[field] = value;
-    if (field === "quantity" || field === "unitPrice") {
-      const qty = parseFloat(newItems[index].quantity || "0");
-      const price = parseFloat(newItems[index].unitPrice || "0");
-      newItems[index].totalAmount = (qty * price).toFixed(2);
-    }
-    setLineItems(newItems);
-  };
-
-  const removeLineItem = (index: number) => {
-    setLineItems(lineItems.filter((_, i) => i !== index));
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -648,7 +635,7 @@ export default function PurchaseOrders() {
                       {formatCurrency(po.totalAmount)}
                     </TableCell>
                     <TableCell>
-                      <Badge className={statusColors[po.status]}>{po.status}</Badge>
+                      <Badge className={getStatusColor(po.status)}>{po.status}</Badge>
                     </TableCell>
                   </TableRow>
                 ))}

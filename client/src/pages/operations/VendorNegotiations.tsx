@@ -101,9 +101,8 @@ export default function VendorNegotiations() {
 
   // Mutations
   const createMutation = trpc.vendorNegotiations.create.useMutation({
-    onSuccess: (data: any) => {
-      (toast as any)({
-        title: "Negotiation Created",
+    onSuccess: (data) => {
+      toast.success("Negotiation Created", {
         description: `Negotiation ${data.negotiationNumber} has been initiated.`,
       });
       setCreateDialogOpen(false);
@@ -111,15 +110,14 @@ export default function VendorNegotiations() {
       utils.vendorNegotiations.list.invalidate();
       utils.vendorNegotiations.stats.invalidate();
     },
-    onError: (error: any) => {
-      (toast as any)({ title: "Error", description: error.message, variant: "destructive" });
+    onError: (error) => {
+      toast.error("Error", { description: error.message });
     },
   });
 
   const addRoundMutation = trpc.vendorNegotiations.addRound.useMutation({
-    onSuccess: (data: any) => {
-      (toast as any)({
-        title: "Round Recorded",
+    onSuccess: (data) => {
+      toast.success("Round Recorded", {
         description: `Round ${data.roundNumber} has been added to the negotiation.`,
       });
       setRoundDialogOpen(false);
@@ -127,8 +125,8 @@ export default function VendorNegotiations() {
       utils.vendorNegotiations.get.invalidate();
       utils.vendorNegotiations.list.invalidate();
     },
-    onError: (error: any) => {
-      (toast as any)({ title: "Error", description: error.message, variant: "destructive" });
+    onError: (error) => {
+      toast.error("Error", { description: error.message });
     },
   });
 

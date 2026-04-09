@@ -24,7 +24,7 @@ import {
   aiAgentLogs,
   sentEmails,
 } from "../drizzle/schema";
-import { eq, and, like, desc, sql, gte, lte, or, isNull, isNotNull } from "drizzle-orm";
+import { eq, and, like, desc, sql, gte, lte, or, isNull, isNotNull, count, sum, lt, inArray } from "drizzle-orm";
 
 // ============================================
 // AI AGENT SERVICE - Comprehensive ERP Integration
@@ -398,6 +398,33 @@ const AI_TOOLS: Tool[] = [
       },
     },
   },
+  // AI-Powered Analytics Tools
+  {
+    type: "function",
+    function: {
+      name: "run_ai_analytics",
+      description: "Run AI-powered analytics including financial anomaly detection, revenue forecasting, HR attrition prediction, manufacturing yield prediction, legal contract analysis, project risk assessment, EDI anomaly detection, and supplier performance scoring",
+      parameters: {
+        type: "object",
+        properties: {
+          analysisType: {
+            type: "string",
+            enum: [
+              "finance_anomalies", "revenue_forecast", "cash_flow_prediction",
+              "hr_attrition", "compensation_benchmark", "performance_analysis", "workforce_plan",
+              "manufacturing_yield", "quality_forecast", "production_optimization", "predictive_maintenance",
+              "contract_analysis", "dispute_prediction", "compliance_check",
+              "project_risks", "effort_estimation", "resource_allocation",
+              "edi_anomalies", "edi_error_prediction", "supplier_scoring"
+            ],
+            description: "Type of AI analysis to run",
+          },
+          entityId: { type: "number", description: "Optional entity ID (contract ID, project ID, etc.)" },
+        },
+        required: ["analysisType"],
+      },
+    },
+  },
 ];
 
 // ============================================
@@ -504,9 +531,9 @@ async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any
         timeRange !== "all" ? gte(invoices.createdAt, startDate) : undefined
       );
       const paidInvoices = allInvoices.filter(i => i.status === "paid");
-      const pendingInvoices = allInvoices.filter(i => (i.status as string) === "pending" || i.status === "sent");
+      const pendingInvoices = allInvoices.filter(i => i.status === "draft" || i.status === "sent");
       const overdueInvoices = allInvoices.filter(i =>
-        ((i.status as string) === "pending" || i.status === "sent") &&
+        (i.status === "draft" || i.status === "sent") &&
         i.dueDate && new Date(i.dueDate) < now
       );
 
@@ -529,7 +556,7 @@ async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any
       const allOrders = await db.select().from(orders).where(
         timeRange !== "all" ? gte(orders.createdAt, startDate) : undefined
       );
-      const pendingOrders = allOrders.filter(o => o.status === "pending");
+      const pendingOrders = allOrders.filter(o => (o.status as string) === "pending");
       const completedOrders = allOrders.filter(o => (o.status as string) === "completed" || o.status === "delivered");
 
       return {
@@ -623,7 +650,7 @@ async function executeSendEmail(params: any, ctx: AIAgentContext): Promise<any> 
     await db.insert(sentEmails).values({
       toEmail,
       toName: recipientName,
-      fromEmail: "noreply@superhumn.com",
+      fromEmail: 'noreply@system.local',
       subject: params.subject,
       bodyText: params.body,
       status: "sent",
@@ -659,69 +686,70 @@ async function executeTrackItems(params: any, ctx: AIAgentContext): Promise<any>
 
   switch (trackingType) {
     case "inventory": {
-      const items = await db.select().from(inventory);
       if (identifier) {
-        const filtered = items.filter(i =>
-          i.id.toString() === identifier ||
-          i.productId?.toString() === identifier
+        // Query only matching items instead of loading entire table
+        const filtered = await db.select().from(inventory).where(
+          or(eq(inventory.id, parseInt(identifier) || 0), eq(inventory.productId, parseInt(identifier) || 0))
         );
         return { type: "inventory", items: filtered, action };
       }
-      return { type: "inventory", totalItems: items.length, items: items.slice(0, 20), action };
+      const [totalCount] = await db.select({ count: count() }).from(inventory);
+      const items = await db.select().from(inventory).limit(20);
+      return { type: "inventory", totalItems: totalCount?.count || 0, items, action };
     }
 
     case "order": {
-      const allOrders = await db.select().from(orders);
       if (identifier) {
-        const order = allOrders.find(o =>
-          o.id.toString() === identifier ||
-          o.orderNumber === identifier
-        );
+        const [order] = await db.select().from(orders).where(
+          or(eq(orders.id, parseInt(identifier) || 0), eq(orders.orderNumber, identifier))
+        ).limit(1);
         if (order) {
           const items = await db.select().from(orderItems).where(eq(orderItems.orderId, order.id));
           return { type: "order", order, items, action };
         }
       }
-      return { type: "orders", totalOrders: allOrders.length, orders: allOrders.slice(0, 20), action };
+      const [totalCount] = await db.select({ count: count() }).from(orders);
+      const recentOrders = await db.select().from(orders).orderBy(desc(orders.createdAt)).limit(20);
+      return { type: "orders", totalOrders: totalCount?.count || 0, orders: recentOrders, action };
     }
 
     case "shipment": {
-      const allShipments = await db.select().from(shipments);
       if (identifier) {
-        const shipment = allShipments.find(s =>
-          s.id.toString() === identifier ||
-          s.trackingNumber === identifier
-        );
+        const [shipment] = await db.select().from(shipments).where(
+          or(eq(shipments.id, parseInt(identifier) || 0), eq(shipments.trackingNumber, identifier))
+        ).limit(1);
         return { type: "shipment", shipment, action };
       }
-      return { type: "shipments", totalShipments: allShipments.length, shipments: allShipments.slice(0, 20), action };
+      const [totalCount] = await db.select({ count: count() }).from(shipments);
+      const recentShipments = await db.select().from(shipments).limit(20);
+      return { type: "shipments", totalShipments: totalCount?.count || 0, shipments: recentShipments, action };
     }
 
     case "purchase_order": {
-      const allPOs = await db.select().from(purchaseOrders);
       if (identifier) {
-        const po = allPOs.find(p =>
-          p.id.toString() === identifier ||
-          p.poNumber === identifier
-        );
+        const [po] = await db.select().from(purchaseOrders).where(
+          or(eq(purchaseOrders.id, parseInt(identifier) || 0), eq(purchaseOrders.poNumber, identifier))
+        ).limit(1);
         if (po) {
           const items = await db.select().from(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, po.id));
           return { type: "purchase_order", purchaseOrder: po, items, action };
         }
       }
-      return { type: "purchase_orders", totalPOs: allPOs.length, purchaseOrders: allPOs.slice(0, 20), action };
+      const [totalCount] = await db.select({ count: count() }).from(purchaseOrders);
+      const recentPOs = await db.select().from(purchaseOrders).limit(20);
+      return { type: "purchase_orders", totalPOs: totalCount?.count || 0, purchaseOrders: recentPOs, action };
     }
 
     case "work_order": {
-      const allWOs = await db.select().from(workOrders);
       if (identifier) {
-        const wo = allWOs.find(w =>
-          w.id.toString() === identifier ||
-          w.workOrderNumber === identifier
-        );
+        const [wo] = await db.select().from(workOrders).where(
+          or(eq(workOrders.id, parseInt(identifier) || 0), eq(workOrders.workOrderNumber, identifier))
+        ).limit(1);
         return { type: "work_order", workOrder: wo, action };
       }
-      return { type: "work_orders", totalWOs: allWOs.length, workOrders: allWOs.slice(0, 20), action };
+      const [totalCount] = await db.select({ count: count() }).from(workOrders);
+      const recentWOs = await db.select().from(workOrders).limit(20);
+      return { type: "work_orders", totalWOs: totalCount?.count || 0, workOrders: recentWOs, action };
     }
 
     default:
@@ -801,7 +829,6 @@ async function executeManageVendor(params: any, ctx: AIAgentContext): Promise<an
         email: data.email,
         phone: data.phone,
         contactName: data.contactName,
-        type: data.category || "supplier",
         status: data.status || "active",
       } as any).$returningId();
       return { created: true, vendorId: newVendor[0].id };
@@ -896,12 +923,9 @@ async function executeManageCopacker(params: any, ctx: AIAgentContext): Promise<
 
   switch (action) {
     case "list": {
-      // Copackers are vendors with category = 'copacker' or 'manufacturer'
       const allVendors = await db.select().from(vendors);
       const copackers = allVendors.filter(v =>
-        (v as any).category === "copacker" ||
-        (v as any).category === "manufacturer" ||
-        (v as any).category === "contract_manufacturer"
+        v.type === "contractor" || v.type === "service"
       );
       return { copackers, total: copackers.length };
     }
@@ -1094,11 +1118,9 @@ async function executeGenerateReport(params: any, ctx: AIAgentContext): Promise<
 
   switch (reportType) {
     case "sales_summary": {
-      const salesOrders = await db.select().from(orders);
-      const filteredOrders = salesOrders.filter(o => {
-        const orderDate = new Date(o.createdAt || 0);
-        return orderDate >= startDate && orderDate <= endDate;
-      });
+      // Use database WHERE clause instead of loading all orders into memory
+      const filteredOrders = await db.select().from(orders)
+        .where(and(gte(orders.createdAt, startDate), lte(orders.createdAt, endDate)));
 
       const totalRevenue = filteredOrders.reduce((sum, o) => sum + parseFloat(o.totalAmount || "0"), 0);
 
@@ -1112,34 +1134,50 @@ async function executeGenerateReport(params: any, ctx: AIAgentContext): Promise<
     }
 
     case "inventory_status": {
-      const allInventory = await db.select().from(inventory);
-      const lowStock = allInventory.filter(i => parseFloat(i.quantity?.toString() || "0") < 10);
+      // Use DB aggregation instead of loading entire table
+      const [totalCount] = await db.select({ count: count() }).from(inventory);
+      const [lowStockCount] = await db.select({ count: count() }).from(inventory)
+        .where(lt(sql`CAST(${inventory.quantity} AS DECIMAL)`, 10));
+      const items = format === "detailed"
+        ? await db.select().from(inventory)
+        : await db.select().from(inventory).limit(10);
 
       return {
         reportType: "inventory_status",
-        totalItems: allInventory.length,
-        lowStockItems: lowStock.length,
-        items: format === "detailed" ? allInventory : allInventory.slice(0, 10),
+        totalItems: totalCount?.count || 0,
+        lowStockItems: lowStockCount?.count || 0,
+        items,
       };
     }
 
     case "vendor_performance": {
-      const allVendors = await db.select().from(vendors);
-      const allPOs = await db.select().from(purchaseOrders);
+      // Use GROUP BY at DB level instead of loading all POs into memory
+      const vendorPOStats = await db.select({
+        vendorId: purchaseOrders.vendorId,
+        totalPOs: count(),
+        totalSpent: sum(purchaseOrders.totalAmount),
+      }).from(purchaseOrders)
+        .groupBy(purchaseOrders.vendorId);
 
-      const vendorStats = allVendors.map(v => {
-        const vendorPOs = allPOs.filter(po => po.vendorId === v.id);
-        return {
-          vendorId: v.id,
-          vendorName: v.name,
-          totalPOs: vendorPOs.length,
-          totalSpent: vendorPOs.reduce((sum, po) => sum + parseFloat(po.totalAmount || "0"), 0).toFixed(2),
-        };
-      });
+      const vendorIds = vendorPOStats.map(s => s.vendorId).filter((id): id is number => id != null);
+      const vendorList = vendorIds.length > 0
+        ? await db.select().from(vendors).where(inArray(vendors.id, vendorIds))
+        : [];
+      const vendorMap = new Map(vendorList.map(v => [v.id, v]));
+
+      const vendorStats = vendorPOStats
+        .filter(s => s.vendorId != null)
+        .map(s => ({
+          vendorId: s.vendorId!,
+          vendorName: vendorMap.get(s.vendorId!)?.name || 'Unknown',
+          totalPOs: s.totalPOs,
+          totalSpent: parseFloat(s.totalSpent || "0").toFixed(2),
+        }))
+        .sort((a, b) => parseFloat(b.totalSpent) - parseFloat(a.totalSpent));
 
       return {
         reportType: "vendor_performance",
-        vendors: vendorStats.sort((a, b) => parseFloat(b.totalSpent) - parseFloat(a.totalSpent)),
+        vendors: vendorStats,
       };
     }
 
@@ -1148,13 +1186,16 @@ async function executeGenerateReport(params: any, ctx: AIAgentContext): Promise<
       const paidInvoices = allInvoices.filter(i => i.status === "paid");
       const pendingInvoices = allInvoices.filter(i => (i.status as string) === "pending" || i.status === "sent");
 
+      const totalBilled = allInvoices.reduce((sum, i) => sum + parseFloat(i.totalAmount || "0"), 0);
+      const totalCollected = paidInvoices.reduce((sum, i) => sum + parseFloat(i.totalAmount || "0"), 0);
+
       return {
         reportType: "financial_overview",
         totalInvoices: allInvoices.length,
         paidInvoices: paidInvoices.length,
         pendingInvoices: pendingInvoices.length,
-        totalBilled: allInvoices.reduce((sum, i) => sum + parseFloat(i.totalAmount || "0"), 0).toFixed(2),
-        totalCollected: paidInvoices.reduce((sum, i) => sum + parseFloat(i.totalAmount || "0"), 0).toFixed(2),
+        totalBilled: totalBilled.toFixed(2),
+        totalCollected: totalCollected.toFixed(2),
       };
     }
 
@@ -1228,8 +1269,102 @@ async function executeTool(toolName: string, params: any, ctx: AIAgentContext): 
       return executeGenerateReport(params, ctx);
     case "create_task":
       return executeCreateTask(params, ctx);
+    case "run_ai_analytics":
+      return executeRunAiAnalytics(params, ctx);
     default:
       throw new Error(`Unknown tool: ${toolName}`);
+  }
+}
+
+async function executeRunAiAnalytics(params: any, ctx: AIAgentContext): Promise<any> {
+  const { analysisType, entityId } = params;
+  const companyId = ctx.companyId;
+
+  switch (analysisType) {
+    case "finance_anomalies": {
+      const { detectFinancialAnomalies } = await import("./financeAiService");
+      return detectFinancialAnomalies({ companyId });
+    }
+    case "revenue_forecast": {
+      const { forecastRevenue } = await import("./financeAiService");
+      return forecastRevenue({ companyId });
+    }
+    case "cash_flow_prediction": {
+      const { predictCashFlow } = await import("./financeAiService");
+      return predictCashFlow({ companyId });
+    }
+    case "hr_attrition": {
+      const { predictAttrition } = await import("./hrAiService");
+      return predictAttrition({ companyId });
+    }
+    case "compensation_benchmark": {
+      const { benchmarkCompensation } = await import("./hrAiService");
+      return benchmarkCompensation({ companyId });
+    }
+    case "performance_analysis": {
+      const { analyzePerformance } = await import("./hrAiService");
+      return analyzePerformance({ companyId });
+    }
+    case "workforce_plan": {
+      const { planWorkforce } = await import("./hrAiService");
+      return planWorkforce({ companyId });
+    }
+    case "manufacturing_yield": {
+      const { predictYield } = await import("./manufacturingAiService");
+      return predictYield();
+    }
+    case "quality_forecast": {
+      const { forecastQuality } = await import("./manufacturingAiService");
+      return forecastQuality();
+    }
+    case "production_optimization": {
+      const { optimizeProduction } = await import("./manufacturingAiService");
+      return optimizeProduction();
+    }
+    case "predictive_maintenance": {
+      const { predictMaintenance } = await import("./manufacturingAiService");
+      return predictMaintenance();
+    }
+    case "contract_analysis": {
+      if (!entityId) return { error: "contractId required for contract analysis" };
+      const { analyzeContract } = await import("./legalAiService");
+      return analyzeContract({ contractId: entityId });
+    }
+    case "dispute_prediction": {
+      const { predictDisputes } = await import("./legalAiService");
+      return predictDisputes({ companyId });
+    }
+    case "compliance_check": {
+      const { checkCompliance } = await import("./legalAiService");
+      return checkCompliance({ companyId });
+    }
+    case "project_risks": {
+      const { predictProjectRisks } = await import("./projectsAiService");
+      return predictProjectRisks(entityId ? { companyId, projectId: entityId } : { companyId });
+    }
+    case "effort_estimation": {
+      if (!entityId) return { error: "projectId required for effort estimation" };
+      const { estimateEffort } = await import("./projectsAiService");
+      return estimateEffort({ projectId: entityId });
+    }
+    case "resource_allocation": {
+      const { optimizeResourceAllocation } = await import("./projectsAiService");
+      return optimizeResourceAllocation({ companyId });
+    }
+    case "edi_anomalies": {
+      const { detectEdiAnomalies } = await import("./ediAiService");
+      return detectEdiAnomalies();
+    }
+    case "edi_error_prediction": {
+      const { predictEdiErrors } = await import("./ediAiService");
+      return predictEdiErrors();
+    }
+    case "supplier_scoring": {
+      const { scoreSuppliers } = await import("./supplierScoringService");
+      return scoreSuppliers({ companyId });
+    }
+    default:
+      return { error: `Unknown analysis type: ${analysisType}` };
   }
 }
 
@@ -1275,6 +1410,8 @@ export async function processAIAgentRequest(
 9. **Generate Reports**: Create various business reports.
 
 10. **Create Tasks**: Create tasks that require approval before execution.
+
+11. **Run AI Analytics**: Run AI-powered analytics including financial anomaly detection, revenue forecasting, cash flow prediction, HR attrition prediction, compensation benchmarking, workforce planning, manufacturing yield/quality prediction, production optimization, predictive maintenance, legal contract analysis, dispute prediction, compliance monitoring, project risk assessment, effort estimation, resource allocation, EDI anomaly detection, EDI error prediction, and supplier performance scoring.
 
 Current System Status:
 - Vendors: ${vendorCount[0]?.count || 0}
@@ -1497,7 +1634,7 @@ export async function getSystemOverview(ctx: AIAgentContext): Promise<any> {
 
   const activeVendors = vendorStats.filter(v => v.status === "active").length;
   const activeCustomers = customerStats.filter(c => c.status === "active").length;
-  const pendingOrders = orderStats.filter(o => o.status === "pending").length;
+  const pendingOrders = orderStats.filter(o => (o.status as string) === "pending").length;
   const lowStockItems = inventoryStats.filter(i => parseFloat(i.quantity?.toString() || "0") < 10).length;
   const pendingPOs = poStats.filter(po => (po.status as string) === "pending" || po.status === "sent").length;
   const inProgressWOs = workOrderStats.filter(wo => wo.status === "in_progress").length;

@@ -31,14 +31,7 @@ import {
 } from "@/components/ui/table";
 import { DollarSign, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
 
 export default function Accounts() {
   const [search, setSearch] = useState("");
@@ -51,13 +44,14 @@ export default function Accounts() {
     description: "",
   });
 
-  const { data: accounts, isLoading, refetch } = trpc.accounts.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: accounts, isLoading } = trpc.accounts.list.useQuery();
   const createAccount = trpc.accounts.create.useMutation({
     onSuccess: () => {
       toast.success("Account created successfully");
       setIsOpen(false);
       setFormData({ code: "", name: "", type: "asset", subtype: "", description: "" });
-      refetch();
+      utils.accounts.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);

@@ -59,6 +59,18 @@ function statusVariant(status: string): "default" | "secondary" | "outline" | "d
   }
 }
 
+/** Convert an ArrayBuffer to a base64 string using chunked encoding to avoid
+ *  call-stack overflows with large files (avoids spread-to-args limit). */
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const CHUNK = 8192;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...Array.from(bytes.subarray(i, i + CHUNK)));
+  }
+  return btoa(binary);
+}
+
 export default function CopackerPortal() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState("overview");
@@ -87,7 +99,7 @@ export default function CopackerPortal() {
 
   // --- Shipping document upload ---
   const [showShipDocUpload, setShowShipDocUpload] = useState(false);
-  const [shipDocType, setShipDocType] = useState<string>("bill_of_lading");
+  const [shipDocType, setShipDocType] = useState<string>("other");
   const [shipDocName, setShipDocName] = useState("");
   const [shipDocDescription, setShipDocDescription] = useState("");
   const [shipDocShipmentId, setShipDocShipmentId] = useState<string>("");
@@ -282,7 +294,7 @@ export default function CopackerPortal() {
 
     if (invoiceFile) {
       const buffer = await invoiceFile.arrayBuffer();
-      fileData = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+      fileData = arrayBufferToBase64(buffer);
       mimeType = invoiceFile.type;
       fileName = invoiceFile.name;
     }
@@ -302,7 +314,7 @@ export default function CopackerPortal() {
 
   // ---- Shipping doc upload ----
   const resetShipDocForm = () => {
-    setShipDocType("bill_of_lading");
+    setShipDocType("other");
     setShipDocName("");
     setShipDocDescription("");
     setShipDocShipmentId("");
@@ -314,14 +326,17 @@ export default function CopackerPortal() {
       toast.error("Please select a file to upload");
       return;
     }
+    if (!shipDocShipmentId) {
+      toast.error("Please select a shipment");
+      return;
+    }
     const buffer = await shipDocFile.arrayBuffer();
-    const fileData = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+    const fileData = arrayBufferToBase64(buffer);
 
     uploadShippingDoc.mutate({
-      shipmentId: shipDocShipmentId ? parseInt(shipDocShipmentId) : undefined,
-      documentType: shipDocType as any,
+      shipmentId: parseInt(shipDocShipmentId),
+      documentType: shipDocType as "invoice" | "receipt" | "contract" | "legal" | "report" | "hr" | "other",
       name: shipDocName || shipDocFile.name,
-      description: shipDocDescription || undefined,
       fileData,
       mimeType: shipDocFile.type,
     });
@@ -1248,13 +1263,12 @@ export default function CopackerPortal() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="bill_of_lading">Bill of Lading</SelectItem>
-                  <SelectItem value="packing_list">Packing List</SelectItem>
-                  <SelectItem value="commercial_invoice">Commercial Invoice</SelectItem>
-                  <SelectItem value="proof_of_delivery">Proof of Delivery</SelectItem>
-                  <SelectItem value="weight_certificate">Weight Certificate</SelectItem>
-                  <SelectItem value="inspection_report">Inspection Report</SelectItem>
-                  <SelectItem value="customs_declaration">Customs Declaration</SelectItem>
+                  <SelectItem value="invoice">Invoice</SelectItem>
+                  <SelectItem value="receipt">Receipt</SelectItem>
+                  <SelectItem value="contract">Contract</SelectItem>
+                  <SelectItem value="legal">Legal</SelectItem>
+                  <SelectItem value="report">Report</SelectItem>
+                  <SelectItem value="hr">HR</SelectItem>
                   <SelectItem value="other">Other</SelectItem>
                 </SelectContent>
               </Select>

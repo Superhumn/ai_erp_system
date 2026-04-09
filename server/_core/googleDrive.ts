@@ -4,6 +4,7 @@
  */
 
 import { ENV } from "./env";
+import { createSignedOAuthState } from "./crypto";
 
 // Google Drive API types
 export interface DriveFile {
@@ -58,9 +59,9 @@ export function getGoogleDriveAuthUrl(userId: number): string {
     "https://www.googleapis.com/auth/spreadsheets.readonly"
   );
   
-  const state = userId.toString();
-  
-  return `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${state}`;
+  const state = createSignedOAuthState({ userId, provider: 'google' });
+
+  return `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${encodeURIComponent(state)}`;
 }
 
 /**
@@ -81,9 +82,9 @@ export function getGoogleFullAccessAuthUrl(userId: number): string {
     "https://www.googleapis.com/auth/gmail.readonly"
   );
   
-  const state = userId.toString();
-  
-  return `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${state}`;
+  const state = createSignedOAuthState({ userId, provider: 'google' });
+
+  return `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${encodeURIComponent(state)}`;
 }
 
 /**

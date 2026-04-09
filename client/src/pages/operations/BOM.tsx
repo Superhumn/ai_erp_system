@@ -18,17 +18,17 @@ export default function BOM() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   
-  const { data: boms, isLoading, refetch } = trpc.bom.list.useQuery(
+  const utils = trpc.useUtils();
+  const { data: boms, isLoading } = trpc.bom.list.useQuery(
     statusFilter !== "all" ? { status: statusFilter } : undefined
   );
   const { data: products } = trpc.products.list.useQuery();
-  const utils = trpc.useUtils();
-  
+
   const createBom = trpc.bom.create.useMutation({
     onSuccess: (result) => {
       toast.success("BOM created successfully");
       setIsCreateOpen(false);
-      refetch();
+      utils.bom.list.invalidate();
       navigate(`/operations/bom/${result.id}`);
     },
     onError: (error) => {
@@ -39,7 +39,7 @@ export default function BOM() {
   const deleteBom = trpc.bom.delete.useMutation({
     onSuccess: () => {
       toast.success("BOM deleted");
-      refetch();
+      utils.bom.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);

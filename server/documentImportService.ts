@@ -802,10 +802,14 @@ export async function importPurchaseOrder(
 
     // 6. If marking as received, update inventory
     if (markAsReceived) {
+      // Batch load all raw materials instead of N+1
+      const rmIds = matchedItems.map(i => i.rawMaterialId).filter((id): id is number => id != null);
+      const materialsToUpdate = rmIds.length > 0 ? await Promise.all(rmIds.map(id => db.getRawMaterialById(id))) : [];
+      const materialMap = new Map(materialsToUpdate.filter(Boolean).map(m => [m!.id, m!]));
+
       for (const item of matchedItems) {
         if (item.rawMaterialId) {
-          // Get current stock and add received quantity
-          const material = await db.getRawMaterialById(item.rawMaterialId);
+          const material = materialMap.get(item.rawMaterialId);
           if (material) {
             const currentReceived = parseFloat(material.quantityReceived || '0');
             const newReceived = currentReceived + item.quantity;
@@ -1017,9 +1021,14 @@ export async function importVendorInvoice(
 
     // 7. If marking as received, update inventory
     if (markAsReceived) {
+      // Batch load all raw materials instead of N+1
+      const rmIds = matchedItems.map(i => i.rawMaterialId).filter((id): id is number => id != null);
+      const materialsToUpdate = rmIds.length > 0 ? await Promise.all(rmIds.map(id => db.getRawMaterialById(id))) : [];
+      const materialMap = new Map(materialsToUpdate.filter(Boolean).map(m => [m!.id, m!]));
+
       for (const item of matchedItems) {
         if (item.rawMaterialId) {
-          const material = await db.getRawMaterialById(item.rawMaterialId);
+          const material = materialMap.get(item.rawMaterialId);
           if (material) {
             const currentReceived = parseFloat(material.quantityReceived || '0');
             const newReceived = currentReceived + item.quantity;
@@ -1132,10 +1141,9 @@ export async function importCustomsDocument(
     createdRecords.push({ type: "customs_document", id: freightId, name: doc.documentNumber });
 
     // 5. Create or update raw materials for line items with HS codes
+    let materials = await db.getRawMaterials();
     for (const item of doc.lineItems) {
       if (item.hsCode) {
-        // Try to find existing material by HS code or description
-        const materials = await db.getRawMaterials();
         const existingMaterial = materials.find(m =>
           m.sku === item.hsCode ||
           m.name.toLowerCase().includes(item.description.toLowerCase().substring(0, 20))
@@ -1165,6 +1173,7 @@ export async function importCustomsDocument(
             preferredVendorId: shipper!.id
           });
           createdRecords.push({ type: "raw_material", id: materialResult.id, name: item.description });
+          materials = await db.getRawMaterials();
         }
       }
     }
@@ -1219,7 +1228,7 @@ export async function bulkImportDocuments(
   let failed = 0;
 
   for (const doc of documents) {
-    const parseResult = await parseUploadedDocument(doc.content, doc.filename, doc.hint as any);
+    const parseResult = await parseUploadedDocument(doc.content, doc.filename, doc.hint as "purchase_order" | "freight_invoice" | undefined);
 
     if (!parseResult.success) {
       results.push({

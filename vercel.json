@@ -1,10 +1,8 @@
 {
-  "version": 2,
-  "builds": [
-    {
-      "src": "package.json",
-      "use": "@vercel/node"
-    }
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/dist/index.js" },
+    { "source": "/webhooks/(.*)", "destination": "/dist/index.js" },
+    { "source": "/(.*)", "destination": "/dist/index.js" }
   ],
   "routes": [
     {

@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -29,8 +30,7 @@ import {
   Target,
   Plus,
 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
 
 type InventoryItem = {
   id: number;
@@ -44,6 +44,50 @@ type InventoryItem = {
 
 type BulkActionType = 'adjust_quantity' | 'change_location' | 'update_reorder_point' | null;
 
+function InventorySummaryCards({ inventory }: { inventory: InventoryItem[] | undefined }) {
+  const { total, inStock, lowStock, outOfStock } = useMemo(() => {
+    if (!inventory) return { total: 0, inStock: 0, lowStock: 0, outOfStock: 0 };
+    let inStock = 0, lowStock = 0, outOfStock = 0;
+    for (const item of inventory) {
+      const qty = parseFloat(item.quantity || "0");
+      const reorder = parseFloat(item.reorderLevel || "0");
+      if (qty <= 0) outOfStock++;
+      else if (qty <= reorder) lowStock++;
+      else inStock++;
+    }
+    return { total: inventory.length, inStock, lowStock, outOfStock };
+  }, [inventory]);
+
+  return (
+    <div className="grid gap-4 md:grid-cols-4">
+      <Card>
+        <CardContent className="pt-6">
+          <div className="text-2xl font-bold">{total}</div>
+          <p className="text-xs text-muted-foreground">Total SKUs</p>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="pt-6">
+          <div className="text-2xl font-bold text-green-600">{inStock}</div>
+          <p className="text-xs text-muted-foreground">In Stock</p>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="pt-6">
+          <div className="text-2xl font-bold text-amber-600">{lowStock}</div>
+          <p className="text-xs text-muted-foreground">Low Stock</p>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="pt-6">
+          <div className="text-2xl font-bold text-red-600">{outOfStock}</div>
+          <p className="text-xs text-muted-foreground">Out of Stock</p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function Inventory() {
   const [selectedRows, setSelectedRows] = useState<Set<number | string>>(new Set());
   const [bulkActionDialogOpen, setBulkActionDialogOpen] = useState(false);
@@ -56,29 +100,22 @@ export default function Inventory() {
   const [newReorderLevel, setNewReorderLevel] = useState<string>("");
   const [newReorderQuantity, setNewReorderQuantity] = useState<string>("");
 
-  const { toast } = useToast();
   const utils = trpc.useUtils();
 
   const { data: inventory, isLoading } = trpc.inventory.list.useQuery();
   const { data: warehouses } = trpc.warehouses.list.useQuery();
 
   const bulkUpdateMutation = trpc.inventory.bulkUpdate.useMutation({
-    onSuccess: (data: any) => {
-      (toast as any)({
-        title: "Bulk Update Complete",
-        description: `Successfully updated ${data.totalUpdated} item(s).${data.totalFailed > 0 ? ` ${data.totalFailed} item(s) failed.` : ''}`,
-      });
+    onSuccess: (data) => {
+      toast.success(`Successfully updated ${data.totalUpdated} item(s).${data.totalFailed > 0 ? ` ${data.totalFailed} item(s) failed.` : ''}`);
+
       setSelectedRows(new Set());
       setBulkActionDialogOpen(false);
       resetFormStates();
       utils.inventory.list.invalidate();
     },
-    onError: (error: any) => {
-      (toast as any)({
-        title: "Bulk Update Failed",
-        description: error.message,
-        variant: "destructive",
-      });
+    onError: (error) => {
+      toast.error(error.message);
     },
   });
 
@@ -213,11 +250,7 @@ export default function Inventory() {
         break;
       case 'change_location':
         if (!selectedWarehouseId) {
-          (toast as any)({
-            title: "Select a location",
-            description: "Please select a warehouse location.",
-            variant: "destructive",
-          });
+          toast.error("Please select a warehouse location.");
           return;
         }
         bulkUpdateMutation.mutate({
@@ -365,43 +398,8 @@ export default function Inventory() {
         </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-xl font-semibold tracking-[-0.02em]">{inventory?.length || 0}</div>
-            <p className="text-xs text-muted-foreground">Total SKUs</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">
-              {inventory?.filter(i => parseFloat(i.quantity || "0") > parseFloat(i.reorderLevel || "0")).length || 0}
-            </div>
-            <p className="text-xs text-muted-foreground">In Stock</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-amber-600">
-              {inventory?.filter(i => {
-                const qty = parseFloat(i.quantity || "0");
-                const reorder = parseFloat(i.reorderLevel || "0");
-                return qty > 0 && qty <= reorder;
-              }).length || 0}
-            </div>
-            <p className="text-xs text-muted-foreground">Low Stock</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-red-600">
-              {inventory?.filter(i => parseFloat(i.quantity || "0") <= 0).length || 0}
-            </div>
-            <p className="text-xs text-muted-foreground">Out of Stock</p>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Summary Cards — memoized to avoid recalculation on every render */}
+      <InventorySummaryCards inventory={inventory as any} />
 
       <Card>
         <CardHeader className="pb-3">

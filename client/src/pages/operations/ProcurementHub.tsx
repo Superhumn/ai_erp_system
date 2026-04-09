@@ -64,12 +64,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Link } from "wouter";
 import { toast } from "sonner";
-
-function formatCurrency(value: string | number | null | undefined) {
-  const num = typeof value === "string" ? parseFloat(value) : value;
-  if (!num) return "-";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
 
 function formatDate(value: string | Date | null | undefined) {
   if (!value) return "-";

@@ -87,11 +87,12 @@ export async function testSftpConnection(partnerId: number): Promise<ConnectionT
       serverInfo: `Working directory: ${serverInfo}`,
     };
   } catch (error: any) {
+    console.error(`[EDI Transport] SFTP connection test failed for partner ${partnerId}:`, error);
     return {
       success: false,
-      message: `Connection failed: ${error.message}`,
+      message: "Connection failed: unable to reach SFTP server",
       latencyMs: Date.now() - startTime,
-      error: error.code || error.message,
+      error: error.code || "SFTP_CONNECTION_ERROR",
     };
   }
 }
@@ -153,13 +154,15 @@ export async function pollSftpForInbound(
           // Archive move is best-effort
         }
       } catch (error: any) {
-        result.errors.push(`Error processing ${file.name}: ${error.message}`);
+        console.error(`[EDI Transport] Error processing file ${file.name}:`, error);
+        result.errors.push(`Error processing ${file.name}`);
       }
     }
 
     await sftp.end();
   } catch (error: any) {
-    result.errors.push(`SFTP connection error: ${error.message}`);
+    console.error(`[EDI Transport] SFTP connection error for partner ${partnerId}:`, error);
+    result.errors.push("SFTP connection error");
   }
 
   return result;
@@ -204,7 +207,8 @@ export async function sendViaSftp(
       remoteFilePath: remotePath,
     };
   } catch (error: any) {
-    return { success: false, message: `SFTP delivery failed: ${error.message}`, error: error.message };
+    console.error(`[EDI Transport] SFTP delivery failed for partner ${partnerId}:`, error);
+    return { success: false, message: "SFTP delivery failed", error: error.code || "SFTP_DELIVERY_ERROR" };
   }
 }
 
@@ -233,11 +237,12 @@ export async function testAs2Connection(partnerId: number): Promise<ConnectionTe
       serverInfo: response.headers.get("server") || undefined,
     };
   } catch (error: any) {
+    console.error(`[EDI Transport] AS2 connection test failed for partner ${partnerId}:`, error);
     return {
       success: false,
-      message: `AS2 endpoint unreachable: ${error.message}`,
+      message: "AS2 endpoint unreachable",
       latencyMs: Date.now() - startTime,
-      error: error.message,
+      error: error.code || "AS2_CONNECTION_ERROR",
     };
   }
 }
@@ -280,7 +285,8 @@ export async function sendViaAs2(
       bytesTransferred: Buffer.byteLength(content),
     };
   } catch (error: any) {
-    return { success: false, message: `AS2 delivery failed: ${error.message}`, error: error.message };
+    console.error(`[EDI Transport] AS2 delivery failed for partner ${partnerId}:`, error);
+    return { success: false, message: "AS2 delivery failed", error: error.code || "AS2_DELIVERY_ERROR" };
   }
 }
 
@@ -292,7 +298,13 @@ export async function sendViaAs2(
  * Test connectivity to a trading partner using their configured transport
  */
 export async function testConnection(partnerId: number): Promise<ConnectionTestResult> {
-  const partner = await db.getEdiTradingPartnerById(partnerId) as any;
+  let partner;
+  try {
+    partner = await db.getEdiTradingPartnerById(partnerId) as any;
+  } catch (error: any) {
+    console.error(`[EDI Transport] Partner lookup failed for testConnection(${partnerId}):`, error);
+    return { success: false, message: "Partner lookup failed" };
+  }
   if (!partner) return { success: false, message: "Partner not found" };
 
   switch (partner.connectionType) {
@@ -320,7 +332,13 @@ export async function deliverOutbound(
   transactionSetCode: string,
   controlNumber: string
 ): Promise<TransportResult> {
-  const partner = await db.getEdiTradingPartnerById(partnerId) as any;
+  let partner;
+  try {
+    partner = await db.getEdiTradingPartnerById(partnerId) as any;
+  } catch (error: any) {
+    console.error(`[EDI Transport] Partner lookup failed for deliverOutbound(${partnerId}):`, error);
+    return { success: false, message: "Partner lookup failed" };
+  }
   if (!partner) return { success: false, message: "Partner not found" };
 
   const filename = `${transactionSetCode}_${controlNumber}_${Date.now()}.edi`;
@@ -414,9 +432,9 @@ export function stopEdiPolling(): void {
  * Poll all active SFTP-connected partners for new inbound files
  */
 export async function pollAllPartners(): Promise<PollResult[]> {
-  const partners = await db.getEdiTradingPartners();
-  const activePartners = partners.filter((p: any) => p.status === "active");
-  const sftpPartners = activePartners.filter((p: any) => p.connectionType === "sftp" || p.connectionType === "van");
+  const allPartners = await db.getEdiTradingPartners();
+  const partners = allPartners.filter(p => (p as any).status === "active" || !(p as any).status);
+  const sftpPartners = partners.filter(p => p.connectionType === "sftp" || p.connectionType === "van");
 
   const results: PollResult[] = [];
 
@@ -452,21 +470,23 @@ export async function handleEdiWebhook(
   // Try to determine the trading partner
   let partnerId: number | undefined;
 
-  if (senderIsaId) {
-    const allPartners = await db.getEdiTradingPartners();
-    const partner = allPartners.find((p: any) => p.isaId === senderIsaId);
-    if (partner) partnerId = partner.id;
-  }
-
-  // If no partner found by header, try to extract from ISA segment
-  if (!partnerId) {
-    const isaMatch = rawContent.match(/ISA\*[^*]*\*[^*]*\*[^*]*\*[^*]*\*[^*]*\*([^*]*?)\s*\*/);
-    if (isaMatch) {
-      const extractedIsaId = isaMatch[1].trim();
-      const allPartners = await db.getEdiTradingPartners();
-      const partner = allPartners.find((p: any) => p.isaId === extractedIsaId);
+  try {
+    if (senderIsaId) {
+      const partner = await db.getEdiTradingPartnerByIsaId(senderIsaId);
       if (partner) partnerId = partner.id;
     }
+
+    if (!partnerId) {
+      const isaMatch = rawContent.match(/ISA\*[^*]*\*[^*]*\*[^*]*\*[^*]*\*[^*]*\*([^*]*?)\s*\*/);
+      if (isaMatch) {
+        const extractedIsaId = isaMatch[1].trim();
+        const partner = await db.getEdiTradingPartnerByIsaId(extractedIsaId);
+        if (partner) partnerId = partner.id;
+      }
+    }
+  } catch (error: any) {
+    console.error("[EDI Transport] Partner lookup failed in webhook handler:", error);
+    return { success: false, message: "Partner lookup failed" };
   }
 
   if (!partnerId) {
@@ -477,7 +497,8 @@ export async function handleEdiWebhook(
     const result = await processInboundEdi(rawContent, partnerId);
     return { success: true, transactionId: result.transactionId, message: result.message };
   } catch (error: any) {
-    return { success: false, message: `Processing error: ${error.message}` };
+    console.error(`[EDI Transport] Webhook processing error for partner ${partnerId}:`, error);
+    return { success: false, message: "Processing error" };
   }
 }
 

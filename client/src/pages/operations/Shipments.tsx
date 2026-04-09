@@ -33,9 +33,10 @@ import {
 import { Truck, Plus, Search, Loader2, Package } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { getStatusColor } from "@/lib/statusColors";
 
 type Shipment = {
-  id: number;
+  id?: number;
   shipmentNumber: string;
   type: "inbound" | "outbound";
   status: "pending" | "in_transit" | "delivered" | "returned" | "cancelled";
@@ -60,7 +61,8 @@ export default function Shipments() {
     notes: "",
   });
 
-  const { data: shipments, isLoading, refetch } = trpc.shipments.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: shipments, isLoading } = trpc.shipments.list.useQuery();
   const createShipment = trpc.shipments.create.useMutation({
     onSuccess: () => {
       toast.success("Shipment created successfully");
@@ -69,14 +71,14 @@ export default function Shipments() {
         type: "outbound", carrier: "", trackingNumber: "",
         shipDate: "", deliveryDate: "", notes: "",
       });
-      refetch();
+      utils.shipments.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
     },
   });
 
-  const filteredShipments = (shipments as unknown as Shipment[])?.filter((shipment: Shipment) => {
+  const filteredShipments = (shipments as unknown as Shipment[] | undefined)?.filter((shipment) => {
     const matchesSearch =
       shipment.shipmentNumber.toLowerCase().includes(search.toLowerCase()) ||
       shipment.trackingNumber?.toLowerCase().includes(search.toLowerCase()) ||
@@ -84,14 +86,6 @@ export default function Shipments() {
     const matchesStatus = statusFilter === "all" || shipment.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-
-  const statusColors: Record<string, string> = {
-    pending: "bg-gray-500/10 text-gray-600",
-    in_transit: "bg-amber-500/10 text-amber-600",
-    delivered: "bg-green-500/10 text-green-600",
-    returned: "bg-purple-500/10 text-purple-600",
-    cancelled: "bg-red-500/10 text-red-600",
-  };
 
   const typeColors: Record<string, string> = {
     inbound: "bg-blue-500/10 text-blue-600",
@@ -110,9 +104,9 @@ export default function Shipments() {
   };
 
   // Calculate summary stats
-  const inTransitCount = (shipments as unknown as Shipment[])?.filter((s: Shipment) => s.status === "in_transit").length || 0;
-  const deliveredCount = (shipments as unknown as Shipment[])?.filter((s: Shipment) => s.status === "delivered").length || 0;
-  const pendingCount = (shipments as unknown as Shipment[])?.filter((s: Shipment) => s.status === "pending").length || 0;
+  const inTransitCount = (shipments as unknown as Shipment[] | undefined)?.filter((s) => s.status === "in_transit").length || 0;
+  const deliveredCount = (shipments as unknown as Shipment[] | undefined)?.filter((s) => s.status === "delivered").length || 0;
+  const pendingCount = (shipments as unknown as Shipment[] | undefined)?.filter((s) => s.status === "pending").length || 0;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -303,7 +297,7 @@ export default function Shipments() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredShipments?.map((shipment: Shipment) => (
+                {(filteredShipments as Shipment[]).map((shipment) => (
                   <TableRow key={shipment.id}>
                     <TableCell className="font-mono">{shipment.shipmentNumber}</TableCell>
                     <TableCell>
@@ -322,7 +316,7 @@ export default function Shipments() {
                         : "-"}
                     </TableCell>
                     <TableCell>
-                      <Badge className={statusColors[shipment.status]}>{shipment.status.replace("_", " ")}</Badge>
+                      <Badge className={getStatusColor(shipment.status)}>{shipment.status.replace("_", " ")}</Badge>
                     </TableCell>
                   </TableRow>
                 ))}

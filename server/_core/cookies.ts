@@ -40,7 +40,6 @@ export function getSessionCookieOptions(
   //       : undefined;
 
   const secure = isSecureRequest(req);
-
   return {
     httpOnly: true,
     path: "/",
