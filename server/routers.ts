@@ -2256,7 +2256,15 @@ export const appRouter = router({
           { ...input, createdBy: ctx.user.id },
           defaultItems,
         );
-        await createAuditLog(ctx.user.id, 'create', 'investmentGrantChecklist', result.id, input.name);
+        try {
+          await createAuditLog(ctx.user.id, 'create', 'investmentGrantChecklist', result.id, input.name);
+        } catch (error) {
+          console.error('Failed to create audit log for investment grant checklist creation', {
+            error,
+            userId: ctx.user.id,
+            checklistId: result.id,
+          });
+        }
 
         return result;
       }),
