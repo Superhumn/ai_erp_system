@@ -114,6 +114,7 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   // Auth routes (login, register)
   registerOAuthRoutes(app);
+  registerLocalAuthRoutes(app);
 
   // Health check endpoint
   app.get('/api/health', (_req, res) => {
