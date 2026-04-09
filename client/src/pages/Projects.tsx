@@ -49,11 +49,11 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 const taskStatusOptions = [
-  { value: "backlog", label: "Backlog", color: "bg-gray-100 text-gray-800" },
-  { value: "todo", label: "To Do", color: "bg-blue-100 text-blue-800" },
-  { value: "in_progress", label: "In Progress", color: "bg-yellow-100 text-yellow-800" },
-  { value: "review", label: "Review", color: "bg-purple-100 text-purple-800" },
-  { value: "done", label: "Done", color: "bg-green-100 text-green-800" },
+  { value: "backlog", label: "Backlog", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
+  { value: "todo", label: "To Do", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
+  { value: "in_progress", label: "In Progress", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
+  { value: "review", label: "Review", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
+  { value: "done", label: "Done", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
 ];
 
 const priorityOptions = [
@@ -128,7 +128,7 @@ function KanbanCard({
   return (
     <Card 
       className={cn(
-        "cursor-pointer hover:shadow-md transition-shadow",
+        "cursor-pointer hover:border-border/80 transition-shadow",
         isOverdue && "border-red-300 bg-red-50/50"
       )}
       onClick={onClick}
@@ -402,7 +402,7 @@ export default function Projects() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+            <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
               <FolderKanban className="h-8 w-8" />
               Projects & Tasks
             </h1>
@@ -479,42 +479,42 @@ export default function Projects() {
               <Circle className="h-4 w-4 text-gray-400" />
               <span className="text-sm text-muted-foreground">Backlog</span>
             </div>
-            <div className="text-2xl font-bold mt-1">{stats.backlog}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-1">{stats.backlog}</div>
           </Card>
           <Card className="p-3">
             <div className="flex items-center gap-2">
               <Circle className="h-4 w-4 text-blue-500" />
               <span className="text-sm text-muted-foreground">To Do</span>
             </div>
-            <div className="text-2xl font-bold mt-1">{stats.todo}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-1">{stats.todo}</div>
           </Card>
           <Card className="p-3">
             <div className="flex items-center gap-2">
               <Clock className="h-4 w-4 text-yellow-500" />
               <span className="text-sm text-muted-foreground">In Progress</span>
             </div>
-            <div className="text-2xl font-bold mt-1">{stats.inProgress}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-1">{stats.inProgress}</div>
           </Card>
           <Card className="p-3">
             <div className="flex items-center gap-2">
               <AlertCircle className="h-4 w-4 text-purple-500" />
               <span className="text-sm text-muted-foreground">Review</span>
             </div>
-            <div className="text-2xl font-bold mt-1">{stats.review}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-1">{stats.review}</div>
           </Card>
           <Card className="p-3">
             <div className="flex items-center gap-2">
               <CheckCircle className="h-4 w-4 text-green-500" />
               <span className="text-sm text-muted-foreground">Done</span>
             </div>
-            <div className="text-2xl font-bold mt-1">{stats.done}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-1">{stats.done}</div>
           </Card>
           <Card className="p-3 border-red-200 bg-red-50/50">
             <div className="flex items-center gap-2">
               <AlertCircle className="h-4 w-4 text-red-500" />
               <span className="text-sm text-red-600">Overdue</span>
             </div>
-            <div className="text-2xl font-bold mt-1 text-red-600">{stats.overdue}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-1 text-red-600">{stats.overdue}</div>
           </Card>
         </div>
 

@@ -127,7 +127,7 @@ export default function VendorPortal() {
     <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold">Vendor Portal</h1>
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">Vendor Portal</h1>
             <p className="text-muted-foreground">
               Manage your purchase orders and upload documents
             </p>

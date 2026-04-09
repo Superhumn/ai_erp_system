@@ -18,10 +18,10 @@ import {
 
 // Status options
 const workOrderStatuses = [
-  { value: "pending", label: "Pending", color: "bg-yellow-100 text-yellow-800" },
-  { value: "in_progress", label: "In Progress", color: "bg-blue-100 text-blue-800" },
-  { value: "completed", label: "Completed", color: "bg-green-100 text-green-800" },
-  { value: "cancelled", label: "Cancelled", color: "bg-red-100 text-red-800" },
+  { value: "pending", label: "Pending", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
+  { value: "in_progress", label: "In Progress", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
+  { value: "completed", label: "Completed", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+  { value: "cancelled", label: "Cancelled", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
 ];
 
 // Detail Panel Components
@@ -34,7 +34,7 @@ function InventoryDetailPanel({ item, onClose }: { item: any; onClose: () => voi
           <p className="text-sm text-muted-foreground">Product ID: {item.productId}</p>
         </div>
         <div className="text-right">
-          <div className="text-2xl font-bold">{item.quantity || 0}</div>
+          <div className="text-xl font-semibold tracking-[-0.02em]">{item.quantity || 0}</div>
           <p className="text-sm text-muted-foreground">Current Stock</p>
         </div>
       </div>
@@ -387,7 +387,7 @@ export default function ManufacturingHub() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Manufacturing Hub</h1>
+            <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Manufacturing Hub</h1>
             <p className="text-muted-foreground">
               Inventory, BOMs, Work Orders, and Locations
             </p>
@@ -412,7 +412,7 @@ export default function ManufacturingHub() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Total SKUs</p>
-                  <p className="text-2xl font-bold">{stats.totalSkus}</p>
+                  <p className="text-xl font-semibold tracking-[-0.02em]">{stats.totalSkus}</p>
                 </div>
                 <Package className="h-8 w-8 text-muted-foreground" />
               </div>
@@ -423,7 +423,7 @@ export default function ManufacturingHub() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Low Stock</p>
-                  <p className="text-2xl font-bold text-amber-600">{stats.lowStock}</p>
+                  <p className="text-xl font-semibold tracking-[-0.02em] text-amber-600">{stats.lowStock}</p>
                 </div>
                 <AlertTriangle className="h-8 w-8 text-amber-500" />
               </div>
@@ -434,7 +434,7 @@ export default function ManufacturingHub() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Active BOMs</p>
-                  <p className="text-2xl font-bold">{stats.activeBoms}</p>
+                  <p className="text-xl font-semibold tracking-[-0.02em]">{stats.activeBoms}</p>
                 </div>
                 <ClipboardList className="h-8 w-8 text-muted-foreground" />
               </div>
@@ -445,7 +445,7 @@ export default function ManufacturingHub() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Open Work Orders</p>
-                  <p className="text-2xl font-bold">{stats.openWorkOrders}</p>
+                  <p className="text-xl font-semibold tracking-[-0.02em]">{stats.openWorkOrders}</p>
                 </div>
                 <Clock className="h-8 w-8 text-muted-foreground" />
               </div>
@@ -456,7 +456,7 @@ export default function ManufacturingHub() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Locations</p>
-                  <p className="text-2xl font-bold">{stats.locations}</p>
+                  <p className="text-xl font-semibold tracking-[-0.02em]">{stats.locations}</p>
                 </div>
                 <MapPin className="h-8 w-8 text-muted-foreground" />
               </div>

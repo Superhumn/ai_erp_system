@@ -50,9 +50,9 @@ export default function Login() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="w-full max-w-md space-y-8 rounded-lg border bg-card p-8 shadow-lg">
+      <div className="w-full max-w-sm space-y-6 p-8 animate-fade-in">
         <div className="text-center">
-          <h1 className="text-2xl font-bold tracking-tight">
+          <h1 className="text-xl font-semibold tracking-[-0.02em] tracking-tight">
             {isRegister ? "Create Account" : "Sign In"}
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">

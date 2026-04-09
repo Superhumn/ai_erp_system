@@ -192,7 +192,7 @@ export default function InventoryManagementHub() {
   return (
     <div className="space-y-6 animate-fade-in">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+        <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
           <Warehouse className="h-8 w-8" />
           Inventory Management Hub
         </h1>
@@ -208,7 +208,7 @@ export default function InventoryManagementHub() {
             <div className="flex items-center gap-2">
               <Package className="h-5 w-5 text-muted-foreground" />
               <div>
-                <div className="text-2xl font-bold">{inventory?.length || 0}</div>
+                <div className="text-xl font-semibold tracking-[-0.02em]">{inventory?.length || 0}</div>
                 <p className="text-xs text-muted-foreground">Raw Materials</p>
               </div>
             </div>
@@ -219,7 +219,7 @@ export default function InventoryManagementHub() {
             <div className="flex items-center gap-2">
               <ShoppingCart className="h-5 w-5 text-blue-600" />
               <div>
-                <div className="text-2xl font-bold text-blue-600">
+                <div className="text-xl font-semibold tracking-[-0.02em] text-blue-600">
                   {inventory?.filter(i => i.poId).length || 0}
                 </div>
                 <p className="text-xs text-muted-foreground">Active POs</p>
@@ -232,7 +232,7 @@ export default function InventoryManagementHub() {
             <div className="flex items-center gap-2">
               <Truck className="h-5 w-5 text-amber-600" />
               <div>
-                <div className="text-2xl font-bold text-amber-600">
+                <div className="text-xl font-semibold tracking-[-0.02em] text-amber-600">
                   {inventory?.filter(i => i.freightId && i.freightStatus === 'in_transit').length || 0}
                 </div>
                 <p className="text-xs text-muted-foreground">In Transit</p>
@@ -245,7 +245,7 @@ export default function InventoryManagementHub() {
             <div className="flex items-center gap-2">
               <TrendingUp className="h-5 w-5 text-green-600" />
               <div>
-                <div className="text-2xl font-bold text-green-600">
+                <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">
                   {inventory?.filter(i => i.forecastId).length || 0}
                 </div>
                 <p className="text-xs text-muted-foreground">Forecasted</p>

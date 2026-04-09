@@ -95,7 +95,7 @@ export default function DataRooms() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Data Rooms</h1>
+            <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Data Rooms</h1>
             <p className="text-muted-foreground mt-1">
               Securely share documents with granular permissions and analytics
             </p>
@@ -204,7 +204,7 @@ export default function DataRooms() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Total Rooms</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{dataRooms?.length || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em]">{dataRooms?.length || 0}</div>
             </CardContent>
           </Card>
           <Card>
@@ -212,7 +212,7 @@ export default function DataRooms() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Active</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-green-600">
+              <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">
                 {dataRooms?.filter(r => r.status === 'active').length || 0}
               </div>
             </CardContent>
@@ -222,7 +222,7 @@ export default function DataRooms() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Password Protected</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
+              <div className="text-xl font-semibold tracking-[-0.02em]">
                 {dataRooms?.filter(r => r.password).length || 0}
               </div>
             </CardContent>
@@ -232,7 +232,7 @@ export default function DataRooms() {
               <CardTitle className="text-sm font-medium text-muted-foreground">NDA Required</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
+              <div className="text-xl font-semibold tracking-[-0.02em]">
                 {dataRooms?.filter(r => r.requiresNda).length || 0}
               </div>
             </CardContent>

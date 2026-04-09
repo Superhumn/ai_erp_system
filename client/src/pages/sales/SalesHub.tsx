@@ -22,19 +22,19 @@ import {
 import { Link } from "wouter";
 
 const orderStatuses = [
-  { value: "pending", label: "Pending", color: "bg-yellow-100 text-yellow-800" },
-  { value: "confirmed", label: "Confirmed", color: "bg-blue-100 text-blue-800" },
-  { value: "shipped", label: "Shipped", color: "bg-purple-100 text-purple-800" },
-  { value: "delivered", label: "Delivered", color: "bg-green-100 text-green-800" },
-  { value: "cancelled", label: "Cancelled", color: "bg-red-100 text-red-800" },
+  { value: "pending", label: "Pending", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
+  { value: "confirmed", label: "Confirmed", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
+  { value: "shipped", label: "Shipped", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
+  { value: "delivered", label: "Delivered", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+  { value: "cancelled", label: "Cancelled", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
 ];
 
 const invoiceStatuses = [
-  { value: "draft", label: "Draft", color: "bg-gray-100 text-gray-800" },
-  { value: "sent", label: "Sent", color: "bg-blue-100 text-blue-800" },
-  { value: "paid", label: "Paid", color: "bg-green-100 text-green-800" },
-  { value: "overdue", label: "Overdue", color: "bg-red-100 text-red-800" },
-  { value: "partial", label: "Partial", color: "bg-amber-100 text-amber-800" },
+  { value: "draft", label: "Draft", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
+  { value: "sent", label: "Sent", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
+  { value: "paid", label: "Paid", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+  { value: "overdue", label: "Overdue", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
+  { value: "partial", label: "Partial", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
 ];
 
 function ProductDetailPanel({ product }: { product: any }) {
@@ -46,7 +46,7 @@ function ProductDetailPanel({ product }: { product: any }) {
           <p className="text-sm text-muted-foreground">SKU: {product.sku}</p>
         </div>
         <div className="text-right">
-          <div className="text-2xl font-bold">${product.price || "0.00"}</div>
+          <div className="text-xl font-semibold tracking-[-0.02em]">${product.price || "0.00"}</div>
           <p className="text-sm text-muted-foreground">Unit Price</p>
         </div>
       </div>
@@ -189,7 +189,7 @@ function PaymentDetailPanel({ payment }: { payment: any }) {
           <p className="text-sm text-muted-foreground">{payment.invoice?.invoiceNumber ? `Invoice #${payment.invoice.invoiceNumber}` : "No invoice"}</p>
         </div>
         <div className="text-right">
-          <div className="text-2xl font-bold text-green-600">${payment.amount}</div>
+          <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">${payment.amount}</div>
           <p className="text-sm text-muted-foreground capitalize">{payment.method}</p>
         </div>
       </div>
@@ -346,7 +346,7 @@ export default function SalesHub() {
     <div className="p-6 space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Sales Hub</h1>
+            <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Sales Hub</h1>
             <p className="text-muted-foreground">Products, Orders, Invoices, Customers, and Payments</p>
           </div>
 
@@ -443,7 +443,7 @@ export default function SalesHub() {
           <Card className="cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("products")}>
             <CardContent className="pt-4">
               <div className="flex items-center justify-between">
-                <div><p className="text-sm text-muted-foreground">Products</p><p className="text-2xl font-bold">{stats.totalProducts}</p></div>
+                <div><p className="text-sm text-muted-foreground">Products</p><p className="text-xl font-semibold tracking-[-0.02em]">{stats.totalProducts}</p></div>
                 <Package className="h-8 w-8 text-muted-foreground" />
               </div>
             </CardContent>
@@ -451,7 +451,7 @@ export default function SalesHub() {
           <Card className="cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("orders")}>
             <CardContent className="pt-4">
               <div className="flex items-center justify-between">
-                <div><p className="text-sm text-muted-foreground">Pending Orders</p><p className="text-2xl font-bold text-amber-600">{stats.pendingOrders}</p></div>
+                <div><p className="text-sm text-muted-foreground">Pending Orders</p><p className="text-xl font-semibold tracking-[-0.02em] text-amber-600">{stats.pendingOrders}</p></div>
                 <ShoppingCart className="h-8 w-8 text-amber-500" />
               </div>
             </CardContent>
@@ -459,7 +459,7 @@ export default function SalesHub() {
           <Card className="cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("invoices")}>
             <CardContent className="pt-4">
               <div className="flex items-center justify-between">
-                <div><p className="text-sm text-muted-foreground">Unpaid Invoices</p><p className="text-2xl font-bold text-red-600">{stats.unpaidInvoices}</p></div>
+                <div><p className="text-sm text-muted-foreground">Unpaid Invoices</p><p className="text-xl font-semibold tracking-[-0.02em] text-red-600">{stats.unpaidInvoices}</p></div>
                 <FileText className="h-8 w-8 text-red-500" />
               </div>
             </CardContent>
@@ -467,7 +467,7 @@ export default function SalesHub() {
           <Card className="cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("customers")}>
             <CardContent className="pt-4">
               <div className="flex items-center justify-between">
-                <div><p className="text-sm text-muted-foreground">Customers</p><p className="text-2xl font-bold">{stats.totalCustomers}</p></div>
+                <div><p className="text-sm text-muted-foreground">Customers</p><p className="text-xl font-semibold tracking-[-0.02em]">{stats.totalCustomers}</p></div>
                 <Users className="h-8 w-8 text-muted-foreground" />
               </div>
             </CardContent>
@@ -475,7 +475,7 @@ export default function SalesHub() {
           <Card className="cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("payments")}>
             <CardContent className="pt-4">
               <div className="flex items-center justify-between">
-                <div><p className="text-sm text-muted-foreground">Payments</p><p className="text-2xl font-bold text-green-600">{stats.recentPayments}</p></div>
+                <div><p className="text-sm text-muted-foreground">Payments</p><p className="text-xl font-semibold tracking-[-0.02em] text-green-600">{stats.recentPayments}</p></div>
                 <CreditCard className="h-8 w-8 text-green-500" />
               </div>
             </CardContent>

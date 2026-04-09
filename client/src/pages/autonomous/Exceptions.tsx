@@ -114,7 +114,7 @@ export default function ExceptionsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
+          <h1 className="text-xl font-semibold tracking-[-0.02em] flex items-center gap-2">
             <AlertTriangle className="h-6 w-6" />
             Exception Management
           </h1>
@@ -131,7 +131,7 @@ export default function ExceptionsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Open</p>
-                <p className="text-2xl font-bold">{openCount}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em]">{openCount}</p>
               </div>
               <AlertTriangle className="h-8 w-8 text-red-500" />
             </div>
@@ -142,7 +142,7 @@ export default function ExceptionsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Escalated</p>
-                <p className="text-2xl font-bold">{escalatedCount}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em]">{escalatedCount}</p>
               </div>
               <ArrowUp className="h-8 w-8 text-orange-500" />
             </div>
@@ -153,7 +153,7 @@ export default function ExceptionsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">In Progress</p>
-                <p className="text-2xl font-bold">
+                <p className="text-xl font-semibold tracking-[-0.02em]">
                   {exceptionsQuery.data?.filter((e) => e.status === "in_progress").length || 0}
                 </p>
               </div>
@@ -166,7 +166,7 @@ export default function ExceptionsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Resolved Today</p>
-                <p className="text-2xl font-bold">
+                <p className="text-xl font-semibold tracking-[-0.02em]">
                   {exceptionsQuery.data?.filter(
                     (e) =>
                       e.status === "resolved" &&

@@ -167,7 +167,7 @@ export default function VendorNegotiations() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Automated Vendor Negotiations</h1>
+          <h1 className="text-xl font-semibold tracking-[-0.02em]">Automated Vendor Negotiations</h1>
           <p className="text-muted-foreground">
             AI-powered negotiation strategy, analysis, and communication drafting
           </p>
@@ -186,7 +186,7 @@ export default function VendorNegotiations() {
             <Handshake className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.total || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.total || 0}</div>
           </CardContent>
         </Card>
         <Card>
@@ -195,7 +195,7 @@ export default function VendorNegotiations() {
             <MessageSquare className="h-4 w-4 text-blue-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.active || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.active || 0}</div>
           </CardContent>
         </Card>
         <Card>
@@ -204,7 +204,7 @@ export default function VendorNegotiations() {
             <Target className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.completed || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.completed || 0}</div>
           </CardContent>
         </Card>
         <Card>
@@ -213,7 +213,7 @@ export default function VendorNegotiations() {
             <Clock className="h-4 w-4 text-red-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.rejected || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.rejected || 0}</div>
           </CardContent>
         </Card>
         <Card>
@@ -222,7 +222,7 @@ export default function VendorNegotiations() {
             <DollarSign className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
+            <div className="text-xl font-semibold tracking-[-0.02em]">
               ${(stats?.totalEstimatedSavings || 0).toFixed(0)}
             </div>
           </CardContent>
@@ -372,7 +372,7 @@ export default function VendorNegotiations() {
                 .map((neg: any) => {
                   const aiAnalysis = neg.aiAnalysis ? (() => { try { return JSON.parse(neg.aiAnalysis); } catch { return null; }})() : null;
                   return (
-                    <Card key={neg.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => openDetail(neg.id)}>
+                    <Card key={neg.id} className="cursor-pointer hover:border-border/80 transition-shadow" onClick={() => openDetail(neg.id)}>
                       <CardHeader className="pb-3">
                         <div className="flex items-center justify-between">
                           <div>

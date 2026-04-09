@@ -68,7 +68,7 @@ export default function Profitability() {
       <div className="flex justify-between items-center">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-3xl font-bold">Profitability & COGS Tracking</h1>
+            <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Profitability & COGS Tracking</h1>
             {qbStatus?.connected ? (
               <Badge variant="default" className="gap-1 bg-green-500">
                 <DollarSign className="h-3 w-3" />
@@ -133,7 +133,7 @@ export default function Profitability() {
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(summary?.totalRevenue)}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{formatCurrency(summary?.totalRevenue)}</div>
             <p className="text-xs text-muted-foreground mt-1">
               For selected period
             </p>
@@ -146,7 +146,7 @@ export default function Profitability() {
             <Package className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(summary?.totalCOGS)}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{formatCurrency(summary?.totalCOGS)}</div>
             <p className="text-xs text-muted-foreground mt-1">
               Cost of goods sold
             </p>
@@ -159,7 +159,7 @@ export default function Profitability() {
             <TrendingUp className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">{formatCurrency(summary?.totalGrossProfit)}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{formatCurrency(summary?.totalGrossProfit)}</div>
             <p className="text-xs text-muted-foreground mt-1">
               Margin: {overallMargin}%
             </p>
@@ -172,7 +172,7 @@ export default function Profitability() {
             <Truck className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(totalInventoryValue)}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{formatCurrency(totalInventoryValue)}</div>
             <p className="text-xs text-muted-foreground mt-1">
               Current valuation
             </p>

@@ -87,7 +87,7 @@ export default function RawMaterials() {
     <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold">Raw Materials</h1>
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">Raw Materials</h1>
             <p className="text-muted-foreground">Manage ingredients and packaging materials for BOMs</p>
           </div>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
@@ -291,10 +291,10 @@ export default function RawMaterials() {
                         <Badge
                           className={
                             mat.status === "active"
-                              ? "bg-green-100 text-green-800"
+                              ? "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400"
                               : mat.status === "inactive"
-                              ? "bg-yellow-100 text-yellow-800"
-                              : "bg-red-100 text-red-800"
+                              ? "bg-amber-500/8 text-amber-600 dark:text-amber-400"
+                              : "bg-red-500/8 text-red-600 dark:text-red-400"
                           }
                         >
                           {mat.status}

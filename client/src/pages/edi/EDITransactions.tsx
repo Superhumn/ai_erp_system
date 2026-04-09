@@ -40,15 +40,15 @@ const txnSetLabels: Record<string, string> = {
 };
 
 const statusColors: Record<string, string> = {
-  received: "bg-blue-100 text-blue-800",
-  parsing: "bg-yellow-100 text-yellow-800",
-  parsed: "bg-indigo-100 text-indigo-800",
-  validated: "bg-purple-100 text-purple-800",
-  processing: "bg-orange-100 text-orange-800",
-  processed: "bg-green-100 text-green-800",
-  error: "bg-red-100 text-red-800",
-  rejected: "bg-red-100 text-red-800",
-  acknowledged: "bg-emerald-100 text-emerald-800",
+  received: "bg-blue-500/8 text-blue-600 dark:text-blue-400",
+  parsing: "bg-amber-500/8 text-amber-600 dark:text-amber-400",
+  parsed: "bg-indigo-500/8 text-indigo-600 dark:text-indigo-400",
+  validated: "bg-violet-500/8 text-violet-600 dark:text-violet-400",
+  processing: "bg-orange-500/8 text-orange-600 dark:text-orange-400",
+  processed: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
+  error: "bg-red-500/8 text-red-600 dark:text-red-400",
+  rejected: "bg-red-500/8 text-red-600 dark:text-red-400",
+  acknowledged: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
 };
 
 export default function EDITransactions() {
@@ -134,7 +134,7 @@ export default function EDITransactions() {
             Back
           </Button>
           <div>
-            <h1 className="text-2xl font-bold">
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">
               {txnSetLabels[txnAny.transactionSetCode] || txnAny.transactionSetCode}
             </h1>
             <p className="text-muted-foreground">
@@ -313,7 +313,7 @@ export default function EDITransactions() {
             </Button>
           </Link>
           <div>
-            <h1 className="text-2xl font-bold">EDI Transactions</h1>
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">EDI Transactions</h1>
             <p className="text-muted-foreground">Document exchange history and processing</p>
           </div>
         </div>
@@ -449,7 +449,7 @@ export default function EDITransactions() {
                       <td className="py-3 text-sm font-mono">{txn.purchaseOrderNumber || "-"}</td>
                       <td className="py-3 text-sm font-mono text-muted-foreground">{txn.interchangeControlNumber || "-"}</td>
                       <td className="py-3">
-                        <Badge className={statusColors[txn.status] || "bg-gray-100 text-gray-800"} variant="outline">
+                        <Badge className={statusColors[txn.status] || "bg-gray-500/8 text-gray-600 dark:text-gray-400"} variant="outline">
                           {txn.status}
                         </Badge>
                       </td>

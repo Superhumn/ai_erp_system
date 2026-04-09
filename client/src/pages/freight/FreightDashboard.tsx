@@ -35,7 +35,7 @@ export default function FreightDashboard() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Freight & Logistics</h1>
+          <h1 className="text-xl font-semibold tracking-[-0.02em]">Freight & Logistics</h1>
           <p className="text-muted-foreground">Manage shipments, quotes, and customs clearance</p>
         </div>
         <div className="flex gap-2">
@@ -58,7 +58,7 @@ export default function FreightDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.activeRfqs || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.activeRfqs || 0}</div>
             <p className="text-xs text-muted-foreground">Awaiting quotes</p>
           </CardContent>
         </Card>
@@ -71,7 +71,7 @@ export default function FreightDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.pendingQuotes || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.pendingQuotes || 0}</div>
             <p className="text-xs text-muted-foreground">To review</p>
           </CardContent>
         </Card>
@@ -84,7 +84,7 @@ export default function FreightDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.activeBookings || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.activeBookings || 0}</div>
             <p className="text-xs text-muted-foreground">In transit</p>
           </CardContent>
         </Card>
@@ -97,7 +97,7 @@ export default function FreightDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.pendingClearances || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.pendingClearances || 0}</div>
             <p className="text-xs text-muted-foreground">Need attention</p>
           </CardContent>
         </Card>
@@ -110,7 +110,7 @@ export default function FreightDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.totalCarriers || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.totalCarriers || 0}</div>
             <p className="text-xs text-muted-foreground">In network</p>
           </CardContent>
         </Card>
@@ -118,7 +118,7 @@ export default function FreightDashboard() {
 
       {/* Quick Actions */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="hover:shadow-md transition-shadow cursor-pointer">
+        <Card className="hover:border-border/80 transition-shadow cursor-pointer">
           <Link href="/freight/rfqs">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -136,7 +136,7 @@ export default function FreightDashboard() {
           </Link>
         </Card>
 
-        <Card className="hover:shadow-md transition-shadow cursor-pointer">
+        <Card className="hover:border-border/80 transition-shadow cursor-pointer">
           <Link href="/freight/carriers">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -158,7 +158,7 @@ export default function FreightDashboard() {
           </Link>
         </Card>
 
-        <Card className="hover:shadow-md transition-shadow cursor-pointer">
+        <Card className="hover:border-border/80 transition-shadow cursor-pointer">
           <Link href="/freight/customs">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">

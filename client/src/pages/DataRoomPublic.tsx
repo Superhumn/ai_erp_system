@@ -284,7 +284,7 @@ export default function DataRoomPublic() {
                 />
               )}
               <div>
-                <h1 className="text-xl font-bold">{content?.room.name}</h1>
+                <h1 className="text-lg font-semibold tracking-[-0.015em]">{content?.room.name}</h1>
                 {content?.room.description && (
                   <p className="text-sm text-muted-foreground">{content.room.description}</p>
                 )}

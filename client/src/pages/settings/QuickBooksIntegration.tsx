@@ -137,7 +137,7 @@ export default function QuickBooksIntegration() {
     <div className="container mx-auto p-6 space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold">QuickBooks COGS Integration</h1>
+          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">QuickBooks COGS Integration</h1>
           <p className="text-muted-foreground mt-2">
             Configure how COGS data is sourced from QuickBooks
           </p>

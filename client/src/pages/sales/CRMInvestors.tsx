@@ -88,14 +88,14 @@ export default function CRMInvestors() {
 
   const getStatusColor = (status: string) => {
     const colors: Record<string, string> = {
-      lead: "bg-gray-100 text-gray-800",
-      contacted: "bg-blue-100 text-blue-800",
-      interested: "bg-purple-100 text-purple-800",
-      committed: "bg-orange-100 text-orange-800",
-      invested: "bg-green-100 text-green-800",
-      passed: "bg-red-100 text-red-800",
+      lead: "bg-gray-500/8 text-gray-600 dark:text-gray-400",
+      contacted: "bg-blue-500/8 text-blue-600 dark:text-blue-400",
+      interested: "bg-violet-500/8 text-violet-600 dark:text-violet-400",
+      committed: "bg-orange-500/8 text-orange-600 dark:text-orange-400",
+      invested: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
+      passed: "bg-red-500/8 text-red-600 dark:text-red-400",
     };
-    return colors[status] || "bg-gray-100 text-gray-800";
+    return colors[status] || "bg-gray-500/8 text-gray-600 dark:text-gray-400";
   };
 
   const getPriorityColor = (priority: string) => {
@@ -112,7 +112,7 @@ export default function CRMInvestors() {
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Investors & Contacts</h1>
+          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Investors & Contacts</h1>
           <p className="text-muted-foreground">Manage your fundraising contacts and relationships</p>
         </div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>

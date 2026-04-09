@@ -38,14 +38,14 @@ export default function OrderDetail() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "draft": return "bg-gray-100 text-gray-800";
-      case "pending": return "bg-yellow-100 text-yellow-800";
-      case "confirmed": return "bg-blue-100 text-blue-800";
-      case "processing": return "bg-purple-100 text-purple-800";
-      case "shipped": return "bg-indigo-100 text-indigo-800";
-      case "delivered": return "bg-green-100 text-green-800";
-      case "cancelled": return "bg-red-100 text-red-800";
-      default: return "bg-gray-100 text-gray-800";
+      case "draft": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "pending": return "bg-amber-500/8 text-amber-600 dark:text-amber-400";
+      case "confirmed": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
+      case "processing": return "bg-violet-500/8 text-violet-600 dark:text-violet-400";
+      case "shipped": return "bg-indigo-500/8 text-indigo-600 dark:text-indigo-400";
+      case "delivered": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
+      case "cancelled": return "bg-red-500/8 text-red-600 dark:text-red-400";
+      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
     }
   };
 
@@ -58,7 +58,7 @@ export default function OrderDetail() {
           </Button>
         </Link>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold">{order.orderNumber}</h1>
+          <h1 className="text-xl font-semibold tracking-[-0.02em]">{order.orderNumber}</h1>
           <p className="text-muted-foreground">Order Details</p>
         </div>
         <Badge className={getStatusColor(order.status)}>{order.status}</Badge>

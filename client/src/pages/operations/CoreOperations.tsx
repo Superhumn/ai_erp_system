@@ -279,7 +279,7 @@ export default function CoreOperations() {
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b">
           <div>
-            <h1 className="text-2xl font-bold">Core Operations</h1>
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">Core Operations</h1>
             <p className="text-muted-foreground">Unified workspace for operations management</p>
           </div>
           <Button variant="outline" size="sm" onClick={refreshAll}>

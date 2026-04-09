@@ -268,7 +268,7 @@ export function FloatingAIAssistant() {
           <TooltipTrigger asChild>
             <button
               onClick={toggleAssistant}
-              className="fixed bottom-6 right-6 h-14 w-14 rounded-full bg-primary text-primary-foreground shadow-lg hover:shadow-xl transition-all hover:scale-105 flex items-center justify-center z-50"
+              className="fixed bottom-6 right-6 h-11 w-11 rounded-full bg-primary text-primary-foreground shadow-lg transition-all hover:opacity-90 flex items-center justify-center z-50"
             >
               <Bot className="h-6 w-6" />
             </button>
@@ -287,7 +287,7 @@ export function FloatingAIAssistant() {
       <div className="fixed bottom-6 right-6 z-50">
         <button
           onClick={maximizeAssistant}
-          className="flex items-center gap-3 px-4 py-3 rounded-full bg-card border shadow-lg hover:shadow-xl transition-all"
+          className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-full bg-card border shadow-lg transition-all hover:bg-accent"
         >
           <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
             <Bot className="h-4 w-4 text-primary" />

@@ -231,7 +231,7 @@ export default function DataRoomDetail() {
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div className="flex-1">
-            <h1 className="text-2xl font-bold">{room.name}</h1>
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">{room.name}</h1>
             <p className="text-muted-foreground">/dataroom/{room.slug}</p>
           </div>
           <Button variant="outline" onClick={() => copyLinkUrl(room.slug)}>
@@ -254,7 +254,7 @@ export default function DataRoomDetail() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{analytics?.totalVisitors || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em]">{analytics?.totalVisitors || 0}</div>
             </CardContent>
           </Card>
           <Card>
@@ -265,7 +265,7 @@ export default function DataRoomDetail() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{analytics?.totalDocumentViews || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em]">{analytics?.totalDocumentViews || 0}</div>
             </CardContent>
           </Card>
           <Card>
@@ -276,7 +276,7 @@ export default function DataRoomDetail() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{links?.length || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em]">{links?.length || 0}</div>
             </CardContent>
           </Card>
           <Card>
@@ -287,7 +287,7 @@ export default function DataRoomDetail() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
+              <div className="text-xl font-semibold tracking-[-0.02em]">
                 {Math.round((analytics?.totalTimeSpent || 0) / 60)}m
               </div>
             </CardContent>
@@ -1449,7 +1449,7 @@ function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
             <CardTitle className="text-sm font-medium text-muted-foreground">Total Visitors</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{report?.summary.totalVisitors || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{report?.summary.totalVisitors || 0}</div>
             <p className="text-xs text-muted-foreground">{report?.summary.activeVisitors || 0} active</p>
           </CardContent>
         </Card>
@@ -1458,7 +1458,7 @@ function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
             <CardTitle className="text-sm font-medium text-muted-foreground">Total Sessions</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{report?.summary.totalSessions || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{report?.summary.totalSessions || 0}</div>
           </CardContent>
         </Card>
         <Card>
@@ -1466,7 +1466,7 @@ function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
             <CardTitle className="text-sm font-medium text-muted-foreground">Total Page Views</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{report?.summary.totalPageViews || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{report?.summary.totalPageViews || 0}</div>
           </CardContent>
         </Card>
         <Card>
@@ -1474,7 +1474,7 @@ function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
             <CardTitle className="text-sm font-medium text-muted-foreground">Total Time Spent</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatDuration(report?.summary.totalEngagementTimeMs || 0)}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{formatDuration(report?.summary.totalEngagementTimeMs || 0)}</div>
           </CardContent>
         </Card>
       </div>
@@ -1596,19 +1596,19 @@ function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
             <div className="space-y-4">
               <div className="grid grid-cols-4 gap-4">
                 <div className="text-center">
-                  <div className="text-2xl font-bold">{visitorDetails.summary.totalSessions}</div>
+                  <div className="text-xl font-semibold tracking-[-0.02em]">{visitorDetails.summary.totalSessions}</div>
                   <div className="text-xs text-muted-foreground">Sessions</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-bold">{visitorDetails.summary.totalDocuments}</div>
+                  <div className="text-xl font-semibold tracking-[-0.02em]">{visitorDetails.summary.totalDocuments}</div>
                   <div className="text-xs text-muted-foreground">Documents</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-bold">{visitorDetails.summary.totalPageViews}</div>
+                  <div className="text-xl font-semibold tracking-[-0.02em]">{visitorDetails.summary.totalPageViews}</div>
                   <div className="text-xs text-muted-foreground">Page Views</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-bold">{formatDuration(visitorDetails.summary.totalTimeMs)}</div>
+                  <div className="text-xl font-semibold tracking-[-0.02em]">{formatDuration(visitorDetails.summary.totalTimeMs)}</div>
                   <div className="text-xs text-muted-foreground">Total Time</div>
                 </div>
               </div>
@@ -1741,7 +1741,7 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
                 </div>
                 <div className="flex items-center gap-2">
                   {syncConfig.lastSyncStatus === 'success' && (
-                    <Badge className="bg-green-100 text-green-800">
+                    <Badge className="bg-emerald-500/8 text-emerald-600 dark:text-emerald-400">
                       <CheckCircle2 className="h-3 w-3 mr-1" />
                       Synced
                     </Badge>
@@ -1976,7 +1976,7 @@ function EmailAccessRulesManager({ dataRoomId }: { dataRoomId: number }) {
   };
 
   const getRuleTypeColor = (type: string) => {
-    return type.startsWith('allow') ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800';
+    return type.startsWith('allow') ? 'bg-emerald-500/8 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/8 text-red-600 dark:text-red-400';
   };
 
   return (

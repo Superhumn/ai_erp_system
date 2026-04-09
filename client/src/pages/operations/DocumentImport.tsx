@@ -400,7 +400,7 @@ export default function DocumentImport() {
     <div className="container py-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Document Import</h1>
+          <h1 className="text-xl font-semibold tracking-[-0.02em]">Document Import</h1>
           <p className="text-muted-foreground">
             Upload purchase orders and freight invoices to import into inventory and history
           </p>
@@ -471,7 +471,7 @@ export default function DocumentImport() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">
+                  <div className="text-xl font-semibold tracking-[-0.02em]">
                     {historyQuery.data?.filter(h => h.documentType === "purchase_order").length || 0}
                   </div>
                   <p className="text-xs text-muted-foreground">Documents imported</p>
@@ -486,7 +486,7 @@ export default function DocumentImport() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">
+                  <div className="text-xl font-semibold tracking-[-0.02em]">
                     {historyQuery.data?.filter(h => h.documentType === "freight_invoice").length || 0}
                   </div>
                   <p className="text-xs text-muted-foreground">Documents imported</p>
@@ -1064,7 +1064,7 @@ export default function DocumentImport() {
                   <div className="text-sm">
                     Subtotal: <span className="font-medium">${(parsedPO.subtotal ?? 0).toFixed(2)}</span>
                   </div>
-                  <div className="text-lg font-bold">
+                  <div className="text-base font-semibold tracking-[-0.01em]">
                     Total: ${(parsedPO.totalAmount ?? 0).toFixed(2)}
                   </div>
                 </div>
@@ -1220,7 +1220,7 @@ export default function DocumentImport() {
                     />
                   </div>
                 </div>
-                <div className="text-right text-lg font-bold">
+                <div className="text-right text-base font-semibold tracking-[-0.01em]">
                   Total: ${(parsedFreight.totalAmount ?? 0).toFixed(2)}
                 </div>
               </div>
@@ -1431,7 +1431,7 @@ export default function DocumentImport() {
                       Shipping: <span className="font-medium">${(parsedVendorInvoice.shippingAmount ?? 0).toFixed(2)}</span>
                     </div>
                   )}
-                  <div className="text-lg font-bold">
+                  <div className="text-base font-semibold tracking-[-0.01em]">
                     Total: ${(parsedVendorInvoice.totalAmount ?? 0).toFixed(2)}
                   </div>
                 </div>
@@ -1640,7 +1640,7 @@ export default function DocumentImport() {
                   <div className="text-sm">
                     Total Taxes: <span className="font-medium">${(parsedCustoms.totalTaxes ?? 0).toFixed(2)}</span>
                   </div>
-                  <div className="text-lg font-bold">
+                  <div className="text-base font-semibold tracking-[-0.01em]">
                     Total Charges: ${(parsedCustoms.totalCharges ?? 0).toFixed(2)}
                   </div>
                 </div>

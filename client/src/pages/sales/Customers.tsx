@@ -142,7 +142,7 @@ export default function Customers() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
             <Users className="h-8 w-8" />
             Customers
           </h1>
@@ -349,7 +349,7 @@ export default function Customers() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Total Customers</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{syncStatus.total}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em]">{syncStatus.total}</div>
             </CardContent>
           </Card>
           <Card>
@@ -360,7 +360,7 @@ export default function Customers() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-green-600">{syncStatus.shopify}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{syncStatus.shopify}</div>
             </CardContent>
           </Card>
           <Card>
@@ -368,7 +368,7 @@ export default function Customers() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Manual Entry</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{syncStatus.manual}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em]">{syncStatus.manual}</div>
             </CardContent>
           </Card>
         </div>
