@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS `investment_grant_checklists` (
   `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
-
+--> statement-breakpoint
 -- Investment grant items table
 CREATE TABLE IF NOT EXISTS `investment_grant_items` (
   `id` int AUTO_INCREMENT PRIMARY KEY,

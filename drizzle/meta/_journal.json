@@ -183,6 +183,13 @@
       "when": 1771251256000,
       "tag": "0025_investment_grant_checklists",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "5",
+      "when": 1775955000000,
+      "tag": "0026_add_users_password_hash",
+      "breakpoints": true
     }
   ]
 }
