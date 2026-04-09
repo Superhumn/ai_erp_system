@@ -218,9 +218,11 @@ export function SentEmailsTab() {
                     <p className="text-xs text-muted-foreground mb-2">Body</p>
                     <div className="p-3 bg-muted rounded-lg max-h-[200px] overflow-y-auto">
                       {emailDetail.bodyHtml ? (
-                        <div 
-                          className="prose prose-sm dark:prose-invert max-w-none"
-                          dangerouslySetInnerHTML={{ __html: emailDetail.bodyHtml }}
+                        <iframe
+                          className="w-full min-h-[180px] border-0"
+                          sandbox=""
+                          srcDoc={emailDetail.bodyHtml}
+                          title="Email body"
                         />
                       ) : (
                         <p className="text-sm whitespace-pre-wrap">{emailDetail.bodyText}</p>
