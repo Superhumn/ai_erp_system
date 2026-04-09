@@ -10487,4 +10487,41 @@ export async function updateCopackerShippingDocument(id: number, data: Partial<I
   const db = await getDb();
   if (!db) return;
   await db.update(copackerShippingDocuments).set(data).where(eq(copackerShippingDocuments.id, id));
+
+// ============================================
+// AI SERVICE HELPER FUNCTIONS
+// ============================================
+
+export async function getContractKeyDates(contractId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(contractKeyDates).where(eq(contractKeyDates.contractId, contractId)).orderBy(contractKeyDates.date);
+}
+
+export async function getProjectMilestones(projectId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(projectMilestones).where(eq(projectMilestones.projectId, projectId)).orderBy(projectMilestones.dueDate);
+}
+
+export async function getEdiPartners(filters?: { status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(ediTradingPartners.status, filters.status as any));
+  return conditions.length > 0
+    ? db.select().from(ediTradingPartners).where(and(...conditions))
+    : db.select().from(ediTradingPartners);
+}
+
+export async function getEdiTransactions(filters?: { tradingPartnerId?: number; status?: string; direction?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.tradingPartnerId) conditions.push(eq(ediTransactions.tradingPartnerId, filters.tradingPartnerId));
+  if (filters?.status) conditions.push(eq(ediTransactions.status, filters.status as any));
+  if (filters?.direction) conditions.push(eq(ediTransactions.direction, filters.direction as any));
+  return conditions.length > 0
+    ? db.select().from(ediTransactions).where(and(...conditions)).orderBy(desc(ediTransactions.createdAt))
+    : db.select().from(ediTransactions).orderBy(desc(ediTransactions.createdAt));
 }

@@ -19,6 +19,14 @@ import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import { agentRouter } from "./agent";
 import { parseCopackerInventoryEmail, applyCopackerInventoryUpdate } from "./copackerEmailExtractor";
+import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
+import { detectFinancialAnomalies, forecastRevenue, predictCashFlow, classifyTransactions } from "./financeAiService";
+import { predictAttrition, benchmarkCompensation, analyzePerformance, planWorkforce } from "./hrAiService";
+import { predictYield, forecastQuality, optimizeProduction, predictMaintenance } from "./manufacturingAiService";
+import { analyzeContract, extractClauses, predictDisputes, checkCompliance } from "./legalAiService";
+import { estimateEffort, optimizeResourceAllocation, predictProjectRisks, optimizeSchedule } from "./projectsAiService";
+import { detectEdiAnomalies, predictEdiErrors } from "./ediAiService";
+import { scoreSuppliers } from "./supplierScoringService";
 import * as db from "./db";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
@@ -14232,6 +14240,47 @@ Ask if they received the original request and if they can provide a quote.`;
   }),
 
   // ============================================
+  // AI-POWERED FINANCE ANALYTICS
+  // ============================================
+  financeAi: router({
+    detectAnomalies: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        lookbackDays: z.number().optional(),
+      }).optional())
+      .mutation(async ({ input }) => {
+        return detectFinancialAnomalies(input || {});
+      }),
+
+    forecastRevenue: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        forecastMonths: z.number().optional(),
+        historyMonths: z.number().optional(),
+      }).optional())
+      .mutation(async ({ input }) => {
+        return forecastRevenue(input || {});
+      }),
+
+    predictCashFlow: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        weeksAhead: z.number().optional(),
+      }).optional())
+      .mutation(async ({ input }) => {
+        return predictCashFlow(input || {});
+      }),
+
+    classifyTransactions: financeProcedure
+      .input(z.object({
+        transactionIds: z.array(z.number()),
+      }))
+      .mutation(async ({ input }) => {
+        return classifyTransactions(input);
+      }),
+  }),
+
+  // ============================================
   // FIREFLIES INTEGRATION
   // ============================================
   fireflies: router({
@@ -14400,6 +14449,183 @@ Ask if they received the original request and if they can provide a quote.`;
         .query(({ input }) => db.getFirefliesMeetings(input || undefined)),
       getStats: protectedProcedure.query(() => db.getFirefliesMeetingStats()),
     }),
+  }),
+
+  // ============================================
+  // AI-POWERED HR ANALYTICS
+  // ============================================
+  hrAi: router({
+    predictAttrition: protectedProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        departmentId: z.number().optional(),
+      }).optional())
+      .mutation(async ({ input }) => {
+        return predictAttrition(input || {});
+      }),
+
+    benchmarkCompensation: protectedProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        departmentId: z.number().optional(),
+      }).optional())
+      .mutation(async ({ input }) => {
+        return benchmarkCompensation(input || {});
+      }),
+
+    analyzePerformance: protectedProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        departmentId: z.number().optional(),
+      }).optional())
+      .mutation(async ({ input }) => {
+        return analyzePerformance(input || {});
+      }),
+
+    planWorkforce: protectedProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        planningHorizonMonths: z.number().optional(),
+      }).optional())
+      .mutation(async ({ input }) => {
+        return planWorkforce(input || {});
+      }),
+  }),
+
+  // ============================================
+  // AI-POWERED MANUFACTURING ANALYTICS
+  // ============================================
+  manufacturingAi: router({
+    predictYield: opsProcedure
+      .input(z.object({
+        workOrderIds: z.array(z.number()).optional(),
+      }).optional())
+      .mutation(async ({ input }) => {
+        return predictYield(input || {});
+      }),
+
+    forecastQuality: opsProcedure
+      .input(z.object({
+        productIds: z.array(z.number()).optional(),
+      }).optional())
+      .mutation(async ({ input }) => {
+        return forecastQuality(input || {});
+      }),
+
+    optimizeProduction: opsProcedure
+      .mutation(async () => {
+        return optimizeProduction();
+      }),
+
+    predictMaintenance: opsProcedure
+      .mutation(async () => {
+        return predictMaintenance();
+      }),
+  }),
+
+  // ============================================
+  // AI-POWERED LEGAL ANALYTICS
+  // ============================================
+  legalAi: router({
+    analyzeContract: legalProcedure
+      .input(z.object({
+        contractId: z.number(),
+      }))
+      .mutation(async ({ input }) => {
+        return analyzeContract(input);
+      }),
+
+    extractClauses: legalProcedure
+      .input(z.object({
+        contractId: z.number(),
+        text: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return extractClauses(input);
+      }),
+
+    predictDisputes: legalProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+      }).optional())
+      .mutation(async ({ input }) => {
+        return predictDisputes(input || {});
+      }),
+
+    checkCompliance: legalProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+      }).optional())
+      .mutation(async ({ input }) => {
+        return checkCompliance(input || {});
+      }),
+  }),
+
+  // ============================================
+  // AI-POWERED PROJECT ANALYTICS
+  // ============================================
+  projectsAi: router({
+    estimateEffort: protectedProcedure
+      .input(z.object({
+        projectId: z.number(),
+      }))
+      .mutation(async ({ input }) => {
+        return estimateEffort(input);
+      }),
+
+    optimizeResourceAllocation: protectedProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+      }).optional())
+      .mutation(async ({ input }) => {
+        return optimizeResourceAllocation(input || {});
+      }),
+
+    predictRisks: protectedProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        projectId: z.number().optional(),
+      }).optional())
+      .mutation(async ({ input }) => {
+        return predictProjectRisks(input || {});
+      }),
+
+    optimizeSchedule: protectedProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+      }).optional())
+      .mutation(async ({ input }) => {
+        return optimizeSchedule(input || {});
+      }),
+  }),
+
+  // ============================================
+  // AI-POWERED EDI ANALYTICS
+  // ============================================
+  ediAi: router({
+    detectAnomalies: protectedProcedure
+      .mutation(async () => {
+        return detectEdiAnomalies();
+      }),
+
+    predictErrors: protectedProcedure
+      .mutation(async () => {
+        return predictEdiErrors();
+      }),
+  }),
+
+  // ============================================
+  // AI-POWERED SUPPLIER SCORING
+  // ============================================
+  supplierScoring: router({
+    scoreSuppliers: protectedProcedure
+      .input(z.object({
+        vendorIds: z.array(z.number()).optional(),
+        companyId: z.number().optional(),
+      }).optional())
+      .mutation(async ({ input }) => {
+        return scoreSuppliers(input || {});
+      }),
   }),
 });
 

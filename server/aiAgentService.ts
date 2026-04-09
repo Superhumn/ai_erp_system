@@ -398,6 +398,33 @@ const AI_TOOLS: Tool[] = [
       },
     },
   },
+  // AI-Powered Analytics Tools
+  {
+    type: "function",
+    function: {
+      name: "run_ai_analytics",
+      description: "Run AI-powered analytics including financial anomaly detection, revenue forecasting, HR attrition prediction, manufacturing yield prediction, legal contract analysis, project risk assessment, EDI anomaly detection, and supplier performance scoring",
+      parameters: {
+        type: "object",
+        properties: {
+          analysisType: {
+            type: "string",
+            enum: [
+              "finance_anomalies", "revenue_forecast", "cash_flow_prediction",
+              "hr_attrition", "compensation_benchmark", "performance_analysis", "workforce_plan",
+              "manufacturing_yield", "quality_forecast", "production_optimization", "predictive_maintenance",
+              "contract_analysis", "dispute_prediction", "compliance_check",
+              "project_risks", "effort_estimation", "resource_allocation",
+              "edi_anomalies", "edi_error_prediction", "supplier_scoring"
+            ],
+            description: "Type of AI analysis to run",
+          },
+          entityId: { type: "number", description: "Optional entity ID (contract ID, project ID, etc.)" },
+        },
+        required: ["analysisType"],
+      },
+    },
+  },
 ];
 
 // ============================================
@@ -1228,8 +1255,102 @@ async function executeTool(toolName: string, params: any, ctx: AIAgentContext): 
       return executeGenerateReport(params, ctx);
     case "create_task":
       return executeCreateTask(params, ctx);
+    case "run_ai_analytics":
+      return executeRunAiAnalytics(params, ctx);
     default:
       throw new Error(`Unknown tool: ${toolName}`);
+  }
+}
+
+async function executeRunAiAnalytics(params: any, ctx: AIAgentContext): Promise<any> {
+  const { analysisType, entityId } = params;
+  const companyId = ctx.companyId;
+
+  switch (analysisType) {
+    case "finance_anomalies": {
+      const { detectFinancialAnomalies } = await import("./financeAiService");
+      return detectFinancialAnomalies({ companyId });
+    }
+    case "revenue_forecast": {
+      const { forecastRevenue } = await import("./financeAiService");
+      return forecastRevenue({ companyId });
+    }
+    case "cash_flow_prediction": {
+      const { predictCashFlow } = await import("./financeAiService");
+      return predictCashFlow({ companyId });
+    }
+    case "hr_attrition": {
+      const { predictAttrition } = await import("./hrAiService");
+      return predictAttrition({ companyId });
+    }
+    case "compensation_benchmark": {
+      const { benchmarkCompensation } = await import("./hrAiService");
+      return benchmarkCompensation({ companyId });
+    }
+    case "performance_analysis": {
+      const { analyzePerformance } = await import("./hrAiService");
+      return analyzePerformance({ companyId });
+    }
+    case "workforce_plan": {
+      const { planWorkforce } = await import("./hrAiService");
+      return planWorkforce({ companyId });
+    }
+    case "manufacturing_yield": {
+      const { predictYield } = await import("./manufacturingAiService");
+      return predictYield();
+    }
+    case "quality_forecast": {
+      const { forecastQuality } = await import("./manufacturingAiService");
+      return forecastQuality();
+    }
+    case "production_optimization": {
+      const { optimizeProduction } = await import("./manufacturingAiService");
+      return optimizeProduction();
+    }
+    case "predictive_maintenance": {
+      const { predictMaintenance } = await import("./manufacturingAiService");
+      return predictMaintenance();
+    }
+    case "contract_analysis": {
+      if (!entityId) return { error: "contractId required for contract analysis" };
+      const { analyzeContract } = await import("./legalAiService");
+      return analyzeContract({ contractId: entityId });
+    }
+    case "dispute_prediction": {
+      const { predictDisputes } = await import("./legalAiService");
+      return predictDisputes({ companyId });
+    }
+    case "compliance_check": {
+      const { checkCompliance } = await import("./legalAiService");
+      return checkCompliance({ companyId });
+    }
+    case "project_risks": {
+      const { predictProjectRisks } = await import("./projectsAiService");
+      return predictProjectRisks(entityId ? { companyId, projectId: entityId } : { companyId });
+    }
+    case "effort_estimation": {
+      if (!entityId) return { error: "projectId required for effort estimation" };
+      const { estimateEffort } = await import("./projectsAiService");
+      return estimateEffort({ projectId: entityId });
+    }
+    case "resource_allocation": {
+      const { optimizeResourceAllocation } = await import("./projectsAiService");
+      return optimizeResourceAllocation({ companyId });
+    }
+    case "edi_anomalies": {
+      const { detectEdiAnomalies } = await import("./ediAiService");
+      return detectEdiAnomalies();
+    }
+    case "edi_error_prediction": {
+      const { predictEdiErrors } = await import("./ediAiService");
+      return predictEdiErrors();
+    }
+    case "supplier_scoring": {
+      const { scoreSuppliers } = await import("./supplierScoringService");
+      return scoreSuppliers({ companyId });
+    }
+    default:
+      return { error: `Unknown analysis type: ${analysisType}` };
   }
 }
 
@@ -1275,6 +1396,8 @@ export async function processAIAgentRequest(
 9. **Generate Reports**: Create various business reports.
 
 10. **Create Tasks**: Create tasks that require approval before execution.
+
+11. **Run AI Analytics**: Run AI-powered analytics including financial anomaly detection, revenue forecasting, cash flow prediction, HR attrition prediction, compensation benchmarking, workforce planning, manufacturing yield/quality prediction, production optimization, predictive maintenance, legal contract analysis, dispute prediction, compliance monitoring, project risk assessment, effort estimation, resource allocation, EDI anomaly detection, EDI error prediction, and supplier performance scoring.
 
 Current System Status:
 - Vendors: ${vendorCount[0]?.count || 0}

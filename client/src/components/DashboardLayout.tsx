@@ -73,6 +73,8 @@ import {
   Calculator,
   Handshake,
   Sparkles,
+  BarChart3,
+  Shield,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -106,6 +108,7 @@ const menuGroups = [
       { icon: Target, label: "Campaigns", path: "/crm/campaigns" },
       { icon: DollarSign, label: "Accounts", path: "/finance/accounts" },
       { icon: TrendingUp, label: "Transactions", path: "/finance/transactions" },
+      { icon: Brain, label: "Finance AI", path: "/finance/ai" },
     ],
   },
   {
@@ -129,6 +132,8 @@ const menuGroups = [
       { icon: FileSpreadsheet, label: "Documents", path: "/operations/document-import" },
       { icon: Calculator, label: "Costing", path: "/operations/inventory-costing" },
       { icon: Handshake, label: "Negotiations", path: "/operations/vendor-negotiations" },
+      { icon: Brain, label: "Manufacturing AI", path: "/operations/manufacturing-ai" },
+      { icon: BarChart3, label: "Supplier Scoring", path: "/operations/supplier-scoring" },
     ],
   },
   {
@@ -144,13 +149,16 @@ const menuGroups = [
     label: "People & Legal",
     items: [
       { icon: UserCog, label: "Team & Payroll", path: "/hr/employees" },
+      { icon: Brain, label: "HR AI Insights", path: "/hr/ai" },
       { icon: FileSignature, label: "Contracts", path: "/legal/contracts" },
+      { icon: Shield, label: "Legal AI", path: "/legal/ai" },
     ],
   },
   {
     label: "Projects & Data",
     items: [
       { icon: FolderKanban, label: "Projects", path: "/projects" },
+      { icon: Brain, label: "Project AI", path: "/projects/ai" },
       { icon: ClipboardCheck, label: "Grants", path: "/projects/investment-grants" },
       { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
       { icon: BookOpen, label: "SOPs", path: "/sops" },

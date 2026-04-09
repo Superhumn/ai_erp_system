@@ -126,6 +126,14 @@ import DataRoomPublic from "./pages/DataRoomPublic";
 // AI Agent
 import ApprovalQueue from "./pages/ai/ApprovalQueue";
 
+// AI Analytics Pages
+import FinanceAI from "./pages/finance/FinanceAI";
+import HRAIInsights from "./pages/hr/HRAIInsights";
+import ManufacturingAI from "./pages/operations/ManufacturingAI";
+import LegalAI from "./pages/legal/LegalAI";
+import ProjectsAI from "./pages/projects/ProjectsAI";
+import SupplierScoring from "./pages/operations/SupplierScoring";
+
 // Autonomous Supply Chain
 import AutonomousDashboard from "./pages/autonomous/Dashboard";
 import AutonomousApprovals from "./pages/autonomous/Approvals";
@@ -161,6 +169,7 @@ function Router() {
         <Route path="/finance/invoices" component={Invoices} />
         <Route path="/finance/payments" component={Payments} />
         <Route path="/finance/transactions" component={Transactions} />
+        <Route path="/finance/ai" component={FinanceAI} />
 
         {/* Sales */}
         <Route path="/sales/orders/:id" component={OrderDetail} />
@@ -208,6 +217,8 @@ function Router() {
         <Route path="/operations/reconciliation" component={ReconciliationReport} />
         <Route path="/operations/inventory-costing" component={InventoryCosting} />
         <Route path="/operations/vendor-negotiations" component={VendorNegotiations} />
+        <Route path="/operations/manufacturing-ai" component={ManufacturingAI} />
+        <Route path="/operations/supplier-scoring" component={SupplierScoring} />
 
         {/* EDI */}
         <Route path="/edi" component={EDIDashboard} />
@@ -226,14 +237,17 @@ function Router() {
         {/* HR */}
         <Route path="/hr/employees" component={Employees} />
         <Route path="/hr/payroll" component={Payroll} />
+        <Route path="/hr/ai" component={HRAIInsights} />
 
         {/* Legal */}
         <Route path="/legal/contracts" component={Contracts} />
         <Route path="/legal/disputes" component={Disputes} />
         <Route path="/legal/documents" component={Documents} />
+        <Route path="/legal/ai" component={LegalAI} />
 
         {/* Projects */}
         <Route path="/projects" component={Projects} />
+        <Route path="/projects/ai" component={ProjectsAI} />
         <Route path="/projects/investment-grants" component={InvestmentGrantChecklist} />
 
         {/* SOPs */}
