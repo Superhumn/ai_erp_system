@@ -117,12 +117,7 @@ function isValidEmail(email: string): boolean {
  * At least 10 characters, must include uppercase, lowercase, and a digit
  */
 function isValidPassword(password: string): boolean {
-  return (
-    password.length >= 10 &&
-    /[a-z]/.test(password) &&
-    /[A-Z]/.test(password) &&
-    /[0-9]/.test(password)
-  );
+  return password.length >= 8;
 }
 
 export interface LocalAuthCredentials {
@@ -168,7 +163,7 @@ export function registerLocalAuthRoutes(app: Express) {
       }
 
       if (!isValidPassword(password)) {
-        return res.status(400).json({ error: "Password must be at least 10 characters and include uppercase, lowercase, and a digit" });
+        return res.status(400).json({ error: "Password must be at least 8 characters" });
       }
 
       // Check if user already exists
@@ -319,7 +314,7 @@ export function registerLocalAuthRoutes(app: Express) {
       }
 
       if (!isValidPassword(newPassword)) {
-        return res.status(400).json({ error: "Password must be at least 10 characters and include uppercase, lowercase, and a digit" });
+        return res.status(400).json({ error: "Password must be at least 8 characters" });
       }
 
       // Get current credentials
