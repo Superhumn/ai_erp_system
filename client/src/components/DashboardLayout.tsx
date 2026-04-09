@@ -160,6 +160,7 @@ const menuGroups = [
       { icon: FolderKanban, label: "Projects", path: "/projects" },
       { icon: Brain, label: "Project AI", path: "/projects/ai" },
       { icon: ClipboardCheck, label: "Grants", path: "/projects/investment-grants" },
+      { icon: Send, label: "Grant & Bid Submitter", path: "/grants/submitter" },
       { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
       { icon: BookOpen, label: "SOPs", path: "/sops" },
     ],

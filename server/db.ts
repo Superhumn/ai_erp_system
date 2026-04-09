@@ -123,6 +123,14 @@ import {
   // Transactional email tables
   transactionalEmailTemplates, emailMessages, emailEvents,
   InsertTransactionalEmailTemplate, InsertEmailMessage, InsertEmailEvent,
+  // Investment grant checklists
+  investmentGrantChecklists, investmentGrantItems,
+  InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
+  // Grant & Bid submitter
+  grantBidTemplates, grantBidApplications, grantBidDocuments, grantBidFieldMappings, grantBidSubmissionLogs,
+  grantBidOpportunities, grantBidWebFormMappings,
+  InsertGrantBidTemplate, InsertGrantBidApplication, InsertGrantBidDocument, InsertGrantBidFieldMapping, InsertGrantBidSubmissionLog,
+  InsertGrantBidOpportunity, InsertGrantBidWebFormMapping,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -10524,4 +10532,328 @@ export async function getEdiTransactions(filters?: { tradingPartnerId?: number; 
   return conditions.length > 0
     ? db.select().from(ediTransactions).where(and(...conditions)).orderBy(desc(ediTransactions.createdAt))
     : db.select().from(ediTransactions).orderBy(desc(ediTransactions.createdAt));
+}
+
+// ============================================
+// GRANT & BID APPLICATION SUBMITTER
+// ============================================
+
+// Templates
+export async function getGrantBidTemplates() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(grantBidTemplates).orderBy(desc(grantBidTemplates.updatedAt));
+}
+
+export async function getGrantBidTemplateById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(grantBidTemplates).where(eq(grantBidTemplates.id, id));
+  return rows[0] || null;
+}
+
+export async function createGrantBidTemplate(data: InsertGrantBidTemplate) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(grantBidTemplates).values(data);
+  return { id: result.insertId };
+}
+
+export async function updateGrantBidTemplate(id: number, data: Partial<InsertGrantBidTemplate>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(grantBidTemplates).set(data).where(eq(grantBidTemplates.id, id));
+}
+
+export async function deleteGrantBidTemplate(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(grantBidTemplates).where(eq(grantBidTemplates.id, id));
+}
+
+// Applications
+export async function getGrantBidApplications(filters?: { type?: string; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.type) conditions.push(eq(grantBidApplications.type, filters.type as any));
+  if (filters?.status) conditions.push(eq(grantBidApplications.status, filters.status as any));
+  
+  if (conditions.length > 0) {
+    return db.select().from(grantBidApplications).where(and(...conditions)).orderBy(desc(grantBidApplications.updatedAt));
+  }
+  return db.select().from(grantBidApplications).orderBy(desc(grantBidApplications.updatedAt));
+}
+
+export async function getGrantBidApplicationById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(grantBidApplications).where(eq(grantBidApplications.id, id));
+  return rows[0] || null;
+}
+
+export async function createGrantBidApplication(data: InsertGrantBidApplication) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(grantBidApplications).values(data);
+  return { id: result.insertId };
+}
+
+export async function updateGrantBidApplication(id: number, data: Partial<InsertGrantBidApplication>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(grantBidApplications).set(data).where(eq(grantBidApplications.id, id));
+}
+
+export async function deleteGrantBidApplication(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(grantBidApplications).where(eq(grantBidApplications.id, id));
+}
+
+// Documents
+export async function getGrantBidDocuments(applicationId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(grantBidDocuments).where(eq(grantBidDocuments.applicationId, applicationId)).orderBy(desc(grantBidDocuments.createdAt));
+}
+
+export async function createGrantBidDocument(data: InsertGrantBidDocument) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(grantBidDocuments).values(data);
+  return { id: result.insertId };
+}
+
+export async function deleteGrantBidDocument(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(grantBidDocuments).where(eq(grantBidDocuments.id, id));
+}
+
+// Field Mappings
+export async function getGrantBidFieldMappings(templateId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(grantBidFieldMappings).where(eq(grantBidFieldMappings.templateId, templateId)).orderBy(asc(grantBidFieldMappings.sortOrder));
+}
+
+export async function createGrantBidFieldMapping(data: InsertGrantBidFieldMapping) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(grantBidFieldMappings).values(data);
+  return { id: result.insertId };
+}
+
+export async function deleteGrantBidFieldMappings(templateId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(grantBidFieldMappings).where(eq(grantBidFieldMappings.templateId, templateId));
+}
+
+// Submission Logs
+export async function getGrantBidSubmissionLogs(applicationId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(grantBidSubmissionLogs).where(eq(grantBidSubmissionLogs.applicationId, applicationId)).orderBy(desc(grantBidSubmissionLogs.performedAt));
+}
+
+export async function createGrantBidSubmissionLog(data: InsertGrantBidSubmissionLog) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(grantBidSubmissionLogs).values(data);
+  return { id: result.insertId };
+}
+
+// Aggregation helpers for auto-populating applications
+export async function getCompanyProfile(companyId?: number) {
+  const db = await getDb();
+  if (!db) return null;
+  if (companyId) {
+    const rows = await db.select().from(companies).where(eq(companies.id, companyId));
+    return rows[0] || null;
+  }
+  const rows = await db.select().from(companies).limit(1);
+  return rows[0] || null;
+}
+
+export async function getEmployeeSummary(companyId?: number) {
+  const db = await getDb();
+  if (!db) return { totalEmployees: 0, departments: 0, totalPayroll: '0' };
+  
+  const empCount = await db.select({
+    total: sql<number>`COUNT(*)`,
+    deptCount: sql<number>`COUNT(DISTINCT ${employees.departmentId})`,
+  }).from(employees).where(eq(employees.status, 'active'));
+  
+  return {
+    totalEmployees: empCount[0]?.total || 0,
+    departments: empCount[0]?.deptCount || 0,
+  };
+}
+
+export async function getFinancialSummary() {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const revData = await db.select({
+    totalRevenue: sql<string>`COALESCE(SUM(CAST(${invoices.totalAmount} AS DECIMAL(15,2))), 0)`,
+    invoiceCount: sql<number>`COUNT(*)`,
+  }).from(invoices).where(eq(invoices.status, 'paid'));
+  
+  const expData = await db.select({
+    totalExpenses: sql<string>`COALESCE(SUM(CAST(${purchaseOrders.totalAmount} AS DECIMAL(15,2))), 0)`,
+    poCount: sql<number>`COUNT(*)`,
+  }).from(purchaseOrders);
+  
+  return {
+    totalRevenue: parseFloat(revData[0]?.totalRevenue || '0'),
+    invoiceCount: revData[0]?.invoiceCount || 0,
+    totalExpenses: parseFloat(expData[0]?.totalExpenses || '0'),
+    poCount: expData[0]?.poCount || 0,
+  };
+}
+
+export async function getProjectSummary(projectId?: number) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  if (projectId) {
+    const rows = await db.select().from(projects).where(eq(projects.id, projectId));
+    return rows[0] || null;
+  }
+  return db.select().from(projects).orderBy(desc(projects.updatedAt)).limit(5);
+}
+
+export async function getGrantBidApplicationStats() {
+  const db = await getDb();
+  if (!db) return { total: 0, draft: 0, submitted: 0, awarded: 0, totalRequested: '0', totalAwarded: '0' };
+
+  const stats = await db.select({
+    total: sql<number>`COUNT(*)`,
+    draft: sql<number>`SUM(CASE WHEN ${grantBidApplications.status} IN ('draft', 'data_collection', 'ai_generating', 'review') THEN 1 ELSE 0 END)`,
+    submitted: sql<number>`SUM(CASE WHEN ${grantBidApplications.status} IN ('submitted', 'under_review') THEN 1 ELSE 0 END)`,
+    awarded: sql<number>`SUM(CASE WHEN ${grantBidApplications.status} = 'awarded' THEN 1 ELSE 0 END)`,
+    totalRequested: sql<string>`COALESCE(SUM(CAST(${grantBidApplications.requestedAmount} AS DECIMAL(15,2))), 0)`,
+  }).from(grantBidApplications);
+
+  return {
+    total: stats[0]?.total || 0,
+    draft: stats[0]?.draft || 0,
+    submitted: stats[0]?.submitted || 0,
+    awarded: stats[0]?.awarded || 0,
+    totalRequested: stats[0]?.totalRequested || '0',
+  };
+}
+
+// ============================================
+// GRANT & BID OPPORTUNITIES (DISCOVERY)
+// ============================================
+
+export async function getGrantBidOpportunities(filters?: { type?: string; status?: string; search?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.type) conditions.push(eq(grantBidOpportunities.type, filters.type as any));
+  if (filters?.status) conditions.push(eq(grantBidOpportunities.status, filters.status as any));
+  if (filters?.search) conditions.push(like(grantBidOpportunities.title, `%${filters.search}%`));
+
+  if (conditions.length > 0) {
+    return db.select().from(grantBidOpportunities).where(and(...conditions)).orderBy(desc(grantBidOpportunities.matchScore), desc(grantBidOpportunities.updatedAt));
+  }
+  return db.select().from(grantBidOpportunities).orderBy(desc(grantBidOpportunities.matchScore), desc(grantBidOpportunities.updatedAt));
+}
+
+export async function getGrantBidOpportunityById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(grantBidOpportunities).where(eq(grantBidOpportunities.id, id));
+  return rows[0] || null;
+}
+
+export async function createGrantBidOpportunity(data: InsertGrantBidOpportunity) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(grantBidOpportunities).values(data);
+  return { id: result.insertId };
+}
+
+export async function createGrantBidOpportunities(data: InsertGrantBidOpportunity[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (data.length === 0) return [];
+  const results = [];
+  for (const item of data) {
+    const [result] = await db.insert(grantBidOpportunities).values(item);
+    results.push({ id: result.insertId });
+  }
+  return results;
+}
+
+export async function updateGrantBidOpportunity(id: number, data: Partial<InsertGrantBidOpportunity>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(grantBidOpportunities).set(data).where(eq(grantBidOpportunities.id, id));
+}
+
+export async function deleteGrantBidOpportunity(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(grantBidOpportunities).where(eq(grantBidOpportunities.id, id));
+}
+
+export async function getGrantBidOpportunityStats() {
+  const db = await getDb();
+  if (!db) return { total: 0, saved: 0, applying: 0, avgMatchScore: 0 };
+
+  const stats = await db.select({
+    total: sql<number>`COUNT(*)`,
+    saved: sql<number>`SUM(CASE WHEN ${grantBidOpportunities.status} = 'saved' THEN 1 ELSE 0 END)`,
+    applying: sql<number>`SUM(CASE WHEN ${grantBidOpportunities.status} = 'applying' THEN 1 ELSE 0 END)`,
+    avgMatchScore: sql<number>`COALESCE(AVG(${grantBidOpportunities.matchScore}), 0)`,
+  }).from(grantBidOpportunities)
+    .where(ne(grantBidOpportunities.status, 'dismissed'));
+
+  return {
+    total: stats[0]?.total || 0,
+    saved: stats[0]?.saved || 0,
+    applying: stats[0]?.applying || 0,
+    avgMatchScore: Math.round(stats[0]?.avgMatchScore || 0),
+  };
+}
+
+// ============================================
+// GRANT & BID WEB FORM MAPPINGS
+// ============================================
+
+export async function getGrantBidWebFormMappings(applicationId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(grantBidWebFormMappings).where(eq(grantBidWebFormMappings.applicationId, applicationId)).orderBy(desc(grantBidWebFormMappings.updatedAt));
+}
+
+export async function getGrantBidWebFormMappingById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(grantBidWebFormMappings).where(eq(grantBidWebFormMappings.id, id));
+  return rows[0] || null;
+}
+
+export async function createGrantBidWebFormMapping(data: InsertGrantBidWebFormMapping) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(grantBidWebFormMappings).values(data);
+  return { id: result.insertId };
+}
+
+export async function updateGrantBidWebFormMapping(id: number, data: Partial<InsertGrantBidWebFormMapping>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(grantBidWebFormMappings).set(data).where(eq(grantBidWebFormMappings.id, id));
+}
+
+export async function deleteGrantBidWebFormMapping(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(grantBidWebFormMappings).where(eq(grantBidWebFormMappings.id, id));
 }

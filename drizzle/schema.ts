@@ -5302,3 +5302,215 @@ export const emailEvents = mysqlTable("emailEvents", {
 
 export type EmailEvent = typeof emailEvents.$inferSelect;
 export type InsertEmailEvent = typeof emailEvents.$inferInsert;
+
+export type EdiSettings = typeof ediSettings.$inferSelect;
+export type InsertEdiSettings = typeof ediSettings.$inferInsert;
+export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
+export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
+
+// ============================================
+// GRANT & BID APPLICATION SUBMITTER
+// ============================================
+
+// Grant/Bid application templates - reusable templates for different grant programs or procurement bids
+export const grantBidTemplates = mysqlTable("grant_bid_templates", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 255 }).notNull(),
+  type: mysqlEnum("type", ["grant", "procurement_bid", "rfp_response", "subsidy", "tax_incentive"]).notNull(),
+  description: text("description"),
+  // Template structure - JSON array of sections/fields
+  sections: text("sections"), // JSON: [{name, fields: [{key, label, type, dataSource, required}]}]
+  isActive: boolean("isActive").default(true).notNull(),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type GrantBidTemplate = typeof grantBidTemplates.$inferSelect;
+export type InsertGrantBidTemplate = typeof grantBidTemplates.$inferInsert;
+
+// Grant/Bid applications - actual submissions
+export const grantBidApplications = mysqlTable("grant_bid_applications", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  templateId: int("templateId"),
+  projectId: int("projectId"), // Link to project
+  // Application metadata
+  applicationNumber: varchar("applicationNumber", { length: 64 }).notNull(),
+  title: varchar("title", { length: 500 }).notNull(),
+  type: mysqlEnum("type", ["grant", "procurement_bid", "rfp_response", "subsidy", "tax_incentive"]).notNull(),
+  grantingOrganization: varchar("grantingOrganization", { length: 255 }),
+  programName: varchar("programName", { length: 255 }),
+  // Financials
+  requestedAmount: decimal("requestedAmount", { precision: 15, scale: 2 }),
+  matchingFunds: decimal("matchingFunds", { precision: 15, scale: 2 }),
+  totalProjectCost: decimal("totalProjectCost", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  // Dates
+  submissionDeadline: timestamp("submissionDeadline"),
+  submittedAt: timestamp("submittedAt"),
+  awardDate: timestamp("awardDate"),
+  projectStartDate: timestamp("projectStartDate"),
+  projectEndDate: timestamp("projectEndDate"),
+  // Status tracking
+  status: mysqlEnum("status", [
+    "draft", "data_collection", "ai_generating", "review",
+    "approved", "submitted", "under_review", "awarded",
+    "rejected", "withdrawn"
+  ]).default("draft").notNull(),
+  // Populated form data (from ERP + AI)
+  formData: text("formData"), // JSON: full form data object
+  generatedNarrative: text("generatedNarrative"), // AI-generated narrative sections
+  // Data sources used
+  dataSourcesUsed: text("dataSourcesUsed"), // JSON: [{source, table, ids}]
+  // Submission details
+  submissionMethod: mysqlEnum("submissionMethod", ["web_form", "email", "portal", "pdf_upload", "api"]).default("pdf_upload"),
+  submissionUrl: text("submissionUrl"),
+  submissionConfirmation: varchar("submissionConfirmation", { length: 255 }),
+  // Review & approval
+  reviewedBy: int("reviewedBy"),
+  reviewedAt: timestamp("reviewedAt"),
+  reviewNotes: text("reviewNotes"),
+  approvedBy: int("approvedBy"),
+  approvedAt: timestamp("approvedAt"),
+  // Creator
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GrantBidApplication = typeof grantBidApplications.$inferSelect;
+export type InsertGrantBidApplication = typeof grantBidApplications.$inferInsert;
+
+// Grant/Bid application documents - attachments and generated documents
+export const grantBidDocuments = mysqlTable("grant_bid_documents", {
+  id: int("id").autoincrement().primaryKey(),
+  applicationId: int("applicationId").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  documentType: mysqlEnum("documentType", [
+    "cover_letter", "executive_summary", "budget_narrative", "financial_statement",
+    "org_chart", "project_timeline", "letter_of_support", "tax_document",
+    "certification", "capability_statement", "past_performance", "technical_proposal",
+    "cost_proposal", "attachment", "generated_application"
+  ]).notNull(),
+  // Source - auto-pulled from ERP or manually uploaded
+  source: mysqlEnum("source", ["auto_generated", "erp_export", "manual_upload"]).default("manual_upload").notNull(),
+  sourceTable: varchar("sourceTable", { length: 64 }), // e.g., "invoices", "projects"
+  sourceId: int("sourceId"),
+  // Storage
+  fileUrl: text("fileUrl"),
+  fileSize: int("fileSize"),
+  mimeType: varchar("mimeType", { length: 128 }),
+  // Content (for generated docs)
+  content: text("content"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type GrantBidDocument = typeof grantBidDocuments.$inferSelect;
+export type InsertGrantBidDocument = typeof grantBidDocuments.$inferInsert;
+
+// Grant/Bid field mappings - maps ERP data fields to application form fields
+export const grantBidFieldMappings = mysqlTable("grant_bid_field_mappings", {
+  id: int("id").autoincrement().primaryKey(),
+  templateId: int("templateId").notNull(),
+  fieldKey: varchar("fieldKey", { length: 128 }).notNull(), // e.g., "org_name", "annual_revenue"
+  fieldLabel: varchar("fieldLabel", { length: 255 }).notNull(),
+  fieldType: mysqlEnum("fieldType", ["text", "number", "currency", "date", "textarea", "select", "file"]).default("text").notNull(),
+  // Data source mapping
+  dataSource: varchar("dataSource", { length: 64 }), // table name: "companies", "employees", etc.
+  dataField: varchar("dataField", { length: 128 }), // field name: "legalName", "taxId"
+  dataTransform: text("dataTransform"), // optional transform instruction for AI
+  // Validation
+  isRequired: boolean("isRequired").default(false),
+  validationRule: varchar("validationRule", { length: 255 }),
+  defaultValue: text("defaultValue"),
+  sortOrder: int("sortOrder").default(0),
+  section: varchar("section", { length: 128 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type GrantBidFieldMapping = typeof grantBidFieldMappings.$inferSelect;
+export type InsertGrantBidFieldMapping = typeof grantBidFieldMappings.$inferInsert;
+
+// Grant/Bid submission log - tracks submission attempts and status changes
+export const grantBidSubmissionLogs = mysqlTable("grant_bid_submission_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  applicationId: int("applicationId").notNull(),
+  action: mysqlEnum("action", [
+    "created", "data_collected", "narrative_generated", "document_attached",
+    "submitted_for_review", "review_completed", "approved", "submission_attempted",
+    "submission_succeeded", "submission_failed", "status_updated", "awarded", "rejected"
+  ]).notNull(),
+  details: text("details"),
+  performedBy: int("performedBy"),
+  performedAt: timestamp("performedAt").defaultNow().notNull(),
+});
+
+export type GrantBidSubmissionLog = typeof grantBidSubmissionLogs.$inferSelect;
+export type InsertGrantBidSubmissionLog = typeof grantBidSubmissionLogs.$inferInsert;
+
+// Grant/Bid opportunities - discovered grant programs, RFPs, and procurement bids to apply for
+export const grantBidOpportunities = mysqlTable("grant_bid_opportunities", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  // Opportunity details
+  title: varchar("title", { length: 500 }).notNull(),
+  type: mysqlEnum("type", ["grant", "procurement_bid", "rfp_response", "subsidy", "tax_incentive"]).notNull(),
+  organization: varchar("organization", { length: 255 }),
+  programName: varchar("programName", { length: 255 }),
+  description: text("description"),
+  // Eligibility & requirements
+  eligibilityCriteria: text("eligibilityCriteria"),
+  requiredDocuments: text("requiredDocuments"), // JSON array
+  // Financials
+  fundingAmountMin: decimal("fundingAmountMin", { precision: 15, scale: 2 }),
+  fundingAmountMax: decimal("fundingAmountMax", { precision: 15, scale: 2 }),
+  matchingRequired: boolean("matchingRequired").default(false),
+  matchingPercentage: decimal("matchingPercentage", { precision: 5, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  // Dates
+  openDate: timestamp("openDate"),
+  deadline: timestamp("deadline"),
+  awardDate: timestamp("awardDate"),
+  // Source
+  sourceUrl: text("sourceUrl"),
+  sourceType: mysqlEnum("sourceType", ["web_search", "manual", "api_feed", "email", "ai_recommended"]).default("web_search").notNull(),
+  // Matching & relevance
+  matchScore: int("matchScore"), // AI-computed relevance score 0-100
+  matchReason: text("matchReason"), // Why this is a good match
+  categories: text("categories"), // JSON array of category tags
+  // Status
+  status: mysqlEnum("status", ["discovered", "saved", "evaluating", "applying", "applied", "not_eligible", "expired", "dismissed"]).default("discovered").notNull(),
+  applicationId: int("applicationId"), // Link to created application
+  // Notes
+  notes: text("notes"),
+  savedBy: int("savedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GrantBidOpportunity = typeof grantBidOpportunities.$inferSelect;
+export type InsertGrantBidOpportunity = typeof grantBidOpportunities.$inferInsert;
+
+// Web form mappings - maps application data to specific web form fields for auto-filling
+export const grantBidWebFormMappings = mysqlTable("grant_bid_web_form_mappings", {
+  id: int("id").autoincrement().primaryKey(),
+  applicationId: int("applicationId").notNull(),
+  // Target website
+  portalName: varchar("portalName", { length: 255 }).notNull(), // e.g., "Grants.gov", "SAM.gov"
+  portalUrl: text("portalUrl"),
+  // Form field mappings - JSON array of {formFieldId, formFieldLabel, formFieldType, cssSelector, value, dataSourceKey}
+  fieldMappings: text("fieldMappings"),
+  // Auto-fill script - generated JavaScript that can be pasted into browser console or used by extension
+  autoFillScript: text("autoFillScript"),
+  // Status
+  status: mysqlEnum("status", ["draft", "mapped", "tested", "submitted"]).default("draft").notNull(),
+  lastFilledAt: timestamp("lastFilledAt"),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type GrantBidWebFormMapping = typeof grantBidWebFormMappings.$inferSelect;
+export type InsertGrantBidWebFormMapping = typeof grantBidWebFormMappings.$inferInsert;
