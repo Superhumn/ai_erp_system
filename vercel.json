@@ -23,7 +23,7 @@
   "env": {
     "NODE_ENV": "production"
   },
-  "installCommand": "npm install",
-  "buildCommand": "npm run build",
+  "installCommand": "pnpm install --no-frozen-lockfile",
+  "buildCommand": "pnpm run build",
   "outputDirectory": "dist"
 }
