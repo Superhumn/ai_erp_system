@@ -10,6 +10,7 @@ import DashboardLayout from "./components/DashboardLayout";
 // Eagerly loaded pages (high-traffic, first paint)
 import Home from "./pages/Home";
 import Login from "./pages/Login";
+import ResetPassword from "./pages/ResetPassword";
 import NotFound from "@/pages/NotFound";
 
 // Lazy-loaded pages — split into separate chunks for smaller initial bundle
@@ -307,6 +308,7 @@ function App() {
               <Switch>
                 {/* Public routes (outside dashboard) */}
                 <Route path="/login" component={Login} />
+                <Route path="/reset-password" component={ResetPassword} />
                 {/* Public Data Room Access (outside dashboard) */}
                 <Route path="/share/:code" component={DataRoomPublic} />
                 {/* Supplier Portal (public) */}

@@ -16,6 +16,10 @@ import * as db from "../db";
 import { startEmailQueueWorker } from "../emailQueueWorker";
 import { startOrchestrator } from "../supplyChainOrchestrator";
 import { startScheduler } from "../aiAgentScheduler";
+import { createLogger } from "./logger";
+import { initErrorTracking, captureException } from "./errorTracking";
+
+const logger = createLogger("Server");
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -44,13 +48,15 @@ const oauthCallbackLimiter = rateLimit({
 });
 
 async function startServer() {
+  await initErrorTracking();
+
   validateCriticalConfig();
 
   const emailConfigValidation = validateEmailConfig();
   if (!emailConfigValidation.valid) {
-    console.warn("[Email Config] Warning: Some email configuration is missing:");
-    emailConfigValidation.errors.forEach(err => console.warn(`  - ${err}`));
-    console.warn("[Email Config] Email features will be disabled until configuration is provided.");
+    logger.warn("Some email configuration is missing — email features will be disabled", {
+      errors: emailConfigValidation.errors,
+    });
   }
 
   const app = express();
@@ -228,6 +234,26 @@ async function startServer() {
   // EDI WEBHOOK ENDPOINT
   // ============================================
 
+  // EDI webhook API key authentication middleware
+  app.use("/webhooks/edi", (req, res, next) => {
+    const apiKey = req.headers["x-api-key"] || req.headers["authorization"]?.replace("Bearer ", "");
+    const expectedKey = process.env.EDI_WEBHOOK_SECRET;
+
+    if (!expectedKey) {
+      // No secret configured — allow in development, block in production
+      if (ENV.isProduction) {
+        return res.status(403).json({ error: "EDI webhook secret not configured" });
+      }
+      return next();
+    }
+
+    if (apiKey !== expectedKey) {
+      return res.status(401).json({ error: "Invalid API key" });
+    }
+
+    next();
+  });
+
   app.post('/webhooks/edi/inbound', express.raw({ type: ['application/edi-x12', 'text/plain', 'application/octet-stream'] }), async (req, res) => {
     try {
       const { handleEdiWebhook } = await import('../ediTransportService');
@@ -290,7 +316,7 @@ async function startServer() {
       await upsertGoogleOAuthToken({ userId, accessToken: tokens.access_token, refreshToken: tokens.refresh_token, expiresAt: new Date(Date.now() + tokens.expires_in * 1000), scope: tokens.scope, googleEmail });
       res.redirect('/import?success=connected');
     } catch (error) {
-      console.error('Google OAuth error:', error);
+      logger.error("Google OAuth error", { error: error instanceof Error ? error.message : String(error) });
       res.redirect('/import?error=oauth_failed');
     }
   });
@@ -332,7 +358,7 @@ async function startServer() {
       await createSyncLog({ integration: 'shopify', action: 'store_connected', status: 'success', details: `Connected store: ${shopInfo.shop.name} (${shopDomain})` });
       res.redirect('/settings/integrations?shopify_success=connected&shop=' + encodeURIComponent(shopInfo.shop.name));
     } catch (error) {
-      console.error('Shopify OAuth error:', error);
+      logger.error("Shopify OAuth error", { error: error instanceof Error ? error.message : String(error) });
       res.redirect('/settings/integrations?shopify_error=oauth_failed');
     }
   });
@@ -356,7 +382,7 @@ async function startServer() {
       await createSyncLog({ integration: 'quickbooks', action: 'connected', status: 'success', details: `QuickBooks connected - Realm ID: ${realmId}` });
       res.redirect('/settings/integrations?quickbooks_success=connected');
     } catch (error) {
-      console.error('QuickBooks OAuth error:', error);
+      logger.error("QuickBooks OAuth error", { error: error instanceof Error ? error.message : String(error) });
       res.redirect('/settings/integrations?quickbooks_error=oauth_failed');
     }
   });
@@ -377,10 +403,10 @@ async function startServer() {
 
   const preferredPort = parseInt(process.env.PORT || "3000");
   const port = await findAvailablePort(preferredPort);
-  if (port !== preferredPort) console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
+  if (port !== preferredPort) logger.info("Preferred port busy, using alternative", { preferredPort, port });
 
   server.listen(port, "0.0.0.0", () => {
-    console.log(`Server running on http://0.0.0.0:${port}/`);
+    logger.info("Server started", { url: `http://0.0.0.0:${port}/`, port });
 
     // Start the email queue worker
     startEmailQueueWorker();
@@ -391,17 +417,19 @@ async function startServer() {
     }).catch(err => {
       console.warn('[EDI Polling] Could not start polling scheduler:', err.message);
     });
-    console.log("[Startup] Starting autonomous supply chain orchestrator...");
+    logger.info("Starting autonomous supply chain orchestrator");
     startOrchestrator().catch(err => {
-      console.error("[Startup] Failed to start orchestrator:", err);
-      console.warn("[Startup] Server running in degraded mode - autonomous workflows disabled");
+      logger.error("Failed to start orchestrator — autonomous workflows disabled", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     });
-    console.log("[Startup] Starting AI agent scheduler...");
+    logger.info("Starting AI agent scheduler");
     try {
       startScheduler();
     } catch (err) {
-      console.error("[Startup] Failed to start AI agent scheduler:", err);
-      console.warn("[Startup] Server running in degraded mode - AI agent automation disabled");
+      logger.error("Failed to start AI agent scheduler — AI agent automation disabled", {
+        error: err instanceof Error ? (err as Error).message : String(err),
+      });
     }
 
     // Start email inbox polling (IMAP)
@@ -529,14 +557,14 @@ async function startServer() {
   });
 
   function gracefulShutdown(signal: string) {
-    console.log(`[Shutdown] ${signal} received. Closing server...`);
+    logger.info("Shutdown signal received, closing server", { signal });
     server.close(() => {
-      console.log("[Shutdown] Server closed. Exiting.");
+      logger.info("Server closed, exiting");
       process.exit(0);
     });
     // Force exit after 10 seconds if connections don't drain
     setTimeout(() => {
-      console.error("[Shutdown] Forced exit after timeout.");
+      logger.error("Forced exit after timeout");
       process.exit(1);
     }, 10_000);
   }
@@ -544,5 +572,14 @@ async function startServer() {
   process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
   process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 }
+
+process.on("unhandledRejection", (reason) => {
+  captureException(reason, { type: "unhandledRejection" });
+});
+
+process.on("uncaughtException", (error) => {
+  captureException(error, { type: "uncaughtException" });
+  process.exit(1);
+});
 
 startServer().catch(console.error);
