@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
+import { COOKIE_NAME } from "@shared/const";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { invokeLLM } from "./_core/llm";
@@ -40,7 +41,6 @@ import type { InsertDataRoomDriveSyncConfig } from "../drizzle/schema";
 import { collectERPData, autoPopulateFields, generateApplicationNarrative, reviewApplication, generateApplicationDocument, DEFAULT_SECTIONS, searchOpportunities, evaluateOpportunityFit, analyzeWebFormFields, generateAutoFillScript, generateCopyPasteGuide, generateApiPayload } from "./grantBidService";
 import { runFormFillerAgent } from "./formFillerAgent";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
-import { purchaseOrderTextEndpoints, shipmentTextEndpoints, paymentTextEndpoints, workOrderTextEndpoints, inventoryTextEndpoints } from "./naturalLanguageRouterExtensions";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -779,31 +779,37 @@ export const appRouter = router({
           totalPaid: totalPaid.toString(),
         };
       }),
+
     createFromText: financeProcedure
       .input(z.object({ text: z.string().min(1) }))
       .mutation(async ({ input, ctx }) => {
-        let invoiceData: any = { customerName: 'Unknown', items: [], notes: input.text };
+        const parsed = await invokeLLM({
+          messages: [
+            { role: 'system', content: 'Extract invoice details from the text and return a JSON object with: customerId (number or null), amount (string), dueDate (ISO date string or null), notes (string). Return only valid JSON.' },
+            { role: 'user', content: input.text },
+          ],
+        });
+        let invoiceData: any = {};
         try {
-          const llmResult = await invokeLLM({
-            messages: [{ role: 'user', content: `Parse this text into invoice data. Extract: customer name, items with descriptions/quantities/prices, dates, and any reference numbers. Return JSON with fields: customerName, items[], dueDate, notes.\n\nText: ${input.text}` }],
-          });
-          const content = llmResult?.choices?.[0]?.message?.content;
-          if (content) {
-            invoiceData = typeof content === 'string' ? JSON.parse(content) : content;
-          }
-        } catch { /* use defaults */ }
-        const invoiceNumber = `INV-${Date.now()}`;
+          const rawContent = parsed.choices[0]?.message?.content;
+          const raw = typeof rawContent === 'string' ? rawContent : '{}';
+          invoiceData = JSON.parse(raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
+        } catch { invoiceData = {}; }
+        const amount = invoiceData.amount || '0';
+        const invoiceNumber = generateNumber('INV');
         const result = await db.createInvoice({
+          customerId: invoiceData.customerId || null,
           invoiceNumber,
-          status: 'draft',
-          createdBy: ctx.user.id,
           issueDate: new Date(),
-          dueDate: invoiceData.dueDate ? new Date(invoiceData.dueDate) : new Date(Date.now() + 30 * 86400000),
-          totalAmount: '0',
+          dueDate: invoiceData.dueDate ? new Date(invoiceData.dueDate) : null,
+          subtotal: amount,
+          totalAmount: amount,
+          status: 'draft',
           notes: invoiceData.notes || input.text,
-        } as any);
+          createdBy: ctx.user.id,
+        });
         await createAuditLog(ctx.user.id, 'create', 'invoice', result.id, invoiceNumber);
-        return { invoiceNumber, id: result.id, parsed: invoiceData };
+        return { invoiceNumber, id: result.id };
       }),
   }),
 
@@ -865,8 +871,35 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'update', 'payment', id);
         return { success: true };
       }),
-    // Natural language text-to-payment
-    ...paymentTextEndpoints,
+
+    createFromText: financeProcedure
+      .input(z.object({ text: z.string().min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        const parsed = await invokeLLM({
+          messages: [
+            { role: 'system', content: 'Extract payment details from the text and return a JSON object with: amount (string), type ("received" or "made"), notes (string). Return only valid JSON.' },
+            { role: 'user', content: input.text },
+          ],
+        });
+        let paymentData: any = {};
+        try {
+          const rawContent = parsed.choices[0]?.message?.content;
+          const raw = typeof rawContent === 'string' ? rawContent : '{}';
+          paymentData = JSON.parse(raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
+        } catch { paymentData = {}; }
+        const amount = paymentData.amount || '0';
+        const paymentNumber = generateNumber('PAY');
+        const result = await db.createPayment({
+          type: paymentData.type || 'received',
+          amount,
+          paymentNumber,
+          paymentDate: new Date(),
+          notes: paymentData.notes || input.text,
+          createdBy: ctx.user.id,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'payment', result.id, paymentNumber);
+        return { amount, id: result.id, paymentNumber };
+      }),
   }),
 
   // ============================================
@@ -1116,8 +1149,32 @@ export const appRouter = router({
     // Get inbound shipments from POs
     getInboundShipments: opsProcedure
       .query(() => db.getInboundShipmentsFromPOs()),
-    // Natural language text-to-inventory-transfer
-    ...inventoryTextEndpoints,
+
+    transferFromText: opsProcedure
+      .input(z.object({ text: z.string().min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        const parsed = await invokeLLM({
+          messages: [
+            { role: 'system', content: 'Extract inventory transfer details from the text and return a JSON object with: fromWarehouseId (number or null), toWarehouseId (number or null), notes (string). Return only valid JSON.' },
+            { role: 'user', content: input.text },
+          ],
+        });
+        let transferData: any = {};
+        try {
+          const rawContent = parsed.choices[0]?.message?.content;
+          const raw = typeof rawContent === 'string' ? rawContent : '{}';
+          transferData = JSON.parse(raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
+        } catch { transferData = {}; }
+        const result = await db.createTransfer({
+          fromWarehouseId: transferData.fromWarehouseId || null,
+          toWarehouseId: transferData.toWarehouseId || null,
+          notes: transferData.notes || input.text,
+          status: 'pending',
+          requestedBy: ctx.user.id,
+        } as any);
+        await createAuditLog(ctx.user.id, 'create', 'inventory_transfer', result.id, result.transferNumber);
+        return { transferNumber: result.transferNumber, id: result.id };
+      }),
   }),
 
   // ============================================
@@ -1533,7 +1590,7 @@ export const appRouter = router({
             quantity: z.string(),
             unitPrice: z.string(),
             totalAmount: z.string(),
-            rawMaterialId: z.number().nullable(),
+            rawMaterialId: z.number().nullable().optional(),
           })),
           shippingAddress: z.string(),
           notes: z.string(),
@@ -1541,12 +1598,14 @@ export const appRouter = router({
           totalAmount: z.string(),
           suggested: z.boolean(),
           isPriceEstimated: z.boolean().optional(),
-        }),
+        }).optional(),
         sendEmail: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
+        // If no preview, parse the text first
+        const preview = (input.preview ?? await createPOPreview(await parseTextToPO(input.text))) as any;
         // Create the PO from preview
-        const po = await createPOFromPreview(input.preview as any, ctx.user.id);
+        const po = await createPOFromPreview(preview, ctx.user.id);
         
         await createAuditLog(ctx.user.id, 'create', 'purchaseOrder', po.id, po.poNumber);
         
@@ -1740,8 +1799,35 @@ export const appRouter = router({
         
         return { success: true };
       }),
-    // Natural language text-to-shipment
-    ...shipmentTextEndpoints,
+
+    createFromText: opsProcedure
+      .input(z.object({ text: z.string().min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        const parsed = await invokeLLM({
+          messages: [
+            { role: 'system', content: 'Extract shipment details from the text and return a JSON object with: trackingNumber (string or null), carrier (string or null), type ("inbound" or "outbound"), notes (string). Return only valid JSON.' },
+            { role: 'user', content: input.text },
+          ],
+        });
+        let shipmentData: any = {};
+        try {
+          const rawContent = parsed.choices[0]?.message?.content;
+          const raw = typeof rawContent === 'string' ? rawContent : '{}';
+          shipmentData = JSON.parse(raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
+        } catch { shipmentData = {}; }
+        const shipmentNumber = generateNumber('SHIP');
+        const trackingNumber = shipmentData.trackingNumber || shipmentNumber;
+        const result = await db.createShipment({
+          shipmentNumber,
+          trackingNumber,
+          type: shipmentData.type || 'inbound',
+          carrier: shipmentData.carrier,
+          notes: shipmentData.notes || input.text,
+          status: 'pending',
+        } as any);
+        await createAuditLog(ctx.user.id, 'create', 'shipment', result.id, shipmentNumber);
+        return { trackingNumber, shipmentNumber, id: result.id };
+      }),
   }),
 
   // ============================================
@@ -5573,44 +5659,41 @@ Extract and return as JSON:
         .mutation(async ({ input, ctx }) => {
           const { id, warehouseId, ...data } = input;
 
+          // When clearing customs (status -> "cleared"), update inventory for inbound shipments
           if (data.status === 'cleared') {
+            if (!warehouseId) {
+              throw new TRPCError({ code: 'BAD_REQUEST', message: 'warehouseId is required when clearing customs with inventory update' });
+            }
             const clearance = await db.getCustomsClearanceById(id);
             if (clearance?.shipmentId) {
-              if (!warehouseId) {
-                throw new TRPCError({ code: 'BAD_REQUEST', message: 'warehouseId is required when clearing customs with inventory update' });
-              }
               const shipment = await db.getShipmentById(clearance.shipmentId);
               if (shipment?.purchaseOrderId) {
                 const poItems = await db.getPurchaseOrderItems(shipment.purchaseOrderId);
                 for (const item of poItems) {
-                  if (!item.productId) continue;
-                  const allInventory = await db.getInventory();
-                  const existing = allInventory.find(
-                    (inv: any) => inv.productId === item.productId && inv.warehouseId === warehouseId
-                  );
-                  const qty = item.quantity ?? '0';
-                  if (existing) {
-                    await db.updateInventory(existing.id, {
-                      quantity: String(Number(existing.quantity) + Number(qty)),
-                    });
+                  const quantity = item.quantity || '0';
+                  const existingInventory = await db.getInventory({ productId: item.productId, warehouseId });
+                  if (existingInventory.length > 0) {
+                    const existing = existingInventory[0];
+                    const newQty = (parseFloat(existing.quantity) + parseFloat(quantity)).toString();
+                    await db.updateInventory(existing.id, { quantity: newQty });
                   } else {
                     await db.createInventory({
                       productId: item.productId,
                       warehouseId,
-                      quantity: qty,
-                      companyId: (shipment as any).companyId,
-                    });
+                      quantity,
+                      companyId: shipment.companyId,
+                    } as any);
                   }
                   await db.createInventoryTransaction({
-                    transactionType: 'receive',
+                    transactionType: 'receive' as any,
                     productId: item.productId,
                     toWarehouseId: warehouseId,
-                    quantity: qty,
-                    referenceType: 'shipment',
-                    referenceId: clearance.shipmentId,
+                    quantity,
+                    referenceType: 'purchase_order',
+                    referenceId: shipment.purchaseOrderId,
                     performedBy: ctx.user.id,
                   } as any);
-                  await db.updatePurchaseOrderItem(item.id, { receivedQuantity: qty });
+                  await db.updatePurchaseOrderItem(item.id, { receivedQuantity: item.quantity });
                 }
                 await db.updateShipment(clearance.shipmentId, { status: 'delivered' });
               }
@@ -5971,6 +6054,34 @@ Provide a brief status summary, any missing documents, and next steps.`;
       // Copackers see all shipments - they can filter by their location in the UI
       return allShipments;
     }),
+
+    // Get customs clearances accessible to copacker
+    getCustomsClearances: copackerProcedure.query(async ({ ctx }) => {
+      const allClearances = await db.getCustomsClearances();
+      if (ctx.user.role === 'copacker') {
+        const allShipments = await db.getShipments();
+        const shipmentIds = new Set(allShipments.map(s => s.id));
+        return allClearances.filter(c => c.shipmentId != null && shipmentIds.has(c.shipmentId));
+      }
+      return allClearances;
+    }),
+
+    // Get customs documents for a specific clearance (copacker access check)
+    getCustomsDocuments: copackerProcedure
+      .input(z.object({ clearanceId: z.number() }))
+      .query(async ({ input, ctx }) => {
+        if (ctx.user.role === 'copacker') {
+          const clearance = await db.getCustomsClearanceById(input.clearanceId);
+          if (!clearance?.shipmentId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+          }
+          const shipment = await db.getShipmentById(clearance.shipmentId);
+          if (!shipment) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
+          }
+        }
+        return db.getCustomsDocuments(input.clearanceId);
+      }),
 
     // Upload shipment document (copacker can upload for their shipments)
     uploadShipmentDocument: copackerProcedure
@@ -6505,26 +6616,24 @@ Provide a brief status summary, any missing documents, and next steps.`;
         return { id: result.id, url };
       }),
 
+    // Get customs clearances accessible to vendor (filtered by their POs/shipments)
     getCustomsClearances: vendorProcedure.query(async ({ ctx }) => {
       const allClearances = await db.getCustomsClearances();
-      if (ctx.user.role !== 'vendor') return allClearances;
-      const allPOs = await db.getPurchaseOrders();
-      const vendorPOIds = new Set(
-        allPOs.filter((po: any) => po.vendorId === ctx.user.linkedVendorId).map((po: any) => po.id)
-      );
-      const allShipments = await db.getShipments();
-      const vendorShipmentIds = new Set(
-        allShipments
-          .filter((s: any) => s.purchaseOrderId != null && vendorPOIds.has(s.purchaseOrderId))
-          .map((s: any) => s.id)
-      );
-      return allClearances.filter((c: any) => c.shipmentId != null && vendorShipmentIds.has(c.shipmentId));
+      if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId) {
+        const allPOs = await db.getPurchaseOrders();
+        const vendorPOIds = new Set(allPOs.filter(po => po.vendorId === ctx.user.linkedVendorId).map(po => po.id));
+        const allShipments = await db.getShipments();
+        const vendorShipmentIds = new Set(allShipments.filter(s => s.purchaseOrderId && vendorPOIds.has(s.purchaseOrderId)).map(s => s.id));
+        return allClearances.filter(c => c.shipmentId != null && vendorShipmentIds.has(c.shipmentId));
+      }
+      return allClearances;
     }),
 
+    // Get customs documents for a specific clearance (vendor access check)
     getCustomsDocuments: vendorProcedure
       .input(z.object({ clearanceId: z.number() }))
       .query(async ({ input, ctx }) => {
-        if (ctx.user.role === 'vendor') {
+        if (ctx.user.role === 'vendor' && ctx.user.linkedVendorId) {
           const clearance = await db.getCustomsClearanceById(input.clearanceId);
           if (!clearance?.shipmentId) {
             throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
@@ -7044,8 +7153,35 @@ Provide a brief status summary, any missing documents, and next steps.`;
         
         return { success: true };
       }),
-    // Natural language text-to-work-order
-    ...workOrderTextEndpoints,
+
+    createFromText: protectedProcedure
+      .input(z.object({ text: z.string().min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        const parsed = await invokeLLM({
+          messages: [
+            { role: 'system', content: 'Extract work order details from the text and return a JSON object with: productId (number or null), quantity (string), priority ("low","normal","high","urgent"), notes (string). Return only valid JSON.' },
+            { role: 'user', content: input.text },
+          ],
+        });
+        let woData: any = {};
+        try {
+          const rawContent = parsed.choices[0]?.message?.content;
+          const raw = typeof rawContent === 'string' ? rawContent : '{}';
+          woData = JSON.parse(raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
+        } catch { woData = {}; }
+        const result = await db.createWorkOrder({
+          productId: woData.productId || null,
+          bomId: woData.bomId || 0,
+          quantity: woData.quantity || '1',
+          unit: 'EA',
+          priority: woData.priority || 'normal',
+          notes: woData.notes || input.text,
+          createdBy: ctx.user?.id,
+          status: 'draft',
+        } as any);
+        await createAuditLog(ctx.user.id, 'create', 'work_order', result.id, result.workOrderNumber);
+        return { workOrderNumber: result.workOrderNumber, id: result.id };
+      }),
   }),
 
   // Raw Material Inventory

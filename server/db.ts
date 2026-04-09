@@ -1010,8 +1010,8 @@ export async function getShipments(filters?: { companyId?: number; status?: stri
 export async function getShipmentById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
-  const result = await db.select().from(shipments).where(eq(shipments.id, id)).limit(1);
-  return result[0];
+  const results = await db.select().from(shipments).where(eq(shipments.id, id)).limit(1);
+  return results[0];
 }
 
 export async function createShipment(data: typeof shipments.$inferInsert) {
@@ -3316,7 +3316,7 @@ export async function getPurchaseOrderItems(purchaseOrderId: number) {
 
 export async function updatePurchaseOrderItem(id: number, data: Partial<typeof purchaseOrderItems.$inferInsert>) {
   const db = await getDb();
-  if (!db) throw new Error("Database not available");
+  if (!db) return { success: false };
   await db.update(purchaseOrderItems).set(data).where(eq(purchaseOrderItems.id, id));
   return { success: true };
 }
@@ -9644,10 +9644,63 @@ export async function getCogsPeriodSummaries(filters?: {
   if (filters?.companyId) conditions.push(eq(cogsPeriodSummary.companyId, filters.companyId));
   if (filters?.productId) conditions.push(eq(cogsPeriodSummary.productId, filters.productId));
   if (filters?.periodType) conditions.push(eq(cogsPeriodSummary.periodType, filters.periodType as any));
-  if (filters?.periodStart) conditions.push(eq(cogsPeriodSummary.periodStart, filters.periodStart));
-  if (filters?.periodEnd) conditions.push(eq(cogsPeriodSummary.periodEnd, filters.periodEnd));
-  if (conditions.length > 0) {
-    return db.select().from(cogsPeriodSummary).where(and(...conditions)).orderBy(desc(cogsPeriodSummary.periodStart));
+  if (filters?.startDate) conditions.push(gte(cogsPeriodSummary.periodStart, filters.startDate));
+  if (filters?.endDate) conditions.push(lte(cogsPeriodSummary.periodEnd, filters.endDate));
+  let query = db.select().from(cogsPeriodSummary);
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(cogsPeriodSummary.periodStart));
+}
+
+/**
+ * Get an existing COGS period summary record by period parameters.
+ * Note: undefined companyId/productId represents NULL in the database (company-wide or product-wide aggregation)
+ */
+export async function getCogsPeriodSummaries(params: {
+  companyId?: number;
+  productId?: number;
+  periodType?: "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
+  periodStart?: Date;
+  periodEnd?: Date;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (params.periodType) conditions.push(eq(cogsPeriodSummary.periodType, params.periodType));
+  if (params.periodStart) conditions.push(eq(cogsPeriodSummary.periodStart, params.periodStart));
+  if (params.periodEnd) conditions.push(eq(cogsPeriodSummary.periodEnd, params.periodEnd));
+  if (params.companyId !== undefined) {
+    conditions.push(eq(cogsPeriodSummary.companyId, params.companyId));
+  }
+  if (params.productId !== undefined) {
+    conditions.push(eq(cogsPeriodSummary.productId, params.productId));
+  }
+
+  return conditions.length > 0
+    ? db.select().from(cogsPeriodSummary).where(and(...conditions))
+    : db.select().from(cogsPeriodSummary);
+}
+
+export async function getCogsPeriodSummary(params: {
+  companyId?: number;
+  productId?: number;
+  periodType: "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
+  periodStart: Date;
+  periodEnd: Date;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const conditions = [
+    eq(cogsPeriodSummary.periodType, params.periodType),
+    eq(cogsPeriodSummary.periodStart, params.periodStart),
+    eq(cogsPeriodSummary.periodEnd, params.periodEnd),
+  ];
+
+  if (params.companyId !== undefined) {
+    conditions.push(eq(cogsPeriodSummary.companyId, params.companyId));
+  } else {
+    conditions.push(isNull(cogsPeriodSummary.companyId));
   }
   return db.select().from(cogsPeriodSummary).orderBy(desc(cogsPeriodSummary.periodStart));
 }
@@ -10578,7 +10631,7 @@ export async function getGrantBidApplications(filters?: { type?: string; status?
   const conditions = [];
   if (filters?.type) conditions.push(eq(grantBidApplications.type, filters.type as any));
   if (filters?.status) conditions.push(eq(grantBidApplications.status, filters.status as any));
-  
+
   if (conditions.length > 0) {
     return db.select().from(grantBidApplications).where(and(...conditions)).orderBy(desc(grantBidApplications.updatedAt));
   }
@@ -10680,12 +10733,12 @@ export async function getCompanyProfile(companyId?: number) {
 export async function getEmployeeSummary(companyId?: number) {
   const db = await getDb();
   if (!db) return { totalEmployees: 0, departments: 0, totalPayroll: '0' };
-  
+
   const empCount = await db.select({
     total: sql<number>`COUNT(*)`,
     deptCount: sql<number>`COUNT(DISTINCT ${employees.departmentId})`,
   }).from(employees).where(eq(employees.status, 'active'));
-  
+
   return {
     totalEmployees: empCount[0]?.total || 0,
     departments: empCount[0]?.deptCount || 0,
@@ -10695,17 +10748,17 @@ export async function getEmployeeSummary(companyId?: number) {
 export async function getFinancialSummary() {
   const db = await getDb();
   if (!db) return null;
-  
+
   const revData = await db.select({
     totalRevenue: sql<string>`COALESCE(SUM(CAST(${invoices.totalAmount} AS DECIMAL(15,2))), 0)`,
     invoiceCount: sql<number>`COUNT(*)`,
   }).from(invoices).where(eq(invoices.status, 'paid'));
-  
+
   const expData = await db.select({
     totalExpenses: sql<string>`COALESCE(SUM(CAST(${purchaseOrders.totalAmount} AS DECIMAL(15,2))), 0)`,
     poCount: sql<number>`COUNT(*)`,
   }).from(purchaseOrders);
-  
+
   return {
     totalRevenue: parseFloat(revData[0]?.totalRevenue || '0'),
     invoiceCount: revData[0]?.invoiceCount || 0,
@@ -10717,7 +10770,7 @@ export async function getFinancialSummary() {
 export async function getProjectSummary(projectId?: number) {
   const db = await getDb();
   if (!db) return null;
-  
+
   if (projectId) {
     const rows = await db.select().from(projects).where(eq(projects.id, projectId));
     return rows[0] || null;
@@ -10856,4 +10909,18 @@ export async function deleteGrantBidWebFormMapping(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.delete(grantBidWebFormMappings).where(eq(grantBidWebFormMappings.id, id));
+}
+
+export async function getEdiTradingPartnerById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const results = await db.select().from(ediTradingPartners).where(eq(ediTradingPartners.id, id)).limit(1);
+  return results[0];
+}
+
+export async function getEdiTradingPartnerByIsaId(isaId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const results = await db.select().from(ediTradingPartners).where(eq(ediTradingPartners.isaId, isaId)).limit(1);
+  return results[0];
 }
