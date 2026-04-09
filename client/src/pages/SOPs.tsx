@@ -805,7 +805,7 @@ function SOPCard({
   const Icon = sop.icon;
 
   return (
-    <Card className={`transition-all duration-200 ${isExpanded ? "ring-1 ring-primary/20" : "hover:shadow-md"}`}>
+    <Card className={`transition-all duration-200 ${isExpanded ? "ring-1 ring-primary/20" : "hover:border-border/80"}`}>
       <button
         onClick={onToggle}
         className="w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-t-lg"
@@ -970,7 +970,7 @@ export default function SOPs() {
             <BookOpen className="h-5 w-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">
+            <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">
               Standard Operating Procedures
             </h1>
             <p className="text-muted-foreground mt-1">
@@ -985,28 +985,28 @@ export default function SOPs() {
         <Card className="p-4">
           <div className="flex items-center gap-2">
             <FileText className="h-4 w-4 text-muted-foreground" />
-            <span className="text-2xl font-bold">{sops.length}</span>
+            <span className="text-xl font-semibold tracking-[-0.02em]">{sops.length}</span>
           </div>
           <p className="text-xs text-muted-foreground mt-1">Total SOPs</p>
         </Card>
         <Card className="p-4">
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-muted-foreground" />
-            <span className="text-2xl font-bold">{allAudiences.length}</span>
+            <span className="text-xl font-semibold tracking-[-0.02em]">{allAudiences.length}</span>
           </div>
           <p className="text-xs text-muted-foreground mt-1">Role Groups</p>
         </Card>
         <Card className="p-4">
           <div className="flex items-center gap-2">
             <Building2 className="h-4 w-4 text-teal-500" />
-            <span className="text-2xl font-bold">1</span>
+            <span className="text-xl font-semibold tracking-[-0.02em]">1</span>
           </div>
           <p className="text-xs text-muted-foreground mt-1">Copacker SOP</p>
         </Card>
         <Card className="p-4">
           <div className="flex items-center gap-2">
             <Truck className="h-4 w-4 text-sky-500" />
-            <span className="text-2xl font-bold">1</span>
+            <span className="text-xl font-semibold tracking-[-0.02em]">1</span>
           </div>
           <p className="text-xs text-muted-foreground mt-1">Vendor SOP</p>
         </Card>

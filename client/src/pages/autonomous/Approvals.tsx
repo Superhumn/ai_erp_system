@@ -107,7 +107,7 @@ export default function ApprovalsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
+          <h1 className="text-xl font-semibold tracking-[-0.02em] flex items-center gap-2">
             <CheckCircle2 className="h-6 w-6" />
             Approval Queue
           </h1>
@@ -141,7 +141,7 @@ export default function ApprovalsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Pending</p>
-                <p className="text-2xl font-bold">
+                <p className="text-xl font-semibold tracking-[-0.02em]">
                   {approvalsQuery.data?.filter((a) => a.status === "pending").length || 0}
                 </p>
               </div>
@@ -154,7 +154,7 @@ export default function ApprovalsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Escalated</p>
-                <p className="text-2xl font-bold">
+                <p className="text-xl font-semibold tracking-[-0.02em]">
                   {approvalsQuery.data?.filter((a) => a.status === "escalated").length || 0}
                 </p>
               </div>
@@ -167,7 +167,7 @@ export default function ApprovalsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Auto-Approved</p>
-                <p className="text-2xl font-bold">
+                <p className="text-xl font-semibold tracking-[-0.02em]">
                   {approvalsQuery.data?.filter((a) => a.status === "auto_approved").length || 0}
                 </p>
               </div>
@@ -180,7 +180,7 @@ export default function ApprovalsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Total Value</p>
-                <p className="text-2xl font-bold">
+                <p className="text-xl font-semibold tracking-[-0.02em]">
                   ${(
                     pendingApprovals.reduce((sum, a) => sum + parseFloat(a.monetaryValue || "0"), 0) / 1000
                   ).toFixed(1)}k

@@ -254,7 +254,7 @@ export default function SupplierPortal() {
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-2">
             <Building2 className="h-8 w-8 text-blue-600" />
-            <h1 className="text-2xl font-bold">Supplier Document Portal</h1>
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">Supplier Document Portal</h1>
           </div>
           <p className="text-muted-foreground">
             Upload required shipping and customs documentation for Purchase Order <strong>#{session.purchaseOrder?.poNumber}</strong>

@@ -139,7 +139,7 @@ export default function Team() {
     <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold">Team Management</h1>
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">Team Management</h1>
             <p className="text-muted-foreground">Manage team members, roles, and permissions</p>
           </div>
           <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>

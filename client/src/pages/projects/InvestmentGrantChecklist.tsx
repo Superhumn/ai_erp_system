@@ -178,7 +178,7 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
           Back
         </Button>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold tracking-tight">{checklist.name}</h1>
+          <h1 className="text-xl font-semibold tracking-[-0.02em] tracking-tight">{checklist.name}</h1>
           {checklist.description && (
             <p className="text-muted-foreground text-sm mt-1">{checklist.description}</p>
           )}
@@ -192,20 +192,20 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold">{completedCount}/{totalCount}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{completedCount}/{totalCount}</div>
             <p className="text-xs text-muted-foreground">Tasks Completed</p>
             <Progress value={progressPercent} className="mt-2 h-2" />
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold">{progressPercent}%</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{progressPercent}%</div>
             <p className="text-xs text-muted-foreground">Overall Progress</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold">
+            <div className="text-xl font-semibold tracking-[-0.02em]">
               {checklist.totalCapex ? formatCurrency(checklist.totalCapex, checklist.currency || "SAR") : "-"}
             </div>
             <p className="text-xs text-muted-foreground">Total Capex</p>
@@ -213,7 +213,7 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-green-600">
+            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">
               {checklist.estimatedGrant
                 ? formatCurrency(checklist.estimatedGrant, checklist.currency || "SAR")
                 : checklist.totalCapex
@@ -377,7 +377,7 @@ export default function InvestmentGrantChecklist() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
             <ClipboardCheck className="h-8 w-8" />
             Saudi Investment Grant Checklist
           </h1>
@@ -474,13 +474,13 @@ export default function InvestmentGrantChecklist() {
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold">{checklists?.length || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{checklists?.length || 0}</div>
             <p className="text-xs text-muted-foreground">Total Checklists</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-blue-600">
+            <div className="text-xl font-semibold tracking-[-0.02em] text-blue-600">
               {(checklists as unknown as Checklist[])?.filter((c: Checklist) => c.status === "in_progress").length || 0}
             </div>
             <p className="text-xs text-muted-foreground">In Progress</p>
@@ -488,7 +488,7 @@ export default function InvestmentGrantChecklist() {
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-green-600">
+            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">
               {(checklists as unknown as Checklist[])?.filter((c: Checklist) => c.status === "completed").length || 0}
             </div>
             <p className="text-xs text-muted-foreground">Completed</p>

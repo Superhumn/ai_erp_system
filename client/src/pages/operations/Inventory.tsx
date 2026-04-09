@@ -350,7 +350,7 @@ export default function Inventory() {
       <div>
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+            <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
               <Warehouse className="h-8 w-8" />
               Inventory
             </h1>
@@ -369,13 +369,13 @@ export default function Inventory() {
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold">{inventory?.length || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{inventory?.length || 0}</div>
             <p className="text-xs text-muted-foreground">Total SKUs</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-green-600">
+            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">
               {inventory?.filter(i => parseFloat(i.quantity || "0") > parseFloat(i.reorderLevel || "0")).length || 0}
             </div>
             <p className="text-xs text-muted-foreground">In Stock</p>
@@ -383,7 +383,7 @@ export default function Inventory() {
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-amber-600">
+            <div className="text-xl font-semibold tracking-[-0.02em] text-amber-600">
               {inventory?.filter(i => {
                 const qty = parseFloat(i.quantity || "0");
                 const reorder = parseFloat(i.reorderLevel || "0");
@@ -395,7 +395,7 @@ export default function Inventory() {
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-red-600">
+            <div className="text-xl font-semibold tracking-[-0.02em] text-red-600">
               {inventory?.filter(i => parseFloat(i.quantity || "0") <= 0).length || 0}
             </div>
             <p className="text-xs text-muted-foreground">Out of Stock</p>

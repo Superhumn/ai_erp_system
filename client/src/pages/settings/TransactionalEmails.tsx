@@ -155,7 +155,7 @@ export default function TransactionalEmailsPage() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Transactional Emails</h1>
+          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Transactional Emails</h1>
           <p className="text-muted-foreground mt-1">
             Manage SendGrid templates, view email logs, and monitor delivery
           </p>

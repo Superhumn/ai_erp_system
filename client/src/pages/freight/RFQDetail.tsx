@@ -290,7 +290,7 @@ export default function RFQDetail() {
           </Link>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold">{rfq.rfqNumber}</h1>
+              <h1 className="text-xl font-semibold tracking-[-0.02em]">{rfq.rfqNumber}</h1>
               <Badge variant={
                 rfq.status === 'quotes_received' ? 'default' :
                 rfq.status === 'awarded' ? 'secondary' :

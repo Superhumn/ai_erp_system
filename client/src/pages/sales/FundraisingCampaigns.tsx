@@ -63,13 +63,13 @@ export default function FundraisingCampaigns() {
 
   const getStatusColor = (status: string) => {
     const colors: Record<string, string> = {
-      planning: "bg-gray-100 text-gray-800",
-      active: "bg-green-100 text-green-800",
-      paused: "bg-yellow-100 text-yellow-800",
-      closed: "bg-blue-100 text-blue-800",
-      cancelled: "bg-red-100 text-red-800",
+      planning: "bg-gray-500/8 text-gray-600 dark:text-gray-400",
+      active: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
+      paused: "bg-amber-500/8 text-amber-600 dark:text-amber-400",
+      closed: "bg-blue-500/8 text-blue-600 dark:text-blue-400",
+      cancelled: "bg-red-500/8 text-red-600 dark:text-red-400",
     };
-    return colors[status] || "bg-gray-100 text-gray-800";
+    return colors[status] || "bg-gray-500/8 text-gray-600 dark:text-gray-400";
   };
 
   const calculateProgress = (raised: string, target: string) => {
@@ -82,7 +82,7 @@ export default function FundraisingCampaigns() {
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Fundraising Campaigns</h1>
+          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Fundraising Campaigns</h1>
           <p className="text-muted-foreground">Manage your fundraising rounds and track progress</p>
         </div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
@@ -254,7 +254,7 @@ export default function FundraisingCampaigns() {
             const target = parseFloat(campaign.targetAmount || '0');
             
             return (
-              <Card key={campaign.id} className="hover:shadow-lg transition-shadow">
+              <Card key={campaign.id} className="hover:border-primary/15 transition-shadow">
                 <CardHeader>
                   <div className="flex items-start justify-between">
                     <div className="flex-1">

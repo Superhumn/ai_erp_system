@@ -355,7 +355,7 @@ export default function CopackerPortal() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Copacker Dashboard</h1>
+          <h1 className="text-xl font-semibold tracking-[-0.02em]">Copacker Dashboard</h1>
           <p className="text-muted-foreground">
             Manage inventory updates, invoices, and shipping documents
           </p>
@@ -403,7 +403,7 @@ export default function CopackerPortal() {
               <Package className="h-8 w-8 text-blue-500" />
               <div>
                 <p className="text-sm text-muted-foreground">Products Tracked</p>
-                <p className="text-2xl font-bold">{stats.totalProducts}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em]">{stats.totalProducts}</p>
               </div>
             </div>
           </CardContent>
@@ -414,7 +414,7 @@ export default function CopackerPortal() {
               <Clock className="h-8 w-8 text-orange-500" />
               <div>
                 <p className="text-sm text-muted-foreground">Draft Updates</p>
-                <p className="text-2xl font-bold">{stats.pendingUpdates}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em]">{stats.pendingUpdates}</p>
               </div>
             </div>
           </CardContent>
@@ -425,7 +425,7 @@ export default function CopackerPortal() {
               <DollarSign className="h-8 w-8 text-green-500" />
               <div>
                 <p className="text-sm text-muted-foreground">Total Invoices</p>
-                <p className="text-2xl font-bold">{stats.totalInvoices}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em]">{stats.totalInvoices}</p>
               </div>
             </div>
           </CardContent>
@@ -436,7 +436,7 @@ export default function CopackerPortal() {
               <FileText className="h-8 w-8 text-yellow-500" />
               <div>
                 <p className="text-sm text-muted-foreground">Pending Invoices</p>
-                <p className="text-2xl font-bold">{stats.pendingInvoices}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em]">{stats.pendingInvoices}</p>
               </div>
             </div>
           </CardContent>
@@ -447,7 +447,7 @@ export default function CopackerPortal() {
               <Truck className="h-8 w-8 text-purple-500" />
               <div>
                 <p className="text-sm text-muted-foreground">Shipping Docs</p>
-                <p className="text-2xl font-bold">{stats.totalDocs}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em]">{stats.totalDocs}</p>
               </div>
             </div>
           </CardContent>
@@ -1197,7 +1197,7 @@ export default function CopackerPortal() {
               <div className="flex justify-end mt-2">
                 <div className="text-right">
                   <p className="text-sm text-muted-foreground">Total</p>
-                  <p className="text-xl font-bold font-mono">
+                  <p className="text-lg font-semibold tracking-[-0.015em] font-mono">
                     ${invoiceTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </p>
                 </div>

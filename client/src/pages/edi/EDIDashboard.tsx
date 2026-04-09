@@ -35,15 +35,15 @@ const txnSetLabels: Record<string, string> = {
 };
 
 const statusColors: Record<string, string> = {
-  received: "bg-blue-100 text-blue-800",
-  parsing: "bg-yellow-100 text-yellow-800",
-  parsed: "bg-indigo-100 text-indigo-800",
-  validated: "bg-purple-100 text-purple-800",
-  processing: "bg-orange-100 text-orange-800",
-  processed: "bg-green-100 text-green-800",
-  error: "bg-red-100 text-red-800",
-  rejected: "bg-red-100 text-red-800",
-  acknowledged: "bg-emerald-100 text-emerald-800",
+  received: "bg-blue-500/8 text-blue-600 dark:text-blue-400",
+  parsing: "bg-amber-500/8 text-amber-600 dark:text-amber-400",
+  parsed: "bg-indigo-500/8 text-indigo-600 dark:text-indigo-400",
+  validated: "bg-violet-500/8 text-violet-600 dark:text-violet-400",
+  processing: "bg-orange-500/8 text-orange-600 dark:text-orange-400",
+  processed: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
+  error: "bg-red-500/8 text-red-600 dark:text-red-400",
+  rejected: "bg-red-500/8 text-red-600 dark:text-red-400",
+  acknowledged: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
 };
 
 export default function EDIDashboard() {
@@ -85,7 +85,7 @@ export default function EDIDashboard() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">EDI Hub</h1>
+          <h1 className="text-xl font-semibold tracking-[-0.02em]">EDI Hub</h1>
           <p className="text-muted-foreground">Electronic Data Interchange for retail customer connections</p>
         </div>
         <div className="flex gap-2">
@@ -114,7 +114,7 @@ export default function EDIDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.totalPartners || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.totalPartners || 0}</div>
             <p className="text-xs text-muted-foreground">{stats?.activePartners || 0} active</p>
           </CardContent>
         </Card>
@@ -127,7 +127,7 @@ export default function EDIDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.totalTransactions || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.totalTransactions || 0}</div>
             <p className="text-xs text-muted-foreground">All time</p>
           </CardContent>
         </Card>
@@ -140,7 +140,7 @@ export default function EDIDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.recentTransactions || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.recentTransactions || 0}</div>
             <p className="text-xs text-muted-foreground">Last 7 days</p>
           </CardContent>
         </Card>
@@ -153,7 +153,7 @@ export default function EDIDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{(stats as any)?.pendingAcks || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{(stats as any)?.pendingAcks || 0}</div>
             <p className="text-xs text-muted-foreground">Awaiting response</p>
           </CardContent>
         </Card>
@@ -166,7 +166,7 @@ export default function EDIDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-600">{(stats as any)?.errorTransactions || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-red-600">{(stats as any)?.errorTransactions || 0}</div>
             <p className="text-xs text-muted-foreground">Needs attention</p>
           </CardContent>
         </Card>
@@ -179,7 +179,7 @@ export default function EDIDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">{stats?.activePartners || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{stats?.activePartners || 0}</div>
             <p className="text-xs text-muted-foreground">Connected</p>
           </CardContent>
         </Card>
@@ -404,7 +404,7 @@ export default function EDIDashboard() {
                       <td className="py-3 text-sm font-mono">{txn.purchaseOrderNumber || "-"}</td>
                       <td className="py-3 text-sm font-mono text-muted-foreground">{txn.interchangeControlNumber || "-"}</td>
                       <td className="py-3">
-                        <Badge className={statusColors[txn.status] || "bg-gray-100 text-gray-800"} variant="outline">
+                        <Badge className={statusColors[txn.status] || "bg-gray-500/8 text-gray-600 dark:text-gray-400"} variant="outline">
                           {txn.status}
                         </Badge>
                       </td>

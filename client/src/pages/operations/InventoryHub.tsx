@@ -539,9 +539,9 @@ export default function InventoryHub() {
 
   const getSeverityColor = (severity: string) => {
     switch (severity) {
-      case "critical": return "bg-red-100 text-red-800 border-red-200";
-      case "warning": return "bg-yellow-100 text-yellow-800 border-yellow-200";
-      default: return "bg-blue-100 text-blue-800 border-blue-200";
+      case "critical": return "bg-red-500/8 text-red-600 dark:text-red-400 border-red-200";
+      case "warning": return "bg-amber-500/8 text-amber-600 dark:text-amber-400 border-yellow-200";
+      default: return "bg-blue-500/8 text-blue-600 dark:text-blue-400 border-blue-200";
     }
   };
 
@@ -561,7 +561,7 @@ export default function InventoryHub() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Inventory</h1>
+          <h1 className="text-xl font-semibold tracking-[-0.02em]">Inventory</h1>
           <p className="text-muted-foreground">Multi-location inventory tracking across all copackers</p>
         </div>
         <div className="flex items-center gap-3">
@@ -704,7 +704,7 @@ export default function InventoryHub() {
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Delayed Shipments</p>
-                      <p className="text-2xl font-bold">{exceptions.filter(e => e.type === "delayed_shipment" || e.type === "late_shipment" || e.type === "shortage").length}</p>
+                      <p className="text-xl font-semibold tracking-[-0.02em]">{exceptions.filter(e => e.type === "delayed_shipment" || e.type === "late_shipment" || e.type === "shortage").length}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -717,7 +717,7 @@ export default function InventoryHub() {
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Blocked Production</p>
-                      <p className="text-2xl font-bold">{exceptions.filter(e => e.type === "blocked_production").length}</p>
+                      <p className="text-xl font-semibold tracking-[-0.02em]">{exceptions.filter(e => e.type === "blocked_production").length}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -730,7 +730,7 @@ export default function InventoryHub() {
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Yield Variance</p>
-                      <p className="text-2xl font-bold">{exceptions.filter(e => e.type === "yield_variance").length}</p>
+                      <p className="text-xl font-semibold tracking-[-0.02em]">{exceptions.filter(e => e.type === "yield_variance").length}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -743,7 +743,7 @@ export default function InventoryHub() {
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">QC Holds</p>
-                      <p className="text-2xl font-bold">{exceptions.filter(e => e.type === "qc_hold").length}</p>
+                      <p className="text-xl font-semibold tracking-[-0.02em]">{exceptions.filter(e => e.type === "qc_hold").length}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -756,7 +756,7 @@ export default function InventoryHub() {
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Low Stock</p>
-                      <p className="text-2xl font-bold">{exceptions.filter(e => e.type === "low_stock" || e.type === "shortage").length}</p>
+                      <p className="text-xl font-semibold tracking-[-0.02em]">{exceptions.filter(e => e.type === "low_stock" || e.type === "shortage").length}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -875,7 +875,7 @@ export default function InventoryHub() {
                             <p className="text-xs font-medium text-muted-foreground mb-2">OUTPUT</p>
                             <div className="flex justify-between items-center">
                               <span className="font-medium">{wo.product?.name || wo.bom?.product?.name || "Product"}</span>
-                              <span className="text-lg font-bold text-green-600">{wo.quantity} {wo.unit || "EA"}</span>
+                              <span className="text-base font-semibold tracking-[-0.01em] text-green-600">{wo.quantity} {wo.unit || "EA"}</span>
                             </div>
                             {wo.completedQuantity > 0 && (
                               <div className="mt-2">
@@ -1052,7 +1052,7 @@ export default function InventoryHub() {
                       </div>
                       <div className="flex items-center gap-6">
                         <div className="text-right">
-                          <p className="text-2xl font-bold">
+                          <p className="text-xl font-semibold tracking-[-0.02em]">
                             {item.totalQuantity.toLocaleString()} <span className="text-sm font-normal text-muted-foreground">{item.unit}</span>
                           </p>
                           <p className="text-sm text-muted-foreground">On Hand</p>
@@ -1285,7 +1285,7 @@ export default function InventoryHub() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="text-2xl font-bold">{location.totalItems}</p>
+                      <p className="text-xl font-semibold tracking-[-0.02em]">{location.totalItems}</p>
                       <p className="text-sm text-muted-foreground">Total Items</p>
                     </div>
                   </div>

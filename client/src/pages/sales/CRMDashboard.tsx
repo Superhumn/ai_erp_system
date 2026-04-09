@@ -70,7 +70,7 @@ export default function CRMDashboard() {
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Fundraising CRM Dashboard</h1>
+          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Fundraising CRM Dashboard</h1>
           <p className="text-muted-foreground">Overview of your fundraising pipeline and investor relationships</p>
         </div>
         <div className="flex gap-2">
@@ -97,7 +97,7 @@ export default function CRMDashboard() {
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalInvestors}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{totalInvestors}</div>
             <p className="text-xs text-muted-foreground">
               {activeInvestors} active, {committedInvestors} committed
             </p>
@@ -110,7 +110,7 @@ export default function CRMDashboard() {
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">${totalRaised.toLocaleString()}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">${totalRaised.toLocaleString()}</div>
             <p className="text-xs text-muted-foreground">
               From {investments?.length || 0} investments
             </p>
@@ -123,7 +123,7 @@ export default function CRMDashboard() {
             <Target className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{activeCampaigns}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{activeCampaigns}</div>
             <p className="text-xs text-muted-foreground">
               {campaigns?.length || 0} total campaigns
             </p>
@@ -136,7 +136,7 @@ export default function CRMDashboard() {
             <Calendar className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{upcomingReminders}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{upcomingReminders}</div>
             <p className="text-xs text-muted-foreground">
               In the next 7 days
             </p>
@@ -244,9 +244,9 @@ export default function CRMDashboard() {
                     </div>
                   </div>
                   <Badge className={
-                    investor.status === 'invested' ? 'bg-green-100 text-green-800' :
-                    investor.status === 'committed' ? 'bg-orange-100 text-orange-800' :
-                    'bg-blue-100 text-blue-800'
+                    investor.status === 'invested' ? 'bg-emerald-500/8 text-emerald-600 dark:text-emerald-400' :
+                    investor.status === 'committed' ? 'bg-orange-500/8 text-orange-600 dark:text-orange-400' :
+                    'bg-blue-500/8 text-blue-600 dark:text-blue-400'
                   }>
                     {investor.status}
                   </Badge>

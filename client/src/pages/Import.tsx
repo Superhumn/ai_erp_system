@@ -260,7 +260,7 @@ export default function Import() {
   return (
     <div className="p-6 max-w-6xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold">Import Data from Google Sheets</h1>
+        <h1 className="text-xl font-semibold tracking-[-0.02em]">Import Data from Google Sheets</h1>
         <p className="text-muted-foreground mt-1">
           Connect your Google account to import data from your spreadsheets
         </p>
@@ -617,11 +617,11 @@ export default function Import() {
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="p-4 bg-green-50 dark:bg-green-950 rounded-lg">
-                <p className="text-3xl font-bold text-green-600">{importResults.imported}</p>
+                <p className="text-[1.75rem] font-semibold tracking-[-0.025em] text-green-600">{importResults.imported}</p>
                 <p className="text-sm text-green-800 dark:text-green-200">Records imported</p>
               </div>
               <div className="p-4 bg-red-50 dark:bg-red-950 rounded-lg">
-                <p className="text-3xl font-bold text-red-600">{importResults.failed}</p>
+                <p className="text-[1.75rem] font-semibold tracking-[-0.025em] text-red-600">{importResults.failed}</p>
                 <p className="text-sm text-red-800 dark:text-red-200">Records failed</p>
               </div>
             </div>

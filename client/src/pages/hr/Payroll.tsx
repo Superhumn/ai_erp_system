@@ -77,7 +77,7 @@ export default function Payroll() {
   return (
     <div className="space-y-6 animate-fade-in">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+        <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
           <Wallet className="h-8 w-8" />
           Payroll & Compensation
         </h1>
@@ -94,7 +94,7 @@ export default function Payroll() {
               <Users className="h-4 w-4 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Active Employees</span>
             </div>
-            <div className="text-2xl font-bold mt-2">{activeEmployees.length}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-2">{activeEmployees.length}</div>
           </CardContent>
         </Card>
         <Card>
@@ -103,7 +103,7 @@ export default function Payroll() {
               <DollarSign className="h-4 w-4 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Annual Payroll</span>
             </div>
-            <div className="text-2xl font-bold mt-2">{formatCurrency(totalSalary.toString())}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-2">{formatCurrency(totalSalary.toString())}</div>
           </CardContent>
         </Card>
         <Card>
@@ -112,7 +112,7 @@ export default function Payroll() {
               <TrendingUp className="h-4 w-4 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Avg. Salary</span>
             </div>
-            <div className="text-2xl font-bold mt-2">{formatCurrency(avgSalary.toString())}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-2">{formatCurrency(avgSalary.toString())}</div>
           </CardContent>
         </Card>
         <Card>
@@ -121,7 +121,7 @@ export default function Payroll() {
               <Wallet className="h-4 w-4 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Monthly Payroll</span>
             </div>
-            <div className="text-2xl font-bold mt-2">{formatCurrency((Number(totalSalary) / 12).toString())}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-2">{formatCurrency((Number(totalSalary) / 12).toString())}</div>
           </CardContent>
         </Card>
       </div>

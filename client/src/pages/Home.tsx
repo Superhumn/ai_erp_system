@@ -1,5 +1,5 @@
 import { trpc } from "@/lib/trpc";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Users,
@@ -12,6 +12,9 @@ import {
   TrendingUp,
   ShoppingCart,
   UserCog,
+  ArrowUpRight,
+  ArrowRight,
+  Sparkles,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -42,25 +45,26 @@ function KPICard({
 }) {
   return (
     <Card
-      className={`group relative overflow-hidden ${onClick ? 'cursor-pointer hover:shadow-md hover:border-primary/20 transition-all duration-200' : ''}`}
+      className={`group relative ${onClick ? 'cursor-pointer hover:border-border/80 transition-colors duration-100' : ''}`}
       onClick={onClick}
     >
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          {title}
-        </CardTitle>
-        <div className="h-8 w-8 rounded-lg bg-primary/8 flex items-center justify-center">
-          <Icon className="h-4 w-4 text-primary/70" />
-        </div>
-      </CardHeader>
-      <CardContent>
+      <CardContent className="pt-5">
         {loading ? (
-          <Skeleton className="h-8 w-24" />
+          <div className="space-y-3">
+            <Skeleton className="h-3 w-20" />
+            <Skeleton className="h-7 w-28" />
+          </div>
         ) : (
           <>
-            <div className="text-2xl font-semibold tracking-tight">{value}</div>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                {title}
+              </span>
+              <Icon className="h-3.5 w-3.5 text-muted-foreground/50" />
+            </div>
+            <div className="text-2xl font-semibold tracking-[-0.02em]">{value}</div>
             {description && (
-              <p className="text-xs text-muted-foreground mt-1.5">{description}</p>
+              <p className="text-[11px] text-muted-foreground mt-1.5">{description}</p>
             )}
           </>
         )}
@@ -69,48 +73,69 @@ function KPICard({
   );
 }
 
+function QuickLink({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: React.ElementType;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors duration-100 group"
+    >
+      <Icon className="h-3.5 w-3.5" />
+      <span className="flex-1 text-left">{label}</span>
+      <ArrowRight className="h-3 w-3 opacity-0 group-hover:opacity-50 transition-opacity duration-100" />
+    </button>
+  );
+}
+
 export default function Home() {
   const [, setLocation] = useLocation();
   const { data: metrics, isLoading } = trpc.dashboard.metrics.useQuery();
 
   return (
-    <div className="space-y-8 animate-fade-in">
+    <div className="space-y-8 animate-fade-in max-w-6xl">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+        <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Dashboard</h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          Overview of your business operations and key metrics.
+          Overview of your business operations
         </p>
       </div>
 
-      {/* KPI Grid */}
-      <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
+      {/* Primary KPIs */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KPICard
-          title="Revenue This Month"
+          title="Revenue"
           value={formatCurrency(metrics?.revenueThisMonth)}
           icon={DollarSign}
-          description="From all sales orders"
+          description="This month"
           onClick={() => setLocation('/sales/orders')}
           loading={isLoading}
         />
         <KPICard
-          title="Invoices Paid"
+          title="Collected"
           value={formatCurrency(metrics?.invoicesPaid)}
           icon={TrendingUp}
-          description="Total collected"
+          description="Invoices paid"
           onClick={() => setLocation('/finance/invoices')}
           loading={isLoading}
         />
         <KPICard
-          title="Pending Invoices"
+          title="Pending"
           value={metrics?.pendingInvoices || 0}
           icon={FileText}
-          description="Awaiting payment"
+          description="Invoices awaiting payment"
           onClick={() => setLocation('/finance/invoices')}
           loading={isLoading}
         />
         <KPICard
-          title="Open Disputes"
+          title="Disputes"
           value={metrics?.openDisputes || 0}
           icon={AlertTriangle}
           description="Requiring attention"
@@ -120,7 +145,7 @@ export default function Home() {
       </div>
 
       {/* Secondary KPIs */}
-      <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
         <KPICard
           title="Customers"
           value={metrics?.customers || 0}
@@ -143,14 +168,14 @@ export default function Home() {
           loading={isLoading}
         />
         <KPICard
-          title="Active Employees"
+          title="Employees"
           value={metrics?.activeEmployees || 0}
           icon={UserCog}
           onClick={() => setLocation('/hr/employees')}
           loading={isLoading}
         />
         <KPICard
-          title="Active Projects"
+          title="Projects"
           value={metrics?.activeProjects || 0}
           icon={FolderKanban}
           onClick={() => setLocation('/projects')}
@@ -158,77 +183,68 @@ export default function Home() {
         />
       </div>
 
-      {/* Quick Actions */}
-      <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-        <Card className="hover:shadow-md hover:border-primary/15 transition-all duration-200">
+      {/* Summary Cards */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <Card>
           <CardHeader>
-            <CardTitle className="text-base font-semibold tracking-tight">Finance Overview</CardTitle>
-            <CardDescription className="text-xs">Track invoices, payments, and cash flow</CardDescription>
+            <CardTitle>Finance</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex justify-between items-center text-sm py-1">
+          <CardContent className="space-y-2.5">
+            <div className="flex justify-between items-center text-[13px] py-1">
               <span className="text-muted-foreground">Pending Invoices</span>
               <span className="font-medium tabular-nums">{metrics?.pendingInvoices || 0}</span>
             </div>
-            <div className="flex justify-between items-center text-sm py-1">
+            <div className="flex justify-between items-center text-[13px] py-1">
               <span className="text-muted-foreground">Pending POs</span>
               <span className="font-medium tabular-nums">{metrics?.pendingPurchaseOrders || 0}</span>
             </div>
-            <div className="flex justify-between items-center text-sm py-1">
+            <div className="flex justify-between items-center text-[13px] py-1">
               <span className="text-muted-foreground">Active Contracts</span>
               <span className="font-medium tabular-nums">{metrics?.activeContracts || 0}</span>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="hover:shadow-md hover:border-primary/15 transition-all duration-200">
+        <Card>
           <CardHeader>
-            <CardTitle className="text-base font-semibold tracking-tight">Operations Summary</CardTitle>
-            <CardDescription className="text-xs">Inventory, vendors, and logistics</CardDescription>
+            <CardTitle>Operations</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex justify-between items-center text-sm py-1">
+          <CardContent className="space-y-2.5">
+            <div className="flex justify-between items-center text-[13px] py-1">
               <span className="text-muted-foreground">Total Products</span>
               <span className="font-medium tabular-nums">{metrics?.products || 0}</span>
             </div>
-            <div className="flex justify-between items-center text-sm py-1">
+            <div className="flex justify-between items-center text-[13px] py-1">
               <span className="text-muted-foreground">Active Vendors</span>
               <span className="font-medium tabular-nums">{metrics?.vendors || 0}</span>
             </div>
-            <div className="flex justify-between items-center text-sm py-1">
+            <div className="flex justify-between items-center text-[13px] py-1">
               <span className="text-muted-foreground">Pending POs</span>
               <span className="font-medium tabular-nums">{metrics?.pendingPurchaseOrders || 0}</span>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="hover:shadow-md hover:border-primary/15 transition-all duration-200">
+        <Card>
           <CardHeader>
-            <CardTitle className="text-base font-semibold tracking-tight">Quick Actions</CardTitle>
-            <CardDescription className="text-xs">Common tasks and shortcuts</CardDescription>
+            <CardTitle>Quick Actions</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-1">
-            <button
+          <CardContent className="space-y-0.5">
+            <QuickLink
+              icon={FileText}
+              label="Create Invoice"
               onClick={() => setLocation('/finance/invoices')}
-              className="w-full text-left text-sm px-3 py-2 rounded-lg hover:bg-accent transition-colors duration-150 flex items-center gap-2.5 text-muted-foreground hover:text-foreground"
-            >
-              <FileText className="h-4 w-4" />
-              Create Invoice
-            </button>
-            <button
+            />
+            <QuickLink
+              icon={ShoppingCart}
+              label="New Purchase Order"
               onClick={() => setLocation('/operations/purchase-orders')}
-              className="w-full text-left text-sm px-3 py-2 rounded-lg hover:bg-accent transition-colors duration-150 flex items-center gap-2.5 text-muted-foreground hover:text-foreground"
-            >
-              <ShoppingCart className="h-4 w-4" />
-              New Purchase Order
-            </button>
-            <button
+            />
+            <QuickLink
+              icon={Sparkles}
+              label="Ask AI Assistant"
               onClick={() => setLocation('/ai')}
-              className="w-full text-left text-sm px-3 py-2 rounded-lg hover:bg-accent transition-colors duration-150 flex items-center gap-2.5 text-muted-foreground hover:text-foreground"
-            >
-              <TrendingUp className="h-4 w-4" />
-              Ask AI Assistant
-            </button>
+            />
           </CardContent>
         </Card>
       </div>

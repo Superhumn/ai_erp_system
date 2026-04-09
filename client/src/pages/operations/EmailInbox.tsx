@@ -54,15 +54,15 @@ import {
 
 // Category display configuration
 const categoryConfig: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
-  receipt: { label: "Receipt", color: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200", icon: <Receipt className="h-3 w-3" /> },
-  purchase_order: { label: "Purchase Order", color: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200", icon: <Package className="h-3 w-3" /> },
-  invoice: { label: "Invoice", color: "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200", icon: <FileText className="h-3 w-3" /> },
-  shipping_confirmation: { label: "Shipping", color: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200", icon: <Truck className="h-3 w-3" /> },
-  freight_quote: { label: "Freight Quote", color: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200", icon: <Ship className="h-3 w-3" /> },
-  delivery_notification: { label: "Delivery", color: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200", icon: <CheckCircle2 className="h-3 w-3" /> },
-  order_confirmation: { label: "Order Confirm", color: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200", icon: <ShoppingCart className="h-3 w-3" /> },
-  payment_confirmation: { label: "Payment", color: "bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200", icon: <CreditCard className="h-3 w-3" /> },
-  general: { label: "General", color: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200", icon: <Mail className="h-3 w-3" /> },
+  receipt: { label: "Receipt", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400 dark:bg-green-900 dark:text-green-200", icon: <Receipt className="h-3 w-3" /> },
+  purchase_order: { label: "Purchase Order", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400 dark:bg-blue-900 dark:text-blue-200", icon: <Package className="h-3 w-3" /> },
+  invoice: { label: "Invoice", color: "bg-orange-500/8 text-orange-600 dark:text-orange-400 dark:bg-orange-900 dark:text-orange-200", icon: <FileText className="h-3 w-3" /> },
+  shipping_confirmation: { label: "Shipping", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400 dark:bg-purple-900 dark:text-purple-200", icon: <Truck className="h-3 w-3" /> },
+  freight_quote: { label: "Freight Quote", color: "bg-cyan-500/8 text-cyan-600 dark:text-cyan-400 dark:bg-cyan-900 dark:text-cyan-200", icon: <Ship className="h-3 w-3" /> },
+  delivery_notification: { label: "Delivery", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400 dark:bg-emerald-900 dark:text-emerald-200", icon: <CheckCircle2 className="h-3 w-3" /> },
+  order_confirmation: { label: "Order Confirm", color: "bg-indigo-500/8 text-indigo-600 dark:text-indigo-400 dark:bg-indigo-900 dark:text-indigo-200", icon: <ShoppingCart className="h-3 w-3" /> },
+  payment_confirmation: { label: "Payment", color: "bg-teal-500/8 text-teal-600 dark:text-teal-400 dark:bg-teal-900 dark:text-teal-200", icon: <CreditCard className="h-3 w-3" /> },
+  general: { label: "General", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400 dark:bg-gray-800 dark:text-gray-200", icon: <Mail className="h-3 w-3" /> },
 };
 
 // Priority display configuration
@@ -477,7 +477,7 @@ export default function EmailInbox() {
       <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Email Inbox</h1>
+            <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Email Inbox</h1>
             <p className="text-muted-foreground">
               Scan emails for receipts, invoices, and shipping documents with AI auto-categorization
             </p>
@@ -744,7 +744,7 @@ export default function EmailInbox() {
               <Mail className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stats?.total || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.total || 0}</div>
             </CardContent>
           </Card>
           <Card>
@@ -753,7 +753,7 @@ export default function EmailInbox() {
               <FileText className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stats?.documents || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.documents || 0}</div>
             </CardContent>
           </Card>
           <Card>
@@ -762,7 +762,7 @@ export default function EmailInbox() {
               <AlertCircle className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stats?.pending || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.pending || 0}</div>
             </CardContent>
           </Card>
           <Card>
@@ -771,7 +771,7 @@ export default function EmailInbox() {
               <CheckCircle2 className="h-4 w-4 text-green-600" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stats?.parsed || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.parsed || 0}</div>
             </CardContent>
           </Card>
           <Card>
@@ -780,7 +780,7 @@ export default function EmailInbox() {
               <ArrowUpCircle className="h-4 w-4 text-red-600" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
+              <div className="text-xl font-semibold tracking-[-0.02em]">
                 {categoryStats?.priorities?.find(p => p.priority === "high")?.count || 0}
               </div>
             </CardContent>

@@ -130,7 +130,7 @@ export default function CustomsClearance() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Customs Clearance</h1>
+          <h1 className="text-xl font-semibold tracking-[-0.02em]">Customs Clearance</h1>
           <p className="text-muted-foreground">Track import and export customs clearances</p>
         </div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>

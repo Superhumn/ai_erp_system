@@ -158,7 +158,7 @@ export default function FirefliesPage() {
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
+          <h1 className="text-xl font-semibold tracking-[-0.02em] flex items-center gap-2">
             <Mic className="h-6 w-6" />
             Fireflies.ai Integration
           </h1>
@@ -207,31 +207,31 @@ export default function FirefliesPage() {
           <Card>
             <CardContent className="pt-4 pb-4">
               <div className="text-sm text-muted-foreground">Total Meetings</div>
-              <div className="text-2xl font-bold">{stats.total}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em]">{stats.total}</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4 pb-4">
               <div className="text-sm text-muted-foreground">Pending</div>
-              <div className="text-2xl font-bold text-yellow-600">{stats.pending}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em] text-yellow-600">{stats.pending}</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4 pb-4">
               <div className="text-sm text-muted-foreground">Processed</div>
-              <div className="text-2xl font-bold text-green-600">{stats.processed}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{stats.processed}</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4 pb-4">
               <div className="text-sm text-muted-foreground flex items-center gap-1"><Users className="h-3 w-3" /> Contacts Created</div>
-              <div className="text-2xl font-bold text-blue-600">{stats.contactsCreated}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em] text-blue-600">{stats.contactsCreated}</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4 pb-4">
               <div className="text-sm text-muted-foreground flex items-center gap-1"><ListTodo className="h-3 w-3" /> Tasks Created</div>
-              <div className="text-2xl font-bold text-purple-600">{stats.tasksCreated}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em] text-purple-600">{stats.tasksCreated}</div>
             </CardContent>
           </Card>
         </div>

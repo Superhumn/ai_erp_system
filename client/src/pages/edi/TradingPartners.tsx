@@ -153,7 +153,7 @@ export default function TradingPartners() {
             Back
           </Button>
           <div>
-            <h1 className="text-2xl font-bold">{sp.name}</h1>
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">{sp.name}</h1>
             <p className="text-muted-foreground">
               {sp.partnerType} &middot; ISA: {sp.isaId} &middot; GS: {sp.gsId}
             </p>
@@ -504,7 +504,7 @@ export default function TradingPartners() {
             </Button>
           </Link>
           <div>
-            <h1 className="text-2xl font-bold">Trading Partners</h1>
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">Trading Partners</h1>
             <p className="text-muted-foreground">Manage EDI connections with retail customers</p>
           </div>
         </div>

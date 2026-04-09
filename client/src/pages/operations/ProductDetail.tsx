@@ -35,20 +35,20 @@ export default function ProductDetail() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "active": return "bg-green-100 text-green-800";
-      case "inactive": return "bg-gray-100 text-gray-800";
-      case "discontinued": return "bg-red-100 text-red-800";
-      default: return "bg-gray-100 text-gray-800";
+      case "active": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
+      case "inactive": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "discontinued": return "bg-red-500/8 text-red-600 dark:text-red-400";
+      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
     }
   };
 
   const getTypeColor = (type: string) => {
     switch (type) {
-      case "finished_good": return "bg-blue-100 text-blue-800";
-      case "raw_material": return "bg-purple-100 text-purple-800";
-      case "component": return "bg-yellow-100 text-yellow-800";
-      case "service": return "bg-green-100 text-green-800";
-      default: return "bg-gray-100 text-gray-800";
+      case "finished_good": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
+      case "raw_material": return "bg-violet-500/8 text-violet-600 dark:text-violet-400";
+      case "component": return "bg-amber-500/8 text-amber-600 dark:text-amber-400";
+      case "service": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
+      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
     }
   };
 
@@ -64,7 +64,7 @@ export default function ProductDetail() {
           </Button>
         </Link>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold">{product.name}</h1>
+          <h1 className="text-xl font-semibold tracking-[-0.02em]">{product.name}</h1>
           <p className="text-muted-foreground font-mono">{product.sku}</p>
         </div>
         <Badge className={getStatusColor(product.status)}>{product.status}</Badge>
@@ -127,7 +127,7 @@ export default function ProductDetail() {
           <CardContent className="space-y-4">
             <div>
               <Label className="text-muted-foreground">Unit Price</Label>
-              <p className="text-2xl font-bold font-mono">{formatCurrency(product.unitPrice)}</p>
+              <p className="text-xl font-semibold tracking-[-0.02em] font-mono">{formatCurrency(product.unitPrice)}</p>
             </div>
             <div>
               <Label className="text-muted-foreground">Cost</Label>

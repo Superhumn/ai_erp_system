@@ -154,7 +154,7 @@ export default function InventoryCosting() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Inventory Costing & COGS</h1>
+          <h1 className="text-xl font-semibold tracking-[-0.02em]">Inventory Costing & COGS</h1>
           <p className="text-muted-foreground">
             FIFO, LIFO, and Weighted Average costing methods with automated COGS tracking
           </p>
@@ -183,7 +183,7 @@ export default function InventoryCosting() {
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
+            <div className="text-xl font-semibold tracking-[-0.02em]">
               ${cogsDashboard?.totalCogs?.toFixed(2) || "0.00"}
             </div>
             <p className="text-xs text-muted-foreground">
@@ -197,7 +197,7 @@ export default function InventoryCosting() {
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
+            <div className="text-xl font-semibold tracking-[-0.02em]">
               ${cogsDashboard?.totalRevenue?.toFixed(2) || "0.00"}
             </div>
             <p className="text-xs text-muted-foreground">
@@ -215,7 +215,7 @@ export default function InventoryCosting() {
             )}
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
+            <div className="text-xl font-semibold tracking-[-0.02em]">
               ${cogsDashboard?.grossMargin?.toFixed(2) || "0.00"}
             </div>
             <p className="text-xs text-muted-foreground">
@@ -229,7 +229,7 @@ export default function InventoryCosting() {
             <Layers className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
+            <div className="text-xl font-semibold tracking-[-0.02em]">
               {costLayers?.filter((l: any) => l.status === "active").length || 0}
             </div>
             <p className="text-xs text-muted-foreground">

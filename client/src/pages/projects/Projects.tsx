@@ -129,7 +129,7 @@ export default function Projects() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
             <FolderKanban className="h-8 w-8" />
             Projects
           </h1>
@@ -242,25 +242,25 @@ export default function Projects() {
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold">{projects?.length || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{projects?.length || 0}</div>
             <p className="text-xs text-muted-foreground">Total Projects</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-green-600">{activeCount}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{activeCount}</div>
             <p className="text-xs text-muted-foreground">Active</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-blue-600">{completedCount}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-blue-600">{completedCount}</div>
             <p className="text-xs text-muted-foreground">Completed</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold">{formatCurrency(totalBudget.toString())}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{formatCurrency(totalBudget.toString())}</div>
             <p className="text-xs text-muted-foreground">Total Budget</p>
           </CardContent>
         </Card>

@@ -279,12 +279,11 @@ export default function CRMHub() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-            <Target className="h-8 w-8" />
+          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">
             CRM Hub
           </h1>
-          <p className="text-muted-foreground mt-1">
-            Manage contacts, track deals, and capture leads from multiple sources.
+          <p className="text-sm text-muted-foreground mt-1">
+            Manage contacts, track deals, and capture leads
           </p>
         </div>
         <div className="flex gap-2">
@@ -593,7 +592,7 @@ export default function CRMHub() {
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{contactStats?.total || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{contactStats?.total || 0}</div>
             <p className="text-xs text-muted-foreground">
               {contactStats?.leads || 0} leads, {contactStats?.prospects || 0} prospects
             </p>
@@ -605,7 +604,7 @@ export default function CRMHub() {
             <Handshake className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{contactStats?.customers || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{contactStats?.customers || 0}</div>
             <p className="text-xs text-muted-foreground">
               Active customers in CRM
             </p>
@@ -617,7 +616,7 @@ export default function CRMHub() {
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{(contactStats?.investors || 0) + (contactStats?.donors || 0)}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{(contactStats?.investors || 0) + (contactStats?.donors || 0)}</div>
             <p className="text-xs text-muted-foreground">
               {contactStats?.investors || 0} investors, {contactStats?.donors || 0} donors
             </p>
@@ -629,7 +628,7 @@ export default function CRMHub() {
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{dealStats?.open || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{dealStats?.open || 0}</div>
             <p className="text-xs text-muted-foreground">
               ${Number(dealStats?.openValue || 0).toLocaleString()} pipeline value
             </p>
@@ -641,7 +640,7 @@ export default function CRMHub() {
             <DollarSign className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">{dealStats?.won || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{dealStats?.won || 0}</div>
             <p className="text-xs text-muted-foreground">
               ${Number(dealStats?.wonValue || 0).toLocaleString()} total won
             </p>
@@ -884,7 +883,7 @@ export default function CRMHub() {
                         </div>
                         <div className="space-y-2 min-h-[200px] bg-muted/30 rounded-lg p-2">
                           {stageDeals.map((deal) => (
-                            <Card key={deal.id} className="p-3 cursor-pointer hover:shadow-md transition-shadow">
+                            <Card key={deal.id} className="p-3 cursor-pointer hover:border-border/80 transition-shadow">
                               <div className="font-medium text-sm">{deal.name}</div>
                               {deal.amount && (
                                 <div className="text-sm text-green-600 font-semibold mt-1">

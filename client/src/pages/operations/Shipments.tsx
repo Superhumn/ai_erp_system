@@ -118,7 +118,7 @@ export default function Shipments() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
             <Truck className="h-8 w-8" />
             Shipments
           </h1>
@@ -227,25 +227,25 @@ export default function Shipments() {
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold">{shipments?.length || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{shipments?.length || 0}</div>
             <p className="text-xs text-muted-foreground">Total Shipments</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-gray-600">{pendingCount}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-gray-600">{pendingCount}</div>
             <p className="text-xs text-muted-foreground">Pending</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-amber-600">{inTransitCount}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-amber-600">{inTransitCount}</div>
             <p className="text-xs text-muted-foreground">In Transit</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-green-600">{deliveredCount}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{deliveredCount}</div>
             <p className="text-xs text-muted-foreground">Delivered</p>
           </CardContent>
         </Card>

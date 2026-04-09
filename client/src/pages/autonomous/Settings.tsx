@@ -125,7 +125,7 @@ export default function AutonomousSettings() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
+          <h1 className="text-xl font-semibold tracking-[-0.02em] flex items-center gap-2">
             <Settings2 className="h-6 w-6" />
             Autonomous Workflow Settings
           </h1>

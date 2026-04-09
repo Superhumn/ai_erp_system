@@ -78,12 +78,12 @@ function formatDate(value: string | Date | null | undefined) {
 }
 
 const poStatusOptions = [
-  { value: "draft", label: "Draft", color: "bg-gray-100 text-gray-800" },
-  { value: "sent", label: "Sent", color: "bg-blue-100 text-blue-800" },
-  { value: "confirmed", label: "Confirmed", color: "bg-green-100 text-green-800" },
-  { value: "shipped", label: "Shipped", color: "bg-purple-100 text-purple-800" },
-  { value: "received", label: "Received", color: "bg-emerald-100 text-emerald-800" },
-  { value: "cancelled", label: "Cancelled", color: "bg-red-100 text-red-800" },
+  { value: "draft", label: "Draft", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
+  { value: "sent", label: "Sent", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
+  { value: "confirmed", label: "Confirmed", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+  { value: "shipped", label: "Shipped", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
+  { value: "received", label: "Received", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+  { value: "cancelled", label: "Cancelled", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
 ];
 
 // Vendor Quotes Tab Component
@@ -202,12 +202,12 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
     { key: 'quantity', header: 'Qty', type: 'number', width: '100px', render: (v, row) => `${v} ${row.unit}` },
     { key: 'status', header: 'Status', type: 'text', width: '120px', render: (v) => {
       const colors: Record<string, string> = {
-        draft: 'bg-gray-100 text-gray-800',
-        sent: 'bg-blue-100 text-blue-800',
-        partially_received: 'bg-yellow-100 text-yellow-800',
-        all_received: 'bg-green-100 text-green-800',
-        awarded: 'bg-purple-100 text-purple-800',
-        cancelled: 'bg-red-100 text-red-800',
+        draft: 'bg-gray-500/8 text-gray-600 dark:text-gray-400',
+        sent: 'bg-blue-500/8 text-blue-600 dark:text-blue-400',
+        partially_received: 'bg-amber-500/8 text-amber-600 dark:text-amber-400',
+        all_received: 'bg-emerald-500/8 text-emerald-600 dark:text-emerald-400',
+        awarded: 'bg-violet-500/8 text-violet-600 dark:text-violet-400',
+        cancelled: 'bg-red-500/8 text-red-600 dark:text-red-400',
       };
       return <Badge className={colors[v] || 'bg-gray-100'}>{v?.replace(/_/g, ' ')}</Badge>;
     }},
@@ -1268,17 +1268,17 @@ export default function ProcurementHub() {
     { key: "phone", header: "Phone", type: "text", editable: true },
     { key: "leadTimeDays", header: "Lead Time", type: "number", editable: true, render: (row) => `${row.leadTimeDays || 14} days` },
     { key: "status", header: "Status", type: "status", editable: true, options: [
-      { value: "active", label: "Active", color: "bg-green-100 text-green-800" },
-      { value: "inactive", label: "Inactive", color: "bg-gray-100 text-gray-800" },
+      { value: "active", label: "Active", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+      { value: "inactive", label: "Inactive", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
     ]},
   ];
 
   const receivingStatusOptions = [
-    { value: "none", label: "None", color: "bg-gray-100 text-gray-800" },
-    { value: "ordered", label: "Ordered", color: "bg-blue-100 text-blue-800" },
-    { value: "in_transit", label: "In Transit", color: "bg-purple-100 text-purple-800" },
-    { value: "received", label: "Received", color: "bg-green-100 text-green-800" },
-    { value: "inspected", label: "Inspected", color: "bg-emerald-100 text-emerald-800" },
+    { value: "none", label: "None", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
+    { value: "ordered", label: "Ordered", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
+    { value: "in_transit", label: "In Transit", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
+    { value: "received", label: "Received", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+    { value: "inspected", label: "Inspected", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
   ];
 
   const materialColumns: Column<any>[] = [
@@ -1380,7 +1380,7 @@ export default function ProcurementHub() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+            <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
               <ShoppingCart className="h-8 w-8" />
               Procurement Hub
             </h1>
@@ -1457,31 +1457,31 @@ export default function ProcurementHub() {
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
           <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("purchase-orders")}>
-            <div className="text-2xl font-bold">{stats.totalPos}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{stats.totalPos}</div>
             <div className="text-xs text-muted-foreground">Total POs</div>
           </Card>
           <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("purchase-orders")}>
-            <div className="text-2xl font-bold text-blue-600">{stats.pendingPos}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-blue-600">{stats.pendingPos}</div>
             <div className="text-xs text-muted-foreground">Pending POs</div>
           </Card>
           <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("vendors")}>
-            <div className="text-2xl font-bold">{stats.totalVendors}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{stats.totalVendors}</div>
             <div className="text-xs text-muted-foreground">Vendors</div>
           </Card>
           <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("vendors")}>
-            <div className="text-2xl font-bold text-green-600">{stats.activeVendors}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{stats.activeVendors}</div>
             <div className="text-xs text-muted-foreground">Active</div>
           </Card>
           <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("materials")}>
-            <div className="text-2xl font-bold">{stats.totalMaterials}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{stats.totalMaterials}</div>
             <div className="text-xs text-muted-foreground">Materials</div>
           </Card>
           <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("materials")}>
-            <div className="text-2xl font-bold text-orange-600">{stats.lowStock}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-orange-600">{stats.lowStock}</div>
             <div className="text-xs text-muted-foreground">Low Stock</div>
           </Card>
           <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("materials")}>
-            <div className="text-2xl font-bold text-purple-600">{stats.inTransit}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-purple-600">{stats.inTransit}</div>
             <div className="text-xs text-muted-foreground">In Transit</div>
           </Card>
         </div>

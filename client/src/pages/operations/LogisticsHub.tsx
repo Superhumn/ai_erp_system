@@ -61,27 +61,27 @@ function formatDate(value: string | Date | null | undefined) {
 }
 
 const shipmentStatusOptions = [
-  { value: "pending", label: "Pending", color: "bg-gray-100 text-gray-800" },
-  { value: "picked_up", label: "Picked Up", color: "bg-blue-100 text-blue-800" },
-  { value: "in_transit", label: "In Transit", color: "bg-purple-100 text-purple-800" },
-  { value: "customs", label: "In Customs", color: "bg-orange-100 text-orange-800" },
-  { value: "delivered", label: "Delivered", color: "bg-green-100 text-green-800" },
-  { value: "cancelled", label: "Cancelled", color: "bg-red-100 text-red-800" },
+  { value: "pending", label: "Pending", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
+  { value: "picked_up", label: "Picked Up", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
+  { value: "in_transit", label: "In Transit", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
+  { value: "customs", label: "In Customs", color: "bg-orange-500/8 text-orange-600 dark:text-orange-400" },
+  { value: "delivered", label: "Delivered", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+  { value: "cancelled", label: "Cancelled", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
 ];
 
 const rfqStatusOptions = [
-  { value: "draft", label: "Draft", color: "bg-gray-100 text-gray-800" },
-  { value: "sent", label: "Sent", color: "bg-blue-100 text-blue-800" },
-  { value: "quoted", label: "Quoted", color: "bg-purple-100 text-purple-800" },
-  { value: "accepted", label: "Accepted", color: "bg-green-100 text-green-800" },
-  { value: "rejected", label: "Rejected", color: "bg-red-100 text-red-800" },
+  { value: "draft", label: "Draft", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
+  { value: "sent", label: "Sent", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
+  { value: "quoted", label: "Quoted", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
+  { value: "accepted", label: "Accepted", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+  { value: "rejected", label: "Rejected", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
 ];
 
 const transferStatusOptions = [
-  { value: "pending", label: "Pending", color: "bg-gray-100 text-gray-800" },
-  { value: "in_transit", label: "In Transit", color: "bg-blue-100 text-blue-800" },
-  { value: "completed", label: "Completed", color: "bg-green-100 text-green-800" },
-  { value: "cancelled", label: "Cancelled", color: "bg-red-100 text-red-800" },
+  { value: "pending", label: "Pending", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
+  { value: "in_transit", label: "In Transit", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
+  { value: "completed", label: "Completed", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+  { value: "cancelled", label: "Cancelled", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
 ];
 
 // Shipment Detail Panel
@@ -989,9 +989,9 @@ export default function LogisticsHub() {
     { key: "origin", header: "Origin", type: "text", sortable: true },
     { key: "destination", header: "Destination", type: "text", sortable: true },
     { key: "mode", header: "Mode", type: "badge", options: [
-      { value: "air", label: "Air", color: "bg-blue-100 text-blue-800" },
-      { value: "sea", label: "Sea", color: "bg-cyan-100 text-cyan-800" },
-      { value: "ground", label: "Ground", color: "bg-amber-100 text-amber-800" },
+      { value: "air", label: "Air", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
+      { value: "sea", label: "Sea", color: "bg-cyan-500/8 text-cyan-600 dark:text-cyan-400" },
+      { value: "ground", label: "Ground", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
     ]},
     { key: "carrier", header: "Carrier", type: "text" },
     { key: "status", header: "Status", type: "status", options: shipmentStatusOptions, filterable: true },
@@ -1041,18 +1041,18 @@ export default function LogisticsHub() {
     { key: "shipment", header: "Shipment", type: "text", render: (row) => row.shipment?.trackingNumber || (row.shipmentId ? `Shipment #${row.shipmentId}` : "-") },
     { key: "hsCode", header: "HS Code", type: "text" },
     { key: "type", header: "Type", type: "badge", options: [
-      { value: "import", label: "Import", color: "bg-blue-100 text-blue-800" },
-      { value: "export", label: "Export", color: "bg-green-100 text-green-800" },
+      { value: "import", label: "Import", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
+      { value: "export", label: "Export", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
     ]},
     { key: "dutyAmount", header: "Duties", type: "currency" },
     { key: "status", header: "Status", type: "badge", options: [
-      { value: "pending_documents", label: "Pending Docs", color: "bg-gray-100 text-gray-800" },
-      { value: "documents_submitted", label: "Submitted", color: "bg-blue-100 text-blue-800" },
-      { value: "under_review", label: "In Review", color: "bg-yellow-100 text-yellow-800" },
-      { value: "additional_info_required", label: "Info Required", color: "bg-orange-100 text-orange-800" },
-      { value: "cleared", label: "Cleared", color: "bg-green-100 text-green-800" },
-      { value: "held", label: "Held", color: "bg-red-100 text-red-800" },
-      { value: "rejected", label: "Rejected", color: "bg-red-100 text-red-800" },
+      { value: "pending_documents", label: "Pending Docs", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
+      { value: "documents_submitted", label: "Submitted", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
+      { value: "under_review", label: "In Review", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
+      { value: "additional_info_required", label: "Info Required", color: "bg-orange-500/8 text-orange-600 dark:text-orange-400" },
+      { value: "cleared", label: "Cleared", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+      { value: "held", label: "Held", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
+      { value: "rejected", label: "Rejected", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
     ]},
     { key: "expectedClearanceDate", header: "Expected Date", type: "date", sortable: true },
   ];
@@ -1072,7 +1072,7 @@ export default function LogisticsHub() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+            <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
               <Truck className="h-8 w-8" />
               Logistics Hub
             </h1>
@@ -1085,27 +1085,27 @@ export default function LogisticsHub() {
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("shipments")}>
-            <div className="text-2xl font-bold">{stats.totalShipments}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{stats.totalShipments}</div>
             <div className="text-xs text-muted-foreground">Total Shipments</div>
           </Card>
           <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("shipments")}>
-            <div className="text-2xl font-bold text-blue-600">{stats.inTransit}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-blue-600">{stats.inTransit}</div>
             <div className="text-xs text-muted-foreground">In Transit</div>
           </Card>
           <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("freight-rfqs")}>
-            <div className="text-2xl font-bold text-purple-600">{stats.pendingRfqs}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-purple-600">{stats.pendingRfqs}</div>
             <div className="text-xs text-muted-foreground">Pending RFQs</div>
           </Card>
           <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("freight-rfqs")}>
-            <div className="text-2xl font-bold text-green-600">{stats.quotedRfqs}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{stats.quotedRfqs}</div>
             <div className="text-xs text-muted-foreground">Quotes Received</div>
           </Card>
           <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("transfers")}>
-            <div className="text-2xl font-bold text-amber-600">{stats.pendingTransfers}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-amber-600">{stats.pendingTransfers}</div>
             <div className="text-xs text-muted-foreground">Pending Transfers</div>
           </Card>
           <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("customs")}>
-            <div className="text-2xl font-bold text-orange-600">{stats.inCustoms}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-orange-600">{stats.inCustoms}</div>
             <div className="text-xs text-muted-foreground">In Customs</div>
           </Card>
         </div>
