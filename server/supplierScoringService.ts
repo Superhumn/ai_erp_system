@@ -67,7 +67,7 @@ export async function scoreSuppliers(params?: {
 
   const metricsResults = await Promise.all(
     targetVendors.slice(0, 30).map(async (vendor) => {
-      const [spending, pos] = await Promise.all([
+      const [spendingRecords, pos] = await Promise.all([
         db.getVendorSpendingHistory(vendor.id),
         db.getPurchaseOrders({ vendorId: vendor.id }),
       ]);
@@ -76,11 +76,12 @@ export async function scoreSuppliers(params?: {
       const terminalPOs = pos.filter(po => po.status === "received" || po.status === "partial" || po.status === "cancelled");
       const onTimeRate = terminalPOs.length > 0 ? deliveredPOs.length / terminalPOs.length : 0;
 
+      const totalSpend = spendingRecords.reduce((s, po) => s + parseFloat(String(po.totalAmount || 0)), 0);
       return {
         vendor,
-        poCount: spending?.orderCount || 0,
-        totalSpend: spending?.totalSpend || 0,
-        avgOrderValue: spending?.avgOrderValue || 0,
+        poCount: spendingRecords.length,
+        totalSpend,
+        avgOrderValue: spendingRecords.length > 0 ? totalSpend / spendingRecords.length : 0,
         onTimeRate,
       };
     })

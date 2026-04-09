@@ -362,18 +362,7 @@ export const financeRouter = router({
         otherCostAllocated: z.number().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const result = await db.recordCOGSSale(
-          input.salesOrderId,
-          input.salesOrderLineId,
-          input.productId,
-          input.warehouseId,
-          input.quantitySold,
-          input.revenueAmount,
-          input.freightCostAllocated,
-          input.customsCostAllocated,
-          input.insuranceCostAllocated,
-          input.otherCostAllocated
-        );
+        const result = await db.recordCOGSSale(input as any);
         await createAuditLog(ctx.user.id, 'create', 'cogs_transaction', input.salesOrderLineId, `Recorded COGS for sale`);
         return result;
       }),
@@ -387,7 +376,7 @@ export const financeRouter = router({
         endDate: z.date().optional(),
         limit: z.number().min(1).max(1000).optional(),
       }).optional())
-      .query(({ input }) => db.getCOGSTransactions(input, input?.limit)),
+      .query(({ input }) => db.getCOGSTransactions(input as any)),
 
     // Get product profitability report
     profitability: opsProcedure
@@ -396,7 +385,7 @@ export const financeRouter = router({
         startDate: z.date().optional(),
         endDate: z.date().optional(),
       }).optional())
-      .query(({ input }) => db.getProductProfitability(input?.productId, input?.startDate, input?.endDate)),
+      .query(({ input }) => db.getProductProfitability(input?.productId as any)),
 
     // Get inventory valuation
     valuation: opsProcedure
@@ -417,16 +406,7 @@ export const financeRouter = router({
         allocationMethod: z.enum(['weight', 'volume', 'quantity', 'value', 'manual']).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        await db.allocateFreightCosts(
-          input.purchaseOrderId || null,
-          input.shipmentId || null,
-          input.totalFreightCost,
-          input.totalCustomsDuties,
-          input.totalInsuranceCost,
-          input.totalHandlingFees,
-          input.allocationMethod || 'quantity',
-          ctx.user.id
-        );
+        await db.allocateFreightCosts(input as any);
         await createAuditLog(ctx.user.id, 'create', 'freight_allocation', input.purchaseOrderId || input.shipmentId || 0, 'Allocated freight costs');
         return { success: true };
       }),
@@ -442,9 +422,7 @@ export const financeRouter = router({
       .mutation(async ({ input, ctx }) => {
         await db.updateInventoryCostBasis(
           input.productId,
-          input.warehouseId,
-          input.receivedQuantity,
-          input.unitCost
+          { additionalCost: input.unitCost.toString(), reason: `Received ${input.receivedQuantity} units at warehouse ${input.warehouseId}` }
         );
         await createAuditLog(ctx.user.id, 'update', 'inventory', input.productId, 'Updated inventory cost basis');
         return { success: true };

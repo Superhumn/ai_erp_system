@@ -171,13 +171,13 @@ async function startServer() {
 
           // Insert a single event row, linking to the message when available
           await db.createEmailEvent({
-            event: providerEventType,
-            timestamp,
+            providerEventType,
+            providerTimestamp: timestamp,
             providerMessageId,
             emailMessageId: message?.id,
-            recipientEmail: email,
-            metadata,
-          });
+            email,
+            rawEventJson: metadata,
+          } as any);
 
           if (message) {
             const newStatus = sendgridProvider.mapEventToStatus(providerEventType);

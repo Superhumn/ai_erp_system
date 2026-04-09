@@ -55,7 +55,7 @@ export function registerOAuthRoutes(app: Express) {
                }
 
                try {
-                       const user = await db.getUserByEmail(email);
+                       const user = await (db as any).getUserByEmail(email);
 
           if (!user || !user.passwordHash) {
                     res.status(401).json({ error: "Invalid email or password" });
@@ -100,7 +100,7 @@ export function registerOAuthRoutes(app: Express) {
                }
 
                try {
-                       const existing = await db.getUserByEmail(email);
+                       const existing = await (db as any).getUserByEmail(email);
                        if (existing) {
                                  res.status(409).json({ error: "An account with this email already exists" });
                                  return;

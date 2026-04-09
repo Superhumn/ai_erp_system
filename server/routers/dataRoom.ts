@@ -6,6 +6,7 @@ import { storagePut } from "../storage";
 import { nanoid } from "nanoid";
 import { syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType } from "../_core/googleDrive";
 import { router, publicProcedure, protectedProcedure, getValidGoogleToken } from "./middleware";
+import type { InsertDataRoomDriveSyncConfig } from "../../drizzle/schema";
 
 export const dataRoomRouter = router({
   // ============================================
@@ -1198,7 +1199,7 @@ export const dataRoomRouter = router({
             await db.updateDriveSyncConfig(existingConfig.id, configData);
             return { id: existingConfig.id, updated: true };
           } else {
-            const id = await db.createDriveSyncConfig(configData);
+            const id = await db.createDriveSyncConfig(configData as any);
             return { id, updated: false };
           }
         }),
@@ -1876,7 +1877,7 @@ export const dataRoomRouter = router({
           categoryName: z.string(),
           itemName: z.string(),
           itemDescription: z.string().optional(),
-          requirement: z.enum(['required', 'recommended', 'optional']).default('required'),
+          requirement: z.enum(['required', 'conditional', 'optional']).default('required'),
           matchKeywords: z.array(z.string()).optional(),
         }))
         .mutation(async ({ input }) => {
@@ -1934,7 +1935,7 @@ export const dataRoomRouter = router({
             reviewNotes: input.reviewNotes,
             reviewedBy: ctx.user.id,
             reviewedAt: new Date(),
-          });
+          } as any);
           return { success: true };
         }),
     }),

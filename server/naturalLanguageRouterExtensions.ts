@@ -261,8 +261,6 @@ export const paymentTextEndpoints = {
         
         // Create payment record
         const payment = await db.createPayment({
-          paymentNumber: `PAY-${Date.now().toString(36).toUpperCase()}`,
-          type: vendorId ? 'made' : 'received',
           invoiceId,
           customerId,
           vendorId,

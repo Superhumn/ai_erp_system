@@ -238,7 +238,7 @@ export async function predictDisputes(params?: {
 }): Promise<DisputePrediction> {
   const contracts = await db.getContracts({ companyId: params?.companyId });
   const disputes = await db.getDisputes({ companyId: params?.companyId });
-  const activeContracts = contracts.filter(c => c.status === "active" || c.status === "pending");
+  const activeContracts = contracts.filter(c => c.status === "active" || (c.status as string) === "pending");
 
   const prompt = `Analyze these contracts and predict dispute risks.
 
@@ -246,7 +246,7 @@ ACTIVE CONTRACTS (${activeContracts.length}):
 ${activeContracts.slice(0, 30).map(c => `- ID:${c.id} "${c.title}" Type:${c.type} Party:"${c.partyName || 'N/A'}" Value:$${c.value || 'N/A'} End:${c.endDate || 'N/A'} Status:${c.status}`).join("\n")}
 
 HISTORICAL DISPUTES (${disputes.length}):
-${disputes.slice(0, 15).map(d => `- "${d.title}" Status:${d.status} Severity:${d.severity || 'N/A'} Type:${d.type || 'N/A'}`).join("\n")}
+${disputes.slice(0, 15).map(d => `- "${d.title}" Status:${d.status} Severity:${d.priority || 'N/A'} Type:${d.type || 'N/A'}`).join("\n")}
 
 Analyze each active contract for dispute risk based on:
 1. Contract complexity and value

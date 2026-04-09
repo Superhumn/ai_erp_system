@@ -218,7 +218,7 @@ export const procurementRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         // Create the PO from preview
-        const po = await createPOFromPreview(input.preview, ctx.user.id);
+        const po = await createPOFromPreview(input.preview as any, ctx.user.id);
         
         await createAuditLog(ctx.user.id, 'create', 'purchaseOrder', po.id, po.poNumber);
         

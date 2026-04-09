@@ -98,17 +98,12 @@ import {
   // Copacker portal
   copackerInventoryUpdates, copackerInventoryUpdateItems, copackerInvoices, copackerInvoiceItems, copackerShippingDocuments,
   InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
-  // Local authentication
-  localAuthCredentials, InsertLocalAuthCredential,
   // Fireflies integration
   firefliesMeetings, firefliesActionItems, firefliesContactMappings, firefliesConfigs,
   InsertFirefliesMeeting, InsertFirefliesActionItem, InsertFirefliesContactMapping,
   // COGS tracking
   cogsTransactions, freightCostAllocations,
   InsertCogsTransaction, InsertFreightCostAllocation,
-  // QuickBooks integration
-  quickbooksAccounts, quickbooksAccountMappings, quickbooksItems,
-  InsertQuickBooksAccount, InsertQuickBooksAccountMapping, InsertQuickBooksItem,
   // EDI module
   ediTradingPartners, ediDocumentMaps, ediTransactions, ediTransactionItems, ediProductCrosswalks, ediShipToLocations, ediComplianceScorecards,
   ediControlNumbers, ediSettings,
@@ -232,6 +227,15 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
+export async function getUserByEmail(email: string) {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot get user by email: database not available");
+    return undefined;
+  }
+  const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
 
 export async function getAllUsers() {
   const db = await getDb();
@@ -9138,7 +9142,7 @@ export async function autoMatchChecklistDocuments(checklistId: number) {
       matchedCount++;
       matchedItems.push({
         itemId: item.id,
-        itemName: (item as any).itemName || item.name,
+        itemName: (item as any).itemName || (item as any).name,
         matchedDocuments: scored.map(s => ({ id: s.doc.id, name: s.doc.name, score: s.score })),
         status: 'complete',
       });
@@ -9978,6 +9982,12 @@ export async function createInventoryCostLayer(data: InsertInventoryCostLayer) {
   return { id: result[0].insertId };
 }
 
+export async function updateInventoryCostLayer(id: number, data: Partial<InsertInventoryCostLayer>, tx?: any) {
+  const conn = tx || await getDb();
+  if (!conn) return;
+  await conn.update(inventoryCostLayers).set(data).where(eq(inventoryCostLayers.id, id));
+}
+
 export async function getWeightedAverageCost(productId: number, warehouseId?: number) {
   const db = await getDb();
   if (!db) return null;
@@ -10048,8 +10058,8 @@ export async function getCogsPeriodSummaries(filters?: {
   if (filters?.companyId) conditions.push(eq(cogsPeriodSummary.companyId, filters.companyId));
   if (filters?.productId) conditions.push(eq(cogsPeriodSummary.productId, filters.productId));
   if (filters?.periodType) conditions.push(eq(cogsPeriodSummary.periodType, filters.periodType as any));
-  if (filters?.startDate) conditions.push(gte(cogsPeriodSummary.periodStart, filters.startDate));
-  if (filters?.endDate) conditions.push(lte(cogsPeriodSummary.periodEnd, filters.endDate));
+  if (filters?.periodStart) conditions.push(gte(cogsPeriodSummary.periodStart, filters.periodStart));
+  if (filters?.periodEnd) conditions.push(lte(cogsPeriodSummary.periodEnd, filters.periodEnd));
   let query = db.select().from(cogsPeriodSummary);
   if (conditions.length > 0) query = query.where(and(...conditions)) as any;
   return query.orderBy(desc(cogsPeriodSummary.periodStart));
@@ -10234,7 +10244,7 @@ export async function getTransactionalEmailTemplates(companyId?: number) {
   const db = await getDb();
   if (!db) return [];
   if (companyId) {
-    return db.select().from(transactionalEmailTemplates).where(eq(transactionalEmailTemplates.companyId, companyId)).orderBy(transactionalEmailTemplates.name);
+    return db.select().from(transactionalEmailTemplates).where(eq((transactionalEmailTemplates as any).companyId, companyId)).orderBy(transactionalEmailTemplates.name);
   }
   return db.select().from(transactionalEmailTemplates).orderBy(transactionalEmailTemplates.name);
 }
@@ -10249,7 +10259,7 @@ export async function getTransactionalEmailTemplateById(id: number) {
 export async function getTransactionalEmailTemplateByName(name: string) {
   const db = await getDb();
   if (!db) return null;
-  const result = await db.select().from(transactionalEmailTemplates).where(eq(transactionalEmailTemplates.name, name)).limit(1);
+  const result = await db.select().from(transactionalEmailTemplates).where(eq(transactionalEmailTemplates.name, name as any)).limit(1);
   return result[0] || null;
 }
 
@@ -10277,7 +10287,7 @@ export async function getEmailMessages(filters?: { status?: string; templateName
   if (!db) return [];
   const conditions: any[] = [];
   if (filters?.status) conditions.push(eq(emailMessages.status, filters.status as any));
-  if (filters?.templateName) conditions.push(eq(emailMessages.templateName, filters.templateName));
+  if (filters?.templateName) conditions.push(eq(emailMessages.templateName, filters.templateName as any));
   if (filters?.relatedEntityType) conditions.push(eq(emailMessages.relatedEntityType, filters.relatedEntityType));
   if (filters?.relatedEntityId) conditions.push(eq(emailMessages.relatedEntityId, filters.relatedEntityId));
   if (conditions.length > 0) {
@@ -10322,13 +10332,13 @@ export async function createEmailEvent(data: InsertEmailEvent) {
 export async function getEmailEventsByMessageId(emailMessageId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(emailEvents).where(eq(emailEvents.emailMessageId, emailMessageId)).orderBy(emailEvents.timestamp);
+  return db.select().from(emailEvents).where(eq(emailEvents.emailMessageId, emailMessageId)).orderBy(emailEvents.createdAt);
 }
 
 export async function getEmailEventsByProviderMessageId(providerMessageId: string) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(emailEvents).where(eq(emailEvents.providerMessageId, providerMessageId)).orderBy(emailEvents.timestamp);
+  return db.select().from(emailEvents).where(eq(emailEvents.providerMessageId, providerMessageId)).orderBy(emailEvents.createdAt);
 }
 
 export async function getRecentEmailEvents(limit: number = 100) {

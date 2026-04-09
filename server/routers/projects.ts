@@ -133,7 +133,7 @@ export const projectsRouter = router({
         companyId: z.number().optional(),
         status: z.string().optional(),
       }).optional())
-      .query(({ input }) => db.getInvestmentGrantChecklists(input)),
+      .query(({ input }) => db.getInvestmentGrantChecklists(input as any)),
     get: protectedProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => db.getInvestmentGrantChecklistWithItems(input.id)),

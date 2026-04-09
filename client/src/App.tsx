@@ -9,7 +9,7 @@ import DashboardLayout from "./components/DashboardLayout";
 
 // Eagerly loaded pages (high-traffic, first paint)
 import Home from "./pages/Home";
-import { Login } from "./pages/Login";
+import Login from "./pages/Login";
 import NotFound from "@/pages/NotFound";
 
 // Lazy-loaded pages — split into separate chunks for smaller initial bundle

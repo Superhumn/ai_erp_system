@@ -94,7 +94,7 @@ export async function predictYield(params?: {
   const workOrders = await db.getWorkOrders();
   const targetWOs = params?.workOrderIds
     ? workOrders.filter(wo => params.workOrderIds!.includes(wo.id))
-    : workOrders.filter(wo => wo.status === "in_progress" || wo.status === "planned");
+    : workOrders.filter(wo => wo.status === "in_progress" || wo.status === "scheduled");
 
   const products = await db.getProducts();
   const boms = await db.getBillOfMaterials();
@@ -102,7 +102,7 @@ export async function predictYield(params?: {
   const prompt = `Predict manufacturing yield for these work orders based on product complexity and historical patterns.
 
 WORK ORDERS (${targetWOs.length}):
-${targetWOs.slice(0, 30).map(wo => `- ID:${wo.id} Product:${wo.productId} Qty:${wo.quantity} Status:${wo.status} Start:${wo.startDate || 'N/A'} Due:${wo.dueDate || 'N/A'}`).join("\n")}
+${targetWOs.slice(0, 30).map(wo => `- ID:${wo.id} Product:${wo.productId} Qty:${wo.quantity} Status:${wo.status} Start:${wo.scheduledStartDate || 'N/A'} Due:${wo.scheduledEndDate || 'N/A'}`).join("\n")}
 
 PRODUCTS:
 ${products.slice(0, 20).map(p => `- ID:${p.id} Name:"${p.name}" SKU:${p.sku} Cost:$${p.costPrice || 0}`).join("\n")}
@@ -180,7 +180,7 @@ PRODUCTS (${targetProducts.length}):
 ${targetProducts.slice(0, 30).map(p => `- ID:${p.id} Name:"${p.name}" SKU:${p.sku} Category:${p.category || 'N/A'} Cost:$${p.costPrice || 0}`).join("\n")}
 
 RECENT WORK ORDERS: ${workOrders.length} total
-${workOrders.filter(wo => wo.status === "completed").slice(0, 15).map(wo => `- WO#${wo.id}: Product:${wo.productId} Qty:${wo.quantity} Completed:${wo.completedDate || 'N/A'}`).join("\n")}
+${workOrders.filter(wo => wo.status === "completed").slice(0, 15).map(wo => `- WO#${wo.id}: Product:${wo.productId} Qty:${wo.quantity} Completed:${wo.actualEndDate || 'N/A'}`).join("\n")}
 
 BOMs: ${boms.length} active bills of materials
 
@@ -232,7 +232,7 @@ Respond ONLY with valid JSON:
 
 export async function optimizeProduction(): Promise<ProductionOptimization> {
   const workOrders = await db.getWorkOrders();
-  const openWOs = workOrders.filter(wo => wo.status === "in_progress" || wo.status === "planned");
+  const openWOs = workOrders.filter(wo => wo.status === "in_progress" || wo.status === "scheduled");
   const products = await db.getProducts();
   const boms = await db.getBillOfMaterials();
   const rawMaterials = await db.getRawMaterials();
@@ -242,7 +242,7 @@ export async function optimizeProduction(): Promise<ProductionOptimization> {
 OPEN WORK ORDERS (${openWOs.length}):
 ${openWOs.slice(0, 30).map(wo => {
     const product = products.find(p => p.id === wo.productId);
-    return `- WO#${wo.id}: "${product?.name || 'Unknown'}" Qty:${wo.quantity} Priority:${wo.priority || 'normal'} Due:${wo.dueDate || 'N/A'} Status:${wo.status}`;
+    return `- WO#${wo.id}: "${product?.name || 'Unknown'}" Qty:${wo.quantity} Priority:${wo.priority || 'normal'} Due:${wo.scheduledEndDate || 'N/A'} Status:${wo.status}`;
   }).join("\n")}
 
 AVAILABLE RAW MATERIALS: ${rawMaterials.length} items
@@ -308,7 +308,7 @@ export async function predictMaintenance(): Promise<MaintenancePrediction> {
 
 PRODUCTION HISTORY:
 - Total completed work orders: ${completedWOs.length}
-- Recent completions: ${completedWOs.slice(-20).map(wo => `WO#${wo.id} completed ${wo.completedDate || 'N/A'}`).join(", ")}
+- Recent completions: ${completedWOs.slice(-20).map(wo => `WO#${wo.id} completed ${wo.actualEndDate || 'N/A'}`).join(", ")}
 - Active work orders: ${workOrders.filter(wo => wo.status === "in_progress").length}
 - Total production volume trend: ${completedWOs.length > 10 ? "Active" : "Low volume"}
 

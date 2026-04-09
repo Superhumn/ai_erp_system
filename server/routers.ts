@@ -2,7 +2,6 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
-import { COOKIE_NAME } from "@shared/const";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { invokeLLM } from "./_core/llm";
@@ -6245,11 +6244,11 @@ Provide a brief status summary, any missing documents, and next steps.`;
         const items = await db.getCopackerInventoryUpdateItems(input.id);
         for (const row of items) {
           const invItems = await db.getInventoryByWarehouse(update.warehouseId);
-          const match = invItems.find((i: any) => i.inventory.productId === row.item.productId);
+          const match = invItems.find((i: any) => i.inventory.productId === (row as any).productId);
           if (match) {
             await db.updateInventoryQuantityById(
               match.inventory.id,
-              parseFloat(row.item.newQuantity),
+              parseFloat((row as any).newQuantity),
               ctx.user.id,
               `Biweekly update #${input.id}`
             );
@@ -6428,276 +6427,6 @@ Provide a brief status summary, any missing documents, and next steps.`;
           : `${periodStart.toLocaleDateString('en-US', { month: 'short' })} 16-${periodEnd.getDate()}, ${year}`,
       };
     }),
-
-    getCustomsClearances: copackerProcedure.query(async ({ ctx }) => {
-      const allClearances = await db.getCustomsClearances();
-      if (ctx.user.role !== 'copacker') return allClearances;
-      // Copackers must have a linked warehouse; they can only see clearances
-      // for inbound shipments (receiving goods) that have a purchase order
-      const linkedWarehouseId = ctx.user.linkedWarehouseId;
-      if (!linkedWarehouseId) return [];
-      const allShipments = await db.getShipments();
-      const inboundPoShipmentIds = new Set(
-        allShipments
-          .filter((s: any) => s.type === 'inbound' && s.purchaseOrderId != null)
-          .map((s: any) => s.id)
-      );
-      return allClearances.filter((c: any) => c.shipmentId != null && inboundPoShipmentIds.has(c.shipmentId));
-    }),
-
-
-    getCustomsDocuments: copackerProcedure
-      .input(z.object({ clearanceId: z.number() }))
-      .query(async ({ input, ctx }) => {
-        if (ctx.user.role === 'copacker') {
-          const clearance = await db.getCustomsClearanceById(input.clearanceId);
-          if (!clearance?.shipmentId) {
-            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
-          }
-          const shipment = await db.getShipmentById(clearance.shipmentId);
-          if (!shipment) {
-            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this customs clearance' });
-          }
-        }
-        return db.getCustomsDocuments(input.clearanceId);
-      }),
-
-    // Current billing period (current calendar month)
-    getCurrentPeriod: copackerProcedure.query(() => {
-      const now = new Date();
-      const periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      const periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-      const daysLeft = Math.max(0, Math.ceil((periodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
-      const isDue = daysLeft <= 3;
-      const periodLabel = periodStart.toLocaleDateString("en-US", { month: "long", year: "numeric" });
-      return { periodStart, periodEnd, isDue, daysLeft, periodLabel };
-    }),
-
-    // Inventory updates submitted by this copacker
-    getInventoryUpdates: copackerProcedure.query(async ({ ctx }) => {
-      if (ctx.user.role === 'copacker') {
-        if (!ctx.user.linkedWarehouseId) {
-          throw new TRPCError({ code: 'FORBIDDEN', message: 'Copacker must be linked to a warehouse to view inventory updates' });
-        }
-        return db.getCopackerInventoryUpdates(ctx.user.linkedWarehouseId);
-      }
-      return db.getCopackerInventoryUpdates(undefined);
-    }),
-
-    // Invoices submitted by this copacker
-    getInvoices: copackerProcedure.query(async ({ ctx }) => {
-      if (ctx.user.role === 'copacker') {
-        if (!ctx.user.linkedWarehouseId) {
-          throw new TRPCError({ code: 'FORBIDDEN', message: 'Copacker must be linked to a warehouse to view invoices' });
-        }
-        return db.getCopackerInvoices(ctx.user.linkedWarehouseId);
-      }
-      return db.getCopackerInvoices(undefined);
-    }),
-
-    // Shipping documents uploaded by this copacker
-    getShippingDocuments: copackerProcedure.query(async ({ ctx }) => {
-      if (ctx.user.role === 'copacker') {
-        if (!ctx.user.linkedWarehouseId) {
-          throw new TRPCError({ code: 'FORBIDDEN', message: 'Copacker must be linked to a warehouse to view shipping documents' });
-        }
-        return db.getCopackerShippingDocuments(ctx.user.linkedWarehouseId);
-      }
-      return db.getCopackerShippingDocuments(undefined);
-    }),
-
-    // Detail view for an inventory update
-    getInventoryUpdateDetail: copackerProcedure
-      .input(z.object({ id: z.number() }))
-      .query(async ({ input, ctx }) => {
-        const update = await db.getCopackerInventoryUpdateById(input.id);
-        if (!update) throw new TRPCError({ code: 'NOT_FOUND', message: 'Inventory update not found' });
-        if (ctx.user.role === 'copacker') {
-          if (!ctx.user.linkedWarehouseId || update.warehouseId !== ctx.user.linkedWarehouseId) {
-            throw new TRPCError({ code: 'FORBIDDEN', message: 'Not authorized to view this inventory update' });
-          }
-        }
-        const rawItems = await db.getCopackerInventoryUpdateItems(input.id);
-        // Batch product lookups to avoid N+1 queries
-        const uniqueProductIds = Array.from(new Set(rawItems.map((item) => item.productId)));
-        const productResults = await Promise.all(uniqueProductIds.map((productId) => db.getProductById(productId)));
-        const productById = new Map<number, typeof productResults[number]>();
-        uniqueProductIds.forEach((productId, index) => {
-          const product = productResults[index];
-          if (product) productById.set(productId, product);
-        });
-        const items = rawItems.map((item) => ({ item, product: productById.get(item.productId) ?? null }));
-        return { update, items };
-      }),
-
-    // Detail view for an invoice
-    getInvoiceDetail: copackerProcedure
-      .input(z.object({ id: z.number() }))
-      .query(async ({ input, ctx }) => {
-        const invoice = await db.getCopackerInvoiceById(input.id);
-        if (!invoice) throw new TRPCError({ code: 'NOT_FOUND', message: 'Invoice not found' });
-        if (ctx.user.role === 'copacker') {
-          if (!ctx.user.linkedWarehouseId || invoice.warehouseId !== ctx.user.linkedWarehouseId) {
-            throw new TRPCError({ code: 'FORBIDDEN', message: 'Not authorized to view this invoice' });
-          }
-        }
-        const items = await db.getCopackerInvoiceItems(input.id);
-        return { invoice, items };
-      }),
-
-    // Create a new inventory update (draft)
-    createInventoryUpdate: copackerProcedure
-      .input(z.object({
-        periodStart: z.coerce.date(),
-        periodEnd: z.coerce.date(),
-        notes: z.string().optional(),
-        items: z.array(z.object({
-          productId: z.number(),
-          previousQuantity: z.string().optional(),
-          newQuantity: z.string(),
-          quantityReceived: z.string().optional(),
-          quantityShipped: z.string().optional(),
-          quantityDamaged: z.string().optional(),
-          notes: z.string().optional(),
-        })),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
-          throw new TRPCError({ code: 'FORBIDDEN', message: 'Copacker must be linked to a warehouse to create inventory updates' });
-        }
-        const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId! : undefined;
-        const update = await db.createCopackerInventoryUpdate({
-          warehouseId,
-          periodStart: input.periodStart,
-          periodEnd: input.periodEnd,
-          notes: input.notes,
-          status: "draft",
-          submittedBy: ctx.user.id,
-        });
-        for (const item of input.items) {
-          await db.createCopackerInventoryUpdateItem({
-            updateId: update.id,
-            productId: item.productId,
-            previousQuantity: item.previousQuantity,
-            newQuantity: item.newQuantity,
-            quantityReceived: item.quantityReceived,
-            quantityShipped: item.quantityShipped,
-            quantityDamaged: item.quantityDamaged,
-            notes: item.notes,
-          });
-        }
-        return update;
-      }),
-
-    // Submit an inventory update (transitions from draft to submitted)
-    submitInventoryUpdate: copackerProcedure
-      .input(z.object({ id: z.number() }))
-      .mutation(async ({ input, ctx }) => {
-        const update = await db.getCopackerInventoryUpdateById(input.id);
-        if (!update) throw new TRPCError({ code: 'NOT_FOUND', message: 'Inventory update not found' });
-        if (ctx.user.role === 'copacker') {
-          if (!ctx.user.linkedWarehouseId || update.warehouseId !== ctx.user.linkedWarehouseId) {
-            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this inventory update' });
-          }
-        }
-        await db.updateCopackerInventoryUpdate(input.id, { status: "submitted" });
-        await createAuditLog(ctx.user.id, 'update', 'copackerInventoryUpdate', input.id, 'Submitted');
-        return { success: true };
-      }),
-
-    // Create a new copacker invoice
-    createInvoice: copackerProcedure
-      .input(z.object({
-        invoiceNumber: z.string().min(1),
-        invoiceDate: z.string(),
-        dueDate: z.string().optional(),
-        description: z.string().optional(),
-        notes: z.string().optional(),
-        items: z.array(z.object({
-          description: z.string(),
-          quantity: z.string().optional(),
-          unitPrice: z.string().optional(),
-          totalAmount: z.string().optional(),
-        })),
-        fileName: z.string().optional(),
-        fileData: z.string().optional(),
-        mimeType: z.string().optional(),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
-          throw new TRPCError({ code: 'FORBIDDEN', message: 'Copacker must be linked to a warehouse to create invoices' });
-        }
-        const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId! : undefined;
-        const totalAmount = input.items.reduce((sum, i) => sum + parseFloat(i.totalAmount || "0"), 0);
-
-        let fileUrl: string | undefined;
-        if (input.fileData && input.fileName) {
-          const buffer = Buffer.from(input.fileData, 'base64');
-          const fileKey = `copacker-invoices/${ctx.user.id}/${nanoid()}-${input.fileName}`;
-          const uploadResult = await storagePut(fileKey, buffer, input.mimeType || 'application/octet-stream');
-          fileUrl = uploadResult.url;
-        }
-
-        const invoice = await db.createCopackerInvoice({
-          warehouseId,
-          invoiceNumber: input.invoiceNumber,
-          invoiceDate: input.invoiceDate,
-          dueDate: input.dueDate,
-          totalAmount: totalAmount.toFixed(2),
-          description: input.description,
-          notes: input.notes,
-          fileName: input.fileName,
-          fileUrl,
-          status: "submitted",
-          submittedBy: ctx.user.id,
-        });
-        for (const item of input.items) {
-          if (item.description.trim()) {
-            await db.createCopackerInvoiceItem({
-              invoiceId: invoice.id,
-              description: item.description,
-              quantity: item.quantity || "1",
-              unitPrice: item.unitPrice || "0",
-              totalAmount: item.totalAmount || "0",
-            });
-          }
-        }
-        await createAuditLog(ctx.user.id, 'create', 'copackerInvoice', invoice.id, input.invoiceNumber);
-        return invoice;
-      }),
-
-    // Upload a shipping document
-    uploadShippingDocument: copackerProcedure
-      .input(z.object({
-        shipmentId: z.number().optional(),
-        documentType: z.string(),
-        name: z.string(),
-        description: z.string().optional(),
-        fileData: z.string().min(1),
-        mimeType: z.string(),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
-          throw new TRPCError({ code: 'FORBIDDEN', message: 'Copacker must be linked to a warehouse to upload shipping documents' });
-        }
-        const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId! : undefined;
-        const buffer = Buffer.from(input.fileData, 'base64');
-        const fileKey = `copacker-shipping/${warehouseId ?? ctx.user.id}/${nanoid()}-${input.name}`;
-        const { url } = await storagePut(fileKey, buffer, input.mimeType);
-        const doc = await db.createCopackerShippingDocument({
-          warehouseId,
-          shipmentId: input.shipmentId,
-          documentType: input.documentType,
-          name: input.name,
-          description: input.description,
-          fileUrl: url,
-          mimeType: input.mimeType,
-          fileSize: buffer.length,
-          uploadedBy: ctx.user.id,
-        });
-        await createAuditLog(ctx.user.id, 'create', 'copackerShippingDocument', doc.id, input.name);
-        return doc;
-      }),
   }),
 
   // Vendor Portal - restricted views for vendors
@@ -6846,7 +6575,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
         mimeType: z.string(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const { storagePut } = await import('./_core/storage');
+        const { storagePut } = await import('./storage');
         const { nanoid } = await import('nanoid');
         const buffer = Buffer.from(input.fileData, 'base64');
         const fileKey = `vendor/${ctx.user.linkedVendorId || 'unknown'}/customs/${input.clearanceId}/${nanoid()}-${input.name}`;
@@ -9314,7 +9043,7 @@ Ask if they received the original request and if they can provide a quote.`;
           bodyHtml: input.bodyHtml || null,
           receivedAt: new Date(),
           parsingStatus: "processing",
-          category: quickCategory.category,
+          category: quickCategory.category as any,
           categoryConfidence: quickCategory.confidence.toString(),
           categoryKeywords: quickCategory.keywords,
           suggestedAction: quickCategory.suggestedAction || null,
@@ -9895,7 +9624,7 @@ Ask if they received the original request and if they can provide a quote.`;
               bodyHtml: email.bodyHtml || null,
               receivedAt: email.date,
               parsingStatus: parseResult ? "parsed" : "pending",
-              category: email.categorization?.category || "general",
+              category: (email.categorization?.category || "general") as any,
               categoryConfidence: email.categorization?.confidence?.toString() || null,
               categoryKeywords: email.categorization?.keywords || null,
               suggestedAction: email.categorization?.suggestedAction || null,
@@ -15330,8 +15059,7 @@ Ask if they received the original request and if they can provide a quote.`;
           type: z.enum(["isa", "gs", "st"]),
         }))
         .mutation(async ({ input }) => {
-          const typeMap = { isa: 'interchange', gs: 'group', st: 'transaction' } as const;
-          const controlNumber = await db.getNextControlNumber(input.tradingPartnerId, typeMap[input.type]);
+          const controlNumber = await db.getNextControlNumber(input.tradingPartnerId, input.type);
           return { controlNumber };
         }),
     }),
@@ -15360,21 +15088,14 @@ Ask if they received the original request and if they can provide a quote.`;
           notes: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const result = await db.createEdiComplianceScorecard(input);
+          const result = await db.createEdiComplianceScorecard(input as any);
           await createAuditLog(ctx.user.id, 'create', 'edi_compliance_scorecard', result.id);
           return result;
         }),
     }),
   }),
 
-  // ============================================
-  // ORDER ITEMS
-  // ============================================
-  orderItems: router({
-    list: protectedProcedure
-      .input(z.object({ orderId: z.number() }))
-      .query(({ input }) => db.getOrderItems(input.orderId)),
-  }),
+  // (orderItems router defined earlier in file)
 
   // ============================================
   // INVENTORY MANAGEMENT (enriched view)
@@ -15454,7 +15175,7 @@ Ask if they received the original request and if they can provide a quote.`;
         autoCreateContacts: config.autoCreateContacts,
         autoCreateTasks: config.autoCreateTasks,
         autoCreateProjects: config.autoCreateProjects,
-        lastSyncAt: config.lastSyncAt,
+        lastSyncAt: (config as any).lastSyncAt,
         config: { apiKey: '***' },
       };
     }),
@@ -15502,7 +15223,7 @@ Ask if they received the original request and if they can provide a quote.`;
           participants: fullTranscript ? JSON.stringify(extractParticipants(fullTranscript)) : null,
           transcript: fullTranscript?.transcript_url || null,
           summary: fullTranscript?.summary ? JSON.stringify(fullTranscript.summary) : null,
-          actionItemsRaw: fullTranscript ? JSON.stringify(parseActionItems(fullTranscript)) : null,
+          actionItemsRaw: fullTranscript ? JSON.stringify(parseActionItems(fullTranscript?.summary?.action_items || [])) : null,
           status: 'pending',
         });
         synced++;
@@ -15548,7 +15269,6 @@ Ask if they received the original request and if they can provide a quote.`;
           const project = await db.createProject({
             projectNumber: `FF-${Date.now()}`,
             name: input.projectName || meeting.title || 'Untitled Meeting Project',
-            projectNumber: `FF-${Date.now()}`,
             status: 'planning',
             createdBy: ctx.user.id,
           } as any);
@@ -16511,7 +16231,7 @@ Ask if they received the original request and if they can provide a quote.`;
 
           await db.createGrantBidSubmissionLog({
             applicationId: input.applicationId,
-            action: 'agent_completed',
+            action: 'status_updated' as any,
             details: `AI agent generated form filler plan for ${input.portalName} — ${plan.fieldActions.length} fields, ${plan.humanActions.length} manual actions, ${plan.steps.length} steps`,
             performedBy: ctx.user.id,
           });

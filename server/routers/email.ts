@@ -163,7 +163,7 @@ export const emailRouter = router({
         toEmail: z.string().email(),
         toName: z.string().optional(),
         subject: z.string(),
-        payload: z.record(z.any()),
+        payload: z.record(z.string(), z.any()),
         idempotencyKey: z.string().optional(),
         relatedEntityType: z.string().optional(),
         relatedEntityId: z.number().optional(),
@@ -197,7 +197,7 @@ export const emailRouter = router({
       .input(z.object({
         quoteId: z.number(),
         customSubject: z.string().optional(),
-        customPayload: z.record(z.any()).optional(),
+        customPayload: z.record(z.string(), z.any()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const result = await emailService.sendQuoteEmail(input.quoteId, {
@@ -219,7 +219,7 @@ export const emailRouter = router({
       .input(z.object({
         poId: z.number(),
         customSubject: z.string().optional(),
-        customPayload: z.record(z.any()).optional(),
+        customPayload: z.record(z.string(), z.any()).optional(),
         pdfUrl: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
@@ -245,7 +245,7 @@ export const emailRouter = router({
         recipientEmail: z.string().email().optional(),
         recipientName: z.string().optional(),
         customSubject: z.string().optional(),
-        customPayload: z.record(z.any()).optional(),
+        customPayload: z.record(z.string(), z.any()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const result = await emailService.sendShipmentEmail(input.shipmentId, {
@@ -271,7 +271,7 @@ export const emailRouter = router({
         recipientEmail: z.string().email().optional(),
         recipientName: z.string().optional(),
         customSubject: z.string().optional(),
-        customPayload: z.record(z.any()).optional(),
+        customPayload: z.record(z.string(), z.any()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const result = await emailService.sendAlertEmail(input.alertId, {
@@ -296,7 +296,7 @@ export const emailRouter = router({
         rfqId: z.number(),
         vendorId: z.number(),
         customSubject: z.string().optional(),
-        customPayload: z.record(z.any()).optional(),
+        customPayload: z.record(z.string(), z.any()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const result = await emailService.sendRFQEmail(input.rfqId, input.vendorId, {
@@ -567,7 +567,7 @@ export const emailRouter = router({
           bodyHtml: input.bodyHtml || null,
           receivedAt: new Date(),
           parsingStatus: "processing",
-          category: quickCategory.category,
+          category: quickCategory.category as any,
           categoryConfidence: quickCategory.confidence.toString(),
           categoryKeywords: quickCategory.keywords,
           suggestedAction: quickCategory.suggestedAction || null,
@@ -1148,7 +1148,7 @@ export const emailRouter = router({
               bodyHtml: email.bodyHtml || null,
               receivedAt: email.date,
               parsingStatus: parseResult ? "parsed" : "pending",
-              category: email.categorization?.category || "general",
+              category: (email.categorization?.category || "general") as any,
               categoryConfidence: email.categorization?.confidence?.toString() || null,
               categoryKeywords: email.categorization?.keywords || null,
               suggestedAction: email.categorization?.suggestedAction || null,

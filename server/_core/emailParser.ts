@@ -642,6 +642,7 @@ export function getCategoryDisplayInfo(category: EmailCategory): {
     delivery_notification: { label: "Delivery", color: "emerald", icon: "package-check" },
     order_confirmation: { label: "Order Confirmation", color: "indigo", icon: "check-circle" },
     payment_confirmation: { label: "Payment", color: "teal", icon: "credit-card" },
+    inventory_report: { label: "Inventory Report", color: "amber", icon: "clipboard-check" },
     general: { label: "General", color: "gray", icon: "mail" }
   };
   

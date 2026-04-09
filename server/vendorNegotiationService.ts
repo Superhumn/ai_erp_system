@@ -66,7 +66,12 @@ export async function analyzeNegotiationOpportunity(params: {
   negotiationType: string;
 }): Promise<NegotiationAnalysis> {
   // Gather vendor data
-  const spending = await db.getVendorSpendingHistory(params.vendorId);
+  const spendingRecords = await db.getVendorSpendingHistory(params.vendorId);
+  const spending = {
+    totalSpend: spendingRecords.reduce((s, po) => s + parseFloat(String(po.totalAmount || 0)), 0),
+    orderCount: spendingRecords.length,
+    avgOrderValue: spendingRecords.length > 0 ? spendingRecords.reduce((s, po) => s + parseFloat(String(po.totalAmount || 0)), 0) / spendingRecords.length : 0,
+  };
 
   // Get product details if provided
   let productDetails: any[] = [];

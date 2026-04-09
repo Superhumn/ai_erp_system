@@ -107,10 +107,10 @@ export async function predictAttrition(params?: {
   const prompt = `Analyze this workforce data and predict employee attrition risk.
 
 EMPLOYEES (${employees.length} active):
-${employees.slice(0, 50).map(e => `- ID:${e.id} Name:"${e.firstName} ${e.lastName}" Dept:${e.departmentId || 'N/A'} Title:"${e.position || 'N/A'}" Hired:${e.hireDate} Salary:$${e.salary || 0} Status:${e.status}`).join("\n")}
+${employees.slice(0, 50).map(e => `- ID:${e.id} Name:"${e.firstName} ${e.lastName}" Dept:${e.departmentId || 'N/A'} Title:"${e.jobTitle || 'N/A'}" Hired:${e.hireDate} Salary:$${e.salary || 0} Status:${e.status}`).join("\n")}
 
 DEPARTMENTS:
-${departments.map(d => `- ID:${d.id} Name:"${d.name}" Head:${d.headCount || 'N/A'}`).join("\n")}
+${departments.map(d => `- ID:${d.id} Name:"${d.name}" Head:${(d as any).headCount || 'N/A'}`).join("\n")}
 
 Analyze each employee for attrition risk based on:
 1. Tenure (very short or very long without promotion)
@@ -197,7 +197,7 @@ export async function benchmarkCompensation(params?: {
   const prompt = `Analyze employee compensation and provide market benchmarking estimates.
 
 EMPLOYEES:
-${employees.slice(0, 50).map(e => `- ID:${e.id} Name:"${e.firstName} ${e.lastName}" Title:"${e.position || 'N/A'}" Salary:$${e.salary || 0} Hired:${e.hireDate}`).join("\n")}
+${employees.slice(0, 50).map(e => `- ID:${e.id} Name:"${e.firstName} ${e.lastName}" Title:"${e.jobTitle || 'N/A'}" Salary:$${e.salary || 0} Hired:${e.hireDate}`).join("\n")}
 
 For each employee, estimate market rates based on their title/role and provide recommendations.
 Consider typical ranges for similar roles in a mid-size company context.
@@ -270,7 +270,7 @@ export async function analyzePerformance(params?: {
   const prompt = `Analyze this workforce and provide performance insights, strengths, development areas, and training recommendations.
 
 EMPLOYEES:
-${employees.slice(0, 50).map(e => `- ID:${e.id} Name:"${e.firstName} ${e.lastName}" Title:"${e.position || 'N/A'}" Dept:${e.departmentId || 'N/A'} Hired:${e.hireDate} Salary:$${e.salary || 0}`).join("\n")}
+${employees.slice(0, 50).map(e => `- ID:${e.id} Name:"${e.firstName} ${e.lastName}" Title:"${e.jobTitle || 'N/A'}" Dept:${e.departmentId || 'N/A'} Hired:${e.hireDate} Salary:$${e.salary || 0}`).join("\n")}
 
 For each employee, assess based on tenure, role level, and career trajectory indicators.
 
@@ -350,7 +350,7 @@ ${departments.map(d => {
 
 BUSINESS INDICATORS:
 - Active orders: ${orders.filter(o => o.status === "processing" || o.status === "confirmed").length}
-- Open work orders: ${workOrders.filter(wo => wo.status === "in_progress" || wo.status === "planned").length}
+- Open work orders: ${workOrders.filter(wo => wo.status === "in_progress" || wo.status === "scheduled").length}
 - Current monthly payroll: $${employees.reduce((s, e) => s + parseFloat(String(e.salary || 0)) / 12, 0).toFixed(0)}
 
 Respond ONLY with valid JSON:

@@ -154,7 +154,7 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
           userId: ctx.user.id,
           userName: ctx.user.name || 'User',
           userRole: ctx.user.role,
-          companyId: ctx.user.companyId,
+          companyId: (ctx.user as any).companyId,
         };
 
         const result = await processAIAgentRequest(
@@ -176,7 +176,7 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
           userId: ctx.user.id,
           userName: ctx.user.name || 'User',
           userRole: ctx.user.role,
-          companyId: ctx.user.companyId,
+          companyId: (ctx.user as any).companyId,
         };
 
         return getQuickAnalysis(input.dataType, agentContext);
@@ -188,7 +188,7 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
         userId: ctx.user.id,
         userName: ctx.user.name || 'User',
         userRole: ctx.user.role,
-        companyId: ctx.user.companyId,
+        companyId: (ctx.user as any).companyId,
       };
 
       return getSystemOverview(agentContext);
@@ -200,7 +200,7 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
         userId: ctx.user.id,
         userName: ctx.user.name || 'User',
         userRole: ctx.user.role,
-        companyId: ctx.user.companyId,
+        companyId: (ctx.user as any).companyId,
       };
 
       return getPendingActions(agentContext);
@@ -215,11 +215,11 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
       const suggestions: { type: string; title: string; description: string; priority: string }[] = [];
 
       // Check for low inventory
-      if (metrics?.lowStockItems && metrics.lowStockItems > 0) {
+      if ((metrics as any)?.lowStockItems && (metrics as any).lowStockItems > 0) {
         suggestions.push({
           type: 'inventory',
           title: 'Low Stock Alert',
-          description: `${metrics.lowStockItems} items are running low on stock`,
+          description: `${(metrics as any).lowStockItems} items are running low on stock`,
           priority: 'high',
         });
       }
@@ -245,11 +245,11 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
       }
 
       // Check for overdue invoices
-      if (metrics?.overdueInvoices && metrics.overdueInvoices > 0) {
+      if ((metrics as any)?.overdueInvoices && (metrics as any).overdueInvoices > 0) {
         suggestions.push({
           type: 'finance',
           title: 'Overdue Invoices',
-          description: `${metrics.overdueInvoices} invoices are past due`,
+          description: `${(metrics as any).overdueInvoices} invoices are past due`,
           priority: 'high',
         });
       }

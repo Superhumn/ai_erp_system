@@ -145,7 +145,7 @@ export function registerLocalAuthRoutes(app: Express) {
    * POST /api/auth/signup
    * Register a new user with email/password
    */
-  app.post("/api/auth/signup", async (req: Request, res: Response) => {
+  app.post("/api/auth/register", async (req: Request, res: Response) => {
     const clientIp = getClientIp(req);
 
     // Check rate limit
@@ -172,7 +172,7 @@ export function registerLocalAuthRoutes(app: Express) {
       }
 
       // Check if user already exists
-      const existingUser = await db.getUserByEmail(email);
+      const existingUser = await (db as any).getUserByEmail(email);
       if (existingUser) {
         return res.status(409).json({ error: "User with this email already exists" });
       }

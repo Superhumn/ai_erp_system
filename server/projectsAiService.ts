@@ -108,15 +108,15 @@ PROJECT:
 - Name: "${project.name}"
 - Status: ${project.status}
 - Start: ${project.startDate || 'N/A'}
-- End: ${project.endDate || 'N/A'}
+- End: ${(project as any).targetEndDate || 'N/A'}
 - Budget: $${project.budget || 'N/A'}
 - Description: "${project.description || 'N/A'}"
 
 MILESTONES (${milestones.length}):
-${milestones.map(m => `- "${m.title}" Due:${m.dueDate || 'N/A'} Status:${m.status}`).join("\n") || "No milestones"}
+${milestones.map(m => `- "${m.name}" Due:${m.dueDate || 'N/A'} Status:${m.status}`).join("\n") || "No milestones"}
 
 TASKS (${tasks.length}):
-${tasks.map(t => `- ID:${t.id} "${t.title}" Status:${t.status} Priority:${t.priority || 'N/A'} Assignee:${t.assigneeId || 'Unassigned'} Due:${t.dueDate || 'N/A'}`).join("\n") || "No tasks"}
+${tasks.map(t => `- ID:${t.id} "${t.name}" Status:${t.status} Priority:${t.priority || 'N/A'} Assignee:${t.assigneeId || 'Unassigned'} Due:${t.dueDate || 'N/A'}`).join("\n") || "No tasks"}
 
 Estimate hours for each task using three-point estimation (optimistic, most likely, pessimistic).
 
@@ -150,7 +150,7 @@ Respond ONLY with valid JSON:
   // Fallback
   const estimates: EffortEstimation["estimates"] = tasks.map(t => ({
     taskId: t.id,
-    taskName: t.title,
+    taskName: t.name,
     estimatedHours: 8,
     confidenceRange: { optimistic: 4, mostLikely: 8, pessimistic: 16 },
     complexityLevel: "medium" as const,
@@ -173,16 +173,16 @@ export async function optimizeResourceAllocation(params?: {
   companyId?: number;
 }): Promise<ResourceAllocation> {
   const projects = await db.getProjects({ companyId: params?.companyId });
-  const activeProjects = projects.filter(p => p.status === "active" || p.status === "in_progress");
+  const activeProjects = projects.filter(p => p.status === "active" || p.status === "planning");
   const employees = await db.getEmployees({ companyId: params?.companyId, status: "active" });
 
   const prompt = `Optimize resource allocation across these active projects.
 
 ACTIVE PROJECTS (${activeProjects.length}):
-${activeProjects.map(p => `- ID:${p.id} "${p.name}" Status:${p.status} Budget:$${p.budget || 'N/A'} Owner:${p.ownerId || 'N/A'} End:${p.endDate || 'N/A'}`).join("\n")}
+${activeProjects.map(p => `- ID:${p.id} "${p.name}" Status:${p.status} Budget:$${p.budget || 'N/A'} Owner:${p.ownerId || 'N/A'} End:${(p as any).targetEndDate || 'N/A'}`).join("\n")}
 
 AVAILABLE TEAM: ${employees.length} employees
-${employees.slice(0, 20).map(e => `- ${e.firstName} ${e.lastName}: ${e.position || 'N/A'} (Dept: ${e.departmentId || 'N/A'})`).join("\n")}
+${employees.slice(0, 20).map(e => `- ${e.firstName} ${e.lastName}: ${e.jobTitle || 'N/A'} (Dept: ${e.departmentId || 'N/A'})`).join("\n")}
 
 Recommend optimal resource distribution considering project priorities, deadlines, and team capabilities.
 
@@ -241,12 +241,12 @@ export async function predictProjectRisks(params?: {
   const projects = await db.getProjects({ companyId: params?.companyId });
   const targetProjects = params?.projectId
     ? projects.filter(p => p.id === params.projectId)
-    : projects.filter(p => p.status === "active" || p.status === "in_progress");
+    : projects.filter(p => p.status === "active" || p.status === "planning");
 
   const prompt = `Assess risk levels for these projects.
 
 PROJECTS (${targetProjects.length}):
-${targetProjects.map(p => `- ID:${p.id} "${p.name}" Status:${p.status} Budget:$${p.budget || 'N/A'} Start:${p.startDate || 'N/A'} End:${p.endDate || 'N/A'} Owner:${p.ownerId || 'N/A'}`).join("\n")}
+${targetProjects.map(p => `- ID:${p.id} "${p.name}" Status:${p.status} Budget:$${p.budget || 'N/A'} Start:${p.startDate || 'N/A'} End:${(p as any).targetEndDate || 'N/A'} Owner:${p.ownerId || 'N/A'}`).join("\n")}
 
 Today: ${new Date().toISOString().slice(0, 10)}
 
@@ -282,8 +282,8 @@ Respond ONLY with valid JSON:
 
   return {
     risks: targetProjects.map(p => {
-      const hasEndDate = !!p.endDate;
-      const daysLeft = p.endDate ? (new Date(p.endDate).getTime() - Date.now()) / (24 * 60 * 60 * 1000) : 999;
+      const hasEndDate = !!(p as any).targetEndDate;
+      const daysLeft = (p as any).targetEndDate ? (new Date((p as any).targetEndDate).getTime() - Date.now()) / (24 * 60 * 60 * 1000) : 999;
       return {
         projectId: p.id,
         projectName: p.name,
@@ -298,7 +298,7 @@ Respond ONLY with valid JSON:
       };
     }),
     portfolioRiskScore: 30,
-    criticalProjects: targetProjects.filter(p => p.endDate && (new Date(p.endDate).getTime() - Date.now()) / (24 * 60 * 60 * 1000) < 14).map(p => p.name),
+    criticalProjects: targetProjects.filter(p => (p as any).targetEndDate && (new Date((p as any).targetEndDate).getTime() - Date.now()) / (24 * 60 * 60 * 1000) < 14).map(p => p.name),
     summary: `Analyzed ${targetProjects.length} projects with basic risk indicators.`,
   };
 }
@@ -311,12 +311,12 @@ export async function optimizeSchedule(params?: {
   companyId?: number;
 }): Promise<ScheduleOptimization> {
   const projects = await db.getProjects({ companyId: params?.companyId });
-  const activeProjects = projects.filter(p => p.status === "active" || p.status === "in_progress" || p.status === "planned");
+  const activeProjects = projects.filter(p => p.status === "active" || p.status === "planning");
 
   const prompt = `Optimize the schedule across these projects for maximum efficiency.
 
 PROJECTS (${activeProjects.length}):
-${activeProjects.map(p => `- ID:${p.id} "${p.name}" Status:${p.status} Start:${p.startDate || 'N/A'} End:${p.endDate || 'N/A'} Budget:$${p.budget || 'N/A'}`).join("\n")}
+${activeProjects.map(p => `- ID:${p.id} "${p.name}" Status:${p.status} Start:${p.startDate || 'N/A'} End:${(p as any).targetEndDate || 'N/A'} Budget:$${p.budget || 'N/A'}`).join("\n")}
 
 Today: ${new Date().toISOString().slice(0, 10)}
 
@@ -355,7 +355,7 @@ Respond ONLY with valid JSON:
       projectId: p.id,
       projectName: p.name,
       recommendedStartDate: p.startDate?.toString() || new Date().toISOString().slice(0, 10),
-      recommendedEndDate: p.endDate?.toString() || "TBD",
+      recommendedEndDate: (p as any).targetEndDate?.toString() || "TBD",
       criticalPath: ["Define milestones for critical path analysis"],
       parallelizableWith: [],
     })),

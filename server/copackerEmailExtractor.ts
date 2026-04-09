@@ -216,7 +216,7 @@ export async function applyCopackerInventoryUpdate(
           newQuantity: newQty.toFixed(4),
           unit: item.unitType.toLowerCase() === "pcs" ? "EA" : "kg",
           referenceType: "copacker_email_report",
-          reason: `Copacker inventory report update (${item.quantityBoxes} ${item.quantityUnit})`,
+          notes: `Copacker inventory report update (${item.quantityBoxes} ${item.quantityUnit})`,
           performedBy: userId,
         });
       }
@@ -303,7 +303,7 @@ export async function applyCopackerInventoryUpdate(
         newQuantity: item.quantityKg.toFixed(4),
         unit: item.unitType.toLowerCase() === "pcs" ? "EA" : "kg",
         referenceType: "copacker_email_report",
-        reason: `Initial copacker inventory from email report (${item.quantityBoxes} ${item.quantityUnit})`,
+        notes: `Initial copacker inventory from email report (${item.quantityBoxes} ${item.quantityUnit})`,
         performedBy: userId,
       });
 

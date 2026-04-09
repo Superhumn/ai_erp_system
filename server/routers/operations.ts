@@ -167,7 +167,7 @@ export const operationsRouter = router({
 
         // Create audit logs for each updated item
         for (const result of results.filter(r => r.success)) {
-          await createAuditLog(ctx.user.id, 'bulk_update', 'inventory', result.id);
+          await createAuditLog(ctx.user.id, 'update' as any, 'inventory', result.id);
         }
 
         // Check for low stock alerts on quantity adjustments

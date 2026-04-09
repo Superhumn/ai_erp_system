@@ -399,7 +399,7 @@ export default function Inventory() {
       </div>
 
       {/* Summary Cards — memoized to avoid recalculation on every render */}
-      <InventorySummaryCards inventory={inventory} />
+      <InventorySummaryCards inventory={inventory as any} />
 
       <Card>
         <CardHeader className="pb-3">

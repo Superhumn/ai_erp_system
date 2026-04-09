@@ -115,7 +115,7 @@ export async function detectFinancialAnomalies(params?: {
   const prompt = `Analyze these financial records for anomalies, fraud indicators, and unusual patterns.
 
 TRANSACTIONS (last ${lookbackDays} days): ${recentTransactions.length} records
-${recentTransactions.slice(0, 50).map(t => `- ID:${t.id} Type:${t.type} Amount:$${t.totalAmount || 0} Date:${t.date} Status:${t.status} Ref:${t.reference || 'N/A'}`).join("\n")}
+${recentTransactions.slice(0, 50).map(t => `- ID:${t.id} Type:${t.type} Amount:$${t.totalAmount || 0} Date:${t.date} Status:${t.status} Ref:${t.referenceType || 'N/A'}`).join("\n")}
 
 INVOICES (last ${lookbackDays} days): ${recentInvoices.length} records
 ${recentInvoices.slice(0, 50).map(i => `- ID:${i.id} #${i.invoiceNumber} Amount:$${i.totalAmount || 0} Status:${i.status} Due:${i.dueDate}`).join("\n")}
@@ -212,7 +212,7 @@ export async function forecastRevenue(params?: {
     if (!inv.issueDate) continue;
     const month = new Date(inv.issueDate).toISOString().slice(0, 7);
     const amount = parseFloat(String(inv.totalAmount || 0));
-    if (inv.type === "payable") {
+    if ((inv.type as string) === "payable") {
       monthlyExpenses[month] = (monthlyExpenses[month] || 0) + amount;
     } else {
       monthlyRevenue[month] = (monthlyRevenue[month] || 0) + amount;
@@ -223,9 +223,9 @@ export async function forecastRevenue(params?: {
     if (!t.date) continue;
     const month = new Date(t.date).toISOString().slice(0, 7);
     const amount = parseFloat(String(t.totalAmount || 0));
-    if (t.type === "expense" || t.type === "purchase") {
+    if (t.type === "expense" || (t.type as string) === "purchase") {
       monthlyExpenses[month] = (monthlyExpenses[month] || 0) + amount;
-    } else if (t.type === "sale" || t.type === "revenue") {
+    } else if ((t.type as string) === "sale" || (t.type as string) === "revenue") {
       monthlyRevenue[month] = (monthlyRevenue[month] || 0) + amount;
     }
   }
@@ -316,9 +316,9 @@ export async function predictCashFlow(params?: {
   const purchaseOrders = await db.getPurchaseOrders({ companyId: params?.companyId });
 
   // Compute pending receivables and payables
-  const pendingReceivables = invoices.filter(i => i.type !== "payable" && (i.status === "sent" || i.status === "overdue"));
-  const pendingPayables = invoices.filter(i => i.type === "payable" && (i.status === "sent" || i.status === "pending" || i.status === "overdue"));
-  const openPOs = purchaseOrders.filter(po => po.status === "approved" || po.status === "sent");
+  const pendingReceivables = invoices.filter(i => (i.type as string) !== "payable" && (i.status === "sent" || i.status === "overdue"));
+  const pendingPayables = invoices.filter(i => (i.type as string) === "payable" && (i.status === "sent" || (i.status as string) === "pending" || i.status === "overdue"));
+  const openPOs = purchaseOrders.filter(po => (po.status as string) === "approved" || po.status === "sent");
 
   const prompt = `Predict weekly cash flow for the next ${weeksAhead} weeks based on this data.
 
@@ -417,7 +417,7 @@ CHART OF ACCOUNTS:
 ${accounts.slice(0, 30).map(a => `- ${a.code}: ${a.name} (${a.type})`).join("\n")}
 
 TRANSACTIONS TO CLASSIFY:
-${targetTransactions.map(t => `- ID:${t.id} Ref:"${t.reference || 'N/A'}" Amount:$${t.totalAmount || 0} Type:${t.type} Description:"${t.description || 'N/A'}"`).join("\n")}
+${targetTransactions.map(t => `- ID:${t.id} Ref:"${t.referenceType || 'N/A'}" Amount:$${t.totalAmount || 0} Type:${t.type} Description:"${t.description || 'N/A'}"`).join("\n")}
 
 Respond ONLY with valid JSON:
 {

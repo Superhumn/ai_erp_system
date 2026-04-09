@@ -486,21 +486,21 @@ export const salesRouter = router({
                 if (existingProduct) {
                   await db.updateProduct(existingProduct.id, {
                     name: product.title,
-                    price: product.variants[0]?.price || '0',
+                    unitPrice: product.variants[0]?.price || '0',
                     description: product.body_html?.replace(/<[^>]*>/g, '') || '',
                     isActive: product.status === 'active',
-                  });
+                  } as any);
                   totalUpdated++;
                 } else {
                   await db.createProduct({
                     name: product.title,
                     sku: product.variants[0]?.sku || `SHOP-${product.id}`,
                     description: product.body_html?.replace(/<[^>]*>/g, '') || '',
-                    price: product.variants[0]?.price || '0',
+                    unitPrice: product.variants[0]?.price || '0',
                     isActive: product.status === 'active',
                     category: product.product_type || 'General',
                     source: 'shopify',
-                  });
+                  } as any);
                   totalImported++;
                 }
               }

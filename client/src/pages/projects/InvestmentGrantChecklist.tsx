@@ -349,7 +349,7 @@ export default function InvestmentGrantChecklist() {
     return <ChecklistDetail checklistId={selectedId} onBack={() => setSelectedId(null)} />;
   }
 
-  const filteredChecklists = (checklists as Checklist[] | undefined)?.filter((c) =>
+  const filteredChecklists = (checklists as unknown as Checklist[] | undefined)?.filter((c) =>
     c.name.toLowerCase().includes(search.toLowerCase())
   );
 
