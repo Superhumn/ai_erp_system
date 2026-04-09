@@ -1,157 +1,169 @@
-# Independent Deployment Guide
+# Deployment Guide
 
-This guide covers deploying the AI ERP System independently (off the Manus.ai platform).
+Comprehensive guide for deploying the AI ERP System. Covers Docker, Railway, Vercel, and manual hosting.
 
 ## Prerequisites
 
-- Docker & Docker Compose (or Node.js 20+ and MySQL 8+)
-- A domain name (for production with SSL)
-- An LLM API key (OpenAI, Kimi/Moonshot, or any OpenAI-compatible provider)
+- Node.js 18+ (recommended: latest LTS)
+- pnpm 10.4.1+
+- MySQL 8.0+ database
+- An Anthropic API key for LLM features (`LLM_API_KEY`)
 
 ## Quick Start with Docker
 
-### 1. Clone and configure
-
 ```bash
 cp .env.example .env
-```
+# Edit .env — at minimum set JWT_SECRET, LLM_API_KEY, MYSQL_PASSWORD, MYSQL_ROOT_PASSWORD
 
-Edit `.env` with your values. At minimum, set:
-
-```env
-JWT_SECRET=<run: openssl rand -hex 32>
-LLM_API_KEY=sk-your-openai-key
-MYSQL_PASSWORD=your-secure-db-password
-MYSQL_ROOT_PASSWORD=your-secure-root-password
-```
-
-### 2. Start everything
-
-```bash
 docker compose up -d
-```
-
-This starts:
-- **app** — Node.js server on port 3000
-- **db** — MySQL 8 on port 3306
-- **nginx** — Reverse proxy on port 80/443
-
-### 3. Run database migrations
-
-```bash
 docker compose exec app npx drizzle-kit generate
 docker compose exec app npx drizzle-kit migrate
 ```
 
-### 4. Create your first admin user
-
-Open `http://localhost` in your browser, click "Create one" on the login page, and register. Then promote yourself to admin:
-
-```bash
-docker compose exec db mysql -u erp_user -p ai_erp_system \
-  -e "UPDATE users SET role='admin' WHERE email='you@company.com';"
-```
+This starts the Node.js app on port 3000, MySQL on 3306, and nginx on 80/443. Visit `http://localhost`, click "Sign up", and the first user becomes admin automatically.
 
 ## Quick Start without Docker
 
-### 1. Install dependencies
-
 ```bash
 pnpm install
-```
-
-### 2. Set up MySQL
-
-Create a database:
-```sql
-CREATE DATABASE ai_erp_system CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'erp_user'@'localhost' IDENTIFIED BY 'your_password';
-GRANT ALL PRIVILEGES ON ai_erp_system.* TO 'erp_user'@'localhost';
-```
-
-### 3. Configure environment
-
-```bash
 cp .env.example .env
-# Edit .env with your DATABASE_URL, JWT_SECRET, and LLM_API_KEY
-```
-
-### 4. Run migrations and start
-
-```bash
+# Edit .env with DATABASE_URL, JWT_SECRET, LLM_API_KEY
 pnpm run db:push
-pnpm run dev        # Development
-# OR
-pnpm run build && pnpm run start  # Production
+pnpm run dev
 ```
 
-## LLM Configuration
+Visit `http://localhost:3000` and sign up. First user gets admin role.
 
-The system supports any OpenAI-compatible API. Set these in `.env`:
+## Platform-Specific Instructions
 
-| Provider | LLM_API_URL | LLM_MODEL | LLM_API_KEY |
-|----------|-------------|-----------|-------------|
-| **OpenAI** (default) | *(leave empty)* | `gpt-4o` | `sk-...` |
-| **Kimi / Moonshot** | `https://api.moonshot.cn` | `moonshot-v1-128k` | Your Moonshot key |
-| **Azure OpenAI** | `https://your-resource.openai.azure.com` | `gpt-4o` | Your Azure key |
-| **Local (Ollama)** | `http://localhost:11434` | `llama3` | `ollama` |
+### Railway (Recommended)
 
-## SSL / HTTPS Setup
+1. Connect your GitHub repository at [railway.app](https://railway.app)
+2. Add a MySQL database: New → Database → MySQL
+3. Set environment variables: `JWT_SECRET`, `NODE_ENV=production`
+4. Railway auto-detects build/start commands from `package.json`
+5. Visit `https://[your-app].railway.app`, sign up as first user
 
-### Option A: Let's Encrypt (recommended)
+### Vercel + PlanetScale
+
+1. Deploy: `vercel` or connect GitHub repo
+2. Create a MySQL database at [planetscale.com](https://planetscale.com) (same region as Vercel)
+3. Set environment variables in Vercel dashboard: `DATABASE_URL`, `JWT_SECRET`, `NODE_ENV=production`
+4. Run migrations locally: `npm run db:push` (with `DATABASE_URL` in local `.env`)
+5. Redeploy: `vercel --prod`
+6. Visit `https://[your-project].vercel.app`, sign up as first user
+
+**Vercel SPA routing note:** The repo includes `vercel.json` with rewrite rules so that direct navigation to routes like `/settings` works correctly. If you see raw code instead of the app, ensure `vercel.json` is committed and redeploy with `vercel --prod`.
+
+### AWS / DigitalOcean / Manual Hosting
 
 ```bash
-# Install certbot
-apt install certbot
+git clone <your-repo>
+cd ai_erp_system
+pnpm install --frozen-lockfile
 
-# Get certificate
+export DATABASE_URL="mysql://user:password@host:3306/database"
+export JWT_SECRET="$(openssl rand -hex 32)"
+export NODE_ENV="production"
+
+pnpm run db:push
+pnpm run build
+pnpm run start
+```
+
+Optional: use PM2 for process management (`pm2 start dist/index.js --name ai-erp`).
+
+## Environment Variables
+
+### Required
+
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | MySQL connection string (e.g., `mysql://user:pass@host:3306/ai_erp_system`) |
+| `JWT_SECRET` | Secure secret, minimum 32 characters. Generate with `openssl rand -hex 32` |
+
+### Recommended
+
+| Variable | Description | Default |
+|---|---|---|
+| `NODE_ENV` | `development` or `production` | `development` |
+| `PORT` | Server port | `3000` |
+| `APP_URL` | Public URL for email links | `http://localhost:3000` |
+
+### LLM Configuration
+
+| Variable | Description |
+|---|---|
+| `LLM_PROVIDER` | `anthropic` |
+| `LLM_API_KEY` | Your Anthropic API key |
+| `LLM_MODEL` | Model name (default: `claude-sonnet-4-20250514`) |
+
+### Optional Integrations
+
+| Variable | Description |
+|---|---|
+| `SENDGRID_API_KEY` | Transactional email |
+| `QUICKBOOKS_CLIENT_ID` / `_SECRET` | QuickBooks sync |
+| `SHOPIFY_CLIENT_ID` / `_SECRET` | Shopify sync |
+| `GOOGLE_CLIENT_ID` / `_SECRET` | Google Workspace |
+| `IMAP_HOST` / `_USER` / `_PASSWORD` | Email inbox scanning |
+
+See `.env.example` for the full list.
+
+## First-Time Setup
+
+1. Visit your deployment URL — you'll be redirected to `/login`
+2. Click "Sign up" at the bottom
+3. Enter name, email, and password (8+ characters)
+4. First user automatically gets **admin** role
+5. Invite team: Settings → Team → Invite Team Member
+
+## SSL / HTTPS
+
+Railway and Vercel provide HTTPS automatically. For Docker/manual:
+
+**Let's Encrypt:**
+```bash
 certbot certonly --standalone -d yourdomain.com
-
-# Copy certs
 cp /etc/letsencrypt/live/yourdomain.com/fullchain.pem nginx/certs/
 cp /etc/letsencrypt/live/yourdomain.com/privkey.pem nginx/certs/
-```
-
-Then uncomment the SSL lines in `nginx/nginx.conf` and restart:
-```bash
 docker compose restart nginx
 ```
 
-### Option B: Cloudflare (easiest)
+**Cloudflare:** Point domain to Cloudflare, set SSL to "Full", use origin certificates.
 
-Point your domain to Cloudflare, set SSL mode to "Full", and use Cloudflare's origin certificates.
+## CI/CD Pipeline
+
+See `docs/deployment-setup.md` for GitHub Actions CI/CD configuration with staging/production environments on Railway.
+
+## Troubleshooting
+
+**"Cannot connect to database"** — Verify `DATABASE_URL` is set and the database is accessible. Format: `mysql://user:password@host:3306/database`. Redeploy after changing env vars.
+
+**"Invalid session cookie" / immediate logout** — `JWT_SECRET` is missing or too short. Must be 32+ characters. Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Redeploy after setting.
+
+**404 on direct navigation (Vercel)** — Ensure `vercel.json` is committed. Redeploy with `vercel --prod`.
+
+**Seeing raw code instead of the app (Vercel)** — Same fix: ensure `vercel.json` exists, then `vercel --prod`.
+
+**Page loads but looks broken** — Build may have failed. Check deployment logs. Verify `dist/public/` was created.
+
+**Slow first load** — Normal for serverless cold starts (3-5s). Keep warm with health check pings. Ensure database is in the same region.
 
 ## Production Checklist
 
-- [ ] Set `NODE_ENV=production` in `.env`
-- [ ] Generate a strong `JWT_SECRET` (min 32 chars): `openssl rand -hex 32`
-- [ ] Set `PUBLIC_APP_URL` to your domain (for email links)
-- [ ] Configure SSL/HTTPS
-- [ ] Set up database backups (cron + `mysqldump`)
-- [ ] Configure SendGrid for transactional emails
-- [ ] Set strong MySQL passwords
-- [ ] Enable firewall (allow only 80, 443, and SSH)
+- [ ] `NODE_ENV=production`
+- [ ] Strong `JWT_SECRET` (32+ chars, never committed to git)
+- [ ] `APP_URL` set to your domain
+- [ ] SSL/HTTPS enabled
+- [ ] Database backups configured
+- [ ] SendGrid configured for transactional emails
+- [ ] Firewall rules (allow 80, 443, SSH only)
 
-## File Storage
+## Health Check
 
-For file uploads, configure AWS S3 or an S3-compatible service:
-
-```env
-AWS_ACCESS_KEY_ID=your-key
-AWS_SECRET_ACCESS_KEY=your-secret
-AWS_REGION=us-east-1
-AWS_S3_BUCKET=your-erp-bucket
-```
-
-S3-compatible alternatives: MinIO (self-hosted), Cloudflare R2, Backblaze B2.
-
-## Monitoring
-
-The health check endpoint is available at:
 ```
 GET /api/health
 ```
 
-Returns `{"status":"ok","timestamp":"..."}` when the server is running.
-
-For Docker, the container includes a built-in healthcheck that polls this endpoint every 30 seconds.
+Returns `{"status":"ok","timestamp":"..."}`. Docker containers auto-poll this every 30 seconds.
