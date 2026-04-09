@@ -69,7 +69,7 @@ export default function IntegrationsPage() {
 
   const testSendgridMutation = trpc.integrations.testSendgrid.useMutation({
     onSuccess: (data) => {
-      toast.success(data.message);
+      toast.success((data as any).message ?? "Success");
       refetch();
     },
     onError: (error) => {
@@ -80,7 +80,7 @@ export default function IntegrationsPage() {
   const shopifyInitiateOAuthMutation = (trpc.integrations as any).shopify.initiateOAuth.useMutation({
     onSuccess: (data) => {
       // Redirect to Shopify OAuth page
-      window.location.href = data.authUrl;
+      window.location.href = data.url;
     },
     onError: (error) => {
       toast.error(error.message);
@@ -100,7 +100,7 @@ export default function IntegrationsPage() {
 
   const shopifyTestConnectionMutation = (trpc.integrations as any).shopify.testConnection.useMutation({
     onSuccess: (data) => {
-      toast.success(data.message);
+      toast.success((data as any).message ?? "Connection successful");
     },
     onError: (error) => {
       toast.error(error.message);
@@ -189,7 +189,7 @@ export default function IntegrationsPage() {
       return;
     }
     setShopifyConnecting(true);
-    shopifyInitiateOAuthMutation.mutate({ shop: shopifyShopDomain });
+    shopifyInitiateOAuthMutation.mutate({ shop: shopifyShopDomain } as any);
   };
 
   const getStatusBadge = (status: string) => {
@@ -614,7 +614,7 @@ export default function IntegrationsPage() {
                               <Button 
                                 variant="ghost" 
                                 size="sm"
-                                onClick={() => shopifyTestConnectionMutation.mutate({ storeId: store.id })}
+                                onClick={() => shopifyTestConnectionMutation.mutate({ storeId: store.id } as any)}
                                 disabled={shopifyTestConnectionMutation.isPending || !store.isEnabled}
                                 title="Test connection"
                               >
@@ -626,7 +626,7 @@ export default function IntegrationsPage() {
                                 className="text-destructive"
                                 onClick={() => {
                                   if (confirm(`Are you sure you want to disconnect ${store.storeName || store.storeDomain}?`)) {
-                                    shopifyDisconnectMutation.mutate({ storeId: store.id });
+                                    shopifyDisconnectMutation.mutate({ storeId: store.id } as any);
                                   }
                                 }}
                                 disabled={shopifyDisconnectMutation.isPending}

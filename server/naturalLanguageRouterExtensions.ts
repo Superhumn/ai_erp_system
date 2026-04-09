@@ -96,7 +96,7 @@ export const purchaseOrderTextEndpoints = {
           } catch (err) {
             // Log material linking failure to audit trail
             console.warn('Failed to link material:', err);
-            await createAuditLog(ctx.user.id, 'warning', 'purchaseOrder', 0, 'Material linking failed', null, {
+            await createAuditLog(ctx.user.id, 'create', 'purchaseOrder', 0, 'Material linking failed', null, {
               materialName: item.materialName,
               error: err instanceof Error ? err.message : 'Unknown error'
             });
@@ -235,7 +235,7 @@ export const paymentTextEndpoints = {
         // Log warning if payment has no associated entity (shouldn't happen after above check)
         if (!customerId && !vendorId) {
           console.error('CRITICAL: Payment created with no associated entity');
-          await createAuditLog(ctx.user.id, 'error', 'payment', 0, 'Payment without entity', null, {
+          await createAuditLog(ctx.user.id, 'create', 'payment', 0, 'Payment without entity', null, {
             payerName: parsed.payerName,
             amount: parsed.amount
           });
@@ -248,7 +248,12 @@ export const paymentTextEndpoints = {
         // Find invoice if mentioned
         let invoiceId: number | undefined;
         if (parsed.invoiceNumber) {
-          const invoice = await db.getInvoiceByNumber(parsed.invoiceNumber);
+          // invoiceNumber may be a string like "INV-2024-001" or a numeric ID
+          const invoiceNumStr = String(parsed.invoiceNumber);
+          const numericId = parseInt(invoiceNumStr, 10);
+          const invoice = (!isNaN(numericId) && String(numericId) === invoiceNumStr)
+            ? await db.getInvoiceById(numericId)
+            : await db.getInvoiceByNumber(invoiceNumStr);
           if (invoice) {
             invoiceId = invoice.id;
           }
@@ -261,6 +266,8 @@ export const paymentTextEndpoints = {
           invoiceId,
           customerId,
           vendorId,
+          paymentNumber: generateNumber('PAY'),
+          type: customerId ? 'received' as const : 'made' as const,
           amount: parsed.amount.toFixed(2),
           paymentDate: parsed.paymentDate ? new Date(parsed.paymentDate) : new Date(),
           paymentMethod: parsed.paymentMethod || 'bank_transfer',
@@ -326,14 +333,14 @@ export const workOrderTextEndpoints = {
         // Create work order
         const workOrder = await db.createWorkOrder({
           productId,
-          bomId: 1, // Default BOM; will be linked properly by ops
           quantity: parsed.quantity.toString(),
-          unit: parsed.unit || 'units',
+          unit: parsed.unit || 'EA',
           status: 'draft',
-          priority: parsed.priority || 'medium',
+          priority: parsed.priority === 'medium' ? 'normal' : (parsed.priority || 'normal'),
           scheduledEndDate: parsed.dueDate ? new Date(parsed.dueDate) : undefined,
           notes: parsed.notes || undefined,
           createdBy: ctx.user.id,
+          bomId: 0,
         } as any);
         
         await createAuditLog(ctx.user.id, 'create', 'workOrder', workOrder.id, workOrder.workOrderNumber, null, { source: 'text', originalText: input.text });
@@ -366,23 +373,24 @@ export const inventoryTextEndpoints = {
         const parsed = await parseEntityText(input.text, 'inventory_transfer');
         
         // Find warehouses
-        const fromWarehouse = await db.getWarehouseByName(parsed.fromLocation);
-        const toWarehouse = await db.getWarehouseByName(parsed.toLocation);
+        const fromWarehouse = await db.getWarehouses().then(ws => ws.find(w => w.name === parsed.fromLocation) ?? null);
+        const toWarehouse = await db.getWarehouses().then(ws => ws.find(w => w.name === parsed.toLocation) ?? null);
         
         if (!fromWarehouse || !toWarehouse) {
           throw new Error(`Warehouse not found: ${!fromWarehouse ? parsed.fromLocation : parsed.toLocation}`);
         }
         
         // Create inventory transfer
-        const transfer = await db.createInventoryTransfer({
+        const transfer = await db.createTransfer({
           fromWarehouseId: fromWarehouse.id,
           toWarehouseId: toWarehouse.id,
           requestedDate: parsed.transferDate ? new Date(parsed.transferDate) : new Date(),
           status: 'pending',
           notes: parsed.notes || parsed.reason || undefined,
           requestedBy: ctx.user.id,
-        } as any);
-        
+        });
+
+
         // Create transfer items
         for (const item of parsed.items || []) {
           // Find material/product
@@ -392,13 +400,12 @@ export const inventoryTextEndpoints = {
           } catch (err) {
             console.warn('Failed to find/create material:', err);
           }
-          
-          await db.createInventoryTransferItem({
+
+          await db.addTransferItem({
             transferId: transfer.id,
-            productId: productId || 0,
+            productId: productId!,
             requestedQuantity: item.quantity.toString(),
-            notes: item.materialName || undefined,
-          } as any);
+          });
         }
 
         await createAuditLog(ctx.user.id, 'create', 'inventoryTransfer', transfer.id, transfer.transferNumber, null, { source: 'text', originalText: input.text });

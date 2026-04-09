@@ -310,12 +310,13 @@ class SupplyChainOrchestrator {
       case "inventory_below":
         // Check if any inventory is below threshold
         const { inventory } = await import("../drizzle/schema");
-        const [lowStock] = await db.execute(sql`
+        const lowStockResult = await db.execute(sql`
           SELECT COUNT(*) as count
           FROM inventory
           WHERE CAST(quantity AS DECIMAL) - CAST(reservedQuantity AS DECIMAL) < CAST(reorderLevel AS DECIMAL)
         `);
-        return ((lowStock as unknown as any[])[0]?.count || 0) > 0;
+        const lowStockRows = (lowStockResult as unknown as any[][])[0];
+        return ((lowStockRows?.[0]?.count || 0) > 0);
 
       case "pending_approvals":
         // Check pending approval count

@@ -482,7 +482,7 @@ async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any
       const allInventory = await db.select().from(inventory);
       const lowStockItems = allInventory.filter(i => parseFloat(i.quantity?.toString() || "0") < 10);
       const totalValue = allInventory.reduce((sum, i) => {
-        return sum + (parseFloat(i.quantity?.toString() || "0") * parseFloat((i as any).unitCost?.toString() || "0"));
+        return sum + (parseFloat(i.quantity?.toString() || "0") * parseFloat(i.averageCost?.toString() || "0"));
       }, 0);
 
       return {
@@ -556,7 +556,7 @@ async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any
       const allOrders = await db.select().from(orders).where(
         timeRange !== "all" ? gte(orders.createdAt, startDate) : undefined
       );
-      const pendingOrders = allOrders.filter(o => o.status === "pending");
+      const pendingOrders = allOrders.filter(o => (o.status as string) === "pending");
       const completedOrders = allOrders.filter(o => (o.status as string) === "completed" || o.status === "delivered");
 
       return {
@@ -650,7 +650,7 @@ async function executeSendEmail(params: any, ctx: AIAgentContext): Promise<any> 
     await db.insert(sentEmails).values({
       toEmail,
       toName: recipientName,
-      fromEmail: "noreply@superhumn.com",
+      fromEmail: 'noreply@system.local',
       subject: params.subject,
       bodyText: params.body,
       status: "sent",
@@ -829,7 +829,6 @@ async function executeManageVendor(params: any, ctx: AIAgentContext): Promise<an
         email: data.email,
         phone: data.phone,
         contactName: data.contactName,
-        type: data.category || "supplier",
         status: data.status || "active",
       } as any).$returningId();
       return { created: true, vendorId: newVendor[0].id };
@@ -924,12 +923,9 @@ async function executeManageCopacker(params: any, ctx: AIAgentContext): Promise<
 
   switch (action) {
     case "list": {
-      // Copackers are vendors with category = 'copacker' or 'manufacturer'
       const allVendors = await db.select().from(vendors);
       const copackers = allVendors.filter(v =>
-        (v as any).category === "copacker" ||
-        (v as any).category === "manufacturer" ||
-        (v as any).category === "contract_manufacturer"
+        v.type === "contractor" || v.type === "service"
       );
       return { copackers, total: copackers.length };
     }
@@ -1186,26 +1182,20 @@ async function executeGenerateReport(params: any, ctx: AIAgentContext): Promise<
     }
 
     case "financial_overview": {
-      // Use DB aggregation instead of loading all invoices into memory
-      const [totals] = await db.select({
-        totalInvoices: count(),
-        totalBilled: sum(invoices.totalAmount),
-      }).from(invoices);
-      const [paidTotals] = await db.select({
-        count: count(),
-        totalCollected: sum(invoices.totalAmount),
-      }).from(invoices).where(eq(invoices.status, "paid"));
-      const [pendingTotals] = await db.select({
-        count: count(),
-      }).from(invoices).where(or(eq(invoices.status, "pending"), eq(invoices.status, "sent")));
+      const allInvoices = await db.select().from(invoices);
+      const paidInvoices = allInvoices.filter(i => i.status === "paid");
+      const pendingInvoices = allInvoices.filter(i => (i.status as string) === "pending" || i.status === "sent");
+
+      const totalBilled = allInvoices.reduce((sum, i) => sum + parseFloat(i.totalAmount || "0"), 0);
+      const totalCollected = paidInvoices.reduce((sum, i) => sum + parseFloat(i.totalAmount || "0"), 0);
 
       return {
         reportType: "financial_overview",
-        totalInvoices: totals?.totalInvoices || 0,
-        paidInvoices: paidTotals?.count || 0,
-        pendingInvoices: pendingTotals?.count || 0,
-        totalBilled: parseFloat(totals?.totalBilled || "0").toFixed(2),
-        totalCollected: parseFloat(paidTotals?.totalCollected || "0").toFixed(2),
+        totalInvoices: allInvoices.length,
+        paidInvoices: paidInvoices.length,
+        pendingInvoices: pendingInvoices.length,
+        totalBilled: totalBilled.toFixed(2),
+        totalCollected: totalCollected.toFixed(2),
       };
     }
 
@@ -1644,7 +1634,7 @@ export async function getSystemOverview(ctx: AIAgentContext): Promise<any> {
 
   const activeVendors = vendorStats.filter(v => v.status === "active").length;
   const activeCustomers = customerStats.filter(c => c.status === "active").length;
-  const pendingOrders = orderStats.filter(o => o.status === "pending").length;
+  const pendingOrders = orderStats.filter(o => (o.status as string) === "pending").length;
   const lowStockItems = inventoryStats.filter(i => parseFloat(i.quantity?.toString() || "0") < 10).length;
   const pendingPOs = poStats.filter(po => (po.status as string) === "pending" || po.status === "sent").length;
   const inProgressWOs = workOrderStats.filter(wo => wo.status === "in_progress").length;

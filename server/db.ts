@@ -97,11 +97,19 @@ import {
   InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
   // Local authentication
   localAuthCredentials, InsertLocalAuthCredential,
-  // Investment grant checklists
-  investmentGrantChecklists, investmentGrantItems,
-  InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
   // Fireflies meetings
   firefliesMeetings, firefliesConfigs,
+  // COGS tracking
+  cogsTransactions, freightCostAllocations,
+  InsertCogsTransaction, InsertFreightCostAllocation,
+  // QuickBooks integration
+  quickbooksAccounts, quickbooksAccountMappings, quickbooksItems,
+  InsertQuickBooksAccount, InsertQuickBooksAccountMapping, InsertQuickBooksItem,
+  // EDI module
+  ediTradingPartners, ediDocumentMaps, ediTransactions, ediTransactionItems, ediProductCrosswalks, ediShipToLocations, ediComplianceScorecards,
+  ediControlNumbers, ediSettings,
+  InsertEdiTradingPartner, InsertEdiDocumentMap, InsertEdiTransaction, InsertEdiTransactionItem, InsertEdiProductCrosswalk, InsertEdiShipToLocation, InsertEdiComplianceScorecard,
+  InsertEdiControlNumber, InsertEdiSettings,
   // Inventory costing & COGS
   inventoryCostingConfig, inventoryCostLayers, cogsRecords, cogsPeriodSummary,
   InsertInventoryCostingConfig, InsertInventoryCostLayer, InsertCogsRecord, InsertCogsPeriodSummary,
@@ -113,13 +121,6 @@ import {
   dataRoomChecklists, dataRoomChecklistItems,
   InsertDueDiligenceTemplate, InsertDueDiligenceCategory, InsertDueDiligenceItem,
   InsertDataRoomChecklist, InsertDataRoomChecklistItem,
-  // QuickBooks accounts & items
-  quickbooksAccounts, quickbooksAccountMappings, quickbooksItems,
-  // EDI tables
-  ediTradingPartners, ediDocumentMaps, ediTransactions, ediTransactionItems,
-  ediProductCrosswalks, ediShipToLocations, ediSettings, ediComplianceScorecards,
-  InsertEdiTradingPartner, InsertEdiDocumentMap, InsertEdiTransaction, InsertEdiTransactionItem,
-  InsertEdiProductCrosswalk, InsertEdiShipToLocation, InsertEdiSetting, InsertEdiComplianceScorecard,
   // Transactional email tables
   transactionalEmailTemplates, emailMessages, emailEvents,
   InsertTransactionalEmailTemplate, InsertEmailMessage, InsertEmailEvent,
@@ -244,21 +245,6 @@ export async function updateUserRole(userId: number, role: InsertUser['role']) {
 // ============================================
 // COMPANY MANAGEMENT
 // ============================================
-
-// ============================================
-// LOCAL AUTH CREDENTIALS
-// ============================================
-
-export async function getUserByEmail(email: string) {
-    const db = await getDb();
-    if (!db) {
-          console.warn("[Database] Cannot get user: database not available");
-          return undefined;
-    }
-
-    const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
-    return result.length > 0 ? result[0] : undefined;
-}
 
 export async function getLocalAuthCredentialByEmail(email: string) {
     const db = await getDb();
@@ -560,6 +546,13 @@ export async function getInvoiceById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(invoices).where(eq(invoices.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getInvoiceByNumber(invoiceNumber: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(invoices).where(eq(invoices.invoiceNumber, invoiceNumber)).limit(1);
   return result[0];
 }
 
@@ -2371,7 +2364,7 @@ export async function getUsersByRoles(roles: string[]) {
   if (!db) return [];
   return db.select().from(users).where(
     and(
-      inArray(users.role, roles as any),
+      inArray(users.role, roles as any[]),
       eq(users.isActive, true)
     )
   );
@@ -2769,19 +2762,18 @@ export async function deleteBomComponent(id: number) {
 }
 
 // Raw Materials
-export async function getRawMaterials(filters?: { status?: string; category?: string }) {
+export async function getRawMaterials(filters?: { status?: string; category?: string; searchTerm?: string; limit?: number }) {
   const db = await getDb();
   if (!db) return [];
   
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(rawMaterials.status, filters.status as any));
+  if (filters?.category) conditions.push(eq(rawMaterials.category, filters.category));
+  if (filters?.searchTerm) conditions.push(like(rawMaterials.name, `%${filters.searchTerm}%`));
+
   let query = db.select().from(rawMaterials).orderBy(rawMaterials.name);
-  
-  if (filters?.status) {
-    query = query.where(eq(rawMaterials.status, filters.status as any)) as typeof query;
-  }
-  if (filters?.category) {
-    query = query.where(eq(rawMaterials.category, filters.category)) as typeof query;
-  }
-  
+  if (conditions.length > 0) query = query.where(and(...conditions)) as typeof query;
+  if (filters?.limit) query = query.limit(filters.limit) as typeof query;
   return query;
 }
 
@@ -8195,14 +8187,12 @@ export async function getCrmPipelines(type?: string) {
   const db = await getDb();
   if (!db) return [];
 
-  const conditions = [eq(crmPipelines.isActive, true)];
+  const conditions: any[] = [eq(crmPipelines.isActive, true)];
   if (type) {
     conditions.push(eq(crmPipelines.type, type as any));
   }
 
-  return db.select().from(crmPipelines)
-    .where(and(...conditions))
-    .orderBy(crmPipelines.name);
+  return db.select().from(crmPipelines).where(and(...conditions)).orderBy(crmPipelines.name);
 }
 
 export async function getCrmPipelineById(id: number) {
@@ -8420,7 +8410,7 @@ export async function processVCardCapture(captureId: number, vcardData: string, 
       source: "iphone_bump" as const,
       capturedBy,
       captureData: JSON.stringify({ vcardData, captureId }),
-    } as InsertCrmContact);
+    } as any);
 
     // Mark capture as contact_created
     await updateContactCapture(captureId, {
@@ -9155,6 +9145,387 @@ export async function autoMatchChecklistDocuments(checklistId: number) {
 // ============================================
 
 // --- EDI Trading Partners ---
+
+export async function getEdiTradingPartners(filters?: { status?: string; partnerType?: string; companyId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(ediTradingPartners.status, filters.status as any));
+  if (filters?.partnerType) conditions.push(eq(ediTradingPartners.partnerType, filters.partnerType as any));
+  if (filters?.companyId) conditions.push(eq(ediTradingPartners.companyId, filters.companyId));
+
+  if (conditions.length > 0) {
+    return db.select().from(ediTradingPartners).where(and(...conditions)).orderBy(desc(ediTradingPartners.updatedAt));
+  }
+  return db.select().from(ediTradingPartners).orderBy(desc(ediTradingPartners.updatedAt));
+}
+
+export async function getEdiTradingPartnerById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(ediTradingPartners).where(eq(ediTradingPartners.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getEdiTradingPartnerByIsaId(isaId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(ediTradingPartners).where(eq(ediTradingPartners.isaId, isaId)).limit(1);
+  return result[0];
+}
+
+export async function createEdiTradingPartner(data: InsertEdiTradingPartner) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediTradingPartners).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEdiTradingPartner(id: number, data: Partial<InsertEdiTradingPartner>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediTradingPartners).set(data).where(eq(ediTradingPartners.id, id));
+}
+
+export async function deleteEdiTradingPartner(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(ediTradingPartners).where(eq(ediTradingPartners.id, id));
+}
+
+// --- EDI Document Maps ---
+
+export async function getEdiDocumentMaps(tradingPartnerId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  if (tradingPartnerId) {
+    return db.select().from(ediDocumentMaps).where(eq(ediDocumentMaps.tradingPartnerId, tradingPartnerId)).orderBy(desc(ediDocumentMaps.updatedAt));
+  }
+  return db.select().from(ediDocumentMaps).orderBy(desc(ediDocumentMaps.updatedAt));
+}
+
+export async function getEdiDocumentMapById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(ediDocumentMaps).where(eq(ediDocumentMaps.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getEdiDocumentMapForPartner(tradingPartnerId: number, transactionSetCode: string, direction: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(ediDocumentMaps).where(
+    and(
+      eq(ediDocumentMaps.tradingPartnerId, tradingPartnerId),
+      eq(ediDocumentMaps.transactionSetCode, transactionSetCode),
+      eq(ediDocumentMaps.direction, direction as any),
+      eq(ediDocumentMaps.isActive, true)
+    )
+  ).limit(1);
+  return result[0];
+}
+
+export async function createEdiDocumentMap(data: InsertEdiDocumentMap) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediDocumentMaps).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEdiDocumentMap(id: number, data: Partial<InsertEdiDocumentMap>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediDocumentMaps).set(data).where(eq(ediDocumentMaps.id, id));
+}
+
+// --- EDI Transactions ---
+
+export async function getEdiTransactions(filters?: { tradingPartnerId?: number; transactionSetCode?: string; direction?: string; status?: string; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.tradingPartnerId) conditions.push(eq(ediTransactions.tradingPartnerId, filters.tradingPartnerId));
+  if (filters?.transactionSetCode) conditions.push(eq(ediTransactions.transactionSetCode, filters.transactionSetCode));
+  if (filters?.direction) conditions.push(eq(ediTransactions.direction, filters.direction as any));
+  if (filters?.status) conditions.push(eq(ediTransactions.status, filters.status as any));
+
+  const query = conditions.length > 0
+    ? db.select().from(ediTransactions).where(and(...conditions)).orderBy(desc(ediTransactions.createdAt))
+    : db.select().from(ediTransactions).orderBy(desc(ediTransactions.createdAt));
+
+  if (filters?.limit) {
+    return query.limit(filters.limit);
+  }
+  return query;
+}
+
+export async function getEdiTransactionById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(ediTransactions).where(eq(ediTransactions.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getEdiTransactionWithItems(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const transaction = await getEdiTransactionById(id);
+  if (!transaction) return undefined;
+
+  const items = await db.select().from(ediTransactionItems).where(eq(ediTransactionItems.transactionId, id)).orderBy(ediTransactionItems.lineNumber);
+  return { ...transaction, items };
+}
+
+export async function createEdiTransaction(data: InsertEdiTransaction) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediTransactions).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEdiTransaction(id: number, data: Partial<InsertEdiTransaction>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediTransactions).set(data).where(eq(ediTransactions.id, id));
+}
+
+// --- EDI Transaction Items ---
+
+export async function getEdiTransactionItems(transactionId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(ediTransactionItems).where(eq(ediTransactionItems.transactionId, transactionId)).orderBy(ediTransactionItems.lineNumber);
+}
+
+export async function createEdiTransactionItem(data: InsertEdiTransactionItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediTransactionItems).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function createEdiTransactionItems(items: InsertEdiTransactionItem[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (items.length === 0) return;
+  await db.insert(ediTransactionItems).values(items);
+}
+
+// --- EDI Product Crosswalks ---
+
+export async function getEdiProductCrosswalks(tradingPartnerId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  if (tradingPartnerId) {
+    return db.select().from(ediProductCrosswalks).where(
+      and(eq(ediProductCrosswalks.tradingPartnerId, tradingPartnerId), eq(ediProductCrosswalks.isActive, true))
+    ).orderBy(ediProductCrosswalks.buyerPartNumber);
+  }
+  return db.select().from(ediProductCrosswalks).orderBy(ediProductCrosswalks.buyerPartNumber);
+}
+
+export async function getEdiProductCrosswalkByBuyerPart(tradingPartnerId: number, buyerPartNumber: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(ediProductCrosswalks).where(
+    and(
+      eq(ediProductCrosswalks.tradingPartnerId, tradingPartnerId),
+      eq(ediProductCrosswalks.buyerPartNumber, buyerPartNumber),
+      eq(ediProductCrosswalks.isActive, true)
+    )
+  ).limit(1);
+  return result[0];
+}
+
+export async function getEdiProductCrosswalkByUpc(tradingPartnerId: number, upc: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(ediProductCrosswalks).where(
+    and(
+      eq(ediProductCrosswalks.tradingPartnerId, tradingPartnerId),
+      eq(ediProductCrosswalks.upc, upc),
+      eq(ediProductCrosswalks.isActive, true)
+    )
+  ).limit(1);
+  return result[0];
+}
+
+export async function createEdiProductCrosswalk(data: InsertEdiProductCrosswalk) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediProductCrosswalks).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEdiProductCrosswalk(id: number, data: Partial<InsertEdiProductCrosswalk>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediProductCrosswalks).set(data).where(eq(ediProductCrosswalks.id, id));
+}
+
+export async function deleteEdiProductCrosswalk(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediProductCrosswalks).set({ isActive: false }).where(eq(ediProductCrosswalks.id, id));
+}
+
+// --- EDI Ship-To Locations ---
+
+export async function getEdiShipToLocations(tradingPartnerId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  if (tradingPartnerId) {
+    return db.select().from(ediShipToLocations).where(
+      and(eq(ediShipToLocations.tradingPartnerId, tradingPartnerId), eq(ediShipToLocations.isActive, true))
+    ).orderBy(ediShipToLocations.locationCode);
+  }
+  return db.select().from(ediShipToLocations).where(eq(ediShipToLocations.isActive, true)).orderBy(ediShipToLocations.locationCode);
+}
+
+export async function getEdiShipToLocationByCode(tradingPartnerId: number, locationCode: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(ediShipToLocations).where(
+    and(
+      eq(ediShipToLocations.tradingPartnerId, tradingPartnerId),
+      eq(ediShipToLocations.locationCode, locationCode)
+    )
+  ).limit(1);
+  return result[0];
+}
+
+export async function createEdiShipToLocation(data: InsertEdiShipToLocation) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediShipToLocations).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEdiShipToLocation(id: number, data: Partial<InsertEdiShipToLocation>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediShipToLocations).set(data).where(eq(ediShipToLocations.id, id));
+}
+
+// --- EDI Compliance Scorecards ---
+
+export async function getEdiComplianceScorecards(tradingPartnerId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  if (tradingPartnerId) {
+    return db.select().from(ediComplianceScorecards).where(eq(ediComplianceScorecards.tradingPartnerId, tradingPartnerId)).orderBy(desc(ediComplianceScorecards.periodEnd));
+  }
+  return db.select().from(ediComplianceScorecards).orderBy(desc(ediComplianceScorecards.periodEnd));
+}
+
+export async function createEdiComplianceScorecard(data: InsertEdiComplianceScorecard) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ediComplianceScorecards).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEdiComplianceScorecard(id: number, data: Partial<InsertEdiComplianceScorecard>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(ediComplianceScorecards).set(data).where(eq(ediComplianceScorecards.id, id));
+}
+
+// --- EDI Dashboard Stats ---
+
+export async function getEdiDashboardStats() {
+  const db = await getDb();
+  if (!db) return { totalPartners: 0, activePartners: 0, totalTransactions: 0, recentTransactions: 0, pendingAcks: 0, errorTransactions: 0 };
+
+  const [partnersResult] = await db.select({ total: count(), active: sum(sql`CASE WHEN status = 'active' THEN 1 ELSE 0 END`) }).from(ediTradingPartners);
+  const [transactionsResult] = await db.select({ total: count(), errors: sum(sql`CASE WHEN status = 'error' THEN 1 ELSE 0 END`) }).from(ediTransactions);
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const [recentResult] = await db.select({ count: count() }).from(ediTransactions).where(gte(ediTransactions.createdAt, sevenDaysAgo));
+  const [pendingAcksResult] = await db.select({ count: count() }).from(ediTransactions).where(
+    and(eq(ediTransactions.ackRequired, true), eq(ediTransactions.ackStatus, "pending"))
+  );
+
+  return {
+    totalPartners: Number(partnersResult?.total ?? 0),
+    activePartners: Number(partnersResult?.active ?? 0),
+    totalTransactions: Number(transactionsResult?.total ?? 0),
+    recentTransactions: Number(recentResult?.count ?? 0),
+    pendingAcks: Number(pendingAcksResult?.count ?? 0),
+    errorTransactions: Number(transactionsResult?.errors ?? 0),
+  };
+}
+
+// ============================================
+// EDI CONTROL NUMBERS
+// ============================================
+
+export async function getNextControlNumber(
+  tradingPartnerId: number,
+  controlNumberType: "isa" | "gs" | "st"
+): Promise<string> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Try to find existing row
+  const [existing] = await db.select().from(ediControlNumbers).where(
+    and(eq(ediControlNumbers.tradingPartnerId, tradingPartnerId), eq(ediControlNumbers.controlNumberType, controlNumberType))
+  );
+
+  let nextNumber: number;
+  if (existing) {
+    nextNumber = existing.lastUsedNumber + 1;
+    await db.update(ediControlNumbers)
+      .set({ lastUsedNumber: nextNumber })
+      .where(eq(ediControlNumbers.id, existing.id));
+  } else {
+    nextNumber = 1;
+    await db.insert(ediControlNumbers).values({
+      tradingPartnerId,
+      controlNumberType,
+      lastUsedNumber: nextNumber,
+    });
+  }
+
+  // ISA control numbers are 9 digits, ST are 4 digits, GS varies
+  const padLen = controlNumberType === "isa" ? 9 : controlNumberType === "st" ? 4 : 6;
+  return nextNumber.toString().padStart(padLen, "0");
+}
+
+// ============================================
+// EDI SETTINGS
+// ============================================
+
+export async function getEdiSettings(companyId?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (companyId) {
+    const [result] = await db.select().from(ediSettings).where(eq(ediSettings.companyId, companyId));
+    return result || null;
+  }
+  // Return first/default settings
+  const [result] = await db.select().from(ediSettings).limit(1);
+  return result || null;
+}
+
+export async function upsertEdiSettings(data: InsertEdiSettings) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = await getEdiSettings(data.companyId || undefined);
+  if (existing) {
+    await db.update(ediSettings).set(data).where(eq(ediSettings.id, existing.id));
+    return { id: existing.id };
+  }
+  const result = await db.insert(ediSettings).values(data);
+  return { id: result[0].insertId };
+}
+
 // Recalculate checklist progress
 export async function recalculateChecklistProgress(checklistId: number) {
   const db = await getDb();
@@ -9215,7 +9586,7 @@ export async function createChecklistFromTemplate(
 }
 
 // Standard due diligence category templates
-const STANDARD_DD_CATEGORIES: Record<string, { name: string; items: { name: string; keywords: string[] }[] }> = {
+const STANDARD_DD_CATEGORIES: Record<string, { name: string; items: Array<{ name: string; keywords: string[] }> }> = {
   corporate: {
     name: "Corporate Documents",
     items: [
@@ -9260,7 +9631,7 @@ const STANDARD_DD_CATEGORIES: Record<string, { name: string; items: { name: stri
   },
 };
 
-const SERIES_B_DD_CATEGORIES: Record<string, { name: string; items: { name: string; keywords: string[] }[] }> = {
+const SERIES_B_DD_CATEGORIES: Record<string, { name: string; items: Array<{ name: string; keywords: string[] }> }> = {
   ...STANDARD_DD_CATEGORIES,
   growth: {
     name: "Growth & Market",
@@ -9766,34 +10137,35 @@ export async function getCogsSummary(filters?: { companyId?: number; productId?:
   return db.select().from(cogsPeriodSummary).orderBy(desc(cogsPeriodSummary.periodStart));
 }
 
+// Aggregated COGS dashboard stats
 export async function getCogsDashboardStats(companyId?: number) {
   const db = await getDb();
   if (!db) return null;
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  const conditions: any[] = [gte(cogsRecords.periodDate, thirtyDaysAgo)];
+  const conditions: any[] = [];
   if (companyId) conditions.push(eq(cogsRecords.companyId, companyId));
-  const stats = await db
-    .select({
-      totalCogs: sql<string>`COALESCE(SUM(CAST(${cogsRecords.totalCogs} AS DECIMAL(15,2))), 0)`,
-      totalRevenue: sql<string>`COALESCE(SUM(CAST(${cogsRecords.totalRevenue} AS DECIMAL(15,2))), 0)`,
-      totalQuantity: sql<string>`COALESCE(SUM(CAST(${cogsRecords.quantitySold} AS DECIMAL(15,4))), 0)`,
-      recordCount: count(),
-    })
-    .from(cogsRecords)
+
+  const now = new Date();
+  const thirtyDaysAgo = new Date(now);
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  conditions.push(gte(cogsRecords.periodDate, thirtyDaysAgo));
+
+  const result = await db.select({
+    totalCogs: sql<string>`COALESCE(SUM(CAST(${cogsRecords.totalCogs} AS DECIMAL(15,2))), 0)`,
+    totalRevenue: sql<string>`COALESCE(SUM(CAST(${cogsRecords.totalRevenue} AS DECIMAL(15,2))), 0)`,
+    totalQuantitySold: sql<string>`COALESCE(SUM(CAST(${cogsRecords.quantitySold} AS DECIMAL(15,4))), 0)`,
+    recordCount: sql<number>`COUNT(*)`,
+  }).from(cogsRecords)
     .where(and(...conditions));
-  const row = stats[0];
-  const totalCogs = parseFloat(row?.totalCogs || '0');
-  const totalRevenue = parseFloat(row?.totalRevenue || '0');
-  const grossMargin = totalRevenue - totalCogs;
-  const grossMarginPercent = totalRevenue > 0 ? (grossMargin / totalRevenue) * 100 : 0;
+
+  const totalCogs = parseFloat(result[0]?.totalCogs || '0');
+  const totalRevenue = parseFloat(result[0]?.totalRevenue || '0');
   return {
     totalCogs,
     totalRevenue,
-    grossMargin,
-    grossMarginPercent,
-    totalQuantity: parseFloat(row?.totalQuantity || '0'),
-    recordCount: Number(row?.recordCount || 0),
+    grossMargin: totalRevenue - totalCogs,
+    grossMarginPercent: totalRevenue > 0 ? ((totalRevenue - totalCogs) / totalRevenue) * 100 : 0,
+    totalQuantitySold: parseFloat(result[0]?.totalQuantitySold || '0'),
+    recordCount: result[0]?.recordCount || 0,
   };
 }
 
@@ -9807,16 +10179,13 @@ export async function dbTransaction<T>(fn: (tx: any) => Promise<T>): Promise<T> 
   return db.transaction(fn);
 }
 
+
 // ============================================
 // VENDOR NEGOTIATIONS
 // ============================================
 
 export async function getVendorNegotiations(filters?: {
-  companyId?: number;
-  vendorId?: number;
-  status?: string;
-  type?: string;
-  assignedTo?: number;
+  companyId?: number; vendorId?: number; status?: string; type?: string; assignedTo?: number;
 }) {
   const db = await getDb();
   if (!db) return [];
@@ -9825,16 +10194,16 @@ export async function getVendorNegotiations(filters?: {
   if (filters?.vendorId) conditions.push(eq(vendorNegotiations.vendorId, filters.vendorId));
   if (filters?.status) conditions.push(eq(vendorNegotiations.status, filters.status as any));
   if (filters?.type) conditions.push(eq(vendorNegotiations.type, filters.type as any));
-  if (conditions.length > 0) {
-    return db.select().from(vendorNegotiations).where(and(...conditions)).orderBy(desc(vendorNegotiations.updatedAt));
-  }
-  return db.select().from(vendorNegotiations).orderBy(desc(vendorNegotiations.updatedAt));
+  if (filters?.assignedTo) conditions.push(eq(vendorNegotiations.assignedTo, filters.assignedTo));
+  let query = db.select().from(vendorNegotiations);
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(vendorNegotiations.updatedAt));
 }
 
 export async function getVendorNegotiationById(id: number) {
   const db = await getDb();
   if (!db) return null;
-  const result = await db.select().from(vendorNegotiations).where(eq(vendorNegotiations.id, id)).limit(1);
+  const result = await db.select().from(vendorNegotiations).where(eq(vendorNegotiations.id, id));
   return result[0] || null;
 }
 
@@ -9859,16 +10228,6 @@ export async function getNegotiationRounds(negotiationId: number) {
     .orderBy(negotiationRounds.roundNumber);
 }
 
-export async function getNextRoundNumber(negotiationId: number): Promise<number> {
-  const db = await getDb();
-  if (!db) return 1;
-  const result = await db
-    .select({ maxRound: sql<number>`COALESCE(MAX(${negotiationRounds.roundNumber}), 0)` })
-    .from(negotiationRounds)
-    .where(eq(negotiationRounds.negotiationId, negotiationId));
-  return (Number(result[0]?.maxRound) || 0) + 1;
-}
-
 export async function createNegotiationRound(data: InsertNegotiationRound) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -9876,12 +10235,32 @@ export async function createNegotiationRound(data: InsertNegotiationRound) {
   return { id: result[0].insertId };
 }
 
+export async function getNextRoundNumber(negotiationId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Compute the next round number; concurrency safety relies on DB constraints and caller retries
+  const result = await db
+    .select({ maxRound: sql<number>`COALESCE(MAX(${negotiationRounds.roundNumber}), 0) + 1` })
+    .from(negotiationRounds)
+    .where(eq(negotiationRounds.negotiationId, negotiationId));
+
+  const rawMaxRound = result[0]?.maxRound;
+  const nextRound = rawMaxRound != null ? Number(rawMaxRound) : NaN;
+
+  return Number.isFinite(nextRound) && nextRound > 0 ? nextRound : 1;
+}
+
+
 export async function getVendorNegotiationStats(companyId?: number) {
   const db = await getDb();
   if (!db) return null;
   const conditions: any[] = [];
   if (companyId) conditions.push(eq(vendorNegotiations.companyId, companyId));
+
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+
   const stats = await db.select({
     total: sql<number>`COUNT(*)`,
     active: sql<number>`SUM(CASE WHEN ${vendorNegotiations.status} IN ('in_progress', 'counter_offered', 'analyzing', 'ready') THEN 1 ELSE 0 END)`,
@@ -9889,406 +10268,201 @@ export async function getVendorNegotiationStats(companyId?: number) {
     rejected: sql<number>`SUM(CASE WHEN ${vendorNegotiations.status} = 'rejected' THEN 1 ELSE 0 END)`,
     totalEstimatedSavings: sql<string>`COALESCE(SUM(CASE WHEN ${vendorNegotiations.status} = 'accepted' THEN CAST(${vendorNegotiations.estimatedSavings} AS DECIMAL(15,2)) ELSE 0 END), 0)`,
     totalConfidenceScore: sql<string>`COALESCE(SUM(CASE WHEN ${vendorNegotiations.status} = 'accepted' THEN CAST(${vendorNegotiations.aiConfidenceScore} AS DECIMAL(5,2)) ELSE 0 END), 0)`,
-  }).from(vendorNegotiations).where(whereClause);
+  })
+    .from(vendorNegotiations)
+    .where(whereClause);
+
   const row = stats[0];
-  if (!row) return { total: 0, active: 0, completed: 0, rejected: 0, totalEstimatedSavings: 0, avgConfidenceScore: 0 };
+  if (!row) {
+    return {
+      total: 0,
+      active: 0,
+      completed: 0,
+      rejected: 0,
+      totalEstimatedSavings: 0,
+      avgConfidenceScore: 0,
+    };
+  }
+
+
   const total = Number(row.total) || 0;
   const active = Number(row.active) || 0;
   const completed = Number(row.completed) || 0;
   const rejected = Number(row.rejected) || 0;
-  const totalEstimatedSavings = parseFloat(row.totalEstimatedSavings || '0');
-  const totalConfidenceScore = parseFloat(row.totalConfidenceScore || '0');
-  return { total, active, completed, rejected, totalEstimatedSavings, avgConfidenceScore: completed > 0 ? totalConfidenceScore / completed : 0 };
-}
+  const totalEstimatedSavings = parseFloat(row.totalEstimatedSavings || "0");
+  const totalConfidenceScore = parseFloat(row.totalConfidenceScore || "0");
 
-export async function getVendorSpendingHistory(vendorId: number) {
-  const db = await getDb();
-  if (!db) return null;
-  const result = await db.select({
-    totalSpend: sql<string>`COALESCE(SUM(CAST(${purchaseOrders.totalAmount} AS DECIMAL(15,2))), 0)`,
-    orderCount: count(),
-    avgOrderValue: sql<string>`COALESCE(AVG(CAST(${purchaseOrders.totalAmount} AS DECIMAL(15,2))), 0)`,
-  }).from(purchaseOrders).where(eq(purchaseOrders.vendorId, vendorId));
-  const row = result[0];
   return {
-    totalSpend: parseFloat(row?.totalSpend || '0'),
-    orderCount: Number(row?.orderCount || 0),
-    avgOrderValue: parseFloat(row?.avgOrderValue || '0'),
+    total,
+    active,
+    completed,
+    rejected,
+    totalEstimatedSavings,
+    avgConfidenceScore: completed > 0 ? totalConfidenceScore / completed : 0,
   };
 }
 
+// Get vendor spending history for negotiation leverage
+export async function getVendorSpendingHistory(vendorId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const poData = await db.select({
+    totalSpend: sql<string>`COALESCE(SUM(CAST(${purchaseOrders.totalAmount} AS DECIMAL(15,2))), 0)`,
+    orderCount: sql<number>`COUNT(*)`,
+    avgOrderValue: sql<string>`COALESCE(AVG(CAST(${purchaseOrders.totalAmount} AS DECIMAL(15,2))), 0)`,
+  }).from(purchaseOrders)
+    .where(eq(purchaseOrders.vendorId, vendorId));
+
+  return {
+    totalSpend: parseFloat(poData[0]?.totalSpend || '0'),
+    orderCount: poData[0]?.orderCount || 0,
+    avgOrderValue: parseFloat(poData[0]?.avgOrderValue || '0'),
+  };
+}
+
+// COGS PERIOD SUMMARIES (alias with array return)
+
 // ============================================
-// EDI FUNCTIONS
+// GOOGLE OAUTH BY USER ID
 // ============================================
 
-// EDI Dashboard Stats
-export async function getEdiDashboardStats() {
-  const db = await getDb();
-  if (!db) return { totalPartners: 0, activePartners: 0, totalTransactions: 0, recentTransactions: 0, errorRate: 0 };
-  const partners = await db.select({ count: count() }).from(ediTradingPartners);
-  const activePartners = await db.select({ count: count() }).from(ediTradingPartners).where(eq(ediTradingPartners.status, "active"));
-  const txns = await db.select({ count: count() }).from(ediTransactions);
-  return { totalPartners: partners[0].count, activePartners: activePartners[0].count, totalTransactions: txns[0].count, recentTransactions: 0, errorRate: 0 };
+export async function getGoogleOAuthTokenByUserId(userId: number) {
+  return getGoogleOAuthToken(userId);
 }
 
-// EDI Trading Partners
-export async function getEdiTradingPartners(companyId?: number) {
-  const db = await getDb();
-  if (!db) return [];
-  if (companyId) return db.select().from(ediTradingPartners).where(eq(ediTradingPartners.companyId, companyId)).orderBy(desc(ediTradingPartners.createdAt));
-  return db.select().from(ediTradingPartners).orderBy(desc(ediTradingPartners.createdAt));
-}
+// ============================================
+// SHOPIFY UPSERT
+// ============================================
 
-export async function getEdiTradingPartnerById(id: number) {
-  const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(ediTradingPartners).where(eq(ediTradingPartners.id, id));
-  return result[0] || null;
-}
-
-export async function createEdiTradingPartner(data: any) {
+export async function upsertShopifyStore(domainOrData: string | InsertShopifyStore, data?: Partial<InsertShopifyStore>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(ediTradingPartners).values(data);
-  return { id: result[0].insertId, ...data };
-}
-
-export async function updateEdiTradingPartner(id: number, data: any) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(ediTradingPartners).set({ ...data, updatedAt: new Date() }).where(eq(ediTradingPartners.id, id));
-}
-
-export async function deleteEdiTradingPartner(id: number) {
-  const db = await getDb();
-  if (!db) return;
-  await db.delete(ediTradingPartners).where(eq(ediTradingPartners.id, id));
-}
-
-// EDI Document Maps
-export async function getEdiDocumentMaps(tradingPartnerId?: number) {
-  const db = await getDb();
-  if (!db) return [];
-  if (tradingPartnerId) return db.select().from(ediDocumentMaps).where(eq(ediDocumentMaps.tradingPartnerId, tradingPartnerId));
-  return db.select().from(ediDocumentMaps);
-}
-
-export async function getEdiDocumentMapById(id: number) {
-  const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(ediDocumentMaps).where(eq(ediDocumentMaps.id, id));
-  return result[0] || null;
-}
-
-export async function createEdiDocumentMap(data: any) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(ediDocumentMaps).values(data);
-  return { id: result[0].insertId, ...data };
-}
-
-export async function updateEdiDocumentMap(id: number, data: any) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(ediDocumentMaps).set({ ...data, updatedAt: new Date() }).where(eq(ediDocumentMaps.id, id));
-}
-
-// EDI Transactions
-export async function getEdiTransactions(filters?: { companyId?: number; tradingPartnerId?: number; status?: string; documentType?: string }) {
-  const db = await getDb();
-  if (!db) return [];
-  const conditions: any[] = [];
-  if (filters?.companyId) conditions.push(eq(ediTransactions.companyId, filters.companyId));
-  if (filters?.tradingPartnerId) conditions.push(eq(ediTransactions.tradingPartnerId, filters.tradingPartnerId));
-  if (filters?.status) conditions.push(eq(ediTransactions.status, filters.status as any));
-  if (filters?.documentType) conditions.push(eq(ediTransactions.documentType, filters.documentType));
-  if (conditions.length > 0) return db.select().from(ediTransactions).where(and(...conditions)).orderBy(desc(ediTransactions.createdAt));
-  return db.select().from(ediTransactions).orderBy(desc(ediTransactions.createdAt));
-}
-
-export async function getEdiTransactionById(id: number) {
-  const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(ediTransactions).where(eq(ediTransactions.id, id));
-  return result[0] || null;
-}
-
-export async function getEdiTransactionWithItems(id: number) {
-  const db = await getDb();
-  if (!db) return null;
-  const transaction = await getEdiTransactionById(id);
-  if (!transaction) return null;
-  const items = await db.select().from(ediTransactionItems).where(eq(ediTransactionItems.transactionId, id));
-  return { ...transaction, items };
-}
-
-export async function createEdiTransaction(data: any) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(ediTransactions).values(data);
-  return { id: result[0].insertId, ...data };
-}
-
-export async function updateEdiTransaction(id: number, data: any) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(ediTransactions).set({ ...data, updatedAt: new Date() }).where(eq(ediTransactions.id, id));
-}
-
-export async function createEdiTransactionItem(data: any) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(ediTransactionItems).values(data);
-  return { id: result[0].insertId };
-}
-
-// EDI Product Crosswalks
-export async function getEdiProductCrosswalks(tradingPartnerId?: number) {
-  const db = await getDb();
-  if (!db) return [];
-  if (tradingPartnerId) return db.select().from(ediProductCrosswalks).where(eq(ediProductCrosswalks.tradingPartnerId, tradingPartnerId));
-  return db.select().from(ediProductCrosswalks);
-}
-
-export async function getEdiProductCrosswalkByBuyerPart(tradingPartnerId: number, buyerPartNumber: string) {
-  const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(ediProductCrosswalks).where(and(eq(ediProductCrosswalks.tradingPartnerId, tradingPartnerId), eq(ediProductCrosswalks.buyerPartNumber, buyerPartNumber)));
-  return result[0] || null;
-}
-
-export async function getEdiProductCrosswalkByUpc(tradingPartnerId: number, upcCode: string) {
-  const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(ediProductCrosswalks).where(and(eq(ediProductCrosswalks.tradingPartnerId, tradingPartnerId), eq(ediProductCrosswalks.upcCode, upcCode)));
-  return result[0] || null;
-}
-
-export async function createEdiProductCrosswalk(data: any) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(ediProductCrosswalks).values(data);
-  return { id: result[0].insertId, ...data };
-}
-
-export async function updateEdiProductCrosswalk(id: number, data: any) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(ediProductCrosswalks).set({ ...data, updatedAt: new Date() }).where(eq(ediProductCrosswalks.id, id));
-}
-
-export async function deleteEdiProductCrosswalk(id: number) {
-  const db = await getDb();
-  if (!db) return;
-  await db.delete(ediProductCrosswalks).where(eq(ediProductCrosswalks.id, id));
-}
-
-// EDI Ship-to Locations
-export async function getEdiShipToLocations(tradingPartnerId?: number) {
-  const db = await getDb();
-  if (!db) return [];
-  if (tradingPartnerId) return db.select().from(ediShipToLocations).where(eq(ediShipToLocations.tradingPartnerId, tradingPartnerId));
-  return db.select().from(ediShipToLocations);
-}
-
-export async function createEdiShipToLocation(data: any) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(ediShipToLocations).values(data);
-  return { id: result[0].insertId, ...data };
-}
-
-export async function updateEdiShipToLocation(id: number, data: any) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(ediShipToLocations).set({ ...data, updatedAt: new Date() }).where(eq(ediShipToLocations.id, id));
-}
-
-// EDI Settings
-export async function getEdiSettings(companyId: number) {
-  const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(ediSettings).where(eq(ediSettings.companyId, companyId));
-  return result[0] || null;
-}
-
-export async function upsertEdiSettings(data: any) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  if (data.id) {
-    await db.update(ediSettings).set({ ...data, updatedAt: new Date() }).where(eq(ediSettings.id, data.id));
-    return data;
+  let domain: string;
+  let storeData: Partial<InsertShopifyStore>;
+  if (typeof domainOrData === "string") {
+    domain = domainOrData;
+    storeData = data || {};
+  } else {
+    domain = (domainOrData as any).domain || (domainOrData as any).storeDomain;
+    storeData = domainOrData;
   }
-  const result = await db.insert(ediSettings).values(data);
-  return { id: result[0].insertId, ...data };
-}
-
-export async function getNextControlNumber(companyId: number, type: 'interchange' | 'group' | 'transaction' = 'transaction') {
-  const db = await getDb();
-  if (!db) return 1;
-  const settings = await getEdiSettings(companyId);
-  if (!settings) return 1;
-  const field = type === 'interchange' ? 'interchangeControlNumber' : type === 'group' ? 'groupControlNumber' : 'transactionControlNumber';
-  const current = (settings as any)[field] || 1;
-  await db.update(ediSettings).set({ [field]: current + 1 } as any).where(eq(ediSettings.companyId, companyId));
-  return current;
-}
-
-// EDI Compliance Scorecards
-export async function getEdiComplianceScorecards(tradingPartnerId?: number) {
-  const db = await getDb();
-  if (!db) return [];
-  if (tradingPartnerId) return db.select().from(ediComplianceScorecards).where(eq(ediComplianceScorecards.tradingPartnerId, tradingPartnerId)).orderBy(desc(ediComplianceScorecards.createdAt));
-  return db.select().from(ediComplianceScorecards).orderBy(desc(ediComplianceScorecards.createdAt));
-}
-
-export async function createEdiComplianceScorecard(data: any) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(ediComplianceScorecards).values(data);
-  return { id: result[0].insertId, ...data };
+  const existing = await getShopifyStoreByDomain(domain);
+  if (existing) {
+    await updateShopifyStore(existing.id, storeData);
+    return existing;
+  }
+  return createShopifyStore(storeData as InsertShopifyStore);
 }
 
 // ============================================
-// TRANSACTIONAL EMAIL FUNCTIONS
+// TRANSACTIONAL EMAIL TEMPLATES
 // ============================================
 
-// Transactional Email Templates
 export async function getTransactionalEmailTemplates(companyId?: number) {
   const db = await getDb();
   if (!db) return [];
-  if (companyId) return db.select().from(transactionalEmailTemplates).where(eq(transactionalEmailTemplates.companyId, companyId));
-  return db.select().from(transactionalEmailTemplates);
+  if (companyId) {
+    return db.select().from(transactionalEmailTemplates).where(eq(transactionalEmailTemplates.companyId, companyId)).orderBy(transactionalEmailTemplates.name);
+  }
+  return db.select().from(transactionalEmailTemplates).orderBy(transactionalEmailTemplates.name);
 }
 
 export async function getTransactionalEmailTemplateById(id: number) {
   const db = await getDb();
   if (!db) return null;
-  const result = await db.select().from(transactionalEmailTemplates).where(eq(transactionalEmailTemplates.id, id));
+  const result = await db.select().from(transactionalEmailTemplates).where(eq(transactionalEmailTemplates.id, id)).limit(1);
   return result[0] || null;
 }
 
-export async function getTransactionalEmailTemplateByName(name: string, companyId?: number) {
+export async function getTransactionalEmailTemplateByName(name: string) {
   const db = await getDb();
   if (!db) return null;
-  const conditions: any[] = [eq(transactionalEmailTemplates.name, name)];
-  if (companyId) conditions.push(eq(transactionalEmailTemplates.companyId, companyId));
-  const result = await db.select().from(transactionalEmailTemplates).where(and(...conditions));
+  const result = await db.select().from(transactionalEmailTemplates).where(eq(transactionalEmailTemplates.name, name)).limit(1);
   return result[0] || null;
 }
 
-export async function createTransactionalEmailTemplate(data: any) {
+export async function createTransactionalEmailTemplate(data: InsertTransactionalEmailTemplate) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const result = await db.insert(transactionalEmailTemplates).values(data);
-  return { id: result[0].insertId, ...data };
+  return { id: result[0].insertId };
 }
 
-export async function updateTransactionalEmailTemplate(id: number, data: any) {
+export async function updateTransactionalEmailTemplate(id: number, data: Partial<InsertTransactionalEmailTemplate>) {
   const db = await getDb();
-  if (!db) return;
-  await db.update(transactionalEmailTemplates).set({ ...data, updatedAt: new Date() }).where(eq(transactionalEmailTemplates.id, id));
+  if (!db) throw new Error("Database not available");
+  await db.update(transactionalEmailTemplates).set(data as any).where(eq(transactionalEmailTemplates.id, id));
 }
 
 export async function deleteTransactionalEmailTemplate(id: number) {
   const db = await getDb();
-  if (!db) return;
+  if (!db) throw new Error("Database not available");
   await db.delete(transactionalEmailTemplates).where(eq(transactionalEmailTemplates.id, id));
 }
 
-// Email Messages (transactional tracking)
-export async function getEmailMessages(filters?: { companyId?: number; status?: string; templateId?: number }) {
+
+  if (!db) throw new Error("Database not available");
+  await db.update(emailMessages).set({ retryCount: sql`${emailMessages.retryCount} + 1`, status: 'queued' as any }).where(eq(emailMessages.id, id));
+}
+
+export async function getEmailMessages(filters?: { status?: string; templateName?: string; relatedEntityType?: string; relatedEntityId?: number }) {
   const db = await getDb();
   if (!db) return [];
   const conditions: any[] = [];
-  if (filters?.companyId) conditions.push(eq(emailMessages.companyId, filters.companyId));
   if (filters?.status) conditions.push(eq(emailMessages.status, filters.status as any));
-  if (filters?.templateId) conditions.push(eq(emailMessages.templateId, filters.templateId));
-  if (conditions.length > 0) return db.select().from(emailMessages).where(and(...conditions)).orderBy(desc(emailMessages.createdAt));
+  if (filters?.templateName) conditions.push(eq(emailMessages.templateName, filters.templateName));
+  if (filters?.relatedEntityType) conditions.push(eq(emailMessages.relatedEntityType, filters.relatedEntityType));
+  if (filters?.relatedEntityId) conditions.push(eq(emailMessages.relatedEntityId, filters.relatedEntityId));
+  if (conditions.length > 0) {
+    return db.select().from(emailMessages).where(and(...conditions)).orderBy(desc(emailMessages.createdAt));
+  }
   return db.select().from(emailMessages).orderBy(desc(emailMessages.createdAt));
 }
 
-export async function getEmailMessageById(id: number) {
-  const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(emailMessages).where(eq(emailMessages.id, id));
-  return result[0] || null;
-}
-
-export async function getEmailMessageByProviderMessageId(providerMessageId: string) {
-  const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(emailMessages).where(eq(emailMessages.providerMessageId, providerMessageId));
-  return result[0] || null;
-}
-
-export async function getEmailMessageByIdempotencyKey(key: string) {
-  const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(emailMessages).where(eq(emailMessages.idempotencyKey, key));
-  return result[0] || null;
-}
-
-export async function createEmailMessage(data: any) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(emailMessages).values(data);
-  return { id: result[0].insertId, ...data };
-}
-
-export async function updateEmailMessage(id: number, data: any) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(emailMessages).set({ ...data, updatedAt: new Date() }).where(eq(emailMessages.id, id));
-}
-
-export async function updateEmailMessageStatus(id: number, status: string, extraData?: any) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(emailMessages).set({ status: status as any, ...extraData, updatedAt: new Date() }).where(eq(emailMessages.id, id));
-}
-
-export async function incrementEmailMessageRetry(id: number) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(emailMessages).set({ retryCount: sql`${emailMessages.retryCount} + 1`, updatedAt: new Date() }).where(eq(emailMessages.id, id));
-}
-
-export async function getQueuedEmailMessages(limit: number = 50) {
+export async function getQueuedEmailMessages(limit?: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(emailMessages).where(eq(emailMessages.status, "queued" as any)).orderBy(asc(emailMessages.createdAt)).limit(limit);
+  let query = db.select().from(emailMessages).where(eq(emailMessages.status, 'queued' as any)).orderBy(emailMessages.scheduledAt, emailMessages.createdAt);
+  if (limit) return (query as any).limit(limit);
+  return query;
 }
 
-export async function getEmailMessageStats(companyId?: number) {
+export async function getEmailMessageStats() {
   const db = await getDb();
-  if (!db) return { total: 0, sent: 0, delivered: 0, bounced: 0, failed: 0 };
-  const conditions: any[] = [];
-  if (companyId) conditions.push(eq(emailMessages.companyId, companyId));
-  const result = await db.select({ count: count(), status: emailMessages.status }).from(emailMessages).where(conditions.length > 0 ? and(...conditions) : undefined).groupBy(emailMessages.status);
-  const stats: any = { total: 0, sent: 0, delivered: 0, bounced: 0, failed: 0 };
-  result.forEach((r: any) => { stats[r.status] = r.count; stats.total += r.count; });
-  return stats;
+  if (!db) return null;
+  const stats = await db.select({
+    total: sql<number>`COUNT(*)`,
+    queued: sql<number>`SUM(CASE WHEN ${emailMessages.status} = 'queued' THEN 1 ELSE 0 END)`,
+    sent: sql<number>`SUM(CASE WHEN ${emailMessages.status} = 'sent' THEN 1 ELSE 0 END)`,
+    delivered: sql<number>`SUM(CASE WHEN ${emailMessages.status} = 'delivered' THEN 1 ELSE 0 END)`,
+    failed: sql<number>`SUM(CASE WHEN ${emailMessages.status} = 'failed' THEN 1 ELSE 0 END)`,
+    bounced: sql<number>`SUM(CASE WHEN ${emailMessages.status} = 'bounced' THEN 1 ELSE 0 END)`,
+  }).from(emailMessages);
+  return stats[0] || null;
 }
 
-// Email Events
-export async function createEmailEvent(data: any) {
+// ============================================
+// EMAIL EVENTS
+// ============================================
+
+export async function createEmailEvent(data: InsertEmailEvent) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const result = await db.insert(emailEvents).values(data);
   return { id: result[0].insertId };
 }
 
-export async function getEmailEventsByMessageId(messageId: number) {
+export async function getEmailEventsByMessageId(emailMessageId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(emailEvents).where(eq(emailEvents.emailMessageId, messageId)).orderBy(desc(emailEvents.createdAt));
+  return db.select().from(emailEvents).where(eq(emailEvents.emailMessageId, emailMessageId)).orderBy(emailEvents.timestamp);
 }
 
 export async function getEmailEventsByProviderMessageId(providerMessageId: string) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(emailEvents).where(eq(emailEvents.providerMessageId, providerMessageId)).orderBy(desc(emailEvents.createdAt));
+  return db.select().from(emailEvents).where(eq(emailEvents.providerMessageId, providerMessageId)).orderBy(emailEvents.timestamp);
 }
 
 export async function getRecentEmailEvents(limit: number = 100) {
@@ -10943,16 +11117,187 @@ export async function deleteGrantBidWebFormMapping(id: number) {
   await db.delete(grantBidWebFormMappings).where(eq(grantBidWebFormMappings.id, id));
 }
 
-export async function getEdiTradingPartnerById(id: number) {
+
+
+
+
+// ============================================
+// QUICKBOOKS EXTENDED FUNCTIONS
+// ============================================
+
+export async function getQuickBooksAccountsByType(companyIdOrType: number | string, classificationOrCompanyId?: string | number) {
   const db = await getDb();
-  if (!db) return undefined;
-  const results = await db.select().from(ediTradingPartners).where(eq(ediTradingPartners.id, id)).limit(1);
-  return results[0];
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (typeof companyIdOrType === 'number') {
+    conditions.push(eq(quickbooksAccounts.companyId, companyIdOrType));
+    if (classificationOrCompanyId) conditions.push(eq(quickbooksAccounts.accountType, classificationOrCompanyId as string));
+  } else {
+    conditions.push(eq(quickbooksAccounts.accountType, companyIdOrType));
+    if (classificationOrCompanyId) conditions.push(eq(quickbooksAccounts.companyId, classificationOrCompanyId as number));
+  }
+  if (conditions.length === 0) return db.select().from(quickbooksAccounts);
+  return db.select().from(quickbooksAccounts).where(and(...conditions));
 }
 
-export async function getEdiTradingPartnerByIsaId(isaId: string) {
+export async function syncQuickBooksAccounts(companyIdOrAccounts: number | InsertQuickBooksAccount[], accountsParam?: any[]) {
   const db = await getDb();
-  if (!db) return undefined;
-  const results = await db.select().from(ediTradingPartners).where(eq(ediTradingPartners.isaId, isaId)).limit(1);
-  return results[0];
+  if (!db) throw new Error("Database not available");
+  const accounts: any[] = Array.isArray(companyIdOrAccounts) ? companyIdOrAccounts : (accountsParam || []);
+  let synced = 0;
+  for (const account of accounts) {
+    const existing = await db.select().from(quickbooksAccounts)
+      .where(eq(quickbooksAccounts.quickbooksAccountId, account.quickbooksAccountId || account.Id)).limit(1);
+    if (existing[0]) {
+      await db.update(quickbooksAccounts).set(account as any).where(eq(quickbooksAccounts.id, existing[0].id));
+    } else {
+      await db.insert(quickbooksAccounts).values(account as any);
+    }
+    synced++;
+  }
+  return { count: synced, synced };
 }
+
+export async function syncQuickBooksItems(companyIdOrItems: number | InsertQuickBooksItem[], itemsParam?: any[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const items: any[] = Array.isArray(companyIdOrItems) ? companyIdOrItems : (itemsParam || []);
+  let synced = 0;
+  for (const item of items) {
+    const existing = await db.select().from(quickbooksItems)
+      .where(eq(quickbooksItems.quickbooksItemId, item.quickbooksItemId || item.Id)).limit(1);
+    if (existing[0]) {
+      await db.update(quickbooksItems).set(item as any).where(eq(quickbooksItems.id, existing[0].id));
+    } else {
+      await db.insert(quickbooksItems).values(item as any);
+    }
+    synced++;
+  }
+  return { count: synced, synced };
+}
+
+export async function getQuickBooksAccountMappings(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) {
+    return db.select().from(quickbooksAccountMappings).where(eq(quickbooksAccountMappings.companyId, companyId));
+  }
+  return db.select().from(quickbooksAccountMappings);
+}
+
+export async function upsertQuickBooksAccountMapping(data: InsertQuickBooksAccountMapping) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = await db.select().from(quickbooksAccountMappings)
+    .where(and(
+      eq(quickbooksAccountMappings.mappingType, data.mappingType),
+      data.companyId ? eq(quickbooksAccountMappings.companyId, data.companyId) : sql`1=1`
+    )).limit(1);
+  if (existing[0]) {
+    await db.update(quickbooksAccountMappings).set(data as any).where(eq(quickbooksAccountMappings.id, existing[0].id));
+    return { id: existing[0].id };
+  }
+  const result = await db.insert(quickbooksAccountMappings).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getInventoryCostingConfigs(filters?: { companyId?: number; productId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(inventoryCostingConfig.companyId, filters.companyId));
+  if (filters?.productId) conditions.push(eq(inventoryCostingConfig.productId, filters.productId));
+  if (conditions.length > 0) {
+    return db.select().from(inventoryCostingConfig).where(and(...conditions)).orderBy(desc(inventoryCostingConfig.createdAt));
+  }
+  return db.select().from(inventoryCostingConfig).orderBy(desc(inventoryCostingConfig.createdAt));
+}
+
+export async function getInventoryCostingConfigByProduct(productId: number, companyId?: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const conditions = [eq(inventoryCostingConfig.productId, productId), eq(inventoryCostingConfig.isActive, true)];
+  if (companyId) conditions.push(eq(inventoryCostingConfig.companyId, companyId));
+  const result = await db.select().from(inventoryCostingConfig).where(and(...conditions)).limit(1);
+  return result[0] || null;
+}
+
+export async function createInventoryCostingConfig(data: InsertInventoryCostingConfig) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(inventoryCostingConfig).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateInventoryCostingConfig(id: number, data: Partial<InsertInventoryCostingConfig>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(inventoryCostingConfig).set(data as any).where(eq(inventoryCostingConfig.id, id));
+}
+
+export async function getInventoryCostLayers(filters?: { companyId?: number; productId?: number; warehouseId?: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(inventoryCostLayers.companyId, filters.companyId));
+  if (filters?.productId) conditions.push(eq(inventoryCostLayers.productId, filters.productId));
+  if (filters?.warehouseId) conditions.push(eq(inventoryCostLayers.warehouseId, filters.warehouseId));
+  if (filters?.status) conditions.push(eq(inventoryCostLayers.status, filters.status as any));
+  if (conditions.length > 0) {
+    return db.select().from(inventoryCostLayers).where(and(...conditions)).orderBy(asc(inventoryCostLayers.layerDate));
+  }
+  return db.select().from(inventoryCostLayers).orderBy(asc(inventoryCostLayers.layerDate));
+}
+
+export async function getActiveCostLayers(productId: number, sortOrder?: "asc" | "desc", warehouseId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(inventoryCostLayers.productId, productId), eq(inventoryCostLayers.status, "active")];
+  if (warehouseId) conditions.push(eq(inventoryCostLayers.warehouseId, warehouseId));
+  const order = sortOrder === "desc" ? desc(inventoryCostLayers.layerDate) : asc(inventoryCostLayers.layerDate);
+  return db.select().from(inventoryCostLayers)
+    .where(and(...conditions))
+    .orderBy(order);
+}
+
+export async function createInventoryCostLayer(data: InsertInventoryCostLayer) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(inventoryCostLayers).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateInventoryCostLayer(id: number, data: Partial<InsertInventoryCostLayer>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(inventoryCostLayers).set(data as any).where(eq(inventoryCostLayers.id, id));
+}
+
+export async function getWeightedAverageCost(productId: number, warehouseId?: number): Promise<{ totalQuantity: number; averageCost: number; totalValue: number }> {
+  const db = await getDb();
+  if (!db) return { totalQuantity: 0, averageCost: 0, totalValue: 0 };
+  const conditions = [eq(inventoryCostLayers.productId, productId), eq(inventoryCostLayers.status, "active")];
+  if (warehouseId) conditions.push(eq(inventoryCostLayers.warehouseId, warehouseId));
+  const layers = await db.select().from(inventoryCostLayers).where(and(...conditions));
+  const totalQty = layers.reduce((sum, l) => sum + parseFloat(l.remainingQuantity), 0);
+  if (totalQty === 0) return { totalQuantity: 0, averageCost: 0, totalValue: 0 };
+  const totalCost = layers.reduce((sum, l) => sum + parseFloat(l.unitCost) * parseFloat(l.remainingQuantity), 0);
+  return { totalQuantity: totalQty, averageCost: totalCost / totalQty, totalValue: totalCost };
+}
+
+export async function getCogsSummary(filters?: { companyId?: number; productId?: number; periodType?: string; startDate?: Date; endDate?: Date }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(cogsPeriodSummary.companyId, filters.companyId));
+  if (filters?.productId) conditions.push(eq(cogsPeriodSummary.productId, filters.productId));
+  if (filters?.periodType) conditions.push(eq(cogsPeriodSummary.periodType, filters.periodType as any));
+  if (filters?.startDate) conditions.push(gte(cogsPeriodSummary.periodStart, filters.startDate));
+  if (filters?.endDate) conditions.push(lte(cogsPeriodSummary.periodEnd, filters.endDate));
+  if (conditions.length > 0) {
+    return db.select().from(cogsPeriodSummary).where(and(...conditions)).orderBy(desc(cogsPeriodSummary.periodStart));
+  }
+  return db.select().from(cogsPeriodSummary).orderBy(desc(cogsPeriodSummary.periodStart));
+}
+
+

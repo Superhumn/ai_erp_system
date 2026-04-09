@@ -109,6 +109,13 @@ async function startServer() {
     }
   }, RATE_LIMIT_WINDOW_MS);
 
+  const oauthCallbackLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
   // ============================================
   // HEALTH CHECK
   // ============================================
@@ -157,14 +164,24 @@ async function startServer() {
           const providerMessageId = event.sg_message_id?.split('.')[0];
           const email = event.email;
           const timestamp = event.timestamp ? new Date(event.timestamp * 1000) : new Date();
-          const emailEvent = await (db as any).createEmailEvent({ providerEventType, providerMessageId, providerTimestamp: timestamp, rawEventJson: event, email, reason: event.reason || event.response || null, bounceType: event.type || null, processedAt: new Date() });
-          if (providerMessageId) {
-            const message = await (db as any).getEmailMessageByProviderMessageId(providerMessageId);
-            if (message) {
-              await (db as any).createEmailEvent({ ...emailEvent, emailMessageId: message.id });
-              const newStatus = sendgridProvider.mapEventToStatus(providerEventType);
-              if (newStatus) await (db as any).updateEmailMessageStatus(message.id, newStatus);
-            }
+          const metadata = { reason: event.reason || event.response, bounceType: event.type };
+
+          // Look up the linked message first to avoid inserting a bare row then a duplicate linked row
+          const message = providerMessageId ? await db.getEmailMessageByProviderMessageId(providerMessageId) : null;
+
+          // Insert a single event row, linking to the message when available
+          await db.createEmailEvent({
+            event: providerEventType,
+            timestamp,
+            providerMessageId,
+            emailMessageId: message?.id,
+            recipientEmail: email,
+            metadata,
+          });
+
+          if (message) {
+            const newStatus = sendgridProvider.mapEventToStatus(providerEventType);
+            if (newStatus) await db.updateEmailMessageStatus(message.id, newStatus);
           }
         } catch (eventError) {
           console.error('[SendGrid Webhook] Error processing event:', eventError);
@@ -178,7 +195,7 @@ async function startServer() {
   });
   
   // Shopify webhooks
-  const handleShopifyWebhook = async (req: any, res: any) => {
+  const handleShopifyWebhook = async (req: any, res: any, _topic?: string) => {
     try {
       const rawBody = req.body.toString();
       const { processShopifyWebhook } = await import('./shopify');
@@ -305,7 +322,7 @@ async function startServer() {
       const { upsertShopifyStore, createSyncLog } = await import('../db');
       const { encrypt } = await import('../_core/crypto');
       const encryptedToken = encrypt(accessToken);
-      await upsertShopifyStore({ companyId: user.companyId || undefined, storeDomain: shopDomain, storeName: shopInfo.shop.name || shopDomain, accessToken: encryptedToken, apiVersion: '2024-01', isEnabled: true, syncInventory: true, syncOrders: true, inventoryAuthority: 'hybrid' });
+      await upsertShopifyStore(shopDomain, { storeDomain: shopDomain, storeName: shopInfo.shop.name || shopDomain, accessToken: encryptedToken, apiVersion: '2024-01', isEnabled: true, syncInventory: true, syncOrders: true, inventoryAuthority: 'hybrid' });
       await createSyncLog({ integration: 'shopify', action: 'store_connected', status: 'success', details: `Connected store: ${shopInfo.shop.name} (${shopDomain})` });
       res.redirect('/settings/integrations?shopify_success=connected&shop=' + encodeURIComponent(shopInfo.shop.name));
     } catch (error) {

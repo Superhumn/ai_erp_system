@@ -1,60 +1,50 @@
 export const ENV = {
-    appId: process.env.VITE_APP_ID ?? "",
-    cookieSecret: process.env.JWT_SECRET ?? "",
-    databaseUrl: process.env.DATABASE_URL ?? "",
-    oAuthServerUrl: process.env.OAUTH_SERVER_URL ?? "",
-    ownerOpenId: process.env.OWNER_OPEN_ID ?? "",
-    isProduction: process.env.NODE_ENV === "production",
-
-    // LLM Configuration (Anthropic Claude)
-    llmProvider: process.env.LLM_PROVIDER ?? "anthropic",
-    llmApiUrl: process.env.LLM_API_URL ?? "",
-    llmApiKey: process.env.LLM_API_KEY ?? "",
-    llmModel: process.env.LLM_MODEL ?? "claude-sonnet-4-20250514",
-
-    // SendGrid email configuration
-    sendgridApiKey: process.env.SENDGRID_API_KEY ?? "",
-    sendgridFromEmail: process.env.SENDGRID_FROM_EMAIL ?? "",  // MAIL_FROM - e.g., quotes@yourdomain.com
-    sendgridReplyTo: process.env.SENDGRID_REPLY_TO ?? "",      // REPLY_TO - optional reply-to address
-    sendgridWebhookSecret: process.env.SENDGRID_WEBHOOK_SECRET ?? "", // For webhook signature verification
-
-    // Public app URL for email links
-    publicAppUrl: process.env.PUBLIC_APP_URL ?? process.env.APP_URL ?? "http://localhost:3000",
-
-    // IMAP email inbox configuration
-    imapHost: process.env.IMAP_HOST ?? "",
-    imapPort: process.env.IMAP_PORT ?? "993",
-    imapUser: process.env.IMAP_USER ?? "",
-    imapPassword: process.env.IMAP_PASSWORD ?? "",
-
-    // Google OAuth configuration
-    googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
-    googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
-    googleRedirectUri: process.env.GOOGLE_REDIRECT_URI ?? "",
-    appUrl: process.env.APP_URL ?? "http://localhost:3000",
-
-    // QuickBooks OAuth configuration
-    quickbooksClientId: process.env.QUICKBOOKS_CLIENT_ID ?? "",
-    quickbooksClientSecret: process.env.QUICKBOOKS_CLIENT_SECRET ?? "",
-    quickbooksRedirectUri: process.env.QUICKBOOKS_REDIRECT_URI ?? "",
-    quickbooksEnvironment: process.env.QUICKBOOKS_ENVIRONMENT ?? "sandbox", // sandbox or production
-
-    // Shopify OAuth configuration
-    shopifyClientId: process.env.SHOPIFY_CLIENT_ID ?? "",
-    shopifyClientSecret: process.env.SHOPIFY_CLIENT_SECRET ?? "",
-    shopifyRedirectUri: process.env.SHOPIFY_REDIRECT_URI ?? "",
-
-    // Twilio voice/SMS configuration
-    twilioAccountSid: process.env.TWILIO_ACCOUNT_SID ?? "",
-    twilioAuthToken: process.env.TWILIO_AUTH_TOKEN ?? "",
-    twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER ?? "",
-
-    // Forge API (image generation, voice, maps, notifications)
-    forgeApiUrl: process.env.FORGE_API_URL ?? "",
-    forgeApiKey: process.env.FORGE_API_KEY ?? "",
-
-    // Airtable integration
-    airtablePersonalAccessToken: process.env.AIRTABLE_PERSONAL_ACCESS_TOKEN ?? "",
+  appId: process.env.VITE_APP_ID ?? "",
+  cookieSecret: process.env.JWT_SECRET ?? "",
+  databaseUrl: process.env.DATABASE_URL ?? "",
+  oAuthServerUrl: process.env.OAUTH_SERVER_URL ?? "",
+  ownerOpenId: process.env.OWNER_OPEN_ID ?? "",
+  isProduction: process.env.NODE_ENV === "production",
+  // LLM Configuration (supports Anthropic/Claude, OpenAI, or any OpenAI-compatible API)
+  llmProvider: process.env.LLM_PROVIDER ?? "",
+  llmApiUrl: process.env.LLM_API_URL ?? process.env.OPENAI_API_BASE_URL ?? "",
+  llmApiKey: process.env.LLM_API_KEY ?? process.env.OPENAI_API_KEY ?? "",
+  llmModel: process.env.LLM_MODEL ?? "claude-sonnet-4-20250514",
+  // SendGrid email configuration
+  sendgridApiKey: process.env.SENDGRID_API_KEY ?? "",
+  sendgridFromEmail: process.env.SENDGRID_FROM_EMAIL ?? "",  // MAIL_FROM - e.g., quotes@yourdomain.com
+  sendgridReplyTo: process.env.SENDGRID_REPLY_TO ?? "",      // REPLY_TO - optional reply-to address
+  sendgridWebhookSecret: process.env.SENDGRID_WEBHOOK_SECRET ?? "", // For webhook signature verification
+  // Public app URL for email links
+  publicAppUrl: process.env.PUBLIC_APP_URL ?? process.env.APP_URL ?? "http://localhost:3000",
+  // IMAP email inbox configuration
+  imapHost: process.env.IMAP_HOST ?? "",
+  imapPort: process.env.IMAP_PORT ?? "993",
+  imapUser: process.env.IMAP_USER ?? "",
+  imapPassword: process.env.IMAP_PASSWORD ?? "",
+  // Google OAuth configuration
+  googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+  googleRedirectUri: process.env.GOOGLE_REDIRECT_URI ?? "",
+  appUrl: process.env.APP_URL ?? "http://localhost:3000",
+  // QuickBooks OAuth configuration
+  quickbooksClientId: process.env.QUICKBOOKS_CLIENT_ID ?? "",
+  quickbooksClientSecret: process.env.QUICKBOOKS_CLIENT_SECRET ?? "",
+  quickbooksRedirectUri: process.env.QUICKBOOKS_REDIRECT_URI ?? "",
+  quickbooksEnvironment: process.env.QUICKBOOKS_ENVIRONMENT ?? "sandbox", // sandbox or production
+  // Shopify OAuth configuration
+  shopifyClientId: process.env.SHOPIFY_CLIENT_ID ?? "",
+  shopifyClientSecret: process.env.SHOPIFY_CLIENT_SECRET ?? "",
+  shopifyRedirectUri: process.env.SHOPIFY_REDIRECT_URI ?? "",
+  // Twilio voice/SMS configuration
+  twilioAccountSid: process.env.TWILIO_ACCOUNT_SID ?? "",
+  twilioAuthToken: process.env.TWILIO_AUTH_TOKEN ?? "",
+  twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER ?? "",
+  // Airtable integration
+  airtablePersonalAccessToken: process.env.AIRTABLE_PERSONAL_ACCESS_TOKEN ?? "",
+  // Forge API
+  forgeApiUrl: process.env.FORGE_API_URL ?? "",
+  forgeApiKey: process.env.FORGE_API_KEY ?? "",
 };
 
 /**

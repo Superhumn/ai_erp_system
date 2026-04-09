@@ -36,7 +36,7 @@ import { format } from "date-fns";
 import { getStatusColor } from "@/lib/statusColors";
 
 type Shipment = {
-  id: number;
+  id?: number;
   shipmentNumber: string;
   type: "inbound" | "outbound";
   status: "pending" | "in_transit" | "delivered" | "returned" | "cancelled";

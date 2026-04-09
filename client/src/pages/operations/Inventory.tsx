@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { SpreadsheetTable, Column, BulkAction } from "@/components/SpreadsheetTable";
+import { Badge } from "@/components/ui/badge";
 import {
   Warehouse,
   Loader2,

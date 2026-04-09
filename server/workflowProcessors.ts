@@ -2386,7 +2386,7 @@ const vendorQuoteAnalysisProcessor: WorkflowProcessor = {
         .from(vendors)
         .where(inArray(vendors.id, vendorIds));
 
-      const vendorMap = new Map<number, any>(vendorDetails.map((v: any) => [v.id, v] as [number, any]));
+      const vendorMap = new Map<number, { name?: string }>(vendorDetails.map((v: any) => [v.id, v]));
 
       // Prepare quote data for AI analysis
       const quoteData = quotes.map((q: any) => {

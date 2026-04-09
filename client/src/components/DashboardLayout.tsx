@@ -59,7 +59,7 @@ import {
   Send,
   MapPin,
   ArrowRightLeft,
-  ClipboardCheck,  ClipboardList,
+  ClipboardCheck, ClipboardList,
   PackageCheck,
   Brain,
   Plug,

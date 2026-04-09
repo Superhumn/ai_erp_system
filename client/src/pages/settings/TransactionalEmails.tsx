@@ -565,7 +565,7 @@ export default function TransactionalEmailsPage() {
                         </TableCell>
                         <TableCell>{event.email || "-"}</TableCell>
                         <TableCell className="font-mono text-xs">{event.providerMessageId}</TableCell>
-                        <TableCell className="max-w-xs truncate text-sm">{event.reason || "-"}</TableCell>
+                        <TableCell className="max-w-xs truncate text-sm">{(event.metadata as any)?.reason || "-"}</TableCell>
                         <TableCell className="text-sm">
                           {event.providerTimestamp ? new Date(event.providerTimestamp).toLocaleString() : (event.createdAt ? new Date(event.createdAt).toLocaleString() : "-")}
                         </TableCell>

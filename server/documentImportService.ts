@@ -1141,10 +1141,9 @@ export async function importCustomsDocument(
     createdRecords.push({ type: "customs_document", id: freightId, name: doc.documentNumber });
 
     // 5. Create or update raw materials for line items with HS codes
+    let materials = await db.getRawMaterials();
     for (const item of doc.lineItems) {
       if (item.hsCode) {
-        // Try to find existing material by HS code or description
-        const materials = await db.getRawMaterials();
         const existingMaterial = materials.find(m =>
           m.sku === item.hsCode ||
           m.name.toLowerCase().includes(item.description.toLowerCase().substring(0, 20))
@@ -1174,6 +1173,7 @@ export async function importCustomsDocument(
             preferredVendorId: shipper!.id
           });
           createdRecords.push({ type: "raw_material", id: materialResult.id, name: item.description });
+          materials = await db.getRawMaterials();
         }
       }
     }
@@ -1228,7 +1228,7 @@ export async function bulkImportDocuments(
   let failed = 0;
 
   for (const doc of documents) {
-    const parseResult = await parseUploadedDocument(doc.content, doc.filename, doc.hint as any);
+    const parseResult = await parseUploadedDocument(doc.content, doc.filename, doc.hint as "purchase_order" | "freight_invoice" | undefined);
 
     if (!parseResult.success) {
       results.push({

@@ -2406,7 +2406,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                     setExpandedCategories(newSet);
                   }}
                 >
-                  {name}: {stats.complete}/{stats.total}
+                  {name}: {(stats as any).complete}/{(stats as any).total}
                 </Badge>
               );
             })}
