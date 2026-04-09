@@ -482,7 +482,7 @@ async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any
       const allInventory = await db.select().from(inventory);
       const lowStockItems = allInventory.filter(i => parseFloat(i.quantity?.toString() || "0") < 10);
       const totalValue = allInventory.reduce((sum, i) => {
-        return sum + (parseFloat(i.quantity?.toString() || "0") * parseFloat(i.averageCost?.toString() || "0"));
+        return sum + (parseFloat(i.quantity?.toString() || "0") * parseFloat((i as any).unitCost?.toString() || "0"));
       }, 0);
 
       return {
@@ -531,9 +531,9 @@ async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any
         timeRange !== "all" ? gte(invoices.createdAt, startDate) : undefined
       );
       const paidInvoices = allInvoices.filter(i => i.status === "paid");
-      const pendingInvoices = allInvoices.filter(i => (i.status as string) === "pending" || i.status === "sent");
+      const pendingInvoices = allInvoices.filter(i => i.status === "draft" || i.status === "sent");
       const overdueInvoices = allInvoices.filter(i =>
-        ((i.status as string) === "pending" || i.status === "sent") &&
+        (i.status === "draft" || i.status === "sent") &&
         i.dueDate && new Date(i.dueDate) < now
       );
 

@@ -77,7 +77,7 @@ export default function PurchaseOrders() {
   });
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
 
-  const { data: purchaseOrders, isLoading } = trpc.purchaseOrders.list.useQuery();
+  const { data: purchaseOrders, isLoading, refetch } = trpc.purchaseOrders.list.useQuery();
   const { data: vendors } = trpc.vendors.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
   const utils = trpc.useUtils();
@@ -179,52 +179,6 @@ export default function PurchaseOrders() {
     const matchesStatus = statusFilter === "all" || po.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-
-  const resetForm = () => {
-    setFormData({ vendorId: 0, expectedDeliveryDate: "", notes: "" });
-    setLineItems([]);
-  };
-
-  const calculateTotals = () => {
-    const subtotal = lineItems.reduce((sum, item) => sum + parseFloat(item.totalAmount || "0"), 0);
-    return { subtotal, total: subtotal };
-  };
-
-  const totals = calculateTotals();
-
-  const addLineItem = () => {
-    setLineItems([...lineItems, { description: "", quantity: "1", unitPrice: "0", totalAmount: "0" }]);
-  };
-
-  const selectProduct = (index: number, value: string) => {
-    const product = products?.find((p: any) => p.id.toString() === value);
-    if (product) {
-      const newItems = [...lineItems];
-      newItems[index] = {
-        ...newItems[index],
-        productId: product.id,
-        description: product.name,
-        unitPrice: product.unitPrice || "0",
-        totalAmount: (parseFloat(newItems[index].quantity || "1") * parseFloat(product.unitPrice || "0")).toFixed(2),
-      };
-      setLineItems(newItems);
-    }
-  };
-
-  const updateLineItem = (index: number, field: keyof LineItem, value: string) => {
-    const newItems = [...lineItems];
-    (newItems[index] as any)[field] = value;
-    if (field === "quantity" || field === "unitPrice") {
-      const qty = parseFloat(newItems[index].quantity || "0");
-      const price = parseFloat(newItems[index].unitPrice || "0");
-      newItems[index].totalAmount = (qty * price).toFixed(2);
-    }
-    setLineItems(newItems);
-  };
-
-  const removeLineItem = (index: number) => {
-    setLineItems(lineItems.filter((_, i) => i !== index));
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

@@ -376,13 +376,13 @@ export default function FirefliesPage() {
                     <TableBody>
                       {meetings.map((meeting) => {
                         const participants = meeting.participants ? JSON.parse(meeting.participants as string) : [];
-                        const actionItems = meeting.actionItems ? JSON.parse(meeting.actionItems as string) : [];
+                        const actionItems = (meeting as any).actionItems ? JSON.parse((meeting as any).actionItems as string) : [];
                         return (
                           <TableRow key={meeting.id}>
                             <TableCell>
                               <div className="font-medium">{meeting.title}</div>
-                              {meeting.organizerEmail && (
-                                <div className="text-xs text-muted-foreground">{meeting.organizerEmail}</div>
+                              {(meeting as any).organizerEmail && (
+                                <div className="text-xs text-muted-foreground">{(meeting as any).organizerEmail}</div>
                               )}
                             </TableCell>
                             <TableCell className="text-sm">{formatDate(meeting.date)}</TableCell>
@@ -404,24 +404,24 @@ export default function FirefliesPage() {
                                 {actionItems.length}
                               </div>
                             </TableCell>
-                            <TableCell>{statusBadge(meeting.processingStatus)}</TableCell>
+                            <TableCell>{statusBadge((meeting as any).processingStatus || meeting.status)}</TableCell>
                             <TableCell>
-                              {meeting.processingStatus !== 'pending' && (
+                              {(meeting as any).processingStatus !== 'pending' && (
                                 <div className="text-xs space-y-0.5">
-                                  {(meeting.autoCreatedContactCount ?? 0) > 0 && (
-                                    <div className="text-blue-600">{meeting.autoCreatedContactCount} contacts</div>
+                                  {((meeting as any).autoCreatedContactCount ?? 0) > 0 && (
+                                    <div className="text-blue-600">{(meeting as any).autoCreatedContactCount} contacts</div>
                                   )}
-                                  {(meeting.autoCreatedTaskCount ?? 0) > 0 && (
-                                    <div className="text-purple-600">{meeting.autoCreatedTaskCount} tasks</div>
+                                  {((meeting as any).autoCreatedTaskCount ?? 0) > 0 && (
+                                    <div className="text-purple-600">{(meeting as any).autoCreatedTaskCount} tasks</div>
                                   )}
-                                  {meeting.autoCreatedProjectId && (
+                                  {(meeting as any).autoCreatedProjectId && (
                                     <div className="text-indigo-600">1 project</div>
                                   )}
                                 </div>
                               )}
                             </TableCell>
                             <TableCell>
-                              {meeting.processingStatus === 'pending' && (
+                              {(meeting as any).processingStatus === 'pending' && (
                                 <Button
                                   size="sm"
                                   variant="outline"

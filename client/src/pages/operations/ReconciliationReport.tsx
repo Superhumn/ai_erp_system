@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState, ReactNode } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -148,7 +148,7 @@ export default function ReconciliationReport() {
   );
 }
 
-function ReconciliationRunRow({ run, getStatusBadge }: { run: any; getStatusBadge: (s: string) => React.ReactElement }) {
+function ReconciliationRunRow({ run, getStatusBadge }: { run: any; getStatusBadge: (s: string) => ReactNode }) {
   const [expanded, setExpanded] = useState(false);
   const { data: detail } = trpc.reconciliation.getById.useQuery(
     { id: run.id },

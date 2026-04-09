@@ -11,6 +11,9 @@ import {
   auditLogs, notifications, integrationConfigs, aiConversations, aiMessages,
   googleOAuthTokens, InsertGoogleOAuthToken,
   quickbooksOAuthTokens, InsertQuickBooksOAuthToken,
+  quickbooksAccounts, InsertQuickBooksAccount,
+  quickbooksItems, InsertQuickBooksItem,
+  quickbooksAccountMappings, InsertQuickBooksAccountMapping,
   freightCarriers, freightRfqs, freightQuotes, freightEmails,
   customsClearances, customsDocuments, freightBookings,
   inventoryTransfers, inventoryTransferItems,
@@ -97,8 +100,9 @@ import {
   InsertCopackerInventoryUpdate, InsertCopackerInventoryUpdateItem, InsertCopackerInvoice, InsertCopackerInvoiceItem, InsertCopackerShippingDocument,
   // Local authentication
   localAuthCredentials, InsertLocalAuthCredential,
-  // Fireflies meetings
-  firefliesMeetings, firefliesConfigs,
+  // Fireflies integration
+  firefliesMeetings, firefliesActionItems, firefliesContactMappings, firefliesConfigs,
+  InsertFirefliesMeeting, InsertFirefliesActionItem, InsertFirefliesContactMapping,
   // COGS tracking
   cogsTransactions, freightCostAllocations,
   InsertCogsTransaction, InsertFreightCostAllocation,
@@ -132,6 +136,11 @@ import {
   grantBidOpportunities, grantBidWebFormMappings,
   InsertGrantBidTemplate, InsertGrantBidApplication, InsertGrantBidDocument, InsertGrantBidFieldMapping, InsertGrantBidSubmissionLog,
   InsertGrantBidOpportunity, InsertGrantBidWebFormMapping,
+  // Agent run tracking
+  agentRuns, agentRunSteps, agentCallLogs,
+  // CRM investors & fundraising
+  investors, InsertInvestor, fundraisingCampaigns, InsertFundraisingCampaign,
+  investorInvestments, InsertInvestorInvestment, fundraisingReminders, InsertFundraisingReminder,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -228,12 +237,6 @@ export async function getAllUsers() {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(users).orderBy(desc(users.createdAt));
-}
-
-export async function getUsersByRoles(roles: string[]) {
-  const db = await getDb();
-  if (!db) return [];
-  return db.select().from(users).where(inArray(users.role, roles)).orderBy(desc(users.createdAt));
 }
 
 export async function updateUserRole(userId: number, role: InsertUser['role']) {
@@ -546,13 +549,6 @@ export async function getInvoiceById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(invoices).where(eq(invoices.id, id)).limit(1);
-  return result[0];
-}
-
-export async function getInvoiceByNumber(invoiceNumber: string) {
-  const db = await getDb();
-  if (!db) return undefined;
-  const result = await db.select().from(invoices).where(eq(invoices.invoiceNumber, invoiceNumber)).limit(1);
   return result[0];
 }
 
@@ -4368,6 +4364,18 @@ export async function updateShopifyStore(id: number, data: Partial<InsertShopify
   await db.update(shopifyStores).set(data).where(eq(shopifyStores.id, id));
 }
 
+export async function upsertShopifyStore(domain: string, data: Partial<InsertShopifyStore>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = await getShopifyStoreByDomain(domain);
+  if (existing) {
+    await db.update(shopifyStores).set(data).where(eq(shopifyStores.id, existing.id));
+    return { id: existing.id };
+  }
+  const result = await db.insert(shopifyStores).values({ storeDomain: domain, storeName: domain, ...data } as InsertShopifyStore);
+  return { id: result[0].insertId };
+}
+
 // Webhook Events
 export async function createWebhookEvent(data: InsertWebhookEvent) {
   const db = await getDb();
@@ -6456,7 +6464,7 @@ export async function getPageViewAnalytics(dataRoomId: number) {
   });
 
   // Aggregate stats by visitor
-  const visitorIds = [...new Set(pageViews.map(pv => pv.visitorId))];
+  const visitorIds = Array.from(new Set(pageViews.map(pv => pv.visitorId)));
   const visitors = visitorIds.length > 0
     ? await db.select().from(dataRoomVisitors).where(inArray(dataRoomVisitors.id, visitorIds))
     : [];
@@ -6709,7 +6717,7 @@ export async function getDetailedVisitorAnalytics(dataRoomId: number, visitorId:
     .where(eq(documentViews.visitorId, visitorId));
 
   // Get documents info
-  const docIds = [...new Set(pageViews.map(pv => pv.documentId))];
+  const docIds = Array.from(new Set(pageViews.map(pv => pv.documentId)));
   const documents = docIds.length > 0
     ? await db.select().from(dataRoomDocuments).where(inArray(dataRoomDocuments.id, docIds))
     : [];
@@ -6717,7 +6725,7 @@ export async function getDetailedVisitorAnalytics(dataRoomId: number, visitorId:
   // Build detailed analytics
   const documentEngagement = documents.map(doc => {
     const docPageViews = pageViews.filter(pv => pv.documentId === doc.id);
-    const uniquePages = [...new Set(docPageViews.map(pv => pv.pageNumber))];
+    const uniquePages = Array.from(new Set(docPageViews.map(pv => pv.pageNumber)));
     const totalDuration = docPageViews.reduce((sum, pv) => sum + (pv.durationMs || 0), 0);
 
     // Page-by-page breakdown
@@ -6819,7 +6827,7 @@ export async function getDataRoomEngagementReport(dataRoomId: number, startDate?
       ndaAcceptedAt: v.ndaAcceptedAt,
       sessionsCount: vSessions.length,
       totalTimeMs: vSessions.reduce((sum, s) => sum + (s.totalDurationMs || 0), 0),
-      documentsViewed: [...new Set(vPageViews.map(pv => pv.documentId))].length,
+      documentsViewed: Array.from(new Set(vPageViews.map(pv => pv.documentId))).length,
       pagesViewed: vPageViews.length,
       lastActivity: vSessions.length > 0
         ? vSessions.reduce((latest, s) => s.sessionStartAt > latest ? s.sessionStartAt : latest, vSessions[0].sessionStartAt)
@@ -6829,7 +6837,7 @@ export async function getDataRoomEngagementReport(dataRoomId: number, startDate?
 
   const documentEngagement = documents.map(d => {
     const dPageViews = filteredPageViews.filter(pv => pv.documentId === d.id);
-    const uniqueVisitors = [...new Set(dPageViews.map(pv => pv.visitorId))];
+    const uniqueVisitors = Array.from(new Set(dPageViews.map(pv => pv.visitorId)));
 
     return {
       documentId: d.id,
@@ -8187,10 +8195,8 @@ export async function getCrmPipelines(type?: string) {
   const db = await getDb();
   if (!db) return [];
 
-  const conditions: any[] = [eq(crmPipelines.isActive, true)];
-  if (type) {
-    conditions.push(eq(crmPipelines.type, type as any));
-  }
+  const conditions = [eq(crmPipelines.isActive, true)];
+  if (type) conditions.push(eq(crmPipelines.type, type as any));
 
   return db.select().from(crmPipelines).where(and(...conditions)).orderBy(crmPipelines.name);
 }
@@ -8407,7 +8413,7 @@ export async function processVCardCapture(captureId: number, vcardData: string, 
     // Create new contact
     contactId = await createCrmContact({
       ...parsedData,
-      source: "iphone_bump" as const,
+      source: "iphone_bump" as any,
       capturedBy,
       captureData: JSON.stringify({ vcardData, captureId }),
     } as any);
@@ -9861,8 +9867,6 @@ export async function getFirefliesMeetingStats() {
   };
 }
 
-
-// ============================================
 // INVENTORY COSTING CONFIG
 // ============================================
 
@@ -9963,17 +9967,15 @@ export async function getActiveCostLayersForUpdate(
   return query.orderBy(inventoryCostLayers.layerDate);
 }
 
+// ============================================
+// INVENTORY COSTING LAYER FUNCTIONS
+// ============================================
+
 export async function createInventoryCostLayer(data: InsertInventoryCostLayer) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const result = await db.insert(inventoryCostLayers).values(data);
   return { id: result[0].insertId };
-}
-
-export async function updateInventoryCostLayer(id: number, data: Partial<InsertInventoryCostLayer>, tx?: any) {
-  const executor = tx || await getDb();
-  if (!executor) throw new Error("Database not available");
-  await executor.update(inventoryCostLayers).set(data as any).where(eq(inventoryCostLayers.id, id));
 }
 
 export async function getWeightedAverageCost(productId: number, warehouseId?: number) {
@@ -10002,7 +10004,6 @@ export async function getWeightedAverageCost(productId: number, warehouseId?: nu
   };
 }
 
-// ============================================
 // COGS RECORDS
 // ============================================
 
@@ -10054,35 +10055,6 @@ export async function getCogsPeriodSummaries(filters?: {
   return query.orderBy(desc(cogsPeriodSummary.periodStart));
 }
 
-/**
- * Get an existing COGS period summary record by period parameters.
- * Note: undefined companyId/productId represents NULL in the database (company-wide or product-wide aggregation)
- */
-export async function getCogsPeriodSummaries(params: {
-  companyId?: number;
-  productId?: number;
-  periodType?: "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
-  periodStart?: Date;
-  periodEnd?: Date;
-}) {
-  const db = await getDb();
-  if (!db) return [];
-
-  const conditions = [];
-  if (params.periodType) conditions.push(eq(cogsPeriodSummary.periodType, params.periodType));
-  if (params.periodStart) conditions.push(eq(cogsPeriodSummary.periodStart, params.periodStart));
-  if (params.periodEnd) conditions.push(eq(cogsPeriodSummary.periodEnd, params.periodEnd));
-  if (params.companyId !== undefined) {
-    conditions.push(eq(cogsPeriodSummary.companyId, params.companyId));
-  }
-  if (params.productId !== undefined) {
-    conditions.push(eq(cogsPeriodSummary.productId, params.productId));
-  }
-
-  return conditions.length > 0
-    ? db.select().from(cogsPeriodSummary).where(and(...conditions))
-    : db.select().from(cogsPeriodSummary);
-}
 
 export async function getCogsPeriodSummary(params: {
   companyId?: number;
@@ -10179,32 +10151,30 @@ export async function dbTransaction<T>(fn: (tx: any) => Promise<T>): Promise<T> 
   return db.transaction(fn);
 }
 
-
 // ============================================
 // VENDOR NEGOTIATIONS
 // ============================================
 
-export async function getVendorNegotiations(filters?: {
-  companyId?: number; vendorId?: number; status?: string; type?: string; assignedTo?: number;
-}) {
+export async function getVendorNegotiations(filters?: { companyId?: number; vendorId?: number; status?: string; type?: string; assignedTo?: number }) {
   const db = await getDb();
   if (!db) return [];
-  const conditions: any[] = [];
+  const conditions = [];
   if (filters?.companyId) conditions.push(eq(vendorNegotiations.companyId, filters.companyId));
   if (filters?.vendorId) conditions.push(eq(vendorNegotiations.vendorId, filters.vendorId));
   if (filters?.status) conditions.push(eq(vendorNegotiations.status, filters.status as any));
   if (filters?.type) conditions.push(eq(vendorNegotiations.type, filters.type as any));
   if (filters?.assignedTo) conditions.push(eq(vendorNegotiations.assignedTo, filters.assignedTo));
-  let query = db.select().from(vendorNegotiations);
-  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
-  return query.orderBy(desc(vendorNegotiations.updatedAt));
+  if (conditions.length > 0) {
+    return db.select().from(vendorNegotiations).where(and(...conditions)).orderBy(desc(vendorNegotiations.updatedAt));
+  }
+  return db.select().from(vendorNegotiations).orderBy(desc(vendorNegotiations.updatedAt));
 }
 
 export async function getVendorNegotiationById(id: number) {
   const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(vendorNegotiations).where(eq(vendorNegotiations.id, id));
-  return result[0] || null;
+  if (!db) return undefined;
+  const result = await db.select().from(vendorNegotiations).where(eq(vendorNegotiations.id, id)).limit(1);
+  return result[0];
 }
 
 export async function createVendorNegotiation(data: InsertVendorNegotiation) {
@@ -10216,16 +10186,14 @@ export async function createVendorNegotiation(data: InsertVendorNegotiation) {
 
 export async function updateVendorNegotiation(id: number, data: Partial<InsertVendorNegotiation>) {
   const db = await getDb();
-  if (!db) throw new Error("Database not available");
+  if (!db) return;
   await db.update(vendorNegotiations).set(data as any).where(eq(vendorNegotiations.id, id));
 }
 
 export async function getNegotiationRounds(negotiationId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(negotiationRounds)
-    .where(eq(negotiationRounds.negotiationId, negotiationId))
-    .orderBy(negotiationRounds.roundNumber);
+  return db.select().from(negotiationRounds).where(eq(negotiationRounds.negotiationId, negotiationId)).orderBy(asc(negotiationRounds.roundNumber));
 }
 
 export async function createNegotiationRound(data: InsertNegotiationRound) {
@@ -10247,83 +10215,9 @@ export async function getNextRoundNumber(negotiationId: number): Promise<number>
 
   const rawMaxRound = result[0]?.maxRound;
   const nextRound = rawMaxRound != null ? Number(rawMaxRound) : NaN;
-
-  return Number.isFinite(nextRound) && nextRound > 0 ? nextRound : 1;
+  return Number.isFinite(nextRound) ? nextRound : 1;
 }
 
-
-export async function getVendorNegotiationStats(companyId?: number) {
-  const db = await getDb();
-  if (!db) return null;
-  const conditions: any[] = [];
-  if (companyId) conditions.push(eq(vendorNegotiations.companyId, companyId));
-
-  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-
-
-  const stats = await db.select({
-    total: sql<number>`COUNT(*)`,
-    active: sql<number>`SUM(CASE WHEN ${vendorNegotiations.status} IN ('in_progress', 'counter_offered', 'analyzing', 'ready') THEN 1 ELSE 0 END)`,
-    completed: sql<number>`SUM(CASE WHEN ${vendorNegotiations.status} = 'accepted' THEN 1 ELSE 0 END)`,
-    rejected: sql<number>`SUM(CASE WHEN ${vendorNegotiations.status} = 'rejected' THEN 1 ELSE 0 END)`,
-    totalEstimatedSavings: sql<string>`COALESCE(SUM(CASE WHEN ${vendorNegotiations.status} = 'accepted' THEN CAST(${vendorNegotiations.estimatedSavings} AS DECIMAL(15,2)) ELSE 0 END), 0)`,
-    totalConfidenceScore: sql<string>`COALESCE(SUM(CASE WHEN ${vendorNegotiations.status} = 'accepted' THEN CAST(${vendorNegotiations.aiConfidenceScore} AS DECIMAL(5,2)) ELSE 0 END), 0)`,
-  })
-    .from(vendorNegotiations)
-    .where(whereClause);
-
-  const row = stats[0];
-  if (!row) {
-    return {
-      total: 0,
-      active: 0,
-      completed: 0,
-      rejected: 0,
-      totalEstimatedSavings: 0,
-      avgConfidenceScore: 0,
-    };
-  }
-
-
-  const total = Number(row.total) || 0;
-  const active = Number(row.active) || 0;
-  const completed = Number(row.completed) || 0;
-  const rejected = Number(row.rejected) || 0;
-  const totalEstimatedSavings = parseFloat(row.totalEstimatedSavings || "0");
-  const totalConfidenceScore = parseFloat(row.totalConfidenceScore || "0");
-
-  return {
-    total,
-    active,
-    completed,
-    rejected,
-    totalEstimatedSavings,
-    avgConfidenceScore: completed > 0 ? totalConfidenceScore / completed : 0,
-  };
-}
-
-// Get vendor spending history for negotiation leverage
-export async function getVendorSpendingHistory(vendorId: number) {
-  const db = await getDb();
-  if (!db) return null;
-
-  const poData = await db.select({
-    totalSpend: sql<string>`COALESCE(SUM(CAST(${purchaseOrders.totalAmount} AS DECIMAL(15,2))), 0)`,
-    orderCount: sql<number>`COUNT(*)`,
-    avgOrderValue: sql<string>`COALESCE(AVG(CAST(${purchaseOrders.totalAmount} AS DECIMAL(15,2))), 0)`,
-  }).from(purchaseOrders)
-    .where(eq(purchaseOrders.vendorId, vendorId));
-
-  return {
-    totalSpend: parseFloat(poData[0]?.totalSpend || '0'),
-    orderCount: poData[0]?.orderCount || 0,
-    avgOrderValue: parseFloat(poData[0]?.avgOrderValue || '0'),
-  };
-}
-
-// COGS PERIOD SUMMARIES (alias with array return)
-
-// ============================================
 // GOOGLE OAUTH BY USER ID
 // ============================================
 
@@ -10331,29 +10225,6 @@ export async function getGoogleOAuthTokenByUserId(userId: number) {
   return getGoogleOAuthToken(userId);
 }
 
-// ============================================
-// SHOPIFY UPSERT
-// ============================================
-
-export async function upsertShopifyStore(domainOrData: string | InsertShopifyStore, data?: Partial<InsertShopifyStore>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  let domain: string;
-  let storeData: Partial<InsertShopifyStore>;
-  if (typeof domainOrData === "string") {
-    domain = domainOrData;
-    storeData = data || {};
-  } else {
-    domain = (domainOrData as any).domain || (domainOrData as any).storeDomain;
-    storeData = domainOrData;
-  }
-  const existing = await getShopifyStoreByDomain(domain);
-  if (existing) {
-    await updateShopifyStore(existing.id, storeData);
-    return existing;
-  }
-  return createShopifyStore(storeData as InsertShopifyStore);
-}
 
 // ============================================
 // TRANSACTIONAL EMAIL TEMPLATES
@@ -10399,11 +10270,6 @@ export async function deleteTransactionalEmailTemplate(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.delete(transactionalEmailTemplates).where(eq(transactionalEmailTemplates.id, id));
-}
-
-
-  if (!db) throw new Error("Database not available");
-  await db.update(emailMessages).set({ retryCount: sql`${emailMessages.retryCount} + 1`, status: 'queued' as any }).where(eq(emailMessages.id, id));
 }
 
 export async function getEmailMessages(filters?: { status?: string; templateName?: string; relatedEntityType?: string; relatedEntityId?: number }) {
@@ -10533,40 +10399,6 @@ export async function updateInventoryCostBasis(lotId: number, data: { additional
 
 // ============================================
 // QUICKBOOKS FUNCTIONS
-// ============================================
-
-export async function syncQuickBooksAccounts(companyId: number, accounts: any[]) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  for (const account of accounts) {
-    await db.insert(quickbooksAccounts).values({ ...account, companyId }).onDuplicateKeyUpdate({ set: { ...account, updatedAt: new Date() } });
-  }
-  return { synced: accounts.length };
-}
-
-export async function syncQuickBooksItems(companyId: number, items: any[]) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  for (const item of items) {
-    await db.insert(quickbooksItems).values({ ...item, companyId }).onDuplicateKeyUpdate({ set: { ...item, updatedAt: new Date() } });
-  }
-  return { synced: items.length };
-}
-
-export async function getQuickBooksAccountsByType(type: string, companyId?: number) {
-  const db = await getDb();
-  if (!db) return [];
-  const conditions: any[] = [eq(quickbooksAccounts.accountType, type)];
-  if (companyId) conditions.push(eq(quickbooksAccounts.companyId, companyId));
-  return db.select().from(quickbooksAccounts).where(and(...conditions));
-}
-
-export async function getQuickBooksAccountMappings(companyId?: number) {
-  const db = await getDb();
-  if (!db) return [];
-  if (companyId) return db.select().from(quickbooksAccountMappings).where(eq(quickbooksAccountMappings.companyId, companyId));
-  return db.select().from(quickbooksAccountMappings);
-}
 
 export async function upsertQuickBooksAccountMapping(data: any) {
   const db = await getDb();
@@ -10584,51 +10416,48 @@ export async function upsertQuickBooksAccountMapping(data: any) {
 // ============================================
 
 // Shopify store upsert (called from _core/index.ts)
-export async function upsertShopifyStore(data: any) {
+
+
+export async function getVendorNegotiationStats(companyId?: number) {
   const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  if (data.id) {
-    await db.update(shopifyStores).set({ ...data, updatedAt: new Date() }).where(eq(shopifyStores.id, data.id));
-    return data;
-  }
-  const result = await db.insert(shopifyStores).values(data);
-  return { id: result[0].insertId, ...data };
+  if (!db) return { total: 0, active: 0, completed: 0, rejected: 0, totalEstimatedSavings: 0 };
+  const conditions = [];
+  if (companyId) conditions.push(eq(vendorNegotiations.companyId, companyId));
+  const allNeg = conditions.length > 0
+    ? await db.select().from(vendorNegotiations).where(and(...conditions))
+    : await db.select().from(vendorNegotiations);
+  const total = allNeg.length;
+  const active = allNeg.filter(n => ["draft", "analyzing", "ready", "in_progress", "counter_offered"].includes(n.status)).length;
+  const completed = allNeg.filter(n => n.status === "accepted").length;
+  const rejected = allNeg.filter(n => n.status === "rejected" || n.status === "expired").length;
+  const totalEstimatedSavings = allNeg.reduce((sum, n) => sum + parseFloat(n.estimatedSavings || "0"), 0);
+  return { total, active, completed, rejected, totalEstimatedSavings };
 }
 
-// Google OAuth by user ID (called from routers.ts)
-export async function getGoogleOAuthTokenByUserId(userId: number) {
+export async function getVendorSpendingHistory(vendorId: number) {
   const db = await getDb();
-  if (!db) return null;
-  const result = await db.select().from(googleOAuthTokens).where(eq(googleOAuthTokens.userId, userId));
-  return result[0] || null;
+  if (!db) return [];
+  return db.select().from(purchaseOrders).where(eq(purchaseOrders.vendorId, vendorId)).orderBy(desc(purchaseOrders.orderDate));
 }
 
 // ============================================
 // COPACKER PORTAL
 // ============================================
 
-// --- Inventory Updates ---
-
 export async function getCopackerInventoryUpdates(warehouseId?: number) {
   const db = await getDb();
   if (!db) return [];
-
-  const conditions = [];
-  if (warehouseId) conditions.push(eq(copackerInventoryUpdates.warehouseId, warehouseId));
-
-  const result = conditions.length
-    ? await db.select().from(copackerInventoryUpdates).where(and(...conditions)).orderBy(desc(copackerInventoryUpdates.createdAt))
-    : await db.select().from(copackerInventoryUpdates).orderBy(desc(copackerInventoryUpdates.createdAt));
-
-  return result;
+  if (warehouseId) {
+    return db.select().from(copackerInventoryUpdates).where(eq(copackerInventoryUpdates.warehouseId, warehouseId)).orderBy(desc(copackerInventoryUpdates.createdAt));
+  }
+  return db.select().from(copackerInventoryUpdates).orderBy(desc(copackerInventoryUpdates.createdAt));
 }
 
 export async function getCopackerInventoryUpdateById(id: number) {
   const db = await getDb();
-  if (!db) return null;
-
-  const rows = await db.select().from(copackerInventoryUpdates).where(eq(copackerInventoryUpdates.id, id)).limit(1);
-  return rows[0] || null;
+  if (!db) return undefined;
+  const result = await db.select().from(copackerInventoryUpdates).where(eq(copackerInventoryUpdates.id, id)).limit(1);
+  return result[0];
 }
 
 export async function createCopackerInventoryUpdate(data: InsertCopackerInventoryUpdate) {
@@ -10647,15 +10476,7 @@ export async function updateCopackerInventoryUpdate(id: number, data: Partial<In
 export async function getCopackerInventoryUpdateItems(updateId: number) {
   const db = await getDb();
   if (!db) return [];
-
-  return db.select({
-    item: copackerInventoryUpdateItems,
-    product: products,
-  })
-    .from(copackerInventoryUpdateItems)
-    .leftJoin(products, eq(copackerInventoryUpdateItems.productId, products.id))
-    .where(eq(copackerInventoryUpdateItems.updateId, updateId))
-    .orderBy(copackerInventoryUpdateItems.id);
+  return db.select().from(copackerInventoryUpdateItems).where(eq(copackerInventoryUpdateItems.updateId, updateId));
 }
 
 export async function createCopackerInventoryUpdateItem(data: InsertCopackerInventoryUpdateItem) {
@@ -10689,10 +10510,9 @@ export async function getCopackerInvoices(warehouseId?: number) {
 
 export async function getCopackerInvoiceById(id: number) {
   const db = await getDb();
-  if (!db) return null;
-
-  const rows = await db.select().from(copackerInvoices).where(eq(copackerInvoices.id, id)).limit(1);
-  return rows[0] || null;
+  if (!db) return undefined;
+  const result = await db.select().from(copackerInvoices).where(eq(copackerInvoices.id, id)).limit(1);
+  return result[0];
 }
 
 export async function createCopackerInvoice(data: InsertCopackerInvoice) {
@@ -10702,16 +10522,10 @@ export async function createCopackerInvoice(data: InsertCopackerInvoice) {
   return { id: result[0].insertId };
 }
 
-export async function updateCopackerInvoice(id: number, data: Partial<InsertCopackerInvoice>) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(copackerInvoices).set(data).where(eq(copackerInvoices.id, id));
-}
-
 export async function getCopackerInvoiceItems(invoiceId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(copackerInvoiceItems).where(eq(copackerInvoiceItems.invoiceId, invoiceId)).orderBy(copackerInvoiceItems.id);
+  return db.select().from(copackerInvoiceItems).where(eq(copackerInvoiceItems.invoiceId, invoiceId));
 }
 
 export async function createCopackerInvoiceItem(data: InsertCopackerInvoiceItem) {
@@ -10750,12 +10564,6 @@ export async function createCopackerShippingDocument(data: InsertCopackerShippin
   return { id: result[0].insertId };
 }
 
-export async function updateCopackerShippingDocument(id: number, data: Partial<InsertCopackerShippingDocument>) {
-  const db = await getDb();
-  if (!db) return;
-  await db.update(copackerShippingDocuments).set(data).where(eq(copackerShippingDocuments.id, id));
-
-// ============================================
 // AI SERVICE HELPER FUNCTIONS
 // ============================================
 
@@ -10779,18 +10587,6 @@ export async function getEdiPartners(filters?: { status?: string }) {
   return conditions.length > 0
     ? db.select().from(ediTradingPartners).where(and(...conditions))
     : db.select().from(ediTradingPartners);
-}
-
-export async function getEdiTransactions(filters?: { tradingPartnerId?: number; status?: string; direction?: string }) {
-  const db = await getDb();
-  if (!db) return [];
-  const conditions = [];
-  if (filters?.tradingPartnerId) conditions.push(eq(ediTransactions.tradingPartnerId, filters.tradingPartnerId));
-  if (filters?.status) conditions.push(eq(ediTransactions.status, filters.status as any));
-  if (filters?.direction) conditions.push(eq(ediTransactions.direction, filters.direction as any));
-  return conditions.length > 0
-    ? db.select().from(ediTransactions).where(and(...conditions)).orderBy(desc(ediTransactions.createdAt))
-    : db.select().from(ediTransactions).orderBy(desc(ediTransactions.createdAt));
 }
 
 // ============================================
@@ -11118,9 +10914,6 @@ export async function deleteGrantBidWebFormMapping(id: number) {
 }
 
 
-
-
-
 // ============================================
 // QUICKBOOKS EXTENDED FUNCTIONS
 // ============================================
@@ -11185,119 +10978,102 @@ export async function getQuickBooksAccountMappings(companyId?: number) {
   return db.select().from(quickbooksAccountMappings);
 }
 
-export async function upsertQuickBooksAccountMapping(data: InsertQuickBooksAccountMapping) {
+export async function createEmailMessage(data: InsertEmailMessage) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const existing = await db.select().from(quickbooksAccountMappings)
-    .where(and(
-      eq(quickbooksAccountMappings.mappingType, data.mappingType),
-      data.companyId ? eq(quickbooksAccountMappings.companyId, data.companyId) : sql`1=1`
-    )).limit(1);
-  if (existing[0]) {
-    await db.update(quickbooksAccountMappings).set(data as any).where(eq(quickbooksAccountMappings.id, existing[0].id));
-    return { id: existing[0].id };
-  }
-  const result = await db.insert(quickbooksAccountMappings).values(data);
-  return { id: result[0].insertId };
+  const result = await db.insert(emailMessages).values(data);
+  return { id: result[0].insertId, ...data };
 }
 
-export async function getInventoryCostingConfigs(filters?: { companyId?: number; productId?: number }) {
-  const db = await getDb();
-  if (!db) return [];
-  const conditions = [];
-  if (filters?.companyId) conditions.push(eq(inventoryCostingConfig.companyId, filters.companyId));
-  if (filters?.productId) conditions.push(eq(inventoryCostingConfig.productId, filters.productId));
-  if (conditions.length > 0) {
-    return db.select().from(inventoryCostingConfig).where(and(...conditions)).orderBy(desc(inventoryCostingConfig.createdAt));
-  }
-  return db.select().from(inventoryCostingConfig).orderBy(desc(inventoryCostingConfig.createdAt));
-}
-
-export async function getInventoryCostingConfigByProduct(productId: number, companyId?: number) {
+export async function getEmailMessageById(id: number) {
   const db = await getDb();
   if (!db) return null;
-  const conditions = [eq(inventoryCostingConfig.productId, productId), eq(inventoryCostingConfig.isActive, true)];
-  if (companyId) conditions.push(eq(inventoryCostingConfig.companyId, companyId));
-  const result = await db.select().from(inventoryCostingConfig).where(and(...conditions)).limit(1);
+  const result = await db.select().from(emailMessages).where(eq(emailMessages.id, id)).limit(1);
   return result[0] || null;
 }
 
-export async function createInventoryCostingConfig(data: InsertInventoryCostingConfig) {
+export async function getEmailMessageByIdempotencyKey(key: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(emailMessages).where(eq(emailMessages.idempotencyKey, key)).limit(1);
+  return result[0] || null;
+}
+
+export async function getEmailMessageByProviderMessageId(providerMessageId: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(emailMessages).where(eq(emailMessages.providerMessageId, providerMessageId)).limit(1);
+  return result[0] || null;
+}
+
+export async function updateEmailMessage(id: number, data: Partial<InsertEmailMessage>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailMessages).set(data).where(eq(emailMessages.id, id));
+}
+
+export async function updateEmailMessageStatus(id: number, status: string, providerMessageId?: string, error?: any) {
+  const db = await getDb();
+  if (!db) return;
+  const updateData: any = { status, updatedAt: new Date() };
+  if (providerMessageId) updateData.providerMessageId = providerMessageId;
+  if (status === 'sent') updateData.sentAt = new Date();
+  if (error) updateData.errorJson = typeof error === 'string' ? { message: error } : error;
+  await db.update(emailMessages).set(updateData).where(eq(emailMessages.id, id));
+}
+
+export async function incrementEmailMessageRetry(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  const msg = await getEmailMessageById(id);
+  if (!msg) return;
+  await db.update(emailMessages).set({ retryCount: (msg.retryCount || 0) + 1 }).where(eq(emailMessages.id, id));
+}
+
+// ============================================
+// CRM INVESTORS & FUNDRAISING
+// ============================================
+
+export async function getInvestors(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) return db.select().from(investors).where(eq(investors.companyId, companyId));
+  return db.select().from(investors);
+}
+
+export async function createInvestor(data: InsertInvestor) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(inventoryCostingConfig).values(data);
+  const result = await db.insert(investors).values(data);
   return { id: result[0].insertId };
 }
 
-export async function updateInventoryCostingConfig(id: number, data: Partial<InsertInventoryCostingConfig>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(inventoryCostingConfig).set(data as any).where(eq(inventoryCostingConfig.id, id));
-}
-
-export async function getInventoryCostLayers(filters?: { companyId?: number; productId?: number; warehouseId?: number; status?: string }) {
+export async function getFundraisingCampaigns(companyId?: number) {
   const db = await getDb();
   if (!db) return [];
-  const conditions = [];
-  if (filters?.companyId) conditions.push(eq(inventoryCostLayers.companyId, filters.companyId));
-  if (filters?.productId) conditions.push(eq(inventoryCostLayers.productId, filters.productId));
-  if (filters?.warehouseId) conditions.push(eq(inventoryCostLayers.warehouseId, filters.warehouseId));
-  if (filters?.status) conditions.push(eq(inventoryCostLayers.status, filters.status as any));
-  if (conditions.length > 0) {
-    return db.select().from(inventoryCostLayers).where(and(...conditions)).orderBy(asc(inventoryCostLayers.layerDate));
-  }
-  return db.select().from(inventoryCostLayers).orderBy(asc(inventoryCostLayers.layerDate));
+  if (companyId) return db.select().from(fundraisingCampaigns).where(eq(fundraisingCampaigns.companyId, companyId));
+  return db.select().from(fundraisingCampaigns);
 }
 
-export async function getActiveCostLayers(productId: number, sortOrder?: "asc" | "desc", warehouseId?: number) {
-  const db = await getDb();
-  if (!db) return [];
-  const conditions = [eq(inventoryCostLayers.productId, productId), eq(inventoryCostLayers.status, "active")];
-  if (warehouseId) conditions.push(eq(inventoryCostLayers.warehouseId, warehouseId));
-  const order = sortOrder === "desc" ? desc(inventoryCostLayers.layerDate) : asc(inventoryCostLayers.layerDate);
-  return db.select().from(inventoryCostLayers)
-    .where(and(...conditions))
-    .orderBy(order);
-}
-
-export async function createInventoryCostLayer(data: InsertInventoryCostLayer) {
+export async function createFundraisingCampaign(data: InsertFundraisingCampaign) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(inventoryCostLayers).values(data);
+  const result = await db.insert(fundraisingCampaigns).values(data);
   return { id: result[0].insertId };
 }
 
-export async function updateInventoryCostLayer(id: number, data: Partial<InsertInventoryCostLayer>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(inventoryCostLayers).set(data as any).where(eq(inventoryCostLayers.id, id));
-}
-
-export async function getWeightedAverageCost(productId: number, warehouseId?: number): Promise<{ totalQuantity: number; averageCost: number; totalValue: number }> {
-  const db = await getDb();
-  if (!db) return { totalQuantity: 0, averageCost: 0, totalValue: 0 };
-  const conditions = [eq(inventoryCostLayers.productId, productId), eq(inventoryCostLayers.status, "active")];
-  if (warehouseId) conditions.push(eq(inventoryCostLayers.warehouseId, warehouseId));
-  const layers = await db.select().from(inventoryCostLayers).where(and(...conditions));
-  const totalQty = layers.reduce((sum, l) => sum + parseFloat(l.remainingQuantity), 0);
-  if (totalQty === 0) return { totalQuantity: 0, averageCost: 0, totalValue: 0 };
-  const totalCost = layers.reduce((sum, l) => sum + parseFloat(l.unitCost) * parseFloat(l.remainingQuantity), 0);
-  return { totalQuantity: totalQty, averageCost: totalCost / totalQty, totalValue: totalCost };
-}
-
-export async function getCogsSummary(filters?: { companyId?: number; productId?: number; periodType?: string; startDate?: Date; endDate?: Date }) {
+export async function getInvestorInvestments(investorId?: number) {
   const db = await getDb();
   if (!db) return [];
-  const conditions = [];
-  if (filters?.companyId) conditions.push(eq(cogsPeriodSummary.companyId, filters.companyId));
-  if (filters?.productId) conditions.push(eq(cogsPeriodSummary.productId, filters.productId));
-  if (filters?.periodType) conditions.push(eq(cogsPeriodSummary.periodType, filters.periodType as any));
-  if (filters?.startDate) conditions.push(gte(cogsPeriodSummary.periodStart, filters.startDate));
-  if (filters?.endDate) conditions.push(lte(cogsPeriodSummary.periodEnd, filters.endDate));
-  if (conditions.length > 0) {
-    return db.select().from(cogsPeriodSummary).where(and(...conditions)).orderBy(desc(cogsPeriodSummary.periodStart));
-  }
-  return db.select().from(cogsPeriodSummary).orderBy(desc(cogsPeriodSummary.periodStart));
+  if (investorId) return db.select().from(investorInvestments).where(eq(investorInvestments.investorId, investorId));
+  return db.select().from(investorInvestments);
 }
 
-
+export async function getFundraisingReminders(filters?: { status?: string; investorId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.investorId) conditions.push(eq(fundraisingReminders.investorId, filters.investorId));
+  if (conditions.length > 0) return db.select().from(fundraisingReminders).where(and(...conditions));
+  return db.select().from(fundraisingReminders);
+}

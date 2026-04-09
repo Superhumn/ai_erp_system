@@ -41,6 +41,7 @@ import type { InsertDataRoomDriveSyncConfig } from "../drizzle/schema";
 import { collectERPData, autoPopulateFields, generateApplicationNarrative, reviewApplication, generateApplicationDocument, DEFAULT_SECTIONS, searchOpportunities, evaluateOpportunityFit, analyzeWebFormFields, generateAutoFillScript, generateCopyPasteGuide, generateApiPayload } from "./grantBidService";
 import { runFormFillerAgent } from "./formFillerAgent";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
+import { purchaseOrderTextEndpoints, shipmentTextEndpoints, paymentTextEndpoints, workOrderTextEndpoints, inventoryTextEndpoints } from "./naturalLanguageRouterExtensions";
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -1630,8 +1631,8 @@ export const appRouter = router({
           subtotal: z.string(),
           totalAmount: z.string(),
           suggested: z.boolean(),
-          isPriceEstimated: z.boolean().optional(),
-        }).optional(),
+          isPriceEstimated: z.boolean().default(false),
+        }),
         sendEmail: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
@@ -2665,6 +2666,7 @@ export const appRouter = router({
         .input(z.object({ storeId: z.number() }))
         .mutation(async ({ input }) => {
           await db.updateShopifyStore(input.storeId, { isEnabled: false, accessToken: null });
+          await db.createSyncLog({ integration: 'shopify', action: 'disconnect', status: 'success', details: `Disconnected store ${input.storeId}` });
           return { success: true };
         }),
       testConnection: protectedProcedure
@@ -2675,7 +2677,7 @@ export const appRouter = router({
           const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/shop.json`, {
             headers: { 'X-Shopify-Access-Token': store.accessToken, 'Content-Type': 'application/json' },
           });
-          if (!response.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Connection test failed' });
+          if (!response.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: `Shopify API error: ${response.status}` });
           return { success: true, message: 'Connection is active' };
         }),
     }),
@@ -6459,39 +6461,243 @@ Provide a brief status summary, any missing documents, and next steps.`;
         }
         return db.getCustomsDocuments(input.clearanceId);
       }),
-    getCurrentPeriod: copackerProcedure.query(async () => {
+
+    // Current billing period (current calendar month)
+    getCurrentPeriod: copackerProcedure.query(() => {
       const now = new Date();
       const periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      const periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      const daysLeft = Math.ceil((periodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-      const periodLabel = periodStart.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-      return {
-        period: now.toISOString().slice(0, 7),
-        periodStart: periodStart.toISOString(),
-        periodEnd: periodEnd.toISOString(),
-        periodLabel,
-        daysLeft,
-        isDue: daysLeft <= 5,
-      };
+      const periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+      const daysLeft = Math.max(0, Math.ceil((periodEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+      const isDue = daysLeft <= 3;
+      const periodLabel = periodStart.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+      return { periodStart, periodEnd, isDue, daysLeft, periodLabel };
     }),
-    getInventoryUpdates: copackerProcedure.query(() => [] as any[]),
-    getInvoices: copackerProcedure.query(() => [] as any[]),
-    getShippingDocuments: copackerProcedure.query(() => [] as any[]),
+
+    // Inventory updates submitted by this copacker
+    getInventoryUpdates: copackerProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role === 'copacker') {
+        if (!ctx.user.linkedWarehouseId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Copacker must be linked to a warehouse to view inventory updates' });
+        }
+        return db.getCopackerInventoryUpdates(ctx.user.linkedWarehouseId);
+      }
+      return db.getCopackerInventoryUpdates(undefined);
+    }),
+
+    // Invoices submitted by this copacker
+    getInvoices: copackerProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role === 'copacker') {
+        if (!ctx.user.linkedWarehouseId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Copacker must be linked to a warehouse to view invoices' });
+        }
+        return db.getCopackerInvoices(ctx.user.linkedWarehouseId);
+      }
+      return db.getCopackerInvoices(undefined);
+    }),
+
+    // Shipping documents uploaded by this copacker
+    getShippingDocuments: copackerProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role === 'copacker') {
+        if (!ctx.user.linkedWarehouseId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Copacker must be linked to a warehouse to view shipping documents' });
+        }
+        return db.getCopackerShippingDocuments(ctx.user.linkedWarehouseId);
+      }
+      return db.getCopackerShippingDocuments(undefined);
+    }),
+
+    // Detail view for an inventory update
     getInventoryUpdateDetail: copackerProcedure
-      .input(z.object({ id: z.number().optional() }))
-      .query(() => null as any),
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input, ctx }) => {
+        const update = await db.getCopackerInventoryUpdateById(input.id);
+        if (!update) throw new TRPCError({ code: 'NOT_FOUND', message: 'Inventory update not found' });
+        if (ctx.user.role === 'copacker') {
+          if (!ctx.user.linkedWarehouseId || update.warehouseId !== ctx.user.linkedWarehouseId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Not authorized to view this inventory update' });
+          }
+        }
+        const rawItems = await db.getCopackerInventoryUpdateItems(input.id);
+        // Batch product lookups to avoid N+1 queries
+        const uniqueProductIds = Array.from(new Set(rawItems.map((item) => item.productId)));
+        const productResults = await Promise.all(uniqueProductIds.map((productId) => db.getProductById(productId)));
+        const productById = new Map<number, typeof productResults[number]>();
+        uniqueProductIds.forEach((productId, index) => {
+          const product = productResults[index];
+          if (product) productById.set(productId, product);
+        });
+        const items = rawItems.map((item) => ({ item, product: productById.get(item.productId) ?? null }));
+        return { update, items };
+      }),
+
+    // Detail view for an invoice
     getInvoiceDetail: copackerProcedure
-      .input(z.object({ id: z.number().optional() }))
-      .query(() => null as any),
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input, ctx }) => {
+        const invoice = await db.getCopackerInvoiceById(input.id);
+        if (!invoice) throw new TRPCError({ code: 'NOT_FOUND', message: 'Invoice not found' });
+        if (ctx.user.role === 'copacker') {
+          if (!ctx.user.linkedWarehouseId || invoice.warehouseId !== ctx.user.linkedWarehouseId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Not authorized to view this invoice' });
+          }
+        }
+        const items = await db.getCopackerInvoiceItems(input.id);
+        return { invoice, items };
+      }),
+
+    // Create a new inventory update (draft)
     createInventoryUpdate: copackerProcedure
-      .input(z.any())
-      .mutation(async () => ({ id: 0 })),
+      .input(z.object({
+        periodStart: z.coerce.date(),
+        periodEnd: z.coerce.date(),
+        notes: z.string().optional(),
+        items: z.array(z.object({
+          productId: z.number(),
+          previousQuantity: z.string().optional(),
+          newQuantity: z.string(),
+          quantityReceived: z.string().optional(),
+          quantityShipped: z.string().optional(),
+          quantityDamaged: z.string().optional(),
+          notes: z.string().optional(),
+        })),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Copacker must be linked to a warehouse to create inventory updates' });
+        }
+        const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId! : undefined;
+        const update = await db.createCopackerInventoryUpdate({
+          warehouseId,
+          periodStart: input.periodStart,
+          periodEnd: input.periodEnd,
+          notes: input.notes,
+          status: "draft",
+          submittedBy: ctx.user.id,
+        });
+        for (const item of input.items) {
+          await db.createCopackerInventoryUpdateItem({
+            updateId: update.id,
+            productId: item.productId,
+            previousQuantity: item.previousQuantity,
+            newQuantity: item.newQuantity,
+            quantityReceived: item.quantityReceived,
+            quantityShipped: item.quantityShipped,
+            quantityDamaged: item.quantityDamaged,
+            notes: item.notes,
+          });
+        }
+        return update;
+      }),
+
+    // Submit an inventory update (transitions from draft to submitted)
     submitInventoryUpdate: copackerProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async () => ({ success: true })),
+      .mutation(async ({ input, ctx }) => {
+        const update = await db.getCopackerInventoryUpdateById(input.id);
+        if (!update) throw new TRPCError({ code: 'NOT_FOUND', message: 'Inventory update not found' });
+        if (ctx.user.role === 'copacker') {
+          if (!ctx.user.linkedWarehouseId || update.warehouseId !== ctx.user.linkedWarehouseId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this inventory update' });
+          }
+        }
+        await db.updateCopackerInventoryUpdate(input.id, { status: "submitted" });
+        await createAuditLog(ctx.user.id, 'update', 'copackerInventoryUpdate', input.id, 'Submitted');
+        return { success: true };
+      }),
+
+    // Create a new copacker invoice
     createInvoice: copackerProcedure
-      .input(z.any())
-      .mutation(async () => ({ id: 0 })),
+      .input(z.object({
+        invoiceNumber: z.string().min(1),
+        invoiceDate: z.string(),
+        dueDate: z.string().optional(),
+        description: z.string().optional(),
+        notes: z.string().optional(),
+        items: z.array(z.object({
+          description: z.string(),
+          quantity: z.string().optional(),
+          unitPrice: z.string().optional(),
+          totalAmount: z.string().optional(),
+        })),
+        fileName: z.string().optional(),
+        fileData: z.string().optional(),
+        mimeType: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Copacker must be linked to a warehouse to create invoices' });
+        }
+        const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId! : undefined;
+        const totalAmount = input.items.reduce((sum, i) => sum + parseFloat(i.totalAmount || "0"), 0);
+
+        let fileUrl: string | undefined;
+        if (input.fileData && input.fileName) {
+          const buffer = Buffer.from(input.fileData, 'base64');
+          const fileKey = `copacker-invoices/${ctx.user.id}/${nanoid()}-${input.fileName}`;
+          const uploadResult = await storagePut(fileKey, buffer, input.mimeType || 'application/octet-stream');
+          fileUrl = uploadResult.url;
+        }
+
+        const invoice = await db.createCopackerInvoice({
+          warehouseId,
+          invoiceNumber: input.invoiceNumber,
+          invoiceDate: input.invoiceDate,
+          dueDate: input.dueDate,
+          totalAmount: totalAmount.toFixed(2),
+          description: input.description,
+          notes: input.notes,
+          fileName: input.fileName,
+          fileUrl,
+          status: "submitted",
+          submittedBy: ctx.user.id,
+        });
+        for (const item of input.items) {
+          if (item.description.trim()) {
+            await db.createCopackerInvoiceItem({
+              invoiceId: invoice.id,
+              description: item.description,
+              quantity: item.quantity || "1",
+              unitPrice: item.unitPrice || "0",
+              totalAmount: item.totalAmount || "0",
+            });
+          }
+        }
+        await createAuditLog(ctx.user.id, 'create', 'copackerInvoice', invoice.id, input.invoiceNumber);
+        return invoice;
+      }),
+
+    // Upload a shipping document
+    uploadShippingDocument: copackerProcedure
+      .input(z.object({
+        shipmentId: z.number().optional(),
+        documentType: z.string(),
+        name: z.string(),
+        description: z.string().optional(),
+        fileData: z.string().min(1),
+        mimeType: z.string(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Copacker must be linked to a warehouse to upload shipping documents' });
+        }
+        const warehouseId = ctx.user.role === 'copacker' ? ctx.user.linkedWarehouseId! : undefined;
+        const buffer = Buffer.from(input.fileData, 'base64');
+        const fileKey = `copacker-shipping/${warehouseId ?? ctx.user.id}/${nanoid()}-${input.name}`;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType);
+        const doc = await db.createCopackerShippingDocument({
+          warehouseId,
+          shipmentId: input.shipmentId,
+          documentType: input.documentType,
+          name: input.name,
+          description: input.description,
+          fileUrl: url,
+          mimeType: input.mimeType,
+          fileSize: buffer.length,
+          uploadedBy: ctx.user.id,
+        });
+        await createAuditLog(ctx.user.id, 'create', 'copackerShippingDocument', doc.id, input.name);
+        return doc;
+      }),
   }),
 
   // Vendor Portal - restricted views for vendors
@@ -6629,6 +6835,35 @@ Provide a brief status summary, any missing documents, and next steps.`;
           }
         }
         return db.getCustomsDocuments(input.clearanceId);
+      }),
+
+    uploadCustomsDocument: vendorProcedure
+      .input(z.object({
+        clearanceId: z.number(),
+        documentType: z.string(),
+        name: z.string(),
+        fileData: z.string(),
+        mimeType: z.string(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { storagePut } = await import('./_core/storage');
+        const { nanoid } = await import('nanoid');
+        const buffer = Buffer.from(input.fileData, 'base64');
+        const fileKey = `vendor/${ctx.user.linkedVendorId || 'unknown'}/customs/${input.clearanceId}/${nanoid()}-${input.name}`;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType);
+        const result = await db.createDocument({
+          name: input.name,
+          type: input.documentType as any,
+          category: 'legal',
+          fileUrl: url,
+          fileKey,
+          mimeType: input.mimeType,
+          fileSize: buffer.length,
+          uploadedBy: ctx.user.id,
+          referenceType: 'customs_clearance',
+          referenceId: input.clearanceId,
+        });
+        return { id: result.id, url };
       }),
   }),
 
@@ -8594,6 +8829,7 @@ Ask if they received the original request and if they can provide a quote.`;
                     name: product.title,
                     unitPrice: product.variants[0]?.price || '0',
                     description: product.body_html ? product.body_html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '').replace(/<[^>]*>/g, '') : '',
+                    status: product.status === 'active' ? 'active' : 'inactive',
                   } as any);
                   totalUpdated++;
                 } else {
@@ -8602,6 +8838,8 @@ Ask if they received the original request and if they can provide a quote.`;
                     sku: product.variants[0]?.sku || `SHOP-${product.id}`,
                     description: product.body_html ? product.body_html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '').replace(/<[^>]*>/g, '') : '',
                     unitPrice: product.variants[0]?.price || '0',
+                    status: product.status === 'active' ? 'active' : 'inactive',
+                    category: product.product_type || 'General',
                   } as any);
                   totalImported++;
                 }
@@ -14454,21 +14692,49 @@ Ask if they received the original request and if they can provide a quote.`;
           return { success: true };
         }),
     }),
-    listInvestors: protectedProcedure.query(() => [] as any[]),
+    // --- INVESTORS & FUNDRAISING ---
+    listInvestors: protectedProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(({ input }) => db.getInvestors(input?.companyId)),
     createInvestor: protectedProcedure
-      .input(z.any())
-      .mutation(async () => ({ id: 0 })),
-    listCampaigns: protectedProcedure.query(() => [] as any[]),
+      .input(z.object({
+        name: z.string().min(1),
+        email: z.string().email().optional(),
+        phone: z.string().optional(),
+        company: z.string().optional(),
+        title: z.string().optional(),
+        type: z.enum(["angel", "vc", "family_office", "strategic", "accelerator", "other"]).default("angel"),
+        status: z.enum(["lead", "contacted", "interested", "committed", "invested", "passed"]).default("lead"),
+        priority: z.enum(["low", "medium", "high", "critical"]).default("medium"),
+        linkedinUrl: z.string().optional(),
+        website: z.string().optional(),
+        source: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(({ input }) => db.createInvestor(input as any)),
+    listCampaigns: protectedProcedure
+      .input(z.object({ companyId: z.number().optional() }).optional())
+      .query(({ input }) => db.getFundraisingCampaigns(input?.companyId)),
     createCampaign: protectedProcedure
-      .input(z.any())
-      .mutation(async () => ({ id: 0 })),
-    listInvestments: protectedProcedure.query(() => [] as any[]),
-    listReminders: protectedProcedure.query(() => [] as any[]),
+      .input(z.object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        targetAmount: z.string().optional(),
+        minimumInvestment: z.string().optional(),
+        valuation: z.string().optional(),
+        roundType: z.enum(["pre_seed", "seed", "series_a", "series_b", "series_c", "bridge", "other"]).default("seed"),
+        equityOffered: z.string().optional(),
+        status: z.enum(["planning", "active", "paused", "closed", "cancelled"]).default("planning"),
+        notes: z.string().optional(),
+      }))
+      .mutation(({ input }) => db.createFundraisingCampaign(input as any)),
+    listInvestments: protectedProcedure
+      .input(z.object({ investorId: z.number().optional() }).optional())
+      .query(({ input }) => db.getInvestorInvestments(input?.investorId)),
+    listReminders: protectedProcedure
+      .input(z.object({ status: z.string().optional(), dueBefore: z.date().optional() }).optional())
+      .query(({ input }) => db.getFundraisingReminders(input ? { status: input.status } : undefined)),
   }),
-
-  // ============================================
-  // INVENTORY COSTING & COGS
-  // ============================================
   inventoryCosting: router({
     // Costing config per product
     configs: router({
@@ -15083,7 +15349,7 @@ Ask if they received the original request and if they can provide a quote.`;
           totalTransactions: z.number().optional(),
           successfulTransactions: z.number().optional(),
           failedTransactions: z.number().optional(),
-          avgProcessingTimeSeconds: z.number().optional(),
+          avgProcessingTimeSeconds: z.string().optional(),
           onTimeAckPercentage: z.string().optional(),
           onTimeShipPercentage: z.string().optional(),
           fillRatePercentage: z.string().optional(),
@@ -15184,10 +15450,12 @@ Ask if they received the original request and if they can provide a quote.`;
       if (!config) return null;
       return {
         isConnected: true,
+        configured: true,
         autoCreateContacts: config.autoCreateContacts,
         autoCreateTasks: config.autoCreateTasks,
         autoCreateProjects: config.autoCreateProjects,
         lastSyncAt: config.lastSyncAt,
+        config: { apiKey: '***' },
       };
     }),
     configure: protectedProcedure
@@ -15209,7 +15477,9 @@ Ask if they received the original request and if they can provide a quote.`;
       await db.deleteFirefliesConfig(ctx.user.id);
       return { success: true };
     }),
-    syncMeetings: protectedProcedure.mutation(async ({ ctx }) => {
+    syncMeetings: protectedProcedure
+      .input(z.object({}).optional())
+      .mutation(async ({ ctx }) => {
       const config = await db.getFirefliesConfig(ctx.user.id);
       if (!config) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fireflies not configured' });
@@ -15229,10 +15499,10 @@ Ask if they received the original request and if they can provide a quote.`;
           title: t.title,
           date: t.date ? new Date(t.date) : new Date(),
           duration: t.duration,
-          participants: fullTranscript ? extractParticipants(fullTranscript) : [],
-          transcript: fullTranscript?.sentences?.map((s: any) => s.text).join('\n') || null,
+          participants: fullTranscript ? JSON.stringify(extractParticipants(fullTranscript)) : null,
+          transcript: fullTranscript?.transcript_url || null,
           summary: fullTranscript?.summary ? JSON.stringify(fullTranscript.summary) : null,
-          actionItems: fullTranscript?.summary?.action_items ? parseActionItems(fullTranscript.summary.action_items) : [],
+          actionItemsRaw: fullTranscript ? JSON.stringify(parseActionItems(fullTranscript)) : null,
           status: 'pending',
         });
         synced++;
@@ -15262,7 +15532,8 @@ Ask if they received the original request and if they can provide a quote.`;
             if (p.email) {
               try {
                 await db.createCrmContact({
-                  name: p.name || p.email.split('@')[0],
+                  firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
+                  fullName: p.name || p.email.split('@')[0],
                   email: p.email,
                   source: 'manual' as const,
                 } as any);
@@ -15275,6 +15546,7 @@ Ask if they received the original request and if they can provide a quote.`;
         // Create project if requested
         if (input.createProject) {
           const project = await db.createProject({
+            projectNumber: `FF-${Date.now()}`,
             name: input.projectName || meeting.title || 'Untitled Meeting Project',
             projectNumber: `FF-${Date.now()}`,
             status: 'planning',
@@ -15284,13 +15556,13 @@ Ask if they received the original request and if they can provide a quote.`;
         }
 
         // Create tasks from action items
-        if (input.createTasks && Array.isArray(meeting.actionItems)) {
-          for (const item of meeting.actionItems as Array<{ text: string }>) {
+        if (input.createTasks && Array.isArray(meeting.actionItemsRaw)) {
+          for (const item of (meeting.actionItemsRaw ? JSON.parse(meeting.actionItemsRaw) : []) as Array<{ text: string }>) {
             if (projectId) {
               await db.createProjectTask({
                 projectId,
-                title: item.text,
-                status: 'todo' as const,
+                name: item.text,
+                status: 'todo',
               } as any);
               tasksCreated++;
             }
@@ -15303,15 +15575,18 @@ Ask if they received the original request and if they can provide a quote.`;
           : 'pending';
 
         await db.updateFirefliesMeeting(input.meetingId, {
-          status,
-          contactsCreated,
-          tasksCreated,
-          projectId,
-        });
+          aiSummary: JSON.stringify({ status, contactsCreated, tasksCreated, projectId }),
+        } as any);
 
         return { contactsCreated, tasksCreated, projectId };
       }),
-    processAllPending: protectedProcedure.mutation(async ({ ctx }) => {
+    processAllPending: protectedProcedure
+      .input(z.object({
+        createContacts: z.boolean().optional(),
+        createTasks: z.boolean().optional(),
+        createProjects: z.boolean().optional(),
+      }).optional())
+      .mutation(async ({ ctx }) => {
       const meetings = await db.getFirefliesMeetings({ status: 'pending' });
       let processed = 0;
       let contactsCreated = 0;
@@ -15324,7 +15599,8 @@ Ask if they received the original request and if they can provide a quote.`;
             if (p.email) {
               try {
                 await db.createCrmContact({
-                  name: p.name || p.email.split('@')[0],
+                  firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
+                  fullName: p.name || p.email.split('@')[0],
                   email: p.email,
                   source: 'manual' as const,
                 } as any);
@@ -15333,7 +15609,7 @@ Ask if they received the original request and if they can provide a quote.`;
             }
           }
         }
-        await db.updateFirefliesMeeting(meeting.id, { status: 'fully_processed' });
+        await db.updateFirefliesMeeting(meeting.id, { aiSummary: 'fully_processed' } as any);
         processed++;
       }
       return { processed, contactsCreated, tasksCreated, projectsCreated };
@@ -15342,7 +15618,10 @@ Ask if they received the original request and if they can provide a quote.`;
       list: protectedProcedure
         .input(z.object({ status: z.string().optional() }).optional())
         .query(({ input }) => db.getFirefliesMeetings(input || undefined)),
-      getStats: protectedProcedure.query(() => db.getFirefliesMeetingStats()),
+      getStats: protectedProcedure.query(async () => {
+        const stats = await db.getFirefliesMeetingStats();
+        return { ...stats, contactsCreated: 0, tasksCreated: 0 };
+      }),
     }),
   }),
 

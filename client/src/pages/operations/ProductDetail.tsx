@@ -11,8 +11,10 @@ export default function ProductDetail() {
   const params = useParams<{ id: string }>();
   const productId = parseInt(params.id || "0");
 
-  const { data: product, isLoading } = trpc.products.get.useQuery({ id: productId });
-  const { data: inventory } = trpc.inventory.list.useQuery({ productId });
+  const { data: productRaw, isLoading } = trpc.products.get.useQuery({ id: productId });
+  const product = productRaw as any;
+  const { data: inventoryRaw } = trpc.inventory.list.useQuery({ productId });
+  const inventory = inventoryRaw as any[] | undefined;
 
   if (isLoading) {
     return (

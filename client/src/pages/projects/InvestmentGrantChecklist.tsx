@@ -292,7 +292,7 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
                         </div>
                         <Select
                           value={item.status}
-                          onValueChange={(value: any) => handleStatusChange(item.id, value as "completed" | "in_progress" | "not_started" | "blocked")}
+                          onValueChange={(value) => handleStatusChange(item.id, value as ChecklistItem["status"])}
                         >
                           <SelectTrigger className="w-[140px] h-8 text-xs">
                             <div className="flex items-center gap-1.5">
@@ -349,7 +349,7 @@ export default function InvestmentGrantChecklist() {
     return <ChecklistDetail checklistId={selectedId} onBack={() => setSelectedId(null)} />;
   }
 
-  const filteredChecklists = (checklists as unknown as Checklist[])?.filter((c: Checklist) =>
+  const filteredChecklists = (checklists as Checklist[] | undefined)?.filter((c) =>
     c.name.toLowerCase().includes(search.toLowerCase())
   );
 

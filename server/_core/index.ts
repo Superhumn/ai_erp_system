@@ -104,9 +104,9 @@ async function startServer() {
   // Periodically clean up stale rate limit entries
   setInterval(() => {
     const now = Date.now();
-    for (const [ip, entry] of rateLimitMap) {
+    Array.from(rateLimitMap.entries()).forEach(([ip, entry]) => {
       if (now > entry.resetTime) rateLimitMap.delete(ip);
-    }
+    });
   }, RATE_LIMIT_WINDOW_MS);
 
   const oauthCallbackLimiter = rateLimit({
@@ -215,8 +215,13 @@ async function startServer() {
     }
   };
 
-  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), handleShopifyWebhook);
-  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), handleShopifyWebhook);
+  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), (req, res) =>
+    handleShopifyWebhook(req, res)
+  );
+
+  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), (req, res) =>
+    handleShopifyWebhook(req, res)
+  );
 
   // ============================================
   // EDI WEBHOOK ENDPOINT

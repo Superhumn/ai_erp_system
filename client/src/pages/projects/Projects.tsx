@@ -80,7 +80,7 @@ export default function Projects() {
     },
   });
 
-  const filteredProjects = (projects as unknown as Project[])?.filter((project: Project) => {
+  const filteredProjects = (projects as Project[] | undefined)?.filter((project) => {
     const matchesSearch =
       project.name.toLowerCase().includes(search.toLowerCase()) ||
       project.projectNumber.toLowerCase().includes(search.toLowerCase());

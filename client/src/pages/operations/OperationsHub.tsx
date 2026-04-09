@@ -617,7 +617,7 @@ export default function OperationsHub() {
                     renderExpanded={(workOrder) => (
                       <WorkOrderDetailPanel 
                         workOrder={workOrder} 
-                        onStatusChange={(id, status) => updateWorkOrderStatus.mutate({ id, status } as any)}
+                        onStatusChange={(id, status) => updateWorkOrderStatus.mutate({ id, status: status as any })}
                         onStartProduction={(id) => startProduction.mutate({ id })}
                         onCompleteProduction={(id, completedQuantity) => completeProduction.mutate({ id, completedQuantity })}
                       />
@@ -657,7 +657,7 @@ export default function OperationsHub() {
                     showSearch
                     expandedRowId={expandedLocationId}
                     onExpandChange={setExpandedLocationId}
-                    renderExpanded={(location: any) => (
+                    renderExpanded={(location) => (
                       <LocationDetailPanel location={location} />
                     )}
                   />

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { trpc } from "../../lib/trpc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
@@ -8,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Label } from "../../components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { AlertCircle, Check, RefreshCw, Settings, DollarSign } from "lucide-react";
-import { useToast } from "../../hooks/use-toast";
+import { toast } from "sonner";
 
 const MAPPING_TYPE_LABELS: Record<string, string> = {
   cogs_product: "COGS - Product Cost",
@@ -21,7 +22,7 @@ const MAPPING_TYPE_LABELS: Record<string, string> = {
 };
 
 export default function QuickBooksIntegration() {
-  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const utils = trpc.useUtils();
   const [selectedMappingType, setSelectedMappingType] = useState<string>("");
   const [selectedAccountId, setSelectedAccountId] = useState<string>("");
@@ -44,49 +45,40 @@ export default function QuickBooksIntegration() {
   // Sync accounts mutation
   const syncAccountsMutation = trpc.quickbooks.syncAccounts.useMutation({
     onSuccess: (data) => {
-      toast({
-        title: "Accounts Synced",
-        description: (data as any).message,
-      });
+      toast.success(data.message);
       utils.quickbooks.getAccounts.invalidate();
     },
     onError: (error: any) => {
-      toast.error("Sync Failed", { description: error.message || "Failed to sync accounts from QuickBooks" });
+      toast.error(error.message || "Failed to sync accounts from QuickBooks");
     },
   });
 
   // Sync items mutation
   const syncItemsMutation = trpc.quickbooks.syncItems.useMutation({
     onSuccess: (data) => {
-      toast({
-        title: "Items Synced",
-        description: (data as any).message,
-      });
+      toast.success(data.message);
     },
     onError: (error: any) => {
-      toast.error("Sync Failed", { description: error.message || "Failed to sync items from QuickBooks" });
+      toast.error(error.message || "Failed to sync items from QuickBooks");
     },
   });
 
   // Save mapping mutation
   const saveMappingMutation = trpc.quickbooks.upsertAccountMapping.useMutation({
     onSuccess: () => {
-      toast({
-        title: "Mapping Saved",
-        description: "Account mapping has been updated",
-      });
+      toast.success("Account mapping has been updated");
       utils.quickbooks.getAccountMappings.invalidate();
       setSelectedMappingType("");
       setSelectedAccountId("");
     },
     onError: (error: any) => {
-      toast.error("Save Failed", { description: error.message || "Failed to save account mapping" });
+      toast.error(error.message || "Failed to save account mapping");
     },
   });
 
   const handleSaveMapping = () => {
     if (!selectedMappingType || !selectedAccountId) {
-      toast.error("Missing Information", { description: "Please select both a mapping type and QuickBooks account" });
+      toast.error("Please select both a mapping type and QuickBooks account");
       return;
     }
 
@@ -203,7 +195,7 @@ export default function QuickBooksIntegration() {
                           </TableCell>
                           <TableCell>
                             {account ? (
-                              <Badge variant="default" className="gap-1 bg-green-600">
+                              <Badge variant="default" className="gap-1 bg-green-600 text-white">
                                 <Check className="h-3 w-3" />
                                 Configured
                               </Badge>
@@ -291,7 +283,7 @@ export default function QuickBooksIntegration() {
                       </p>
                     </div>
                   </div>
-                  <Badge variant="default" className="bg-green-600">Active</Badge>
+                  <Badge variant="default" className="bg-green-600 text-white">Active</Badge>
                 </div>
 
                 <div className="flex items-center justify-between p-4 border rounded-lg">
@@ -304,7 +296,7 @@ export default function QuickBooksIntegration() {
                       </p>
                     </div>
                   </div>
-                  <Badge variant={accountMappings?.length ? "default" : "secondary"} className={accountMappings?.length ? "bg-green-600" : ""}>
+                  <Badge variant={accountMappings?.length ? "default" : "secondary"} className={accountMappings?.length ? "bg-green-600 text-white" : ""}>
                     {accountMappings?.length ? "Configured" : "Pending"}
                   </Badge>
                 </div>

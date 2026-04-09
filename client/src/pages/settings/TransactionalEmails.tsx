@@ -195,7 +195,7 @@ export default function TransactionalEmailsPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Delivered</CardDescription>
-            <CardTitle className="text-2xl text-green-500">{stats?.delivered || 0}</CardTitle>
+            <CardTitle className="text-2xl text-green-500">{((stats as any)?.delivered) || 0}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
@@ -207,7 +207,7 @@ export default function TransactionalEmailsPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Bounced</CardDescription>
-            <CardTitle className="text-2xl text-orange-500">{stats?.bounced || 0}</CardTitle>
+            <CardTitle className="text-2xl text-orange-500">{((stats as any)?.bounced) || 0}</CardTitle>
           </CardHeader>
         </Card>
       </div>

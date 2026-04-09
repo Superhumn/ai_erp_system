@@ -22,15 +22,13 @@ export default function Profitability() {
   const { data: qbStatus } = trpc.quickbooks.getConnectionStatus.useQuery();
 
   // Fetch product profitability data
-  const { data: profitabilityData, isLoading: profitabilityLoading } = (trpc.cogs as any).profitability.useQuery({
-    startDate: dateRange.from,
-    endDate: dateRange.to
-  }, {
-    enabled: !!dateRange.from && !!dateRange.to
-  });
+  const { data: profitabilityData, isLoading: profitabilityLoading } = trpc.cogs.profitability.useQuery(
+    { startDate: dateRange.from, endDate: dateRange.to },
+    { enabled: !!dateRange.from && !!dateRange.to }
+  );
 
   // Fetch inventory valuation
-  const { data: valuationData, isLoading: valuationLoading } = (trpc.cogs as any).valuation.useQuery();
+  const { data: valuationData, isLoading: valuationLoading } = trpc.cogs.valuation.useQuery();
 
   // Calculate summary metrics
   const summary = profitabilityData?.reduce(
@@ -63,7 +61,7 @@ export default function Profitability() {
           <div className="flex items-center gap-3">
             <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Profitability & COGS Tracking</h1>
             {qbStatus?.connected ? (
-              <Badge variant="default" className="gap-1 bg-green-500">
+              <Badge variant="default" className="gap-1 bg-green-500 text-white">
                 <DollarSign className="h-3 w-3" />
                 QuickBooks Connected
               </Badge>

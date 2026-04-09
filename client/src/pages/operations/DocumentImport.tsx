@@ -208,7 +208,7 @@ export default function DocumentImport() {
             });
 
             setParsedPO({
-              ...result.purchaseOrder,
+              ...(result.purchaseOrder as any),
               lineItems: matchedItems.map((item: any) => ({
                 ...item,
                 matchedMaterialId: item.rawMaterialId,
@@ -219,8 +219,8 @@ export default function DocumentImport() {
             console.error("[DocumentImport] Material matching error:", matchError);
             // Still show the PO without material matching
             setParsedPO({
-              ...result.purchaseOrder,
-              lineItems: result.purchaseOrder.lineItems.map((item: any) => ({
+              ...(result.purchaseOrder as any),
+              lineItems: (result.purchaseOrder.lineItems as any[]).map((item: any) => ({
                 ...item,
                 matchedMaterialId: undefined,
                 matchedMaterialName: undefined,
@@ -237,7 +237,7 @@ export default function DocumentImport() {
             });
 
             setParsedVendorInvoice({
-              ...result.vendorInvoice,
+              ...(result.vendorInvoice as any),
               lineItems: matchedItems.map((item: any) => ({
                 ...item,
                 matchedMaterialId: item.rawMaterialId,
@@ -247,8 +247,8 @@ export default function DocumentImport() {
           } catch (matchError) {
             console.error("[DocumentImport] Material matching error:", matchError);
             setParsedVendorInvoice({
-              ...result.vendorInvoice,
-              lineItems: result.vendorInvoice.lineItems.map((item: any) => ({
+              ...(result.vendorInvoice as any),
+              lineItems: (result.vendorInvoice.lineItems as any[]).map((item: any) => ({
                 ...item,
                 matchedMaterialId: undefined,
                 matchedMaterialName: undefined,

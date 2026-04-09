@@ -199,7 +199,7 @@ export async function runContactLookup(input: ContactInput): Promise<ToolAdapter
             totalInteractions: interactions.length,
             totalCalls: calls.length,
             totalEmails: emails.length,
-            channels: [...new Set(interactions.map(i => i.channel))],
+            channels: Array.from(new Set(interactions.map(i => i.channel))),
           },
         },
       };

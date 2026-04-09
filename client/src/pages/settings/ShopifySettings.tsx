@@ -56,14 +56,14 @@ export default function ShopifySettings() {
 
   const syncOrders = trpc.shopify.sync.orders.useMutation({
     onSuccess: (result) => {
-      toast.success(`Synced ${result.imported + result.updated} orders`);
+      toast.success(`Synced ${(result as any).imported ?? result.updated} orders`);
     },
     onError: (error) => toast.error(error.message),
   });
 
   const syncProducts = trpc.shopify.sync.products.useMutation({
     onSuccess: (result) => {
-      toast.success(`Synced ${result.imported + result.updated} products`);
+      toast.success(`Synced ${(result as any).imported ?? result.updated} products`);
     },
     onError: (error) => toast.error(error.message),
   });
@@ -77,7 +77,7 @@ export default function ShopifySettings() {
 
   const syncCustomers = trpc.shopify.sync.customers.useMutation({
     onSuccess: (result) => {
-      toast.success(`Synced ${result.imported + result.updated} customers`);
+      toast.success(`Synced ${(result as any).imported ?? result.updated} customers`);
     },
     onError: (error) => toast.error(error.message),
   });
