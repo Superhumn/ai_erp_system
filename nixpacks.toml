@@ -9,4 +9,4 @@ cmds = ["pnpm install --no-frozen-lockfile"]
 cmds = ["pnpm run build"]
 
 [start]
-cmd = "node dist/index.js"
+cmd = "node dist/_core/index.js"

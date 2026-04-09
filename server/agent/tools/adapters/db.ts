@@ -30,7 +30,7 @@ const TABLE_MAP: Record<string, any> = {
   productionPlans: schema.productionPlans,
   freightCarriers: schema.freightCarriers,
   freightRfqs: schema.freightRfqs,
-  supplierPerformance: schema.supplierPerformance,
+  // supplierPerformance: table removed from schema
   accounts: schema.accounts,
   transactions: schema.transactions,
   companies: schema.companies,
