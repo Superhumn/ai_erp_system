@@ -206,7 +206,13 @@ export function registerLocalAuthRoutes(app: Express) {
       // Reset rate limit on successful signup
       resetRateLimit(clientIp);
 
+      // First user automatically gets admin role
+      const allUsers = await db.getAllUsers();
       const newUser = await db.getUserByOpenId(openId);
+      if (allUsers.length <= 1 && newUser) {
+        await db.updateUserRole(newUser.id, 'admin');
+      }
+
       await logAuthEvent("create", "auth_signup", newUser?.id, clientIp, email.toLowerCase());
 
       return res.status(201).json({

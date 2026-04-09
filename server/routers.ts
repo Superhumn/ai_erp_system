@@ -637,6 +637,52 @@ export const appRouter = router({
         }
         
         await createAuditLog(ctx.user.id, 'create', 'invoice', result.id, invoiceNumber);
+
+        // Auto-create journal entry for invoice (double-entry bookkeeping)
+        try {
+          const txn = await db.createTransaction({
+            companyId: input.companyId || 1,
+            transactionNumber: `JE-INV-${invoiceNumber}`,
+            type: "invoice",
+            referenceType: "invoice",
+            referenceId: result.id,
+            date: new Date(),
+            description: `Journal entry for Invoice ${invoiceNumber}`,
+            totalAmount: input.totalAmount,
+            status: "posted",
+            createdBy: ctx.user.id,
+            postedBy: ctx.user.id,
+            postedAt: new Date(),
+          });
+
+          // Debit: Accounts Receivable, Credit: Revenue
+          const arAccount = await db.getAccountByCode("1200", input.companyId)
+            || await db.getAccountByName("Accounts Receivable", input.companyId);
+          const revenueAccount = await db.getAccountByCode("4000", input.companyId)
+            || await db.getAccountByName("Revenue", input.companyId);
+
+          if (arAccount) {
+            await db.createTransactionLine({
+              transactionId: txn.id,
+              accountId: arAccount.id,
+              debit: input.totalAmount,
+              credit: "0",
+              description: `AR - Invoice ${invoiceNumber}`,
+            });
+          }
+          if (revenueAccount) {
+            await db.createTransactionLine({
+              transactionId: txn.id,
+              accountId: revenueAccount.id,
+              debit: "0",
+              credit: input.totalAmount,
+              description: `Revenue - Invoice ${invoiceNumber}`,
+            });
+          }
+        } catch (e) {
+          console.warn("[Journal Entry] Failed to auto-create for invoice:", e);
+        }
+
         return result;
       }),
     update: financeProcedure
@@ -789,8 +835,54 @@ export const appRouter = router({
         });
         
         await createAuditLog(ctx.user.id, 'update', 'invoice', input.invoiceId, `Payment recorded: ${input.amount}`);
-        
-        return { 
+
+        // Auto-create journal entry for payment (double-entry bookkeeping)
+        try {
+          const paymentNumber = `PAY-${paymentResult.id}`;
+          const txn = await db.createTransaction({
+            companyId: invoice.companyId || 1,
+            transactionNumber: `JE-PAY-${paymentNumber}`,
+            type: "payment",
+            referenceType: "payment",
+            referenceId: paymentResult.id,
+            date: new Date(),
+            description: `Journal entry for payment on Invoice ${invoice.invoiceNumber}`,
+            totalAmount: input.amount,
+            status: "posted",
+            createdBy: ctx.user.id,
+            postedBy: ctx.user.id,
+            postedAt: new Date(),
+          });
+
+          // Debit: Cash/Bank, Credit: Accounts Receivable
+          const cashAccount = await db.getAccountByCode("1000", invoice.companyId)
+            || await db.getAccountByName("Cash", invoice.companyId);
+          const arAccount = await db.getAccountByCode("1200", invoice.companyId)
+            || await db.getAccountByName("Accounts Receivable", invoice.companyId);
+
+          if (cashAccount) {
+            await db.createTransactionLine({
+              transactionId: txn.id,
+              accountId: cashAccount.id,
+              debit: input.amount,
+              credit: "0",
+              description: `Cash received - Invoice ${invoice.invoiceNumber}`,
+            });
+          }
+          if (arAccount) {
+            await db.createTransactionLine({
+              transactionId: txn.id,
+              accountId: arAccount.id,
+              debit: "0",
+              credit: input.amount,
+              description: `AR reduced - Invoice ${invoice.invoiceNumber}`,
+            });
+          }
+        } catch (e) {
+          console.warn("[Journal Entry] Failed to auto-create for payment:", e);
+        }
+
+        return {
           success: true,
           paymentId: paymentResult.id,
           newStatus,
@@ -1426,6 +1518,46 @@ export const appRouter = router({
           ctx.user.id
         );
         await createAuditLog(ctx.user.id, 'create', 'freight_allocation', input.purchaseOrderId || input.shipmentId || 0, 'Allocated freight costs');
+
+        // Auto-update cost layers with freight allocation (landed cost adjustment)
+        try {
+          if (input.purchaseOrderId) {
+            const totalLandedCost = input.totalFreightCost
+              + (input.totalCustomsDuties || 0)
+              + (input.totalInsuranceCost || 0)
+              + (input.totalHandlingFees || 0);
+
+            if (totalLandedCost > 0) {
+              const poItems = await db.getPurchaseOrderItems(input.purchaseOrderId);
+              const itemsWithProduct = poItems.filter((poi: any) => poi.productId);
+              const totalQty = itemsWithProduct.reduce(
+                (sum: number, poi: any) => sum + parseFloat(poi.quantity?.toString() || '0'), 0
+              );
+
+              if (totalQty > 0) {
+                const { addCostLayer } = await import("./inventoryCostingService");
+                for (const poi of itemsWithProduct) {
+                  const qty = parseFloat(poi.quantity?.toString() || '0');
+                  if (qty > 0 && poi.productId) {
+                    const freightPerUnit = (totalLandedCost * (qty / totalQty)) / qty;
+                    await addCostLayer({
+                      productId: poi.productId,
+                      quantity: qty,
+                      unitCost: freightPerUnit,
+                      purchaseOrderId: input.purchaseOrderId,
+                      referenceType: "freight_allocation",
+                      referenceId: input.purchaseOrderId,
+                      notes: `Freight/landed cost allocation: $${totalLandedCost.toFixed(2)} total`,
+                    });
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("[COGS] Failed to allocate freight to cost layers:", e);
+        }
+
         return { success: true };
       }),
 
@@ -1600,6 +1732,24 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         await db.updatePurchaseOrder(input.id, { status: 'sent', approvedBy: ctx.user.id, approvedAt: new Date() });
         await createAuditLog(ctx.user.id, 'approve', 'purchaseOrder', input.id);
+
+        // Auto-send PO to vendor via email
+        try {
+          const po = await db.getPurchaseOrderById(input.id);
+          if (po?.vendorId) {
+            const { sendVendorEmail } = await import("./vendorEmailAutomation");
+            await sendVendorEmail({
+              vendorId: po.vendorId,
+              emailType: "order_confirmation",
+              purchaseOrderId: po.id,
+              subject: `Purchase Order ${po.poNumber}`,
+              triggeredBy: ctx.user.id,
+            });
+          }
+        } catch (e) {
+          console.warn("[PO Approval] Failed to auto-send PO to vendor:", e);
+        }
+
         return { success: true };
       }),
     // Parse text to PO preview
@@ -3492,10 +3642,29 @@ export const appRouter = router({
         
         // Create audit log
         await createAuditLog(ctx.user.id, 'create', 'gmail_message', 0, `Sent email to ${Array.isArray(input.to) ? input.to.join(', ') : input.to}`);
-        
+
+        // Auto-log email to CRM contact history
+        try {
+          const recipientEmails = Array.isArray(input.to) ? input.to : [input.to];
+          for (const recipientEmail of recipientEmails) {
+            const contact = await db.getCrmContactByEmail(recipientEmail);
+            if (contact) {
+              await db.createCrmInteraction({
+                contactId: contact.id,
+                channel: "email",
+                interactionType: "sent",
+                subject: input.subject,
+                content: `Email sent: ${input.subject}`,
+              });
+            }
+          }
+        } catch (e) {
+          console.warn("[CRM Email Log] Failed to log email interaction:", e);
+        }
+
         return { success: true, messageId: result.messageId };
       }),
-    
+
     // Create draft
     createDraft: protectedProcedure
       .input(z.object({
@@ -6345,6 +6514,50 @@ Provide a brief status summary, any missing documents, and next steps.`;
         }
 
         await createAuditLog(ctx.user.id, 'create', 'copacker_invoice', result.id, invoiceData.invoiceNumber);
+
+        // Auto-allocate copacker fees to product cost layers as overhead
+        try {
+          if (totalAmount > 0) {
+            const activeLayers = await db.getInventoryCostLayers({
+              warehouseId,
+              status: 'active',
+            });
+
+            if (activeLayers.length > 0) {
+              // Group layers by productId and sum remaining quantities
+              const productQtyMap = new Map<number, number>();
+              for (const layer of activeLayers) {
+                const pid = layer.productId;
+                const qty = parseFloat(layer.remainingQuantity?.toString() || '0');
+                productQtyMap.set(pid, (productQtyMap.get(pid) || 0) + qty);
+              }
+
+              const grandTotalQty = Array.from(productQtyMap.values()).reduce((a, b) => a + b, 0);
+
+              if (grandTotalQty > 0) {
+                const { addCostLayer } = await import("./inventoryCostingService");
+                for (const [productId, productQty] of productQtyMap) {
+                  if (productQty > 0) {
+                    const copackerCostPerUnit = (totalAmount * (productQty / grandTotalQty)) / productQty;
+                    await addCostLayer({
+                      productId,
+                      warehouseId,
+                      quantity: productQty,
+                      unitCost: copackerCostPerUnit,
+                      referenceType: "copacker_invoice",
+                      referenceId: result.id,
+                      notes: `Copacker fee allocation from invoice ${invoiceData.invoiceNumber}`,
+                      createdBy: ctx.user.id,
+                    });
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("[COGS] Failed to allocate copacker fees to cost layers:", e);
+        }
+
         return { id: result.id };
       }),
 
@@ -8401,6 +8614,7 @@ Ask if they received the original request and if they can provide a quote.`;
               });
               
               // Create order lines
+              const createdLines: Array<{ productId: number; quantity: number; unitPrice: number }> = [];
               for (const item of shopifyOrder.line_items || []) {
                 const product = await db.getProductByShopifySku(store.id, item.variant_id?.toString());
                 if (product) {
@@ -8413,7 +8627,29 @@ Ask if they received the original request and if they can provide a quote.`;
                     unitPrice: item.price || '0',
                     totalPrice: (parseFloat(item.price || '0') * (item.quantity || 0)).toString(),
                   });
+                  createdLines.push({
+                    productId: product.id,
+                    quantity: item.quantity || 0,
+                    unitPrice: parseFloat(item.price || '0'),
+                  });
                 }
+              }
+
+              // Auto-record COGS for Shopify order lines
+              try {
+                const { recordCogs } = await import("./inventoryCostingService");
+                for (const line of createdLines) {
+                  if (line.productId && line.quantity > 0) {
+                    await recordCogs({
+                      productId: line.productId,
+                      quantitySold: line.quantity,
+                      orderId: orderId,
+                      unitRevenue: line.unitPrice,
+                    });
+                  }
+                }
+              } catch (e) {
+                console.warn("[COGS] Failed to auto-record COGS on Shopify order:", e);
               }
             }
           }
@@ -8799,7 +9035,53 @@ Ask if they received the original request and if they can provide a quote.`;
             totalPrice: (parseFloat(line.quantity) * parseFloat(line.unitPrice)).toString(),
           });
         }
-        
+
+        // Auto-record COGS for each line item
+        try {
+          const { recordCogs } = await import("./inventoryCostingService");
+          for (const line of input.lines) {
+            if (line.productId && parseFloat(line.quantity) > 0) {
+              await recordCogs({
+                productId: line.productId,
+                quantitySold: parseFloat(line.quantity),
+                orderId: orderId,
+                unitRevenue: parseFloat(line.unitPrice),
+              });
+            }
+          }
+        } catch (e) {
+          console.warn("[COGS] Failed to auto-record COGS on sales order:", e);
+        }
+
+        // Auto-generate invoice from sales order
+        try {
+          const invoice = await db.createInvoice({
+            customerId: input.customerId,
+            invoiceNumber: `INV-${Date.now().toString(36).toUpperCase()}`,
+            issueDate: new Date(),
+            dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Net 30
+            subtotal: totalAmount.toString(),
+            taxAmount: "0",
+            totalAmount: totalAmount.toString(),
+            status: "draft",
+            type: "invoice",
+            notes: `Auto-generated from Sales Order #${orderId}`,
+            createdBy: ctx.user.id,
+          });
+          for (const line of input.lines) {
+            await db.createInvoiceItem({
+              invoiceId: invoice.id,
+              description: `Product ${line.productId}`,
+              productId: line.productId,
+              quantity: line.quantity,
+              unitPrice: line.unitPrice,
+              totalAmount: (parseFloat(line.quantity) * parseFloat(line.unitPrice)).toString(),
+            });
+          }
+        } catch (e) {
+          console.warn("[Auto-Invoice] Failed to auto-generate invoice from sales order:", e);
+        }
+
         return { id: orderId, orderNumber };
       }),
     updateStatus: protectedProcedure
@@ -15208,6 +15490,9 @@ Ask if they received the original request and if they can provide a quote.`;
       const transcripts = await listTranscripts(config.apiKey);
       let synced = 0;
       let skipped = 0;
+      let dealsCreated = 0;
+      let contactsCreated = 0;
+      let actionItemNotifications = 0;
       for (const t of transcripts) {
         const existing = await db.getFirefliesMeetingByFirefliesId(t.id);
         if (existing) {
@@ -15215,20 +15500,102 @@ Ask if they received the original request and if they can provide a quote.`;
           continue;
         }
         const fullTranscript = await getTranscript(config.apiKey, t.id);
+        const participants = fullTranscript ? extractParticipants(fullTranscript) : [];
         await db.createFirefliesMeeting({
           firefliesId: t.id,
           title: t.title,
           date: t.date ? new Date(t.date) : new Date(),
           duration: t.duration,
-          participants: fullTranscript ? JSON.stringify(extractParticipants(fullTranscript)) : null,
+          participants: JSON.stringify(participants),
           transcript: fullTranscript?.transcript_url || null,
           summary: fullTranscript?.summary ? JSON.stringify(fullTranscript.summary) : null,
           actionItemsRaw: fullTranscript ? JSON.stringify(parseActionItems(fullTranscript?.summary?.action_items || [])) : null,
           status: 'pending',
         });
         synced++;
+
+        // Auto-create CRM deals from meeting notes
+        try {
+          const overview = fullTranscript?.summary?.overview || "";
+          const actionItems = fullTranscript?.summary?.action_items || [];
+
+          // Check if meeting mentions deal-related keywords
+          const dealKeywords = /\b(proposal|contract|pricing|quote|deal|budget|agreement|renewal|upsell)\b/i;
+          const hasDealSignals = dealKeywords.test(overview) || actionItems.some((a: string) => dealKeywords.test(a));
+
+          if (hasDealSignals && participants.length > 0) {
+            // Find or create a default sales pipeline for auto-created deals
+            const pipelines = await db.getCrmPipelines("sales");
+            let pipelineId = pipelines[0]?.id;
+            if (!pipelineId) {
+              pipelineId = await db.createCrmPipeline({
+                name: "Sales Pipeline",
+                type: "sales",
+                stages: JSON.stringify(["discovery", "qualification", "proposal", "negotiation", "closed_won", "closed_lost"]),
+                isDefault: true,
+                isActive: true,
+              });
+            }
+
+            for (const participant of participants) {
+              if (participant.email) {
+                try {
+                  let contact = await db.getCrmContactByEmail(participant.email);
+                  if (!contact) {
+                    // Create new CRM contact from meeting participant
+                    const contactId = await db.createCrmContact({
+                      firstName: (participant.name || participant.email.split("@")[0]).split(" ")[0] || "",
+                      fullName: participant.name || participant.email.split("@")[0],
+                      email: participant.email,
+                      source: "meeting" as any,
+                    });
+                    contact = await db.getCrmContactById(contactId);
+                    contactsCreated++;
+                  }
+
+                  if (contact) {
+                    // Create CRM deal from meeting
+                    await db.createCrmDeal({
+                      pipelineId,
+                      contactId: contact.id,
+                      name: `Deal from: ${fullTranscript?.title || t.title || "Meeting"}`,
+                      stage: "discovery",
+                      source: "meeting",
+                      notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
+                    });
+                    dealsCreated++;
+
+                    // Log meeting as CRM interaction
+                    await db.createCrmInteraction({
+                      contactId: contact.id,
+                      channel: "meeting",
+                      interactionType: "meeting_completed",
+                      subject: fullTranscript?.title || t.title || "Meeting",
+                      content: overview.substring(0, 500) || undefined,
+                    });
+                  }
+                } catch { /* skip duplicate contacts or failed deal creation */ }
+              }
+            }
+          }
+
+          // Auto-create notifications from action items
+          for (const item of actionItems) {
+            try {
+              await db.createNotification({
+                userId: ctx.user.id,
+                type: "reminder",
+                title: `Meeting Action Item: ${typeof item === "string" ? item.substring(0, 100) : String(item).substring(0, 100)}`,
+                message: `From meeting: ${fullTranscript?.title || t.title || "Unknown"}`,
+              });
+              actionItemNotifications++;
+            } catch { /* skip failed notification */ }
+          }
+        } catch (e) {
+          console.warn("[CRM Auto-Deal] Failed to create deal from meeting:", e);
+        }
       }
-      return { synced, skipped };
+      return { synced, skipped, dealsCreated, contactsCreated, actionItemNotifications };
     }),
     processMeeting: protectedProcedure
       .input(z.object({

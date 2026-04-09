@@ -403,6 +403,129 @@ async function startServer() {
       console.error("[Startup] Failed to start AI agent scheduler:", err);
       console.warn("[Startup] Server running in degraded mode - AI agent automation disabled");
     }
+
+    // Start email inbox polling (IMAP)
+    (async () => {
+      try {
+        const { scanInbox, getImapConfig, isImapConfigured } = await import("./emailInboxScanner");
+        if (isImapConfigured()) {
+          const POLL_INTERVAL = 5 * 60 * 1000; // 5 minutes
+          console.log("[Email Polling] Starting inbox scanner with 5m interval");
+          setInterval(async () => {
+            try {
+              const config = getImapConfig();
+              if (config) {
+                await scanInbox(config, { unseenOnly: true, limit: 50 });
+              }
+            } catch (e) {
+              console.warn("[Email Polling] Scan failed:", e);
+            }
+          }, POLL_INTERVAL);
+          // Initial scan after 30 seconds
+          setTimeout(() => {
+            const config = getImapConfig();
+            if (config) {
+              scanInbox(config, { unseenOnly: true, limit: 50 }).catch(e =>
+                console.warn("[Email Polling] Initial scan failed:", e)
+              );
+            }
+          }, 30000);
+        }
+      } catch (e) {
+        console.warn("[Email Polling] Could not initialize:", e);
+      }
+    })();
+
+    // Start recurring invoice scheduler
+    (async () => {
+      try {
+        const RECUR_INTERVAL = 60 * 60 * 1000; // Check every hour
+        console.log("[Recurring Invoices] Starting scheduler with 1h interval");
+        setInterval(async () => {
+          try {
+            const templates = await db.getRecurringInvoicesDueForGeneration();
+            for (const template of templates) {
+              try {
+                const recurring = await db.getRecurringInvoiceWithItems(template.id);
+                if (!recurring) continue;
+
+                const invoiceNumber = `INV-${Date.now().toString(36).toUpperCase()}`;
+                const issueDate = new Date();
+                const dueDate = new Date();
+                dueDate.setDate(dueDate.getDate() + (recurring.daysUntilDue || 30));
+
+                const invoiceResult = await db.createInvoice({
+                  companyId: recurring.companyId,
+                  customerId: recurring.customerId,
+                  invoiceNumber,
+                  type: 'invoice',
+                  status: 'draft',
+                  issueDate,
+                  dueDate,
+                  subtotal: recurring.subtotal,
+                  taxAmount: recurring.taxAmount,
+                  discountAmount: recurring.discountAmount,
+                  totalAmount: recurring.totalAmount,
+                  currency: recurring.currency,
+                  notes: recurring.notes,
+                  terms: recurring.terms,
+                });
+
+                for (const item of recurring.items || []) {
+                  await db.createInvoiceItem({
+                    invoiceId: invoiceResult.id,
+                    productId: item.productId,
+                    description: item.description,
+                    quantity: item.quantity,
+                    unitPrice: item.unitPrice,
+                    taxRate: item.taxRate,
+                    taxAmount: item.taxAmount,
+                    totalAmount: item.totalAmount,
+                  });
+                }
+
+                // Calculate next generation date based on frequency
+                const nextDate = new Date(issueDate);
+                if (recurring.frequency === 'weekly') {
+                  nextDate.setDate(nextDate.getDate() + 7);
+                } else if (recurring.frequency === 'biweekly') {
+                  nextDate.setDate(nextDate.getDate() + 14);
+                } else if (recurring.frequency === 'monthly') {
+                  nextDate.setMonth(nextDate.getMonth() + 1);
+                } else if (recurring.frequency === 'quarterly') {
+                  nextDate.setMonth(nextDate.getMonth() + 3);
+                } else if (recurring.frequency === 'annually') {
+                  nextDate.setFullYear(nextDate.getFullYear() + 1);
+                } else {
+                  nextDate.setMonth(nextDate.getMonth() + 1); // default monthly
+                }
+
+                await db.updateRecurringInvoice(template.id, {
+                  lastGeneratedAt: new Date(),
+                  nextGenerationDate: nextDate,
+                  generationCount: (recurring.generationCount || 0) + 1,
+                });
+
+                await db.createRecurringInvoiceHistory({
+                  recurringInvoiceId: template.id,
+                  generatedInvoiceId: invoiceResult.id,
+                  scheduledFor: issueDate,
+                  status: 'generated',
+                });
+
+                console.log(`[Recurring Invoices] Generated invoice ${invoiceNumber} from template ${recurring.templateName}`);
+              } catch (templateErr) {
+                console.warn(`[Recurring Invoices] Failed to generate invoice from template ${template.id}:`, templateErr);
+              }
+            }
+          } catch (e) {
+            console.warn("[Recurring Invoices] Generation cycle failed:", e);
+          }
+        }, RECUR_INTERVAL);
+      } catch (e) {
+        console.warn("[Recurring Invoices] Could not initialize:", e);
+      }
+    })();
   });
 
   function gracefulShutdown(signal: string) {

@@ -690,6 +690,37 @@ export async function createTransaction(data: InsertTransaction) {
   return { id: result[0].insertId };
 }
 
+export async function createTransactionLine(data: {
+  transactionId: number;
+  accountId: number;
+  debit?: string;
+  credit?: string;
+  description?: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(transactionLines).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function getAccountByCode(code: string, companyId?: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const conditions = [eq(accounts.code, code)];
+  if (companyId) conditions.push(eq(accounts.companyId, companyId));
+  const result = await db.select().from(accounts).where(and(...conditions)).limit(1);
+  return result[0];
+}
+
+export async function getAccountByName(name: string, companyId?: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const conditions = [like(accounts.name, `%${name}%`)];
+  if (companyId) conditions.push(eq(accounts.companyId, companyId));
+  const result = await db.select().from(accounts).where(and(...conditions)).limit(1);
+  return result[0];
+}
+
 // ============================================
 // SALES - ORDERS
 // ============================================
@@ -3242,6 +3273,31 @@ export async function receivePurchaseOrderItems(
           .where(eq(shipments.id, shipmentToUpdate));
       }
     }
+  }
+
+  // Auto-create cost layers from PO item prices for COGS tracking
+  try {
+    for (const item of items) {
+      if (item.productId && item.quantity > 0) {
+        // Look up unit price from the PO item
+        const poItem = poItems.find(poi => poi.id === item.purchaseOrderItemId);
+        const unitPrice = parseFloat(poItem?.unitPrice?.toString() || '0');
+        if (unitPrice > 0) {
+          const { addCostLayer } = await import("./inventoryCostingService");
+          await addCostLayer({
+            productId: item.productId,
+            warehouseId: warehouseId || undefined,
+            quantity: item.quantity,
+            unitCost: unitPrice,
+            purchaseOrderId: purchaseOrderId,
+            referenceType: "purchase_order",
+            referenceId: purchaseOrderId,
+          });
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("[COGS] Failed to auto-create cost layers on PO receipt:", e);
   }
 
   return receiving;

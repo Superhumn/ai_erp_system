@@ -182,6 +182,24 @@ export const procurementRouter = router({
       .mutation(async ({ input, ctx }) => {
         await db.updatePurchaseOrder(input.id, { status: 'sent', approvedBy: ctx.user.id, approvedAt: new Date() });
         await createAuditLog(ctx.user.id, 'approve', 'purchaseOrder', input.id);
+
+        // Auto-send PO to vendor via email
+        try {
+          const po = await db.getPurchaseOrderById(input.id);
+          if (po?.vendorId) {
+            const { sendVendorEmail } = await import("../vendorEmailAutomation");
+            await sendVendorEmail({
+              vendorId: po.vendorId,
+              emailType: "order_confirmation",
+              purchaseOrderId: po.id,
+              subject: `Purchase Order ${po.poNumber}`,
+              triggeredBy: ctx.user.id,
+            });
+          }
+        } catch (e) {
+          console.warn("[PO Approval] Failed to auto-send PO to vendor:", e);
+        }
+
         return { success: true };
       }),
     // Parse text to PO preview
