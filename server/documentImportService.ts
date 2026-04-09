@@ -802,10 +802,14 @@ export async function importPurchaseOrder(
 
     // 6. If marking as received, update inventory
     if (markAsReceived) {
+      // Batch load all raw materials instead of N+1
+      const rmIds = matchedItems.map(i => i.rawMaterialId).filter((id): id is number => id != null);
+      const materialsToUpdate = rmIds.length > 0 ? await Promise.all(rmIds.map(id => db.getRawMaterialById(id))) : [];
+      const materialMap = new Map(materialsToUpdate.filter(Boolean).map(m => [m!.id, m!]));
+
       for (const item of matchedItems) {
         if (item.rawMaterialId) {
-          // Get current stock and add received quantity
-          const material = await db.getRawMaterialById(item.rawMaterialId);
+          const material = materialMap.get(item.rawMaterialId);
           if (material) {
             const currentReceived = parseFloat(material.quantityReceived || '0');
             const newReceived = currentReceived + item.quantity;
@@ -1017,9 +1021,14 @@ export async function importVendorInvoice(
 
     // 7. If marking as received, update inventory
     if (markAsReceived) {
+      // Batch load all raw materials instead of N+1
+      const rmIds = matchedItems.map(i => i.rawMaterialId).filter((id): id is number => id != null);
+      const materialsToUpdate = rmIds.length > 0 ? await Promise.all(rmIds.map(id => db.getRawMaterialById(id))) : [];
+      const materialMap = new Map(materialsToUpdate.filter(Boolean).map(m => [m!.id, m!]));
+
       for (const item of matchedItems) {
         if (item.rawMaterialId) {
-          const material = await db.getRawMaterialById(item.rawMaterialId);
+          const material = materialMap.get(item.rawMaterialId);
           if (material) {
             const currentReceived = parseFloat(material.quantityReceived || '0');
             const newReceived = currentReceived + item.quantity;

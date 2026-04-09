@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
@@ -7,127 +8,125 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { AIAgentProvider } from "./contexts/AIAgentContext";
 import DashboardLayout from "./components/DashboardLayout";
 
-// Pages
+// Eagerly loaded pages (high-traffic, first paint)
 import Home from "./pages/Home";
-import AIAssistant from "./pages/AIAssistant";
-import Settings from "./pages/Settings";
-import GlobalSearch from "./pages/GlobalSearch";
-import Notifications from "./pages/Notifications";
+import { Login } from "./pages/Login";
+
+// Lazy-loaded pages — split into separate chunks for smaller initial bundle
+const AIAssistant = lazy(() => import("./pages/AIAssistant"));
+const Settings = lazy(() => import("./pages/Settings"));
+const GlobalSearch = lazy(() => import("./pages/GlobalSearch"));
+const Notifications = lazy(() => import("./pages/Notifications"));
 
 // Finance
-import Accounts from "./pages/finance/Accounts";
-import Invoices from "./pages/finance/Invoices";
-import Payments from "./pages/finance/Payments";
-import Transactions from "./pages/finance/Transactions";
+const Accounts = lazy(() => import("./pages/finance/Accounts"));
+const Invoices = lazy(() => import("./pages/finance/Invoices"));
+const Payments = lazy(() => import("./pages/finance/Payments"));
+const Transactions = lazy(() => import("./pages/finance/Transactions"));
 
 // Sales
-import Orders from "./pages/sales/Orders";
-import OrderDetail from "./pages/sales/OrderDetail";
-import Customers from "./pages/sales/Customers";
-import CustomerDetail from "./pages/sales/CustomerDetail";
-import SalesHub from "./pages/sales/SalesHub";
-import CRMDashboard from "./pages/sales/CRMDashboard";
-import CRMInvestors from "./pages/sales/CRMInvestors";
-import FundraisingCampaigns from "./pages/sales/FundraisingCampaigns";
+const Orders = lazy(() => import("./pages/sales/Orders"));
+const OrderDetail = lazy(() => import("./pages/sales/OrderDetail"));
+const Customers = lazy(() => import("./pages/sales/Customers"));
+const CustomerDetail = lazy(() => import("./pages/sales/CustomerDetail"));
+const SalesHub = lazy(() => import("./pages/sales/SalesHub"));
+const CRMDashboard = lazy(() => import("./pages/sales/CRMDashboard"));
+const CRMInvestors = lazy(() => import("./pages/sales/CRMInvestors"));
+const FundraisingCampaigns = lazy(() => import("./pages/sales/FundraisingCampaigns"));
 
 // CRM
-import CRMHub from "./pages/crm/CRMHub";
+const CRMHub = lazy(() => import("./pages/crm/CRMHub"));
 
 // Operations
-import Products from "./pages/operations/Products";
-import ProductDetail from "./pages/operations/ProductDetail";
-import Inventory from "./pages/operations/Inventory";
-import Vendors from "./pages/operations/Vendors";
-import PurchaseOrders from "./pages/operations/PurchaseOrders";
-import Shipments from "./pages/operations/Shipments";
-import Locations from "./pages/operations/Locations";
-import Transfers from "./pages/operations/Transfers";
-import TransferDetail from "./pages/operations/TransferDetail";
-import BOM from "./pages/operations/BOM";
-import BOMDetail from "./pages/operations/BOMDetail";
-import RawMaterials from "./pages/operations/RawMaterials";
-import WorkOrders from "./pages/operations/WorkOrders";
-import WorkOrderDetail from "./pages/operations/WorkOrderDetail";
-import POReceiving from "./pages/operations/POReceiving";
-import Forecasting from "./pages/operations/Forecasting";
-import CoreOperations from "./pages/operations/CoreOperations";
-import EmailInbox from "./pages/operations/EmailInbox";
-import Logistics from "./pages/operations/Logistics";
-import Procurement from "./pages/operations/Procurement";
-import ManufacturingHub from "./pages/operations/ManufacturingHub";
-import ProcurementHub from "./pages/operations/ProcurementHub";
-import LogisticsHub from "./pages/operations/LogisticsHub";
-import InventoryHub from "./pages/operations/InventoryHub";
-import OperationsHub from "./pages/operations/OperationsHub";
-import InventoryManagementHub from "./pages/operations/InventoryManagementHub";
-import DocumentImport from "./pages/operations/DocumentImport";
-import Profitability from "./pages/operations/Profitability";
-import ReconciliationReport from "./pages/operations/ReconciliationReport";
-import InventoryCosting from "./pages/operations/InventoryCosting";
-import VendorNegotiations from "./pages/operations/VendorNegotiations";
-import SupplierPortal from "./pages/SupplierPortal";
+const Products = lazy(() => import("./pages/operations/Products"));
+const ProductDetail = lazy(() => import("./pages/operations/ProductDetail"));
+const Inventory = lazy(() => import("./pages/operations/Inventory"));
+const Vendors = lazy(() => import("./pages/operations/Vendors"));
+const PurchaseOrders = lazy(() => import("./pages/operations/PurchaseOrders"));
+const Shipments = lazy(() => import("./pages/operations/Shipments"));
+const Locations = lazy(() => import("./pages/operations/Locations"));
+const Transfers = lazy(() => import("./pages/operations/Transfers"));
+const TransferDetail = lazy(() => import("./pages/operations/TransferDetail"));
+const BOM = lazy(() => import("./pages/operations/BOM"));
+const BOMDetail = lazy(() => import("./pages/operations/BOMDetail"));
+const RawMaterials = lazy(() => import("./pages/operations/RawMaterials"));
+const WorkOrders = lazy(() => import("./pages/operations/WorkOrders"));
+const WorkOrderDetail = lazy(() => import("./pages/operations/WorkOrderDetail"));
+const POReceiving = lazy(() => import("./pages/operations/POReceiving"));
+const Forecasting = lazy(() => import("./pages/operations/Forecasting"));
+const CoreOperations = lazy(() => import("./pages/operations/CoreOperations"));
+const EmailInbox = lazy(() => import("./pages/operations/EmailInbox"));
+const Logistics = lazy(() => import("./pages/operations/Logistics"));
+const Procurement = lazy(() => import("./pages/operations/Procurement"));
+const ManufacturingHub = lazy(() => import("./pages/operations/ManufacturingHub"));
+const ProcurementHub = lazy(() => import("./pages/operations/ProcurementHub"));
+const LogisticsHub = lazy(() => import("./pages/operations/LogisticsHub"));
+const InventoryHub = lazy(() => import("./pages/operations/InventoryHub"));
+const OperationsHub = lazy(() => import("./pages/operations/OperationsHub"));
+const InventoryManagementHub = lazy(() => import("./pages/operations/InventoryManagementHub"));
+const DocumentImport = lazy(() => import("./pages/operations/DocumentImport"));
+const Profitability = lazy(() => import("./pages/operations/Profitability"));
+const ReconciliationReport = lazy(() => import("./pages/operations/ReconciliationReport"));
+const InventoryCosting = lazy(() => import("./pages/operations/InventoryCosting"));
+const VendorNegotiations = lazy(() => import("./pages/operations/VendorNegotiations"));
+const SupplierPortal = lazy(() => import("./pages/SupplierPortal"));
 
 // EDI
-import EDIDashboard from "./pages/edi/EDIDashboard";
-import TradingPartners from "./pages/edi/TradingPartners";
-import EDITransactions from "./pages/edi/EDITransactions";
-import RetailerOnboarding from "./pages/edi/RetailerOnboarding";
+const EDIDashboard = lazy(() => import("./pages/edi/EDIDashboard"));
+const TradingPartners = lazy(() => import("./pages/edi/TradingPartners"));
+const EDITransactions = lazy(() => import("./pages/edi/EDITransactions"));
+const RetailerOnboarding = lazy(() => import("./pages/edi/RetailerOnboarding"));
 
 // Freight
-import FreightDashboard from "./pages/freight/FreightDashboard";
-import Carriers from "./pages/freight/Carriers";
-import RFQs from "./pages/freight/RFQs";
-import RFQDetail from "./pages/freight/RFQDetail";
-import CustomsClearance from "./pages/freight/CustomsClearance";
-import CustomsDetail from "./pages/freight/CustomsDetail";
+const FreightDashboard = lazy(() => import("./pages/freight/FreightDashboard"));
+const Carriers = lazy(() => import("./pages/freight/Carriers"));
+const RFQs = lazy(() => import("./pages/freight/RFQs"));
+const RFQDetail = lazy(() => import("./pages/freight/RFQDetail"));
+const CustomsClearance = lazy(() => import("./pages/freight/CustomsClearance"));
+const CustomsDetail = lazy(() => import("./pages/freight/CustomsDetail"));
 
 // HR
-import Employees from "./pages/hr/Employees";
-import Payroll from "./pages/hr/Payroll";
+const Employees = lazy(() => import("./pages/hr/Employees"));
+const Payroll = lazy(() => import("./pages/hr/Payroll"));
 
 // Legal
-import Contracts from "./pages/legal/Contracts";
-import Disputes from "./pages/legal/Disputes";
-import Documents from "./pages/legal/Documents";
+const Contracts = lazy(() => import("./pages/legal/Contracts"));
+const Disputes = lazy(() => import("./pages/legal/Disputes"));
+const Documents = lazy(() => import("./pages/legal/Documents"));
 
 // Settings
-import Integrations from "./pages/settings/Integrations";
-import NotificationSettings from "./pages/settings/Notifications";
-import TransactionalEmails from "./pages/settings/TransactionalEmails";
-import Fireflies from "./pages/settings/Fireflies";
-import QuickBooksIntegration from "./pages/settings/QuickBooksIntegration";
-import ShopifySettings from "./pages/settings/ShopifySettings";
+const Integrations = lazy(() => import("./pages/settings/Integrations"));
+const NotificationSettings = lazy(() => import("./pages/settings/Notifications"));
+const TransactionalEmails = lazy(() => import("./pages/settings/TransactionalEmails"));
+const Fireflies = lazy(() => import("./pages/settings/Fireflies"));
+const QuickBooksIntegration = lazy(() => import("./pages/settings/QuickBooksIntegration"));
+const ShopifySettings = lazy(() => import("./pages/settings/ShopifySettings"));
+const Team = lazy(() => import("./pages/settings/Team"));
 
 // Projects
-import Projects from "./pages/projects/Projects";
-import InvestmentGrantChecklist from "./pages/projects/InvestmentGrantChecklist";
+const Projects = lazy(() => import("./pages/projects/Projects"));
+const InvestmentGrantChecklist = lazy(() => import("./pages/projects/InvestmentGrantChecklist"));
 
 // Grants & Bids
-import GrantBidSubmitter from "./pages/grants/GrantBidSubmitter";
+const GrantBidSubmitter = lazy(() => import("./pages/grants/GrantBidSubmitter"));
 
 // Import
-import Import from "./pages/Import";
-
-// Settings
-import Team from "./pages/settings/Team";
+const Import = lazy(() => import("./pages/Import"));
 
 // Portals
-import CopackerPortal from "./pages/portal/CopackerPortal";
-import VendorPortal from "./pages/portal/VendorPortal";
-
-// Auth
-import Login from "./pages/Login";
+const CopackerPortal = lazy(() => import("./pages/portal/CopackerPortal"));
+const VendorPortal = lazy(() => import("./pages/portal/VendorPortal"));
 
 // SOPs
-import SOPs from "./pages/SOPs";
+const SOPs = lazy(() => import("./pages/SOPs"));
 
 // Data Room
-import DataRooms from "./pages/DataRooms";
-import DataRoomDetail from "./pages/DataRoomDetail";
-import DataRoomPublic from "./pages/DataRoomPublic";
+const DataRooms = lazy(() => import("./pages/DataRooms"));
+const DataRoomDetail = lazy(() => import("./pages/DataRoomDetail"));
+const DataRoomPublic = lazy(() => import("./pages/DataRoomPublic"));
 
 // AI Agent
-import ApprovalQueue from "./pages/ai/ApprovalQueue";
+const ApprovalQueue = lazy(() => import("./pages/ai/ApprovalQueue"));
 
 // AI Analytics Pages
 import FinanceAI from "./pages/finance/FinanceAI";
@@ -138,145 +137,154 @@ import ProjectsAI from "./pages/projects/ProjectsAI";
 import SupplierScoring from "./pages/operations/SupplierScoring";
 
 // Autonomous Supply Chain
-import AutonomousDashboard from "./pages/autonomous/Dashboard";
-import AutonomousApprovals from "./pages/autonomous/Approvals";
-import AutonomousExceptions from "./pages/autonomous/Exceptions";
-import AutonomousSettings from "./pages/autonomous/Settings";
+const AutonomousDashboard = lazy(() => import("./pages/autonomous/Dashboard"));
+const AutonomousApprovals = lazy(() => import("./pages/autonomous/Approvals"));
+const AutonomousExceptions = lazy(() => import("./pages/autonomous/Exceptions"));
+const AutonomousSettings = lazy(() => import("./pages/autonomous/Settings"));
+
+function PageLoader() {
+  return (
+    <div className="flex items-center justify-center h-64">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+    </div>
+  );
+}
 
 function Router() {
   return (
     <DashboardLayout>
-      <Switch>
-        {/* Overview */}
-        <Route path="/" component={Home} />
-        <Route path="/ai" component={AIAssistant} />
-        <Route path="/ai/approvals" component={ApprovalQueue} />
-        <Route path="/search" component={GlobalSearch} />
+      <Suspense fallback={<PageLoader />}>
+        <Switch>
+          {/* Overview */}
+          <Route path="/" component={Home} />
+          <Route path="/ai" component={AIAssistant} />
+          <Route path="/ai/approvals" component={ApprovalQueue} />
+          <Route path="/search" component={GlobalSearch} />
 
-        {/* Autonomous Supply Chain */}
-        <Route path="/autonomous-dashboard" component={AutonomousDashboard} />
-        <Route path="/approvals" component={AutonomousApprovals} />
-        <Route path="/exceptions" component={AutonomousExceptions} />
-        <Route path="/autonomous-settings" component={AutonomousSettings} />
-        <Route path="/notifications" component={Notifications} />
-        <Route path="/settings" component={Settings} />
-        <Route path="/settings/integrations" component={Integrations} />
-        <Route path="/settings/notifications" component={NotificationSettings} />
-        <Route path="/settings/emails" component={TransactionalEmails} />
-        <Route path="/settings/fireflies" component={Fireflies} />
-        <Route path="/settings/quickbooks" component={QuickBooksIntegration} />
-        <Route path="/settings/shopify" component={ShopifySettings} />
+          {/* Autonomous Supply Chain */}
+          <Route path="/autonomous-dashboard" component={AutonomousDashboard} />
+          <Route path="/approvals" component={AutonomousApprovals} />
+          <Route path="/exceptions" component={AutonomousExceptions} />
+          <Route path="/autonomous-settings" component={AutonomousSettings} />
+          <Route path="/notifications" component={Notifications} />
+          <Route path="/settings" component={Settings} />
+          <Route path="/settings/integrations" component={Integrations} />
+          <Route path="/settings/notifications" component={NotificationSettings} />
+          <Route path="/settings/emails" component={TransactionalEmails} />
+          <Route path="/settings/fireflies" component={Fireflies} />
+          <Route path="/settings/quickbooks" component={QuickBooksIntegration} />
+          <Route path="/settings/shopify" component={ShopifySettings} />
 
-        {/* Finance */}
-        <Route path="/finance/accounts" component={Accounts} />
-        <Route path="/finance/invoices" component={Invoices} />
-        <Route path="/finance/payments" component={Payments} />
-        <Route path="/finance/transactions" component={Transactions} />
-        <Route path="/finance/ai" component={FinanceAI} />
+          {/* Finance */}
+          <Route path="/finance/accounts" component={Accounts} />
+          <Route path="/finance/invoices" component={Invoices} />
+          <Route path="/finance/payments" component={Payments} />
+          <Route path="/finance/transactions" component={Transactions} />
+          <Route path="/finance/ai" component={FinanceAI} />
 
-        {/* Sales */}
-        <Route path="/sales/orders/:id" component={OrderDetail} />
-        <Route path="/sales/orders" component={Orders} />
-        <Route path="/sales/customers/:id" component={CustomerDetail} />
-        <Route path="/sales/customers" component={Customers} />
-        <Route path="/sales/hub" component={SalesHub} />
-        <Route path="/crm" component={CRMDashboard} />
-        <Route path="/crm/investors" component={CRMInvestors} />
-        <Route path="/crm/campaigns" component={FundraisingCampaigns} />
+          {/* Sales */}
+          <Route path="/sales/orders/:id" component={OrderDetail} />
+          <Route path="/sales/orders" component={Orders} />
+          <Route path="/sales/customers/:id" component={CustomerDetail} />
+          <Route path="/sales/customers" component={Customers} />
+          <Route path="/sales/hub" component={SalesHub} />
+          <Route path="/crm/investors" component={CRMInvestors} />
+          <Route path="/crm/campaigns" component={FundraisingCampaigns} />
 
-        {/* CRM */}
-        <Route path="/crm" component={CRMHub} />
-        <Route path="/crm/hub" component={CRMHub} />
+          {/* CRM — deduplicated: /crm now points to CRMHub only */}
+          <Route path="/crm/hub" component={CRMHub} />
+          <Route path="/crm" component={CRMHub} />
 
-        {/* Operations */}
-        <Route path="/operations" component={OperationsHub} />
-        <Route path="/operations/products/:id" component={ProductDetail} />
-        <Route path="/operations/products" component={Products} />
-        <Route path="/operations/inventory" component={Inventory} />
-        <Route path="/operations/vendors" component={Vendors} />
-        <Route path="/operations/purchase-orders" component={PurchaseOrders} />
-        <Route path="/operations/shipments" component={Shipments} />
-        <Route path="/operations/locations" component={Locations} />
-        <Route path="/operations/transfers" component={Transfers} />
-        <Route path="/operations/transfers/:id" component={TransferDetail} />
-        <Route path="/operations/bom" component={BOM} />
-        <Route path="/operations/bom/:id" component={BOMDetail} />
-        <Route path="/operations/raw-materials" component={RawMaterials} />
-        <Route path="/operations/work-orders" component={WorkOrders} />
-        <Route path="/operations/work-orders/:id" component={WorkOrderDetail} />
-        <Route path="/operations/receiving" component={POReceiving} />
-        <Route path="/operations/forecasting" component={Forecasting} />
-        <Route path="/operations/core" component={CoreOperations} />
-        <Route path="/operations/email-inbox" component={EmailInbox} />
-        <Route path="/operations/logistics" component={Logistics} />
-        <Route path="/operations/procurement" component={Procurement} />
-        <Route path="/operations/manufacturing-hub" component={ManufacturingHub} />
-        <Route path="/operations/procurement-hub" component={ProcurementHub} />
-        <Route path="/operations/logistics-hub" component={LogisticsHub} />
-        <Route path="/operations/inventory-hub" component={InventoryHub} />
-        <Route path="/operations/inventory-management" component={InventoryManagementHub} />
-        <Route path="/operations/profitability" component={Profitability} />
-        <Route path="/operations/document-import" component={DocumentImport} />
-        <Route path="/operations/reconciliation" component={ReconciliationReport} />
-        <Route path="/operations/inventory-costing" component={InventoryCosting} />
-        <Route path="/operations/vendor-negotiations" component={VendorNegotiations} />
-        <Route path="/operations/manufacturing-ai" component={ManufacturingAI} />
-        <Route path="/operations/supplier-scoring" component={SupplierScoring} />
+          {/* Operations */}
+          <Route path="/operations" component={OperationsHub} />
+          <Route path="/operations/products/:id" component={ProductDetail} />
+          <Route path="/operations/products" component={Products} />
+          <Route path="/operations/inventory" component={Inventory} />
+          <Route path="/operations/vendors" component={Vendors} />
+          <Route path="/operations/purchase-orders" component={PurchaseOrders} />
+          <Route path="/operations/shipments" component={Shipments} />
+          <Route path="/operations/locations" component={Locations} />
+          <Route path="/operations/transfers" component={Transfers} />
+          <Route path="/operations/transfers/:id" component={TransferDetail} />
+          <Route path="/operations/bom" component={BOM} />
+          <Route path="/operations/bom/:id" component={BOMDetail} />
+          <Route path="/operations/raw-materials" component={RawMaterials} />
+          <Route path="/operations/work-orders" component={WorkOrders} />
+          <Route path="/operations/work-orders/:id" component={WorkOrderDetail} />
+          <Route path="/operations/receiving" component={POReceiving} />
+          <Route path="/operations/forecasting" component={Forecasting} />
+          <Route path="/operations/core" component={CoreOperations} />
+          <Route path="/operations/email-inbox" component={EmailInbox} />
+          <Route path="/operations/logistics" component={Logistics} />
+          <Route path="/operations/procurement" component={Procurement} />
+          <Route path="/operations/manufacturing-hub" component={ManufacturingHub} />
+          <Route path="/operations/procurement-hub" component={ProcurementHub} />
+          <Route path="/operations/logistics-hub" component={LogisticsHub} />
+          <Route path="/operations/inventory-hub" component={InventoryHub} />
+          <Route path="/operations/inventory-management" component={InventoryManagementHub} />
+          <Route path="/operations/profitability" component={Profitability} />
+          <Route path="/operations/document-import" component={DocumentImport} />
+          <Route path="/operations/reconciliation" component={ReconciliationReport} />
+          <Route path="/operations/inventory-costing" component={InventoryCosting} />
+          <Route path="/operations/vendor-negotiations" component={VendorNegotiations} />
+          <Route path="/operations/manufacturing-ai" component={ManufacturingAI} />
+          <Route path="/operations/supplier-scoring" component={SupplierScoring} />
 
-        {/* EDI */}
-        <Route path="/edi" component={EDIDashboard} />
-        <Route path="/edi/connect" component={RetailerOnboarding} />
-        <Route path="/edi/partners" component={TradingPartners} />
-        <Route path="/edi/transactions" component={EDITransactions} />
+          {/* EDI */}
+          <Route path="/edi" component={EDIDashboard} />
+          <Route path="/edi/connect" component={RetailerOnboarding} />
+          <Route path="/edi/partners" component={TradingPartners} />
+          <Route path="/edi/transactions" component={EDITransactions} />
 
-        {/* Freight */}
-        <Route path="/freight" component={FreightDashboard} />
-        <Route path="/freight/carriers" component={Carriers} />
-        <Route path="/freight/rfqs" component={RFQs} />
-        <Route path="/freight/rfqs/:id" component={RFQDetail} />
-        <Route path="/freight/customs" component={CustomsClearance} />
-        <Route path="/freight/customs/:id" component={CustomsDetail} />
+          {/* Freight */}
+          <Route path="/freight" component={FreightDashboard} />
+          <Route path="/freight/carriers" component={Carriers} />
+          <Route path="/freight/rfqs" component={RFQs} />
+          <Route path="/freight/rfqs/:id" component={RFQDetail} />
+          <Route path="/freight/customs" component={CustomsClearance} />
+          <Route path="/freight/customs/:id" component={CustomsDetail} />
 
-        {/* HR */}
-        <Route path="/hr/employees" component={Employees} />
-        <Route path="/hr/payroll" component={Payroll} />
-        <Route path="/hr/ai" component={HRAIInsights} />
+          {/* HR */}
+          <Route path="/hr/employees" component={Employees} />
+          <Route path="/hr/payroll" component={Payroll} />
+          <Route path="/hr/ai" component={HRAIInsights} />
 
-        {/* Legal */}
-        <Route path="/legal/contracts" component={Contracts} />
-        <Route path="/legal/disputes" component={Disputes} />
-        <Route path="/legal/documents" component={Documents} />
-        <Route path="/legal/ai" component={LegalAI} />
+          {/* Legal */}
+          <Route path="/legal/contracts" component={Contracts} />
+          <Route path="/legal/disputes" component={Disputes} />
+          <Route path="/legal/documents" component={Documents} />
+          <Route path="/legal/ai" component={LegalAI} />
 
-        {/* Projects */}
-        <Route path="/projects" component={Projects} />
-        <Route path="/projects/ai" component={ProjectsAI} />
-        <Route path="/projects/investment-grants" component={InvestmentGrantChecklist} />
+          {/* Projects */}
+          <Route path="/projects" component={Projects} />
+          <Route path="/projects/ai" component={ProjectsAI} />
+          <Route path="/projects/investment-grants" component={InvestmentGrantChecklist} />
 
-        {/* SOPs */}
-        <Route path="/sops" component={SOPs} />
+          {/* SOPs */}
+          <Route path="/sops" component={SOPs} />
 
-        {/* Grants & Bids */}
-        <Route path="/grants/submitter" component={GrantBidSubmitter} />
+          {/* Grants & Bids */}
+          <Route path="/grants/submitter" component={GrantBidSubmitter} />
 
-        {/* Import */}
-        <Route path="/import" component={Import} />
+          {/* Import */}
+          <Route path="/import" component={Import} />
 
-        {/* Settings */}
-        <Route path="/settings/team" component={Team} />
+          {/* Settings */}
+          <Route path="/settings/team" component={Team} />
 
-        {/* Portals */}
-        <Route path="/portal/copacker" component={CopackerPortal} />
-        <Route path="/portal/vendor" component={VendorPortal} />
+          {/* Portals */}
+          <Route path="/portal/copacker" component={CopackerPortal} />
+          <Route path="/portal/vendor" component={VendorPortal} />
 
-        {/* Data Room */}
-        <Route path="/datarooms" component={DataRooms} />
-        <Route path="/dataroom/:id" component={DataRoomDetail} />
+          {/* Data Room */}
+          <Route path="/datarooms" component={DataRooms} />
+          <Route path="/dataroom/:id" component={DataRoomDetail} />
 
-        {/* Fallback */}
-        <Route path="/404" component={NotFound} />
-        <Route component={NotFound} />
-      </Switch>
+          {/* Fallback */}
+          <Route path="/404" component={NotFound} />
+          <Route component={NotFound} />
+        </Switch>
+      </Suspense>
     </DashboardLayout>
   );
 }
@@ -289,12 +297,24 @@ function App() {
           <TooltipProvider>
             <Toaster />
             <Switch>
-              {/* Auth */}
+              {/* Public routes (outside dashboard) */}
               <Route path="/login" component={Login} />
               {/* Public Data Room Access (outside dashboard) */}
-              <Route path="/share/:code" component={DataRoomPublic} />
+              <Route path="/share/:code">
+                {(params) => (
+                  <Suspense fallback={<PageLoader />}>
+                    <DataRoomPublic {...params} />
+                  </Suspense>
+                )}
+              </Route>
               {/* Supplier Portal (public) */}
-              <Route path="/supplier-portal/:token" component={SupplierPortal} />
+              <Route path="/supplier-portal/:token">
+                {(params) => (
+                  <Suspense fallback={<PageLoader />}>
+                    <SupplierPortal {...params} />
+                  </Suspense>
+                )}
+              </Route>
               {/* All other routes go through dashboard */}
               <Route component={Router} />
             </Switch>

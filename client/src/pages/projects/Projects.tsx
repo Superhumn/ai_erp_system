@@ -34,6 +34,8 @@ import {
 import { FolderKanban, Plus, Search, Loader2, Calendar } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { formatCurrency } from "@/lib/format";
+import { getStatusColor } from "@/lib/statusColors";
 
 type Project = {
   id: number;
@@ -49,14 +51,6 @@ type Project = {
   createdAt: Date;
 };
 
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
-
 export default function Projects() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -70,7 +64,8 @@ export default function Projects() {
     description: "",
   });
 
-  const { data: projects, isLoading, refetch } = trpc.projects.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: projects, isLoading } = trpc.projects.list.useQuery();
   const createProject = trpc.projects.create.useMutation({
     onSuccess: () => {
       toast.success("Project created successfully");
@@ -78,7 +73,7 @@ export default function Projects() {
       setFormData({
         name: "", priority: "medium", startDate: "", endDate: "", budget: "", description: "",
       });
-      refetch();
+      utils.projects.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -92,14 +87,6 @@ export default function Projects() {
     const matchesStatus = statusFilter === "all" || project.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-
-  const statusColors: Record<string, string> = {
-    planning: "bg-gray-500/10 text-gray-600",
-    active: "bg-green-500/10 text-green-600",
-    on_hold: "bg-amber-500/10 text-amber-600",
-    completed: "bg-blue-500/10 text-blue-600",
-    cancelled: "bg-red-500/10 text-red-600",
-  };
 
   const priorityColors: Record<string, string> = {
     low: "bg-gray-500/10 text-gray-600",
@@ -349,7 +336,7 @@ export default function Projects() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge className={statusColors[project.status]}>{project.status.replace("_", " ")}</Badge>
+                      <Badge className={getStatusColor(project.status)}>{project.status.replace("_", " ")}</Badge>
                     </TableCell>
                   </TableRow>
                 ))}

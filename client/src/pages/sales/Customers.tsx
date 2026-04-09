@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -34,6 +34,7 @@ import {
 import { Users, Plus, Search, Loader2, RefreshCw, ShoppingBag } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "wouter";
+import { getStatusColor } from "@/lib/statusColors";
 
 export default function Customers() {
   const [search, setSearch] = useState("");
@@ -58,9 +59,10 @@ export default function Customers() {
     notes: "",
   });
 
-  const { data: customers, isLoading, refetch } = trpc.customers.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: customers, isLoading } = trpc.customers.list.useQuery();
   const { data: syncStatus } = trpc.customers.getSyncStatus.useQuery();
-  
+
   const createCustomer = trpc.customers.create.useMutation({
     onSuccess: () => {
       toast.success("Customer created successfully");
@@ -69,7 +71,7 @@ export default function Customers() {
         name: "", email: "", phone: "", type: "business",
         address: "", city: "", state: "", country: "", postalCode: "", notes: "",
       });
-      refetch();
+      utils.customers.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -80,14 +82,14 @@ export default function Customers() {
     onSuccess: (result) => {
       toast.success(`Shopify sync complete: ${result.imported} imported, ${result.updated} updated`);
       setIsSyncOpen(false);
-      refetch();
+      utils.customers.list.invalidate();
     },
     onError: (error) => {
       toast.error(`Shopify sync failed: ${error.message}`);
     },
   });
 
-  const filteredCustomers = customers?.filter((customer) => {
+  const filteredCustomers = useMemo(() => customers?.filter((customer) => {
     const matchesSearch =
       customer.name.toLowerCase().includes(search.toLowerCase()) ||
       customer.email?.toLowerCase().includes(search.toLowerCase());
@@ -96,13 +98,7 @@ export default function Customers() {
       (sourceFilter === "shopify" && customer.shopifyCustomerId) ||
       (sourceFilter === "manual" && !customer.shopifyCustomerId);
     return matchesSearch && matchesStatus && matchesSource;
-  });
-
-  const statusColors: Record<string, string> = {
-    active: "bg-green-500/10 text-green-600",
-    inactive: "bg-gray-500/10 text-gray-600",
-    prospect: "bg-blue-500/10 text-blue-600",
-  };
+  }), [customers, search, statusFilter, sourceFilter]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -450,7 +446,7 @@ export default function Customers() {
                     <TableCell>{customer.phone || "-"}</TableCell>
                     <TableCell className="capitalize">{customer.type}</TableCell>
                     <TableCell>
-                      <Badge className={statusColors[customer.status] || ""}>
+                      <Badge className={getStatusColor(customer.status)}>
                         {customer.status}
                       </Badge>
                     </TableCell>

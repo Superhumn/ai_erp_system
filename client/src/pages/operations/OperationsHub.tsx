@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
+import { formatCurrency } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -32,12 +33,6 @@ const poStatusOptions = [
   { value: "received", label: "Received", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
   { value: "cancelled", label: "Cancelled", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
 ];
-
-function formatCurrency(value: string | number | null | undefined) {
-  const num = typeof value === "string" ? parseFloat(value) : value;
-  if (!num) return "-";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(num);
-}
 
 function formatDate(value: string | Date | null | undefined) {
   if (!value) return "-";

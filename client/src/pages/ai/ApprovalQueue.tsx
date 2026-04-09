@@ -43,6 +43,7 @@ import {
 } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
+import { formatCurrency } from "@/lib/format";
 
 function formatDate(value: string | Date | null | undefined) {
   if (!value) return "-";
@@ -54,12 +55,6 @@ function formatDate(value: string | Date | null | undefined) {
     hour: "2-digit",
     minute: "2-digit"
   });
-}
-
-function formatCurrency(value: string | number | null | undefined) {
-  const num = typeof value === "string" ? parseFloat(value) : value;
-  if (!num) return "-";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(num);
 }
 
 const taskTypeIcons: Record<string, any> = {

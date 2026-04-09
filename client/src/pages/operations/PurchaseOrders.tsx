@@ -34,14 +34,8 @@ import { SelectWithCreate } from "@/components/ui/select-with-create";
 import { ClipboardList, Plus, Search, Loader2, Sparkles, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
+import { getStatusColor } from "@/lib/statusColors";
 
 type LineItem = {
   productId?: number;
@@ -83,7 +77,7 @@ export default function PurchaseOrders() {
   });
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
 
-  const { data: purchaseOrders, isLoading, refetch } = trpc.purchaseOrders.list.useQuery();
+  const { data: purchaseOrders, isLoading } = trpc.purchaseOrders.list.useQuery();
   const { data: vendors } = trpc.vendors.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
   const utils = trpc.useUtils();
@@ -93,7 +87,7 @@ export default function PurchaseOrders() {
       toast.success("Purchase order created successfully");
       setIsOpen(false);
       resetForm();
-      refetch();
+      utils.purchaseOrders.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -123,7 +117,7 @@ export default function PurchaseOrders() {
       setTextInput("");
       setPoPreview(null);
       setActiveAction(null);
-      refetch();
+      utils.purchaseOrders.list.invalidate();
     },
     onError: (error) => {
       toast.error(`Failed to create PO: ${error.message}`);
@@ -136,16 +130,6 @@ export default function PurchaseOrders() {
     const matchesStatus = statusFilter === "all" || po.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-
-  const statusColors: Record<string, string> = {
-    draft: "bg-gray-500/10 text-gray-600",
-    pending: "bg-amber-500/10 text-amber-600",
-    approved: "bg-blue-500/10 text-blue-600",
-    ordered: "bg-purple-500/10 text-purple-600",
-    partial: "bg-indigo-500/10 text-indigo-600",
-    received: "bg-green-500/10 text-green-600",
-    cancelled: "bg-red-500/10 text-red-600",
-  };
 
   const resetForm = () => {
     setFormData({ vendorId: 0, expectedDeliveryDate: "", notes: "" });
@@ -648,7 +632,7 @@ export default function PurchaseOrders() {
                       {formatCurrency(po.totalAmount)}
                     </TableCell>
                     <TableCell>
-                      <Badge className={statusColors[po.status]}>{po.status}</Badge>
+                      <Badge className={getStatusColor(po.status)}>{po.status}</Badge>
                     </TableCell>
                   </TableRow>
                 ))}

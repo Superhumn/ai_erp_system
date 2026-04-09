@@ -10,6 +10,7 @@ import { Badge } from "../../components/ui/badge";
 import { CalendarIcon, Download, TrendingUp, TrendingDown, DollarSign, Package, Truck, ExternalLink } from "lucide-react";
 import { format } from "date-fns";
 import { Link } from "wouter";
+import { formatCurrency } from "@/lib/format";
 
 export default function Profitability() {
   const [dateRange, setDateRange] = useState<{ from: Date | undefined; to: Date | undefined }>({
@@ -49,14 +50,6 @@ export default function Profitability() {
     (acc, item) => acc + (Number(item.totalValue) || 0),
     0
   ) || 0;
-
-  const formatCurrency = (value: number | string | null | undefined) => {
-    const num = Number(value) || 0;
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD'
-    }).format(num);
-  };
 
   const formatPercent = (value: number | string | null | undefined) => {
     const num = Number(value) || 0;

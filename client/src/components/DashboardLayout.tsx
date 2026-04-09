@@ -76,7 +76,7 @@ import {
   BarChart3,
   Shield,
 } from "lucide-react";
-import { CSSProperties, useEffect, useRef, useState } from "react";
+import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { AICommandBar } from './AICommandBar';
@@ -334,18 +334,18 @@ function DashboardLayoutContent({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [setLocation]);
 
-  const toggleGroup = (label: string) => {
+  const toggleGroup = useCallback((label: string) => {
     setOpenGroups(prev =>
       prev.includes(label)
         ? prev.filter(g => g !== label)
         : [...prev, label]
     );
-  };
+  }, []);
 
-  // Find active menu item for mobile header
-  const activeMenuItem = menuGroups
+  // Find active menu item for mobile header (memoized to avoid recalculation)
+  const activeMenuItem = useMemo(() => menuGroups
     .flatMap(g => g.items)
-    .find(item => item.path === location);
+    .find(item => item.path === location), [location]);
 
   useEffect(() => {
     if (isCollapsed) {
