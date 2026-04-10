@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS `quickbooksAccounts` (
   `updatedAt` timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
   UNIQUE KEY `idx_qb_account_id` (`companyId`, `quickbooksAccountId`)
 );
+--> statement-breakpoint
 
 -- QuickBooks Account Mappings for COGS categories
 CREATE TABLE IF NOT EXISTS `quickbooksAccountMappings` (
@@ -33,6 +34,7 @@ CREATE TABLE IF NOT EXISTS `quickbooksAccountMappings` (
   `updatedAt` timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
   KEY `idx_mapping_type` (`companyId`, `mappingType`)
 );
+--> statement-breakpoint
 
 -- QuickBooks Items (Products)
 CREATE TABLE IF NOT EXISTS `quickbooksItems` (
@@ -57,7 +59,9 @@ CREATE TABLE IF NOT EXISTS `quickbooksItems` (
   UNIQUE KEY `idx_qb_item_id` (`companyId`, `quickbooksItemId`),
   KEY `idx_product_id` (`productId`)
 );
+--> statement-breakpoint
 
 -- Add indexes for performance
 CREATE INDEX `idx_qb_accounts_classification` ON `quickbooksAccounts` (`classification`, `active`);
+--> statement-breakpoint
 CREATE INDEX `idx_qb_items_sku` ON `quickbooksItems` (`sku`);

@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS `inventoryCostingConfig` (
   KEY `idx_costing_config_product` (`productId`),
   KEY `idx_costing_config_company` (`companyId`)
 );
+--> statement-breakpoint
 
 -- Inventory cost layers (purchase lots) for FIFO/LIFO/Weighted Average
 CREATE TABLE IF NOT EXISTS `inventoryCostLayers` (
@@ -41,6 +42,7 @@ CREATE TABLE IF NOT EXISTS `inventoryCostLayers` (
   KEY `idx_cost_layers_warehouse` (`warehouseId`),
   KEY `idx_cost_layers_date` (`layerDate`)
 );
+--> statement-breakpoint
 
 -- COGS (Cost of Goods Sold) records per sale
 CREATE TABLE IF NOT EXISTS `cogsRecords` (
@@ -66,6 +68,7 @@ CREATE TABLE IF NOT EXISTS `cogsRecords` (
   KEY `idx_cogs_records_period` (`periodDate`),
   KEY `idx_cogs_records_order` (`orderId`)
 );
+--> statement-breakpoint
 
 -- COGS period summaries for reporting
 CREATE TABLE IF NOT EXISTS `cogsPeriodSummary` (
@@ -86,6 +89,7 @@ CREATE TABLE IF NOT EXISTS `cogsPeriodSummary` (
   KEY `idx_cogs_summary_period` (`periodType`, `periodStart`, `periodEnd`),
   KEY `idx_cogs_summary_product` (`productId`)
 );
+--> statement-breakpoint
 
 -- Vendor negotiations
 CREATE TABLE IF NOT EXISTS `vendorNegotiations` (
@@ -121,6 +125,7 @@ CREATE TABLE IF NOT EXISTS `vendorNegotiations` (
   KEY `idx_vendor_negotiations_vendor` (`vendorId`),
   KEY `idx_vendor_negotiations_status` (`status`)
 );
+--> statement-breakpoint
 
 -- Negotiation rounds
 CREATE TABLE IF NOT EXISTS `negotiationRounds` (

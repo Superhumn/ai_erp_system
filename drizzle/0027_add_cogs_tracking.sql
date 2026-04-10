@@ -2,7 +2,9 @@
 
 -- Add cost tracking fields to inventory table
 ALTER TABLE `inventory` ADD COLUMN `averageCost` decimal(15,4);
+--> statement-breakpoint
 ALTER TABLE `inventory` ADD COLUMN `totalCostBasis` decimal(15,2);
+--> statement-breakpoint
 
 -- Create COGS transactions table
 CREATE TABLE IF NOT EXISTS `cogsTransactions` (
@@ -28,6 +30,7 @@ CREATE TABLE IF NOT EXISTS `cogsTransactions` (
   `transactionDate` timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL,
   `createdAt` timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
+--> statement-breakpoint
 
 -- Create freight cost allocations table
 CREATE TABLE IF NOT EXISTS `freightCostAllocations` (
@@ -47,19 +50,29 @@ CREATE TABLE IF NOT EXISTS `freightCostAllocations` (
   `createdAt` timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL,
   `updatedAt` timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
 );
+--> statement-breakpoint
 
 -- Add COGS tracking fields to salesOrders table
 ALTER TABLE `salesOrders` ADD COLUMN `totalCOGS` decimal(15,2);
+--> statement-breakpoint
 ALTER TABLE `salesOrders` ADD COLUMN `grossProfit` decimal(15,2);
+--> statement-breakpoint
 ALTER TABLE `salesOrders` ADD COLUMN `grossProfitMargin` decimal(5,2);
+--> statement-breakpoint
 
 -- Add COGS tracking fields to salesOrderLines table
 ALTER TABLE `salesOrderLines` ADD COLUMN `costOfGoodsSold` decimal(15,2);
+--> statement-breakpoint
 ALTER TABLE `salesOrderLines` ADD COLUMN `grossProfit` decimal(15,2);
+--> statement-breakpoint
 
 -- Create indexes for performance
 CREATE INDEX `idx_cogs_sales_order` ON `cogsTransactions` (`salesOrderId`);
+--> statement-breakpoint
 CREATE INDEX `idx_cogs_product` ON `cogsTransactions` (`productId`);
+--> statement-breakpoint
 CREATE INDEX `idx_cogs_transaction_date` ON `cogsTransactions` (`transactionDate`);
+--> statement-breakpoint
 CREATE INDEX `idx_freight_po` ON `freightCostAllocations` (`purchaseOrderId`);
+--> statement-breakpoint
 CREATE INDEX `idx_freight_product` ON `freightCostAllocations` (`productId`);
