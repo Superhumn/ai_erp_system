@@ -898,6 +898,16 @@ export function getOrchestrator(): SupplyChainOrchestrator {
 }
 
 export async function startOrchestrator(): Promise<void> {
+  // The supply chain workflow tables were removed from the schema.
+  // Check if the table exists before attempting to start.
+  const db = await getDb();
+  if (!db) return;
+  try {
+    await db.execute(sql`SELECT 1 FROM supply_chain_workflows LIMIT 1`);
+  } catch {
+    console.log("[Orchestrator] Supply chain workflow tables not found — orchestrator disabled (this is expected)");
+    return;
+  }
   const orchestrator = getOrchestrator();
   await orchestrator.configureDefaultWorkflows();
   await orchestrator.start();
