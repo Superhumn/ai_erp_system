@@ -211,34 +211,6 @@
       "when": 1771251260000,
       "tag": "0029_inventory_costing_vendor_negotiations",
       "breakpoints": true
-    },
-    {
-      "idx": 30,
-      "version": "5",
-      "when": 1771251261000,
-      "tag": "0029_add_performance_indexes",
-      "breakpoints": true
-    },
-    {
-      "idx": 31,
-      "version": "5",
-      "when": 1771251262000,
-      "tag": "0029_add_indexes_and_foreign_keys",
-      "breakpoints": true
-    },
-    {
-      "idx": 32,
-      "version": "5",
-      "when": 1771251263000,
-      "tag": "0030_additional_indexes_and_constraints",
-      "breakpoints": true
-    },
-    {
-      "idx": 33,
-      "version": "5",
-      "when": 1771251264000,
-      "tag": "0031_add_users_password_hash",
-      "breakpoints": true
     }
   ]
 }
