@@ -756,6 +756,48 @@ export const emailRouter = router({
             }
           }
 
+          // ── Automation #3: Vendor quote email → auto-create freight quote ──
+          if (result.categorization?.category === "freight_quote" && result.documents.length > 0) {
+            try {
+              const quoteDoc = result.documents.find(d => d.totalAmount || (d as any).freightCost) || result.documents[0];
+              const senderEmail = input.fromEmail;
+              // Try to find a matching carrier by sender email
+              const carriers = await db.getFreightCarriers();
+              const matchedCarrier = carriers.find(
+                (c: any) => c.email && senderEmail && c.email.toLowerCase() === senderEmail.toLowerCase()
+              );
+              const carrierId = matchedCarrier?.id ?? 0;
+
+              // Check if there's an open RFQ we can link this quote to
+              const openRfqs = await db.getFreightRfqs({ status: "awaiting_quotes" });
+              const linkedRfq = openRfqs.length > 0 ? openRfqs[0] : null;
+              const rfqId = linkedRfq?.id ?? 0;
+
+              await db.createFreightQuote({
+                rfqId,
+                carrierId,
+                quoteNumber: quoteDoc.documentNumber || `QTE-EMAIL-${Date.now().toString(36).toUpperCase()}`,
+                status: "received",
+                freightCost: quoteDoc.totalAmount?.toString() || (quoteDoc as any).freightCost?.toString() || null,
+                totalCost: quoteDoc.totalAmount?.toString() || null,
+                currency: quoteDoc.currency || "USD",
+                transitDays: (quoteDoc as any).transitDays ?? null,
+                shippingMode: (quoteDoc as any).shippingMode || null,
+                receivedVia: "email",
+                rawEmailContent: input.bodyText?.substring(0, 5000) || null,
+                notes: `Auto-created from vendor quote email: ${input.subject}`,
+              } as any);
+              console.log(`[Email→Quote] Auto-created freight quote from email ${emailId} (carrier=${matchedCarrier?.name || 'unknown'}, rfq=${rfqId || 'standalone'})`);
+
+              // If linked to an RFQ, update its status
+              if (linkedRfq) {
+                await db.updateFreightRfq(linkedRfq.id, { status: "quotes_received" });
+              }
+            } catch (e) {
+              console.warn("[Email→Quote] Auto-creation failed:", e);
+            }
+          }
+
           // ── Automation #5: Copacker email extractor → auto-trigger ──
           if (result.categorization?.category === "inventory_report") {
             try {
@@ -1354,6 +1396,44 @@ export const emailRouter = router({
                 }
               } catch (e) {
                 console.warn("[IMAP→Shipment] Auto-update failed:", e);
+              }
+            }
+
+            // ── IMAP Automation #3: Vendor quote email → auto-create freight quote ──
+            if (email.categorization?.category === "freight_quote" && parseResult?.documents?.length) {
+              try {
+                const quoteDoc: any = parseResult.documents.find((d: any) => d.totalAmount || d.freightCost) || parseResult.documents[0];
+                const senderEmail = email.from?.address;
+                const carriers = await db.getFreightCarriers();
+                const matchedCarrier = carriers.find(
+                  (c: any) => c.email && senderEmail && c.email.toLowerCase() === senderEmail.toLowerCase()
+                );
+                const carrierId = matchedCarrier?.id ?? 0;
+                const openRfqs = await db.getFreightRfqs({ status: "awaiting_quotes" });
+                const linkedRfq = openRfqs.length > 0 ? openRfqs[0] : null;
+                const rfqId = linkedRfq?.id ?? 0;
+
+                await db.createFreightQuote({
+                  rfqId,
+                  carrierId,
+                  quoteNumber: quoteDoc.documentNumber || `QTE-IMAP-${Date.now().toString(36).toUpperCase()}`,
+                  status: "received",
+                  freightCost: quoteDoc.totalAmount?.toString() || quoteDoc.freightCost?.toString() || null,
+                  totalCost: quoteDoc.totalAmount?.toString() || null,
+                  currency: quoteDoc.currency || "USD",
+                  transitDays: quoteDoc.transitDays ?? null,
+                  shippingMode: quoteDoc.shippingMode || null,
+                  receivedVia: "email",
+                  rawEmailContent: email.bodyText?.substring(0, 5000) || null,
+                  notes: `Auto-created from IMAP vendor quote email: ${email.subject}`,
+                } as any);
+                console.log(`[IMAP→Quote] Auto-created freight quote from email ${emailId} (carrier=${matchedCarrier?.name || 'unknown'}, rfq=${rfqId || 'standalone'})`);
+
+                if (linkedRfq) {
+                  await db.updateFreightRfq(linkedRfq.id, { status: "quotes_received" });
+                }
+              } catch (e) {
+                console.warn("[IMAP→Quote] Auto-creation failed:", e);
               }
             }
 

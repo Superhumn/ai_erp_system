@@ -698,6 +698,21 @@ export const appRouter = router({
         const oldInvoice = await db.getInvoiceById(id);
         await db.updateInvoice(id, data);
         await createAuditLog(ctx.user.id, 'update', 'invoice', id, oldInvoice?.invoiceNumber, oldInvoice, data);
+
+        // ── Cascade #16b: Invoice status changed to "paid" → mark linked order as "delivered" ──
+        if (input.status === "paid" && oldInvoice?.status !== "paid") {
+          try {
+            const allOrders = await db.getOrders();
+            const linkedOrder = allOrders.find((o: any) => o.invoiceId === id);
+            if (linkedOrder && linkedOrder.status !== "delivered" && linkedOrder.status !== "cancelled") {
+              await db.updateOrder(linkedOrder.id, { status: "delivered" });
+              console.log(`[Cascade] Invoice ${id} paid → Order ${linkedOrder.id} marked as delivered`);
+            }
+          } catch (e) {
+            console.warn("[Cascade] Invoice paid→Order complete failed:", e);
+          }
+        }
+
         return { success: true };
       }),
     approve: financeProcedure
@@ -833,8 +848,22 @@ export const appRouter = router({
           paidAmount: totalPaid.toString(),
           status: newStatus,
         });
-        
+
         await createAuditLog(ctx.user.id, 'update', 'invoice', input.invoiceId, `Payment recorded: ${input.amount}`);
+
+        // ── Cascade #16b: Invoice fully paid → mark linked order as "delivered" ──
+        if (newStatus === "paid") {
+          try {
+            const allOrders = await db.getOrders();
+            const linkedOrder = allOrders.find((o: any) => o.invoiceId === input.invoiceId);
+            if (linkedOrder && linkedOrder.status !== "delivered" && linkedOrder.status !== "cancelled") {
+              await db.updateOrder(linkedOrder.id, { status: "delivered" });
+              console.log(`[Cascade] Invoice ${input.invoiceId} paid → Order ${linkedOrder.id} marked as delivered`);
+            }
+          } catch (e) {
+            console.warn("[Cascade] Invoice paid→Order complete failed:", e);
+          }
+        }
 
         // Auto-create journal entry for payment (double-entry bookkeeping)
         try {
@@ -947,9 +976,23 @@ export const appRouter = router({
             const newPaidAmount = (parseFloat(invoice.paidAmount || '0') + parseFloat(input.amount)).toString();
             const newStatus = parseFloat(newPaidAmount) >= parseFloat(invoice.totalAmount) ? 'paid' : 'partial';
             await db.updateInvoice(input.invoiceId, { paidAmount: newPaidAmount, status: newStatus });
+
+            // ── Cascade #16b: Invoice fully paid → mark linked order as "delivered" ──
+            if (newStatus === "paid") {
+              try {
+                const allOrders = await db.getOrders();
+                const linkedOrder = allOrders.find((o: any) => o.invoiceId === input.invoiceId);
+                if (linkedOrder && linkedOrder.status !== "delivered" && linkedOrder.status !== "cancelled") {
+                  await db.updateOrder(linkedOrder.id, { status: "delivered" });
+                  console.log(`[Cascade] Invoice ${input.invoiceId} paid → Order ${linkedOrder.id} marked as delivered`);
+                }
+              } catch (e) {
+                console.warn("[Cascade] Invoice paid→Order complete failed:", e);
+              }
+            }
           }
         }
-        
+
         await createAuditLog(ctx.user.id, 'create', 'payment', result.id, paymentNumber);
         return result;
       }),
@@ -1085,6 +1128,23 @@ export const appRouter = router({
         const { id, ...data } = input;
         await db.updateOrder(id, data);
         await createAuditLog(ctx.user.id, 'update', 'order', id);
+
+        // ── Cascade #16a: Order shipped/delivered → mark linked invoice as "sent" ──
+        if (input.status === "shipped" || input.status === "delivered") {
+          try {
+            const order = await db.getOrderById(id);
+            if (order?.invoiceId) {
+              const invoice = await db.getInvoiceById(order.invoiceId);
+              if (invoice && invoice.status === "draft") {
+                await db.updateInvoice(order.invoiceId, { status: "sent" });
+                console.log(`[Cascade] Order ${id} ${input.status} → Invoice ${order.invoiceId} marked as sent`);
+              }
+            }
+          } catch (e) {
+            console.warn("[Cascade] Order→Invoice status update failed:", e);
+          }
+        }
+
         return { success: true };
       }),
   }),
@@ -1979,7 +2039,36 @@ export const appRouter = router({
             metadata: { trackingNumber: data.trackingNumber || oldShipment?.trackingNumber },
           }, opsUsers.map(u => u.id));
         }
-        
+
+        // ── Cascade #16c: Shipment delivered → update linked order to "delivered" ──
+        if (data.status === "delivered") {
+          try {
+            const shipment = await db.getShipmentById(id);
+            if (shipment?.orderId) {
+              const order = await db.getOrderById(shipment.orderId);
+              if (order && order.status !== "delivered" && order.status !== "cancelled") {
+                await db.updateOrder(shipment.orderId, { status: "delivered" });
+                console.log(`[Cascade] Shipment ${id} delivered → Order ${shipment.orderId} marked as delivered`);
+
+                // Create a notification for the delivery
+                const deliveryUsers = await db.getUsersByRoles(['admin', 'ops', 'sales', 'exec']);
+                await db.notifyUsersOfEvent({
+                  type: 'sales_order_delivered',
+                  title: `Order ${order.orderNumber} delivered`,
+                  message: `Order ${order.orderNumber} has been marked as delivered following shipment delivery.`,
+                  entityType: 'order',
+                  entityId: shipment.orderId,
+                  severity: 'info',
+                  link: `/sales/orders`,
+                  metadata: { shipmentId: id },
+                }, deliveryUsers.map(u => u.id));
+              }
+            }
+          } catch (e) {
+            console.warn("[Cascade] Shipment delivered→Order update failed:", e);
+          }
+        }
+
         return { success: true };
       }),
 
@@ -9541,6 +9630,44 @@ Ask if they received the original request and if they can provide a quote.`;
             }
           }
 
+          // ── Automation #3: Vendor quote email → auto-create freight quote ──
+          if (result.categorization?.category === "freight_quote" && result.documents.length > 0) {
+            try {
+              const quoteDoc = result.documents.find(d => d.totalAmount || (d as any).freightCost) || result.documents[0];
+              const senderEmail = input.fromEmail;
+              const carriers = await db.getFreightCarriers();
+              const matchedCarrier = carriers.find(
+                (c: any) => c.email && senderEmail && c.email.toLowerCase() === senderEmail.toLowerCase()
+              );
+              const carrierId = matchedCarrier?.id ?? 0;
+              const openRfqs = await db.getFreightRfqs({ status: "awaiting_quotes" });
+              const linkedRfq = openRfqs.length > 0 ? openRfqs[0] : null;
+              const rfqId = linkedRfq?.id ?? 0;
+
+              await db.createFreightQuote({
+                rfqId,
+                carrierId,
+                quoteNumber: quoteDoc.documentNumber || `QTE-EMAIL-${Date.now().toString(36).toUpperCase()}`,
+                status: "received",
+                freightCost: quoteDoc.totalAmount?.toString() || (quoteDoc as any).freightCost?.toString() || null,
+                totalCost: quoteDoc.totalAmount?.toString() || null,
+                currency: quoteDoc.currency || "USD",
+                transitDays: (quoteDoc as any).transitDays ?? null,
+                shippingMode: (quoteDoc as any).shippingMode || null,
+                receivedVia: "email",
+                rawEmailContent: input.bodyText?.substring(0, 5000) || null,
+                notes: `Auto-created from vendor quote email: ${input.subject}`,
+              } as any);
+              console.log(`[Email→Quote] Auto-created freight quote from email ${emailId} (carrier=${matchedCarrier?.name || 'unknown'}, rfq=${rfqId || 'standalone'})`);
+
+              if (linkedRfq) {
+                await db.updateFreightRfq(linkedRfq.id, { status: "quotes_received" });
+              }
+            } catch (e) {
+              console.warn("[Email→Quote] Auto-creation failed:", e);
+            }
+          }
+
           // ── Automation #5: Copacker email extractor → auto-trigger ──
           if (result.categorization?.category === "inventory_report") {
             try {
@@ -10139,6 +10266,44 @@ Ask if they received the original request and if they can provide a quote.`;
                 }
               } catch (e) {
                 console.warn("[IMAP→Shipment] Auto-update failed:", e);
+              }
+            }
+
+            // ── IMAP Automation #3: Vendor quote email → auto-create freight quote ──
+            if (email.categorization?.category === "freight_quote" && parseResult?.documents?.length) {
+              try {
+                const quoteDoc: any = parseResult.documents.find((d: any) => d.totalAmount || d.freightCost) || parseResult.documents[0];
+                const senderEmail = email.from?.address;
+                const carriers = await db.getFreightCarriers();
+                const matchedCarrier = carriers.find(
+                  (c: any) => c.email && senderEmail && c.email.toLowerCase() === senderEmail.toLowerCase()
+                );
+                const carrierId = matchedCarrier?.id ?? 0;
+                const openRfqs = await db.getFreightRfqs({ status: "awaiting_quotes" });
+                const linkedRfq = openRfqs.length > 0 ? openRfqs[0] : null;
+                const rfqId = linkedRfq?.id ?? 0;
+
+                await db.createFreightQuote({
+                  rfqId,
+                  carrierId,
+                  quoteNumber: quoteDoc.documentNumber || `QTE-IMAP-${Date.now().toString(36).toUpperCase()}`,
+                  status: "received",
+                  freightCost: quoteDoc.totalAmount?.toString() || quoteDoc.freightCost?.toString() || null,
+                  totalCost: quoteDoc.totalAmount?.toString() || null,
+                  currency: quoteDoc.currency || "USD",
+                  transitDays: quoteDoc.transitDays ?? null,
+                  shippingMode: quoteDoc.shippingMode || null,
+                  receivedVia: "email",
+                  rawEmailContent: email.bodyText?.substring(0, 5000) || null,
+                  notes: `Auto-created from IMAP vendor quote email: ${email.subject}`,
+                } as any);
+                console.log(`[IMAP→Quote] Auto-created freight quote from email ${emailId} (carrier=${matchedCarrier?.name || 'unknown'}, rfq=${rfqId || 'standalone'})`);
+
+                if (linkedRfq) {
+                  await db.updateFreightRfq(linkedRfq.id, { status: "quotes_received" });
+                }
+              } catch (e) {
+                console.warn("[IMAP→Quote] Auto-creation failed:", e);
               }
             }
 
