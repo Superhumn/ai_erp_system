@@ -37,7 +37,9 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 const oauthCallbackLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
-  message: { error: "Too many OAuth callback requests, please try again later" },
+  message: {
+    error: "Too many OAuth callback requests, please try again later",
+  },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -45,13 +47,23 @@ const oauthCallbackLimiter = rateLimit({
 async function startServer() {
   const emailConfigValidation = validateEmailConfig();
   if (!emailConfigValidation.valid) {
-    console.warn("[Email Config] Warning: Some email configuration is missing:");
+    console.warn(
+      "[Email Config] Warning: Some email configuration is missing:"
+    );
     emailConfigValidation.errors.forEach(err => console.warn(`  - ${err}`));
-    console.warn("[Email Config] Email features will be disabled until configuration is provided.");
+    console.warn(
+      "[Email Config] Email features will be disabled until configuration is provided."
+    );
   }
 
   const app = express();
-  app.set("trust proxy", 1);
+  // Trust exactly one proxy hop in production (Railway reverse proxy) so that
+  // req.secure / req.ip are derived from X-Forwarded-* headers correctly.
+  // Keeping this off in development prevents X-Forwarded-For spoofing against
+  // the in-memory rate limiter when running without a proxy.
+  if (ENV.isProduction) {
+    app.set("trust proxy", 1);
+  }
   const server = createServer(app);
 
   // =====================================  // SECURITY HEADERS
@@ -61,9 +73,15 @@ async function startServer() {
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader("X-XSS-Protection", "1; mode=block");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    res.setHeader(
+      "Permissions-Policy",
+      "camera=(), microphone=(), geolocation=()"
+    );
     if (process.env.NODE_ENV === "production") {
-      res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+      res.setHeader(
+        "Strict-Transport-Security",
+        "max-age=31536000; includeSubDomains"
+      );
     }
     next();
   });
@@ -87,8 +105,13 @@ async function startServer() {
 
     entry.count++;
     if (entry.count > RATE_LIMIT_MAX) {
-      res.setHeader("Retry-After", String(Math.ceil((entry.resetTime - now) / 1000)));
-      return res.status(429).json({ error: "Too many requests. Please try again later." });
+      res.setHeader(
+        "Retry-After",
+        String(Math.ceil((entry.resetTime - now) / 1000))
+      );
+      return res
+        .status(429)
+        .json({ error: "Too many requests. Please try again later." });
     }
 
     next();
@@ -106,7 +129,11 @@ async function startServer() {
   // HEALTH CHECK
   // ============================================
   app.get("/health", (_req, res) => {
-    res.json({ status: "ok", timestamp: new Date().toISOString(), uptime: process.uptime() });
+    res.json({
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+    });
   });
 
   // Configure body parser with larger size limit for file uploads
@@ -116,218 +143,409 @@ async function startServer() {
   registerOAuthRoutes(app);
 
   // Health check endpoint
-  app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  app.get("/api/health", (_req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
   // ============================================
   // SENDGRID WEBHOOK ENDPOINT
   // ============================================
-  app.post('/webhooks/sendgrid/events', express.raw({ type: 'application/json' }), async (req, res) => {
-    try {
-      const rawBody = req.body.toString();
-      if (ENV.sendgridWebhookSecret) {
-        const signature = req.headers['x-twilio-email-event-webhook-signature'] as string;
-        const timestamp = req.headers['x-twilio-email-event-webhook-timestamp'] as string;
-        if (!signature || !timestamp) {
-          return res.status(401).json({ error: 'Missing signature headers' });
-        }
-        const isValid = sendgridProvider.verifyWebhookSignature(ENV.sendgridWebhookSecret, rawBody, signature, timestamp);
-        if (!isValid) {
-          return res.status(401).json({ error: 'Invalid signature' });
-        }
-      }
-      let events: any[];
+  app.post(
+    "/webhooks/sendgrid/events",
+    express.raw({ type: "application/json" }),
+    async (req, res) => {
       try {
-        events = JSON.parse(rawBody);
-      } catch (e) {
-        return res.status(400).json({ error: 'Invalid JSON' });
-      }
-      if (!Array.isArray(events)) events = [events];
-      for (const event of events) {
-        try {
-          const providerEventType = event.event;
-          const providerMessageId = event.sg_message_id?.split('.')[0];
-          const email = event.email;
-          const timestamp = event.timestamp ? new Date(event.timestamp * 1000) : new Date();
-          const emailEvent = await (db as any).createEmailEvent({ providerEventType, providerMessageId, providerTimestamp: timestamp, rawEventJson: event, email, reason: event.reason || event.response || null, bounceType: event.type || null, processedAt: new Date() });
-          if (providerMessageId) {
-            const message = await (db as any).getEmailMessageByProviderMessageId(providerMessageId);
-            if (message) {
-              await (db as any).createEmailEvent({ ...emailEvent, emailMessageId: message.id });
-              const newStatus = sendgridProvider.mapEventToStatus(providerEventType);
-              if (newStatus) await (db as any).updateEmailMessageStatus(message.id, newStatus);
-            }
+        const rawBody = req.body.toString();
+        if (ENV.sendgridWebhookSecret) {
+          const signature = req.headers[
+            "x-twilio-email-event-webhook-signature"
+          ] as string;
+          const timestamp = req.headers[
+            "x-twilio-email-event-webhook-timestamp"
+          ] as string;
+          if (!signature || !timestamp) {
+            return res.status(401).json({ error: "Missing signature headers" });
           }
-        } catch (eventError) {
-          console.error('[SendGrid Webhook] Error processing event:', eventError);
+          const isValid = sendgridProvider.verifyWebhookSignature(
+            ENV.sendgridWebhookSecret,
+            rawBody,
+            signature,
+            timestamp
+          );
+          if (!isValid) {
+            return res.status(401).json({ error: "Invalid signature" });
+          }
         }
+        let events: any[];
+        try {
+          events = JSON.parse(rawBody);
+        } catch (e) {
+          return res.status(400).json({ error: "Invalid JSON" });
+        }
+        if (!Array.isArray(events)) events = [events];
+        for (const event of events) {
+          try {
+            const providerEventType = event.event;
+            const providerMessageId = event.sg_message_id?.split(".")[0];
+            const email = event.email;
+            const timestamp = event.timestamp
+              ? new Date(event.timestamp * 1000)
+              : new Date();
+            const emailEvent = await (db as any).createEmailEvent({
+              providerEventType,
+              providerMessageId,
+              providerTimestamp: timestamp,
+              rawEventJson: event,
+              email,
+              reason: event.reason || event.response || null,
+              bounceType: event.type || null,
+              processedAt: new Date(),
+            });
+            if (providerMessageId) {
+              const message = await (
+                db as any
+              ).getEmailMessageByProviderMessageId(providerMessageId);
+              if (message) {
+                await (db as any).createEmailEvent({
+                  ...emailEvent,
+                  emailMessageId: message.id,
+                });
+                const newStatus =
+                  sendgridProvider.mapEventToStatus(providerEventType);
+                if (newStatus)
+                  await (db as any).updateEmailMessageStatus(
+                    message.id,
+                    newStatus
+                  );
+              }
+            }
+          } catch (eventError) {
+            console.error(
+              "[SendGrid Webhook] Error processing event:",
+              eventError
+            );
+          }
+        }
+        res.status(200).json({ received: events.length });
+      } catch (error) {
+        console.error("[SendGrid Webhook] Error:", error);
+        res.status(500).json({ error: "Internal server error" });
       }
-      res.status(200).json({ received: events.length });
-    } catch (error) {
-      console.error('[SendGrid Webhook] Error:', error);
-      res.status(500).json({ error: 'Internal server error' });
     }
-  });
-  
+  );
+
   // Shopify webhooks
   const handleShopifyWebhook = async (req: any, res: any) => {
     try {
       const rawBody = req.body.toString();
-      const { processShopifyWebhook } = await import('./shopify');
+      const { processShopifyWebhook } = await import("./shopify");
       const result = await processShopifyWebhook(rawBody, {
-        hmac: req.headers['x-shopify-hmac-sha256'] as string,
-        shopDomain: req.headers['x-shopify-shop-domain'] as string,
-        topic: req.headers['x-shopify-topic'] as string,
+        hmac: req.headers["x-shopify-hmac-sha256"] as string,
+        shopDomain: req.headers["x-shopify-shop-domain"] as string,
+        topic: req.headers["x-shopify-topic"] as string,
       });
       if (!result.shouldProcess) {
-        if (result.error === 'Already processed') return res.status(200).json({ success: true, message: 'Already processed' });
-        return res.status(result.error === 'Invalid signature' ? 401 : 400).json({ error: result.error });
+        if (result.error === "Already processed")
+          return res
+            .status(200)
+            .json({ success: true, message: "Already processed" });
+        return res
+          .status(result.error === "Invalid signature" ? 401 : 400)
+          .json({ error: result.error });
       }
       res.status(200).json({ success: true });
     } catch (error) {
-      console.error('[Shopify Webhook] Error:', error);
-      res.status(500).json({ error: 'Internal server error' });
+      console.error("[Shopify Webhook] Error:", error);
+      res.status(500).json({ error: "Internal server error" });
     }
   };
 
-  app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), (req, res) =>
-    handleShopifyWebhook(req, res)
+  app.post(
+    "/webhooks/shopify/orders",
+    express.raw({ type: "application/json" }),
+    (req, res) => handleShopifyWebhook(req, res)
   );
 
-  app.post('/webhooks/shopify/inventory', express.raw({ type: 'application/json' }), (req, res) =>
-    handleShopifyWebhook(req, res)
+  app.post(
+    "/webhooks/shopify/inventory",
+    express.raw({ type: "application/json" }),
+    (req, res) => handleShopifyWebhook(req, res)
   );
 
   // ============================================
   // EDI WEBHOOK ENDPOINT
   // ============================================
 
-  app.post('/webhooks/edi/inbound', express.raw({ type: ['application/edi-x12', 'text/plain', 'application/octet-stream'] }), async (req, res) => {
-    try {
-      const { handleEdiWebhook } = await import('../ediTransportService');
-      const rawContent = req.body.toString();
+  app.post(
+    "/webhooks/edi/inbound",
+    express.raw({
+      type: ["application/edi-x12", "text/plain", "application/octet-stream"],
+    }),
+    async (req, res) => {
+      try {
+        const { handleEdiWebhook } = await import("../ediTransportService");
+        const rawContent = req.body.toString();
 
-      if (!rawContent || rawContent.trim().length === 0) {
-        return res.status(400).json({ error: 'Empty EDI content' });
+        if (!rawContent || rawContent.trim().length === 0) {
+          return res.status(400).json({ error: "Empty EDI content" });
+        }
+
+        const senderIsaId = req.headers["x-edi-sender-id"] as
+          | string
+          | undefined;
+        const headers: Record<string, string> = {};
+        for (const [key, value] of Object.entries(req.headers)) {
+          if (typeof value === "string") headers[key] = value;
+        }
+
+        const result = await handleEdiWebhook(rawContent, senderIsaId, headers);
+
+        if (result.success) {
+          console.log(
+            `[EDI Webhook] Processed inbound document, transaction ID: ${result.transactionId}`
+          );
+          res.status(200).json(result);
+        } else {
+          console.warn(`[EDI Webhook] Processing failed: ${result.message}`);
+          res.status(422).json(result);
+        }
+      } catch (error) {
+        console.error("[EDI Webhook] Error:", error);
+        res.status(500).json({ error: "Internal server error" });
       }
-
-      const senderIsaId = req.headers['x-edi-sender-id'] as string | undefined;
-      const headers: Record<string, string> = {};
-      for (const [key, value] of Object.entries(req.headers)) {
-        if (typeof value === 'string') headers[key] = value;
-      }
-
-      const result = await handleEdiWebhook(rawContent, senderIsaId, headers);
-
-      if (result.success) {
-        console.log(`[EDI Webhook] Processed inbound document, transaction ID: ${result.transactionId}`);
-        res.status(200).json(result);
-      } else {
-        console.warn(`[EDI Webhook] Processing failed: ${result.message}`);
-        res.status(422).json(result);
-      }
-    } catch (error) {
-      console.error('[EDI Webhook] Error:', error);
-      res.status(500).json({ error: 'Internal server error' });
     }
-  });
+  );
 
   // Google OAuth callback
-  app.get('/api/google/callback', oauthCallbackLimiter, async (req, res) => {
+  app.get("/api/google/callback", oauthCallbackLimiter, async (req, res) => {
     const { code, state } = req.query;
-    if (!code || !state) return res.redirect('/import?error=missing_params');
+    if (!code || !state) return res.redirect("/import?error=missing_params");
     const userId = parseInt(state as string, 10);
-    if (isNaN(userId) || userId <= 0) return res.redirect('/import?error=invalid_state');
+    if (isNaN(userId) || userId <= 0)
+      return res.redirect("/import?error=invalid_state");
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    if (!clientId || !clientSecret) return res.redirect('/import?error=not_configured');
+    if (!clientId || !clientSecret)
+      return res.redirect("/import?error=not_configured");
     try {
-      const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, code: code as string, grant_type: 'authorization_code', redirect_uri: `${process.env.VITE_APP_URL || 'http://localhost:3000'}/api/google/callback` }),
+      const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          code: code as string,
+          grant_type: "authorization_code",
+          redirect_uri: `${process.env.VITE_APP_URL || "http://localhost:3000"}/api/google/callback`,
+        }),
       });
-      if (!tokenResponse.ok) return res.redirect('/import?error=token_exchange_failed');
+      if (!tokenResponse.ok)
+        return res.redirect("/import?error=token_exchange_failed");
       const tokens = await tokenResponse.json();
-      const userInfoResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', { headers: { Authorization: `Bearer ${tokens.access_token}` } });
+      const userInfoResponse = await fetch(
+        "https://www.googleapis.com/oauth2/v2/userinfo",
+        { headers: { Authorization: `Bearer ${tokens.access_token}` } }
+      );
       let googleEmail = null;
-      if (userInfoResponse.ok) { const userInfo = await userInfoResponse.json(); googleEmail = userInfo.email; }
-      const { upsertGoogleOAuthToken } = await import('../db');
-      await upsertGoogleOAuthToken({ userId, accessToken: tokens.access_token, refreshToken: tokens.refresh_token, expiresAt: new Date(Date.now() + tokens.expires_in * 1000), scope: tokens.scope, googleEmail });
-      res.redirect('/import?success=connected');
+      if (userInfoResponse.ok) {
+        const userInfo = await userInfoResponse.json();
+        googleEmail = userInfo.email;
+      }
+      const { upsertGoogleOAuthToken } = await import("../db");
+      await upsertGoogleOAuthToken({
+        userId,
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+        expiresAt: new Date(Date.now() + tokens.expires_in * 1000),
+        scope: tokens.scope,
+        googleEmail,
+      });
+      res.redirect("/import?success=connected");
     } catch (error) {
-      console.error('Google OAuth error:', error);
-      res.redirect('/import?error=oauth_failed');
+      console.error("Google OAuth error:", error);
+      res.redirect("/import?error=oauth_failed");
     }
   });
 
   // Shopify OAuth callback
-  app.get('/api/shopify/callback', oauthCallbackLimiter, async (req, res) => {
+  app.get("/api/shopify/callback", oauthCallbackLimiter, async (req, res) => {
     const { code, shop, state } = req.query;
-    if (!code || !shop || !state) return res.redirect('/settings/integrations?shopify_error=missing_params');
+    if (!code || !shop || !state)
+      return res.redirect(
+        "/settings/integrations?shopify_error=missing_params"
+      );
     const clientId = process.env.SHOPIFY_CLIENT_ID;
     const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
-    if (!clientId || !clientSecret) return res.redirect('/settings/integrations?shopify_error=not_configured');
+    if (!clientId || !clientSecret)
+      return res.redirect(
+        "/settings/integrations?shopify_error=not_configured"
+      );
     try {
-      const { sdk } = await import('./sdk');
+      const { sdk } = await import("./sdk");
       let user: any;
-      try { user = await sdk.authenticateRequest(req); } catch { return res.redirect('/settings/integrations?shopify_error=not_authenticated'); }
-      if (!user) return res.redirect('/settings/integrations?shopify_error=not_authenticated');
-      const stateParts = (state as string).split(':');
-      if (stateParts.length < 4) return res.redirect('/settings/integrations?shopify_error=invalid_state');
+      try {
+        user = await sdk.authenticateRequest(req);
+      } catch {
+        return res.redirect(
+          "/settings/integrations?shopify_error=not_authenticated"
+        );
+      }
+      if (!user)
+        return res.redirect(
+          "/settings/integrations?shopify_error=not_authenticated"
+        );
+      const stateParts = (state as string).split(":");
+      if (stateParts.length < 4)
+        return res.redirect(
+          "/settings/integrations?shopify_error=invalid_state"
+        );
       const stateUserId = parseInt(stateParts[0]);
-      const stateCompanyId = stateParts[1] !== 'undefined' ? parseInt(stateParts[1]) : undefined;
+      const stateCompanyId =
+        stateParts[1] !== "undefined" ? parseInt(stateParts[1]) : undefined;
       const stateShop = stateParts[2];
       const stateTimestamp = parseInt(stateParts[3]);
-      if (stateUserId !== user.id) return res.redirect('/settings/integrations?shopify_error=user_mismatch');
-      if (user.companyId && stateCompanyId !== user.companyId) return res.redirect('/settings/integrations?shopify_error=company_mismatch');
+      if (stateUserId !== user.id)
+        return res.redirect(
+          "/settings/integrations?shopify_error=user_mismatch"
+        );
+      if (user.companyId && stateCompanyId !== user.companyId)
+        return res.redirect(
+          "/settings/integrations?shopify_error=company_mismatch"
+        );
       let shopDomain = (shop as string).trim().toLowerCase();
-      if (!shopDomain.endsWith('.myshopify.com')) return res.redirect('/settings/integrations?shopify_error=invalid_domain');
-      if (stateShop !== shopDomain) return res.redirect('/settings/integrations?shopify_error=shop_mismatch');
-      if (Date.now() - stateTimestamp > 10 * 60 * 1000) return res.redirect('/settings/integrations?shopify_error=state_expired');
-      const tokenResponse = await fetch(`https://${shopDomain}/admin/oauth/access_token`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code: code as string }) });
-      if (!tokenResponse.ok) return res.redirect('/settings/integrations?shopify_error=token_exchange_failed');
+      if (!shopDomain.endsWith(".myshopify.com"))
+        return res.redirect(
+          "/settings/integrations?shopify_error=invalid_domain"
+        );
+      if (stateShop !== shopDomain)
+        return res.redirect(
+          "/settings/integrations?shopify_error=shop_mismatch"
+        );
+      if (Date.now() - stateTimestamp > 10 * 60 * 1000)
+        return res.redirect(
+          "/settings/integrations?shopify_error=state_expired"
+        );
+      const tokenResponse = await fetch(
+        `https://${shopDomain}/admin/oauth/access_token`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            client_id: clientId,
+            client_secret: clientSecret,
+            code: code as string,
+          }),
+        }
+      );
+      if (!tokenResponse.ok)
+        return res.redirect(
+          "/settings/integrations?shopify_error=token_exchange_failed"
+        );
       const tokenData = await tokenResponse.json();
       const accessToken = tokenData.access_token;
-      const shopInfoResponse = await fetch(`https://${shopDomain}/admin/api/2024-01/shop.json`, { headers: { 'X-Shopify-Access-Token': accessToken, 'Content-Type': 'application/json' } });
-      if (!shopInfoResponse.ok) return res.redirect('/settings/integrations?shopify_error=failed_to_fetch_shop_info');
+      const shopInfoResponse = await fetch(
+        `https://${shopDomain}/admin/api/2024-01/shop.json`,
+        {
+          headers: {
+            "X-Shopify-Access-Token": accessToken,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      if (!shopInfoResponse.ok)
+        return res.redirect(
+          "/settings/integrations?shopify_error=failed_to_fetch_shop_info"
+        );
       const shopInfo = await shopInfoResponse.json();
-      const { upsertShopifyStore, createSyncLog } = await import('../db');
-      const { encrypt } = await import('../_core/crypto');
+      const { upsertShopifyStore, createSyncLog } = await import("../db");
+      const { encrypt } = await import("../_core/crypto");
       const encryptedToken = encrypt(accessToken);
-      await upsertShopifyStore({ companyId: user.companyId || undefined, storeDomain: shopDomain, storeName: shopInfo.shop.name || shopDomain, accessToken: encryptedToken, apiVersion: '2024-01', isEnabled: true, syncInventory: true, syncOrders: true, inventoryAuthority: 'hybrid' });
-      await createSyncLog({ integration: 'shopify', action: 'store_connected', status: 'success', details: `Connected store: ${shopInfo.shop.name} (${shopDomain})` });
-      res.redirect('/settings/integrations?shopify_success=connected&shop=' + encodeURIComponent(shopInfo.shop.name));
+      await upsertShopifyStore({
+        companyId: user.companyId || undefined,
+        storeDomain: shopDomain,
+        storeName: shopInfo.shop.name || shopDomain,
+        accessToken: encryptedToken,
+        apiVersion: "2024-01",
+        isEnabled: true,
+        syncInventory: true,
+        syncOrders: true,
+        inventoryAuthority: "hybrid",
+      });
+      await createSyncLog({
+        integration: "shopify",
+        action: "store_connected",
+        status: "success",
+        details: `Connected store: ${shopInfo.shop.name} (${shopDomain})`,
+      });
+      res.redirect(
+        "/settings/integrations?shopify_success=connected&shop=" +
+          encodeURIComponent(shopInfo.shop.name)
+      );
     } catch (error) {
-      console.error('Shopify OAuth error:', error);
-      res.redirect('/settings/integrations?shopify_error=oauth_failed');
+      console.error("Shopify OAuth error:", error);
+      res.redirect("/settings/integrations?shopify_error=oauth_failed");
     }
   });
 
   // QuickBooks OAuth callback
-  app.get('/api/oauth/quickbooks/callback', oauthCallbackLimiter, async (req, res) => {
-    const { code, state, realmId } = req.query;
-    if (!code || !state || !realmId) return res.redirect('/settings/integrations?quickbooks_error=missing_params');
-    try {
-      const { sdk } = await import('./sdk');
-      let user: any;
-      try { user = await sdk.authenticateRequest(req); } catch { return res.redirect('/settings/integrations?quickbooks_error=not_authenticated'); }
-      if (!user) return res.redirect('/settings/integrations?quickbooks_error=not_authenticated');
-      const { validateOAuthState, exchangeCodeForToken } = await import('./quickbooks');
-      const stateValidation = validateOAuthState(state as string);
-      if (stateValidation.error || stateValidation.userId !== user.id) return res.redirect('/settings/integrations?quickbooks_error=invalid_state');
-      const tokenResult = await exchangeCodeForToken(code as string);
-      if (tokenResult.error) return res.redirect('/settings/integrations?quickbooks_error=token_exchange_failed');
-      const { upsertQuickBooksOAuthToken, createSyncLog } = await import('../db');
-      await upsertQuickBooksOAuthToken({ userId: user.id, accessToken: tokenResult.access_token!, refreshToken: tokenResult.refresh_token!, expiresAt: new Date(Date.now() + (tokenResult.expires_in! * 1000)), realmId: realmId as string, scope: 'com.intuit.quickbooks.accounting' });
-      await createSyncLog({ integration: 'quickbooks', action: 'connected', status: 'success', details: `QuickBooks connected - Realm ID: ${realmId}` });
-      res.redirect('/settings/integrations?quickbooks_success=connected');
-    } catch (error) {
-      console.error('QuickBooks OAuth error:', error);
-      res.redirect('/settings/integrations?quickbooks_error=oauth_failed');
+  app.get(
+    "/api/oauth/quickbooks/callback",
+    oauthCallbackLimiter,
+    async (req, res) => {
+      const { code, state, realmId } = req.query;
+      if (!code || !state || !realmId)
+        return res.redirect(
+          "/settings/integrations?quickbooks_error=missing_params"
+        );
+      try {
+        const { sdk } = await import("./sdk");
+        let user: any;
+        try {
+          user = await sdk.authenticateRequest(req);
+        } catch {
+          return res.redirect(
+            "/settings/integrations?quickbooks_error=not_authenticated"
+          );
+        }
+        if (!user)
+          return res.redirect(
+            "/settings/integrations?quickbooks_error=not_authenticated"
+          );
+        const { validateOAuthState, exchangeCodeForToken } =
+          await import("./quickbooks");
+        const stateValidation = validateOAuthState(state as string);
+        if (stateValidation.error || stateValidation.userId !== user.id)
+          return res.redirect(
+            "/settings/integrations?quickbooks_error=invalid_state"
+          );
+        const tokenResult = await exchangeCodeForToken(code as string);
+        if (tokenResult.error)
+          return res.redirect(
+            "/settings/integrations?quickbooks_error=token_exchange_failed"
+          );
+        const { upsertQuickBooksOAuthToken, createSyncLog } =
+          await import("../db");
+        await upsertQuickBooksOAuthToken({
+          userId: user.id,
+          accessToken: tokenResult.access_token!,
+          refreshToken: tokenResult.refresh_token!,
+          expiresAt: new Date(Date.now() + tokenResult.expires_in! * 1000),
+          realmId: realmId as string,
+          scope: "com.intuit.quickbooks.accounting",
+        });
+        await createSyncLog({
+          integration: "quickbooks",
+          action: "connected",
+          status: "success",
+          details: `QuickBooks connected - Realm ID: ${realmId}`,
+        });
+        res.redirect("/settings/integrations?quickbooks_success=connected");
+      } catch (error) {
+        console.error("QuickBooks OAuth error:", error);
+        res.redirect("/settings/integrations?quickbooks_error=oauth_failed");
+      }
     }
-  });
+  );
 
   // Health check endpoint for Railway and other deployment platforms
   app.get("/api/health", (_req, res) => {
@@ -335,8 +553,11 @@ async function startServer() {
   });
 
   // tRPC API
-  app.use("/api/trpc", createExpressMiddleware({ router: appRouter, createContext }));
-  
+  app.use(
+    "/api/trpc",
+    createExpressMiddleware({ router: appRouter, createContext })
+  );
+
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
   } else {
@@ -345,7 +566,8 @@ async function startServer() {
 
   const preferredPort = parseInt(process.env.PORT || "3000");
   const port = await findAvailablePort(preferredPort);
-  if (port !== preferredPort) console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
+  if (port !== preferredPort)
+    console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
 
   server.listen(port, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${port}/`);
@@ -354,22 +576,31 @@ async function startServer() {
     startEmailQueueWorker();
 
     // Start EDI polling scheduler (check every 5 minutes)
-    import('../ediTransportService').then(({ startEdiPolling }) => {
-      startEdiPolling(5 * 60 * 1000);
-    }).catch(err => {
-      console.warn('[EDI Polling] Could not start polling scheduler:', err.message);
-    });
+    import("../ediTransportService")
+      .then(({ startEdiPolling }) => {
+        startEdiPolling(5 * 60 * 1000);
+      })
+      .catch(err => {
+        console.warn(
+          "[EDI Polling] Could not start polling scheduler:",
+          err.message
+        );
+      });
     console.log("[Startup] Starting autonomous supply chain orchestrator...");
     startOrchestrator().catch(err => {
       console.error("[Startup] Failed to start orchestrator:", err);
-      console.warn("[Startup] Server running in degraded mode - autonomous workflows disabled");
+      console.warn(
+        "[Startup] Server running in degraded mode - autonomous workflows disabled"
+      );
     });
     console.log("[Startup] Starting AI agent scheduler...");
     try {
       startScheduler();
     } catch (err) {
       console.error("[Startup] Failed to start AI agent scheduler:", err);
-      console.warn("[Startup] Server running in degraded mode - AI agent automation disabled");
+      console.warn(
+        "[Startup] Server running in degraded mode - AI agent automation disabled"
+      );
     }
   });
 }
