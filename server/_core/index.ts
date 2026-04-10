@@ -8,7 +8,7 @@ import { registerOAuthRoutes } from "./oauth";
 import { registerLocalAuthRoutes } from "./localAuth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
-import { serveStatic, setupVite } from "./vite";
+import { serveStatic } from "./vite";
 import { ENV, validateEmailConfig, validateCriticalConfig } from "./env";
 import * as sendgridProvider from "./sendgridProvider";
 import * as emailService from "./emailService";
@@ -398,6 +398,8 @@ async function startServer() {
   app.use("/api/trpc", createExpressMiddleware({ router: appRouter, createContext }));
   
   if (process.env.NODE_ENV === "development") {
+    // Dynamic import to avoid bundling vite in production
+    const { setupVite } = await import("./vite");
     await setupVite(app, server);
   } else {
     serveStatic(app);
