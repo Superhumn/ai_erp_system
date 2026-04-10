@@ -387,11 +387,6 @@ async function startServer() {
     }
   });
 
-  // Health check endpoint for Railway and other deployment platforms
-  app.get("/api/health", (_req, res) => {
-    res.status(200).json({ ok: true });
-  });
-
   // tRPC API
   app.use("/api/trpc", createExpressMiddleware({ router: appRouter, createContext }));
   
@@ -552,6 +547,100 @@ async function startServer() {
         }, RECUR_INTERVAL);
       } catch (e) {
         console.warn("[Recurring Invoices] Could not initialize:", e);
+      }
+    })();
+
+    // ── Automation #3 & #4: Material shortage background check + PO auto-generation (every 30 min) ──
+    (async () => {
+      try {
+        const SHORTAGE_INTERVAL = 30 * 60 * 1000; // 30 minutes
+        console.log("[Material Shortage] Starting background check with 30m interval");
+        setInterval(async () => {
+          try {
+            const { runShortageCheckAndNotify, detectMaterialShortages } = await import("../materialShortageService");
+            const result = await runShortageCheckAndNotify();
+            if (result.shortageCount > 0) {
+              console.log(`[Material Shortage] Found ${result.shortageCount} shortages, notified ${result.notifiedUsers} users`);
+            }
+
+            // Automation #4: Auto-suggest PO for materials below reorder point without pending POs
+            try {
+              const shortages = await detectMaterialShortages();
+              const { getPendingOrdersForMaterial, createPurchaseOrder, createPurchaseOrderItem } = await import("../db");
+              for (const shortage of shortages) {
+                const pendingOrders = await getPendingOrdersForMaterial(shortage.rawMaterialId);
+                if (pendingOrders.length === 0 && shortage.preferredVendorId) {
+                  const poNumber = `AUTO-PO-${Date.now().toString(36).toUpperCase()}-${shortage.rawMaterialId}`;
+                  const po = await createPurchaseOrder({
+                    poNumber,
+                    vendorId: shortage.preferredVendorId,
+                    status: "draft",
+                    orderDate: new Date(),
+                    totalAmount: "0",
+                    notes: `Auto-generated: ${shortage.shortfall.toFixed(1)} ${shortage.unit} shortage of ${shortage.rawMaterialName}`,
+                  } as any);
+                  await createPurchaseOrderItem({
+                    purchaseOrderId: po.id,
+                    description: shortage.rawMaterialName,
+                    quantity: Math.ceil(shortage.shortfall).toString(),
+                    unit: shortage.unit,
+                    unitPrice: "0",
+                    totalAmount: "0",
+                  } as any);
+                  console.log(`[Material Shortage→PO] Auto-created draft PO ${poNumber} for ${shortage.rawMaterialName} (shortfall: ${shortage.shortfall.toFixed(1)} ${shortage.unit})`);
+                }
+              }
+            } catch (poErr) {
+              console.warn("[Material Shortage→PO] Auto PO generation failed:", poErr);
+            }
+          } catch (e) {
+            console.warn("[Material Shortage] Check failed:", e);
+          }
+        }, SHORTAGE_INTERVAL);
+        // Initial check after 2 minutes
+        setTimeout(async () => {
+          try {
+            const { runShortageCheckAndNotify } = await import("../materialShortageService");
+            await runShortageCheckAndNotify();
+          } catch (e) {
+            console.warn("[Material Shortage] Initial check failed:", e);
+          }
+        }, 2 * 60 * 1000);
+      } catch (e) {
+        console.warn("[Material Shortage] Could not initialize:", e);
+      }
+    })();
+
+    // ── Automation #7: Vendor follow-up emails background schedule (daily) ──
+    (async () => {
+      try {
+        const FOLLOWUP_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
+        console.log("[Vendor Follow-Up] Starting daily PO follow-up scheduler");
+        setInterval(async () => {
+          try {
+            const { checkAndSendPoFollowups } = await import("../vendorEmailAutomation");
+            const result = await checkAndSendPoFollowups();
+            if (result.followUpsSent > 0) {
+              console.log(`[Vendor Follow-Up] Sent ${result.followUpsSent} follow-up emails`);
+            }
+            if (result.errors.length > 0) {
+              console.warn(`[Vendor Follow-Up] ${result.errors.length} errors:`, result.errors.slice(0, 3));
+            }
+          } catch (e) {
+            console.warn("[Vendor Follow-Up] Check failed:", e);
+          }
+        }, FOLLOWUP_INTERVAL);
+        // Initial check after 5 minutes
+        setTimeout(async () => {
+          try {
+            const { checkAndSendPoFollowups } = await import("../vendorEmailAutomation");
+            await checkAndSendPoFollowups();
+          } catch (e) {
+            console.warn("[Vendor Follow-Up] Initial check failed:", e);
+          }
+        }, 5 * 60 * 1000);
+      } catch (e) {
+        console.warn("[Vendor Follow-Up] Could not initialize:", e);
       }
     })();
   });

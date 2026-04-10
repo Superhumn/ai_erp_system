@@ -81,7 +81,6 @@ import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { AICommandBar } from './AICommandBar';
 import { FloatingAIAssistant } from './FloatingAIAssistant';
-import { Button } from "./ui/button";
 import { toast } from "sonner";
 import {
   Collapsible,
@@ -211,34 +210,8 @@ export default function DashboardLayout({
   }
 
   if (!user) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <div className="flex flex-col items-center gap-8 p-8 max-w-sm w-full animate-fade-in">
-          <div className="flex flex-col items-center gap-4">
-            <div className="h-10 w-10 rounded-xl bg-primary flex items-center justify-center">
-              <Sparkles className="h-5 w-5 text-primary-foreground" />
-            </div>
-            <div className="flex flex-col items-center gap-1.5">
-              <h1 className="text-xl font-semibold tracking-[-0.02em] text-center">
-                Welcome back
-              </h1>
-              <p className="text-sm text-muted-foreground text-center leading-relaxed">
-                Sign in to your ERP dashboard
-              </p>
-            </div>
-          </div>
-          <Button
-            onClick={() => {
-              window.location.href = getLoginUrl();
-            }}
-            size="lg"
-            className="w-full"
-          >
-            Continue with sign in
-          </Button>
-        </div>
-      </div>
-    );
+    window.location.href = getLoginUrl();
+    return null;
   }
 
   return (

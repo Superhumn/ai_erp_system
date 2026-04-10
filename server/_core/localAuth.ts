@@ -35,9 +35,11 @@ setInterval(() => {
 // EMAIL VERIFICATION
 // ============================================
 
+// TODO: For multi-instance deployments, replace in-memory Map with database-backed token store
 // In-memory store for verification tokens (simple approach)
 const verificationTokens = new Map<string, { email: string; expiresAt: number }>();
 
+// TODO: For multi-instance deployments, replace in-memory Set with a persisted emailVerified column on the users table
 // In-memory set of verified emails (avoids schema migration)
 const verifiedEmails = new Set<string>();
 
@@ -58,6 +60,7 @@ setInterval(() => {
 // PASSWORD RESET TOKENS
 // ============================================
 
+// TODO: For multi-instance deployments, replace in-memory Map with database-backed token store
 const resetTokens = new Map<string, { email: string; expiresAt: number }>();
 
 // Cleanup expired reset tokens every 15 minutes

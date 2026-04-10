@@ -7223,6 +7223,35 @@ Provide a brief status summary, any missing documents, and next steps.`;
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
         await db.updateWorkOrder(input.id, { status: 'in_progress', actualStartDate: new Date() });
+
+        // ── Automation #8: Reserve raw materials when production starts ──
+        try {
+          const materials = await db.getWorkOrderMaterials(input.id);
+          for (const mat of materials) {
+            if (!mat.rawMaterialId) continue;
+            const reqQty = parseFloat(mat.requiredQuantity?.toString() || "0");
+            const consumedQty = parseFloat(mat.consumedQuantity?.toString() || "0");
+            const remaining = Math.max(0, reqQty - consumedQty);
+            if (remaining <= 0) continue;
+
+            const inventoryRecords = await db.getRawMaterialInventory({ rawMaterialId: mat.rawMaterialId });
+            for (const inv of inventoryRecords) {
+              const totalQty = parseFloat(inv.quantity?.toString() || "0");
+              const availableQty = parseFloat(inv.availableQuantity?.toString() || totalQty.toString());
+              const toReserve = Math.min(remaining, availableQty);
+              if (toReserve > 0) {
+                await db.upsertRawMaterialInventory(mat.rawMaterialId, inv.warehouseId, {
+                  availableQuantity: (availableQty - toReserve).toFixed(4),
+                });
+              }
+            }
+            await db.updateWorkOrderMaterial(mat.id, { status: "reserved" as any });
+          }
+          console.log(`[WorkOrder→Reserve] Reserved raw materials for WO ${input.id}`);
+        } catch (e) {
+          console.warn("[WorkOrder→Reserve] Material reservation failed:", e);
+        }
+
         return { success: true };
       }),
     completeProduction: protectedProcedure
@@ -9426,7 +9455,105 @@ Ask if they received the original request and if they can provide a quote.`;
           }
 
           await db.updateInboundEmailStatus(emailId, "parsed");
-          
+
+          // ── Automation #6: Auto-run email document linker ──
+          try {
+            const { linkParsedEmailToEntities } = await import("./emailDocumentLinker");
+            const linkData: Record<string, unknown> = {
+              category: result.categorization?.category,
+              vendorEmail: input.fromEmail,
+              fromEmail: input.fromEmail,
+            };
+            if (result.documents.length > 0) {
+              const firstDoc = result.documents[0];
+              if (firstDoc.vendorName) linkData.vendorName = firstDoc.vendorName;
+              if (firstDoc.documentNumber) linkData.documentNumber = firstDoc.documentNumber;
+              if (firstDoc.trackingNumber) linkData.trackingNumber = firstDoc.trackingNumber;
+              if (firstDoc.totalAmount) linkData.totalAmount = firstDoc.totalAmount;
+            }
+            const linkResult = await linkParsedEmailToEntities(linkData as any);
+            if (linkResult.linkedPurchaseOrderId || linkResult.linkedShipmentId || linkResult.linkedInvoiceId) {
+              console.log(`[Email→DocumentLinker] Linked email ${emailId}: PO=${linkResult.linkedPurchaseOrderId}, Shipment=${linkResult.linkedShipmentId}, Invoice=${linkResult.linkedInvoiceId} (${linkResult.matchMethod}, ${linkResult.matchConfidence}%)`);
+            }
+          } catch (e) {
+            console.warn("[Email→DocumentLinker] Auto-link failed:", e);
+          }
+
+          // ── Automation #1: Auto-create draft invoice from parsed email ──
+          if (result.categorization?.category === "invoice" && result.documents.length > 0) {
+            try {
+              const invoiceDoc = result.documents.find(d => d.documentType === "invoice") || result.documents[0];
+              if (invoiceDoc.totalAmount) {
+                const vendorId = invoiceDoc.vendorEmail
+                  ? (await db.findVendorByEmailOrName(invoiceDoc.vendorEmail, invoiceDoc.vendorName))?.id ?? null
+                  : null;
+                const invoiceNumber = invoiceDoc.documentNumber || `DRAFT-EMAIL-${Date.now().toString(36).toUpperCase()}`;
+                const existing = await db.getInvoiceByNumber(invoiceNumber);
+                if (!existing) {
+                  const draftInvoice = await db.createInvoice({
+                    invoiceNumber,
+                    type: "bill",
+                    status: "draft",
+                    customerId: vendorId,
+                    issueDate: invoiceDoc.documentDate ? new Date(invoiceDoc.documentDate) : new Date(),
+                    dueDate: invoiceDoc.dueDate ? new Date(invoiceDoc.dueDate) : undefined,
+                    subtotal: invoiceDoc.subtotal?.toString() || invoiceDoc.totalAmount?.toString() || "0",
+                    taxAmount: invoiceDoc.taxAmount?.toString() || "0",
+                    totalAmount: invoiceDoc.totalAmount?.toString() || "0",
+                    currency: invoiceDoc.currency || "USD",
+                    notes: `Auto-created from email: ${input.subject}`,
+                  } as any);
+                  console.log(`[Email→Invoice] Auto-created draft invoice ${invoiceNumber} (id=${draftInvoice.id}) from email ${emailId}`);
+                  if (invoiceDoc.lineItems?.length) {
+                    for (const item of invoiceDoc.lineItems) {
+                      await db.createInvoiceItem({
+                        invoiceId: draftInvoice.id,
+                        description: item.description || "Line item",
+                        quantity: item.quantity?.toString() || "1",
+                        unitPrice: item.unitPrice?.toString() || "0",
+                        totalAmount: item.totalPrice?.toString() || "0",
+                      } as any);
+                    }
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn("[Email→Invoice] Auto-creation failed:", e);
+            }
+          }
+
+          // ── Automation #2: Shipping email → auto-update shipment status ──
+          if (result.categorization?.category === "shipping_confirmation" && result.documents.length > 0) {
+            try {
+              const shippingDoc = result.documents.find(d => d.trackingNumber) || result.documents[0];
+              if (shippingDoc.trackingNumber) {
+                const shipment = await db.findShipmentByTracking(shippingDoc.trackingNumber);
+                if (shipment && shipment.status !== "delivered") {
+                  await db.updateShipment(shipment.id, {
+                    status: "in_transit" as any,
+                    carrier: shippingDoc.carrierName || shipment.carrier,
+                  });
+                  console.log(`[Email→Shipment] Auto-updated shipment ${shipment.id} to in_transit (tracking: ${shippingDoc.trackingNumber})`);
+                }
+              }
+            } catch (e) {
+              console.warn("[Email→Shipment] Auto-update failed:", e);
+            }
+          }
+
+          // ── Automation #5: Copacker email extractor → auto-trigger ──
+          if (result.categorization?.category === "inventory_report") {
+            try {
+              const { parseCopackerInventoryEmail } = await import("./copackerEmailExtractor");
+              const copackerResult = await parseCopackerInventoryEmail(input.bodyText, input.subject);
+              if (copackerResult.success && copackerResult.items.length > 0) {
+                console.log(`[Email→Copacker] Parsed ${copackerResult.items.length} inventory items from copacker email ${emailId}`);
+              }
+            } catch (e) {
+              console.warn("[Email→Copacker] Auto-extraction failed:", e);
+            }
+          }
+
           // Create audit log
           await db.createAuditLog({
             userId: ctx.user.id,
@@ -9949,6 +10076,83 @@ Ask if they received the original request and if they can provide a quote.`;
                 size: attachment.size,
                 storageUrl: null, // Attachments not downloaded in scan
               });
+            }
+
+            // ── IMAP Automation #6: Auto-run email document linker ──
+            try {
+              const { linkParsedEmailToEntities } = await import("./emailDocumentLinker");
+              const firstDoc = parseResult?.documents?.[0];
+              await linkParsedEmailToEntities({
+                category: email.categorization?.category,
+                vendorEmail: email.from.address,
+                fromEmail: email.from.address,
+                vendorName: firstDoc?.vendorName,
+                documentNumber: firstDoc?.documentNumber,
+                trackingNumber: firstDoc?.trackingNumber,
+                totalAmount: firstDoc?.totalAmount,
+              });
+            } catch (e) {
+              console.warn("[IMAP→DocumentLinker] Auto-link failed:", e);
+            }
+
+            // ── IMAP Automation #1: Auto-create draft invoice ──
+            if (email.categorization?.category === "invoice" && parseResult?.documents?.length) {
+              try {
+                const invoiceDoc = parseResult.documents.find((d: any) => d.documentType === "invoice") || parseResult.documents[0];
+                if (invoiceDoc.totalAmount) {
+                  const invNum = invoiceDoc.documentNumber || `DRAFT-IMAP-${Date.now().toString(36).toUpperCase()}`;
+                  const existingInv = await db.getInvoiceByNumber(invNum);
+                  if (!existingInv) {
+                    const vendorMatch = invoiceDoc.vendorEmail
+                      ? (await db.findVendorByEmailOrName(invoiceDoc.vendorEmail, invoiceDoc.vendorName))?.id ?? null
+                      : null;
+                    await db.createInvoice({
+                      invoiceNumber: invNum,
+                      type: "bill",
+                      status: "draft",
+                      customerId: vendorMatch,
+                      issueDate: invoiceDoc.documentDate ? new Date(invoiceDoc.documentDate) : new Date(),
+                      subtotal: invoiceDoc.totalAmount?.toString() || "0",
+                      taxAmount: "0",
+                      totalAmount: invoiceDoc.totalAmount?.toString() || "0",
+                      currency: invoiceDoc.currency || "USD",
+                      notes: `Auto-created from IMAP email: ${email.subject}`,
+                    } as any);
+                    console.log(`[IMAP→Invoice] Auto-created draft invoice ${invNum} from email ${emailId}`);
+                  }
+                }
+              } catch (e) {
+                console.warn("[IMAP→Invoice] Auto-creation failed:", e);
+              }
+            }
+
+            // ── IMAP Automation #2: Shipping email → auto-update shipment ──
+            if (email.categorization?.category === "shipping_confirmation" && parseResult?.documents?.length) {
+              try {
+                const shipDoc = parseResult.documents.find((d: any) => d.trackingNumber);
+                if (shipDoc?.trackingNumber) {
+                  const shipment = await db.findShipmentByTracking(shipDoc.trackingNumber);
+                  if (shipment && shipment.status !== "delivered") {
+                    await db.updateShipment(shipment.id, { status: "in_transit" as any, carrier: shipDoc.carrierName || shipment.carrier });
+                    console.log(`[IMAP→Shipment] Auto-updated shipment ${shipment.id} to in_transit`);
+                  }
+                }
+              } catch (e) {
+                console.warn("[IMAP→Shipment] Auto-update failed:", e);
+              }
+            }
+
+            // ── IMAP Automation #5: Copacker email → auto-extract inventory ──
+            if (email.categorization?.category === "inventory_report") {
+              try {
+                const { parseCopackerInventoryEmail } = await import("./copackerEmailExtractor");
+                const copackerResult = await parseCopackerInventoryEmail(email.bodyText, email.subject);
+                if (copackerResult.success && copackerResult.items.length > 0) {
+                  console.log(`[IMAP→Copacker] Parsed ${copackerResult.items.length} inventory items from email ${emailId}`);
+                }
+              } catch (e) {
+                console.warn("[IMAP→Copacker] Auto-extraction failed:", e);
+              }
             }
 
             imported++;

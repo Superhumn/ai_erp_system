@@ -426,6 +426,38 @@ export const manufacturingRouter = router({
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
         await db.updateWorkOrder(input.id, { status: 'in_progress', actualStartDate: new Date() });
+
+        // ── Automation #8: Reserve raw materials when production starts ──
+        try {
+          const materials = await db.getWorkOrderMaterials(input.id);
+          for (const mat of materials) {
+            if (!mat.rawMaterialId) continue;
+            const reqQty = parseFloat(mat.requiredQuantity?.toString() || "0");
+            const consumedQty = parseFloat(mat.consumedQuantity?.toString() || "0");
+            const remaining = Math.max(0, reqQty - consumedQty);
+            if (remaining <= 0) continue;
+
+            // Get all inventory locations for this material
+            const inventoryRecords = await db.getRawMaterialInventory({ rawMaterialId: mat.rawMaterialId });
+            for (const inv of inventoryRecords) {
+              const totalQty = parseFloat(inv.quantity?.toString() || "0");
+              const availableQty = parseFloat(inv.availableQuantity?.toString() || totalQty.toString());
+              // Reserve by reducing availableQuantity (but not actual quantity)
+              const toReserve = Math.min(remaining, availableQty);
+              if (toReserve > 0) {
+                await db.upsertRawMaterialInventory(mat.rawMaterialId, inv.warehouseId, {
+                  availableQuantity: (availableQty - toReserve).toFixed(4),
+                });
+              }
+            }
+            // Mark the work order material as reserved
+            await db.updateWorkOrderMaterial(mat.id, { status: "reserved" as any });
+          }
+          console.log(`[WorkOrder→Reserve] Reserved raw materials for WO ${input.id}`);
+        } catch (e) {
+          console.warn("[WorkOrder→Reserve] Material reservation failed:", e);
+        }
+
         return { success: true };
       }),
     completeProduction: protectedProcedure
