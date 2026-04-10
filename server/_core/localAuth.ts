@@ -209,7 +209,7 @@ export function registerLocalAuthRoutes(app: Express) {
       }
 
       // Check if user already exists
-      const existingUser = await (db as any).getUserByEmail(email);
+      const existingUser = await db.getUserByEmail(email.toLowerCase());
       if (existingUser) {
         return res.status(409).json({ error: "User with this email already exists" });
       }

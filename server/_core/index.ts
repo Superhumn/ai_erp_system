@@ -60,6 +60,13 @@ async function startServer() {
   }
 
   const app = express();
+
+  // Trust exactly one proxy hop in production (Railway/Vercel reverse proxy)
+  // so that req.secure / req.ip are derived from X-Forwarded-* headers correctly.
+  if (ENV.isProduction) {
+    app.set("trust proxy", 1);
+  }
+
   const server = createServer(app);
 
   // ============================================
