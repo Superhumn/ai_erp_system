@@ -8,7 +8,22 @@ import { registerOAuthRoutes } from "./oauth";
 import { registerLocalAuthRoutes } from "./localAuth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
-import { serveStatic } from "./vite";
+// serveStatic is inlined here to avoid importing vite.ts (which pulls in vite devDependencies)
+import path from "path";
+import fs from "fs";
+function serveStatic(app: import("express").Express) {
+  const distPath =
+    process.env.NODE_ENV === "development"
+      ? path.resolve(import.meta.dirname, "../..", "dist", "public")
+      : path.resolve(import.meta.dirname, "..", "public");
+  if (!fs.existsSync(distPath)) {
+    console.error(`Could not find the build directory: ${distPath}, make sure to build the client first`);
+  }
+  app.use(express.static(distPath));
+  app.use("*", (_req: any, res: any) => {
+    res.sendFile(path.resolve(distPath, "index.html"));
+  });
+}
 import { ENV, validateEmailConfig, validateCriticalConfig } from "./env";
 import * as sendgridProvider from "./sendgridProvider";
 import * as emailService from "./emailService";
@@ -398,8 +413,10 @@ async function startServer() {
   app.use("/api/trpc", createExpressMiddleware({ router: appRouter, createContext }));
   
   if (process.env.NODE_ENV === "development") {
-    // Dynamic import to avoid bundling vite in production
-    const { setupVite } = await import("./vite");
+    // Use a variable path to prevent esbuild from tracing this import at build time.
+    // In development, tsx runs the source directly (no esbuild), so this resolves fine.
+    const vitePath = "./vite" + "";
+    const { setupVite } = await import(vitePath);
     await setupVite(app, server);
   } else {
     serveStatic(app);
