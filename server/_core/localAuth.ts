@@ -618,4 +618,40 @@ export function registerLocalAuthRoutes(app: Express) {
       return res.status(500).json({ error: "Password reset failed" });
     }
   });
+
+  /**
+   * POST /api/auth/promote-admin
+   * One-time admin promotion endpoint. Requires a secret key.
+   * Remove this endpoint after initial setup.
+   */
+  app.post("/api/auth/promote-admin", async (req: Request, res: Response) => {
+    try {
+      const { email, secret } = req.body as { email: string; secret: string };
+
+      // Require JWT_SECRET as the promotion key for security
+      if (!secret || secret !== process.env.JWT_SECRET) {
+        return res.status(403).json({ error: "Invalid secret" });
+      }
+
+      if (!email) {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      const user = await db.getUserByEmail(email.toLowerCase());
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      await db.updateUserRole(user.id, "admin");
+
+      return res.status(200).json({
+        success: true,
+        message: `${email} promoted to admin`,
+        user: { id: user.id, email: user.email, role: "admin" },
+      });
+    } catch (error) {
+      console.error("[Local Auth] Admin promotion failed", error);
+      return res.status(500).json({ error: "Promotion failed" });
+    }
+  });
 }
