@@ -5422,3 +5422,40 @@ export type TimeEntry = typeof timeEntries.$inferSelect;
 export type InsertTimeEntry = typeof timeEntries.$inferInsert;
 export type TimeInvoice = typeof timeInvoices.$inferSelect;
 export type InsertTimeInvoice = typeof timeInvoices.$inferInsert;
+
+// ============================================
+// MERCURY BANK TRANSACTIONS
+// ============================================
+
+export const bankTransactions = mysqlTable("bank_transactions", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  externalId: varchar("externalId", { length: 128 }).unique(), // Mercury transaction ID
+  accountName: varchar("accountName", { length: 256 }),
+  accountId: varchar("accountId", { length: 128 }),
+  date: timestamp("date").notNull(),
+  amount: decimal("amount", { precision: 14, scale: 2 }).notNull(),
+  type: mysqlEnum("type", ["debit", "credit"]).notNull(),
+  description: varchar("description", { length: 512 }),
+  counterpartyName: varchar("counterpartyName", { length: 256 }),
+  status: varchar("status", { length: 64 }),
+  // AI categorization
+  category: varchar("category", { length: 128 }),
+  accountCode: varchar("accountCode", { length: 32 }),
+  categorizationStatus: mysqlEnum("categorizationStatus", ["uncategorized", "ai_suggested", "confirmed", "manual"]).default("uncategorized"),
+  aiConfidence: int("aiConfidence"),
+  // Matching
+  matchedInvoiceId: int("matchedInvoiceId"),
+  matchedPurchaseOrderId: int("matchedPurchaseOrderId"),
+  matchedVendorId: int("matchedVendorId"),
+  matchedCustomerId: int("matchedCustomerId"),
+  // Sync
+  syncedToQuickbooks: boolean("syncedToQuickbooks").default(false),
+  source: mysqlEnum("source", ["mercury", "quickbooks", "manual"]).default("mercury"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export type BankTransaction = typeof bankTransactions.$inferSelect;
+export type InsertBankTransaction = typeof bankTransactions.$inferInsert;

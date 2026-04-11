@@ -680,6 +680,50 @@ async function startServer() {
         console.warn("[Vendor Follow-Up] Could not initialize:", e);
       }
     })();
+
+    // ── Automation #8: Mercury transaction sync (every 15 minutes) ──
+    if (process.env.MERCURY_API_TOKEN) {
+      (async () => {
+        try {
+          const MERCURY_INTERVAL = 15 * 60 * 1000; // 15 minutes
+          console.log("[Mercury Sync] Starting background sync with 15m interval");
+          setInterval(async () => {
+            try {
+              const { getMercuryAccounts, getMercuryTransactions } = await import("../mercuryService");
+              const accounts = await getMercuryAccounts();
+              let totalImported = 0;
+              for (const account of (accounts.accounts || []) as any[]) {
+                const txns = await getMercuryTransactions(account.id);
+                for (const txn of (txns.transactions || []) as any[]) {
+                  const existing = await db.getBankTransactionByExternalId(txn.id);
+                  if (existing) continue;
+                  await db.createBankTransaction({
+                    externalId: txn.id,
+                    accountName: account.name,
+                    accountId: account.id,
+                    date: new Date(txn.postedDate || txn.createdAt),
+                    amount: Math.abs(txn.amount).toString(),
+                    type: txn.amount < 0 ? "debit" : "credit",
+                    description: txn.bankDescription || txn.note || txn.externalMemo || "",
+                    counterpartyName: txn.counterpartyName || txn.friendlyDescription || "",
+                    status: txn.status,
+                    source: "mercury",
+                  });
+                  totalImported++;
+                }
+              }
+              if (totalImported > 0) {
+                console.log(`[Mercury Sync] Imported ${totalImported} new transactions`);
+              }
+            } catch (e) {
+              console.warn("[Mercury Sync] Failed:", e);
+            }
+          }, MERCURY_INTERVAL);
+        } catch (e) {
+          console.warn("[Mercury Sync] Could not initialize:", e);
+        }
+      })();
+    }
   });
 
   function gracefulShutdown(signal: string) {

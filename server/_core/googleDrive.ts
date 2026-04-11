@@ -100,7 +100,7 @@ export async function listDriveFolders(
       query += ` and '${parentFolderId}' in parents`;
     }
     
-    const url = `${GOOGLE_DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,webViewLink,parents)&orderBy=name`;
+    const url = `${GOOGLE_DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,webViewLink,parents)&orderBy=name&supportsAllDrives=true&includeItemsFromAllDrives=true`;
     
     const response = await fetch(url, {
       headers: {
@@ -132,7 +132,7 @@ export async function listDriveFiles(
   try {
     const query = `'${folderId}' in parents and trashed=false and mimeType!='${FOLDER_MIME_TYPE}'`;
     
-    const url = `${GOOGLE_DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,webViewLink,thumbnailLink,iconLink,createdTime,modifiedTime,parents)&orderBy=name`;
+    const url = `${GOOGLE_DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,webViewLink,thumbnailLink,iconLink,createdTime,modifiedTime,parents)&orderBy=name&supportsAllDrives=true&includeItemsFromAllDrives=true`;
     
     const response = await fetch(url, {
       headers: {
@@ -175,8 +175,14 @@ export async function syncDriveFolder(
       return;
     }
     
-    allFolders.push(...folders);
-    
+    // Skip folders named "Private" or starting with "_"
+    const filteredFolders = folders.filter(f =>
+      !f.name.toLowerCase().includes('private') &&
+      !f.name.startsWith('_') &&
+      !f.name.toLowerCase().includes('confidential')
+    );
+    allFolders.push(...filteredFolders);
+
     // Get files in current folder
     const { files, error: fileError } = await listDriveFiles(accessToken, currentFolderId);
     if (fileError) {
@@ -185,8 +191,8 @@ export async function syncDriveFolder(
       allFiles.push(...files);
     }
     
-    // Recursively sync subfolders
-    for (const folder of folders) {
+    // Recursively sync subfolders (only non-private ones)
+    for (const folder of filteredFolders) {
       await syncRecursive(folder.id, depth + 1);
     }
   }
@@ -310,7 +316,7 @@ export async function getFolderInfo(
   folderId: string
 ): Promise<{ folder: DriveFolder | null; error?: string }> {
   try {
-    const url = `${GOOGLE_DRIVE_API}/files/${folderId}?fields=id,name,mimeType,webViewLink,parents`;
+    const url = `${GOOGLE_DRIVE_API}/files/${folderId}?fields=id,name,mimeType,webViewLink,parents&supportsAllDrives=true&includeItemsFromAllDrives=true`;
     
     const response = await fetch(url, {
       headers: {

@@ -156,6 +156,8 @@ import {
   timeInvoices, InsertTimeInvoice,
   // Team invites (email-based)
   teamInvites, InsertTeamInvite,
+  // Bank transactions (Mercury)
+  bankTransactions, InsertBankTransaction,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -11699,4 +11701,49 @@ export async function createTimeInvoice(data: InsertTimeInvoice) {
 export async function updateTimeInvoice(id: number, data: Partial<InsertTimeInvoice>) {
   const db = await getDb(); if (!db) throw new Error("Database not available");
   await db.update(timeInvoices).set({ ...data, updatedAt: new Date() }).where(eq(timeInvoices.id, id));
+}
+
+// ============================================
+// BANK TRANSACTIONS (Mercury)
+// ============================================
+
+export async function getBankTransactions(filters?: {
+  status?: string;
+  categorizationStatus?: string;
+  accountId?: string;
+  startDate?: string;
+  endDate?: string;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.categorizationStatus) conditions.push(eq(bankTransactions.categorizationStatus, filters.categorizationStatus as any));
+  if (filters?.status) conditions.push(eq(bankTransactions.status, filters.status));
+  if (filters?.accountId) conditions.push(eq(bankTransactions.accountId, filters.accountId));
+  if (filters?.startDate) conditions.push(gte(bankTransactions.date, new Date(filters.startDate)));
+  if (filters?.endDate) conditions.push(lte(bankTransactions.date, new Date(filters.endDate)));
+  if (conditions.length > 0) {
+    return db.select().from(bankTransactions).where(and(...conditions)).orderBy(desc(bankTransactions.date));
+  }
+  return db.select().from(bankTransactions).orderBy(desc(bankTransactions.date));
+}
+
+export async function getBankTransactionByExternalId(externalId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(bankTransactions).where(eq(bankTransactions.externalId, externalId)).limit(1);
+  return result[0];
+}
+
+export async function createBankTransaction(data: InsertBankTransaction) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(bankTransactions).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateBankTransaction(id: number, data: Partial<InsertBankTransaction>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(bankTransactions).set({ ...data, updatedAt: new Date() }).where(eq(bankTransactions.id, id));
 }
