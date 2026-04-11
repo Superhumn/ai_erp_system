@@ -582,3 +582,72 @@
 .lf-empty-description {
   @apply text-xs text-muted-foreground/70 mt-1 max-w-sm;
 }
+
+/* ============================================
+   DATA ROOM PUBLIC VIEWER ANIMATIONS
+   Premium, DocSend-quality investor experience
+   ============================================ */
+
+/* Fade in on mount */
+.dr-fade-in {
+  animation: drFadeIn 0.4s ease-out;
+}
+@keyframes drFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Slide in from right (document viewer open) */
+.dr-slide-in {
+  animation: drSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes drSlideIn {
+  from { opacity: 0; transform: scale(0.96) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* Slide out (document viewer close) */
+.dr-slide-out {
+  animation: drSlideOut 0.25s ease-in forwards;
+}
+@keyframes drSlideOut {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.96) translateY(10px); }
+}
+
+/* Page flip left (next page) */
+.dr-page-left {
+  animation: drPageLeft 0.3s ease-out;
+}
+@keyframes drPageLeft {
+  from { opacity: 0; transform: translateX(40px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* Page flip right (previous page) */
+.dr-page-right {
+  animation: drPageRight 0.3s ease-out;
+}
+@keyframes drPageRight {
+  from { opacity: 0; transform: translateX(-40px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* Folder expand */
+.dr-expand {
+  animation: drExpand 0.2s ease-out;
+  overflow: hidden;
+}
+@keyframes drExpand {
+  from { opacity: 0; max-height: 0; }
+  to { opacity: 1; max-height: 500px; }
+}
+
+/* Subtle hover lift */
+.dr-hover-lift {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.dr-hover-lift:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
