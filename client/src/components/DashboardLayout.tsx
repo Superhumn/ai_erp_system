@@ -32,49 +32,32 @@ import {
   LayoutDashboard,
   LogOut,
   PanelLeft,
-  DollarSign,
   ShoppingCart,
   Package,
   Users,
   Scale,
-  FolderKanban,
-  Bot,
   Settings,
-  Building2,
   FileText,
-  CreditCard,
-  TrendingUp,
   Warehouse,
   Truck,
-  UserCog,
-  FileSignature,
-  AlertTriangle,
   Mail,
   ChevronDown,
-  Search,
   Bell,
-  FileSpreadsheet,
-  Ship,
-  FileCheck,
-  Send,
   MapPin,
+  ArrowLeftRight,
   ArrowRightLeft,
-  ClipboardCheck, ClipboardList,
-  PackageCheck,
-  Brain,
-  Plug,
+  ClipboardCheck,
+  ClipboardList,
   FolderLock,
   Target,
-  MessageSquare,
-  Heart,
-  Mic,
-  BookOpen,
-  Plus,
-  Calculator,
-  Handshake,
-  Sparkles,
   BarChart3,
-  Shield,
+  CircleDollarSign,
+  Wrench,
+  Factory,
+  UserCircle,
+  Receipt,
+  Landmark,
+  Network,
 } from "lucide-react";
 import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -91,86 +74,69 @@ import { Input } from "./ui/input";
 
 const menuGroups = [
   {
-    label: "Overview",
+    label: "Command Center",
     items: [
       { icon: LayoutDashboard, label: "Dashboard", path: "/" },
-      { icon: Sparkles, label: "AI Assistant", path: "/ai" },
-      { icon: ClipboardList, label: "Approvals", path: "/ai/approvals" },
-    ],
-  },
-  {
-    label: "Sales & Finance",
-    items: [
-      { icon: ShoppingCart, label: "Sales Hub", path: "/sales/hub" },
-      { icon: Heart, label: "Fundraising", path: "/crm" },
-      { icon: Users, label: "Investors", path: "/crm/investors" },
-      { icon: Target, label: "Campaigns", path: "/crm/campaigns" },
-      { icon: DollarSign, label: "Accounts", path: "/finance/accounts" },
-      { icon: TrendingUp, label: "Transactions", path: "/finance/transactions" },
-      { icon: Brain, label: "Finance AI", path: "/finance/ai" },
-    ],
-  },
-  {
-    label: "CRM",
-    items: [
-      { icon: Target, label: "CRM Hub", path: "/crm/hub" },
-      { icon: Users, label: "Contacts", path: "/crm/contacts" },
-      { icon: MessageSquare, label: "Messaging", path: "/crm/messaging" },
-    ],
-  },
-  {
-    label: "Operations",
-    items: [
-      { icon: Package, label: "Operations", path: "/operations" },
-      { icon: Package, label: "Inventory", path: "/operations/inventory-hub" },
-      { icon: ClipboardList, label: "Inventory Mgmt", path: "/operations/inventory-management" },
-      { icon: Warehouse, label: "Manufacturing", path: "/operations/manufacturing-hub" },
-      { icon: Building2, label: "Procurement", path: "/operations/procurement-hub" },
-      { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
+      { icon: ClipboardCheck, label: "Approvals", path: "/ai/approvals" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
-      { icon: FileSpreadsheet, label: "Documents", path: "/operations/document-import" },
-      { icon: Calculator, label: "Costing", path: "/operations/inventory-costing" },
-      { icon: Handshake, label: "Negotiations", path: "/operations/vendor-negotiations" },
-      { icon: Brain, label: "Manufacturing AI", path: "/operations/manufacturing-ai" },
-      { icon: BarChart3, label: "Supplier Scoring", path: "/operations/supplier-scoring" },
+      { icon: Bell, label: "Notifications", path: "/notifications" },
     ],
   },
   {
-    label: "EDI & Retail",
+    label: "Buy",
     items: [
-      { icon: ArrowRightLeft, label: "EDI Hub", path: "/edi" },
-      { icon: Plus, label: "Connect", path: "/edi/connect" },
-      { icon: Building2, label: "Partners", path: "/edi/partners" },
-      { icon: FileText, label: "Transactions", path: "/edi/transactions" },
+      { icon: Users, label: "Vendors", path: "/operations/vendors" },
+      { icon: FileText, label: "Purchase Orders", path: "/operations/purchase-orders" },
+      { icon: CircleDollarSign, label: "Costing", path: "/operations/inventory-costing" },
+    ],
+  },
+  {
+    label: "Make",
+    items: [
+      { icon: Package, label: "Products", path: "/operations/products" },
+      { icon: ClipboardList, label: "BOMs & Recipes", path: "/operations/bom" },
+      { icon: Wrench, label: "Work Orders", path: "/operations/work-orders" },
+      { icon: Factory, label: "Copacker Portal", path: "/portal/copacker" },
+    ],
+  },
+  {
+    label: "Store",
+    items: [
+      { icon: Warehouse, label: "Inventory", path: "/operations/inventory-hub" },
+      { icon: ArrowLeftRight, label: "Transfers", path: "/operations/transfers" },
+      { icon: MapPin, label: "Locations", path: "/operations/locations" },
+    ],
+  },
+  {
+    label: "Sell",
+    items: [
+      { icon: UserCircle, label: "Customers & CRM", path: "/crm/hub" },
+      { icon: ShoppingCart, label: "Orders", path: "/sales/orders" },
+      { icon: Receipt, label: "Invoices", path: "/finance/invoices" },
+      { icon: Truck, label: "Shipments", path: "/operations/shipments" },
+    ],
+  },
+  {
+    label: "Money",
+    items: [
+      { icon: Landmark, label: "Accounts", path: "/finance/accounts" },
+      { icon: ArrowRightLeft, label: "Transactions", path: "/finance/transactions" },
+      { icon: BarChart3, label: "Reports", path: "/operations/profitability" },
     ],
   },
   {
     label: "People & Legal",
     items: [
-      { icon: UserCog, label: "Team & Payroll", path: "/hr/employees" },
-      { icon: Brain, label: "HR AI Insights", path: "/hr/ai" },
-      { icon: FileSignature, label: "Contracts", path: "/legal/contracts" },
-      { icon: Shield, label: "Legal AI", path: "/legal/ai" },
+      { icon: Users, label: "Team", path: "/hr/employees" },
+      { icon: Scale, label: "Contracts", path: "/legal/contracts" },
     ],
   },
   {
-    label: "Projects & Data",
+    label: "Tools",
     items: [
-      { icon: FolderKanban, label: "Projects", path: "/projects" },
-      { icon: Brain, label: "Project AI", path: "/projects/ai" },
-      { icon: ClipboardCheck, label: "Grants", path: "/projects/investment-grants" },
-      { icon: Send, label: "Grant & Bid Submitter", path: "/grants/submitter" },
       { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
-      { icon: BookOpen, label: "SOPs", path: "/sops" },
-    ],
-  },
-  {
-    label: "Settings",
-    items: [
-      { icon: Users, label: "Team", path: "/settings/team" },
-      { icon: Plug, label: "Integrations", path: "/settings/integrations" },
-      { icon: Mic, label: "Fireflies", path: "/settings/fireflies" },
-      { icon: FileSpreadsheet, label: "Import", path: "/import" },
+      { icon: Network, label: "EDI", path: "/edi" },
+      { icon: Target, label: "Projects & Grants", path: "/projects" },
       { icon: Settings, label: "Settings", path: "/settings" },
     ],
   },
@@ -245,9 +211,7 @@ function DashboardLayoutContent({
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
-  const [openGroups, setOpenGroups] = useState<string[]>(["Overview", "Finance", "Sales", "CRM", "Operations"]);
-  const [aiCommandOpen, setAiCommandOpen] = useState(false);
-
+  const [openGroups, setOpenGroups] = useState<string[]>(["Command Center", "Buy", "Sell"]);
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -257,27 +221,22 @@ function DashboardLayoutContent({
         return;
       }
 
-      // Cmd/Ctrl + K: Open AI Command Bar
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault();
-        setAiCommandOpen(true);
-        return;
-      }
-
       // G + key combinations for navigation (Gmail-style)
       if (e.key === 'g') {
         // Set a flag to wait for next key
         const handleNextKey = (nextE: KeyboardEvent) => {
           document.removeEventListener('keydown', handleNextKey);
           switch (nextE.key) {
-            case 'd': setLocation('/'); break; // Go to Dashboard
-            case 'a': setLocation('/ai'); break; // Go to AI Assistant
-            case 's': setLocation('/sales/hub'); break; // Go to Sales
-            case 'c': setLocation('/crm'); break; // Go to CRM
-            case 'm': setLocation('/operations/manufacturing-hub'); break; // Go to Manufacturing
-            case 'p': setLocation('/operations/procurement-hub'); break; // Go to Procurement
-            case 'l': setLocation('/operations/logistics-hub'); break; // Go to Logistics
-            case 'e': setLocation('/operations/email-inbox'); break; // Go to Email
+            case 'd': setLocation('/'); break; // Dashboard
+            case 'a': setLocation('/ai/approvals'); break; // Approvals
+            case 'e': setLocation('/operations/email-inbox'); break; // Email Inbox
+            case 'v': setLocation('/operations/vendors'); break; // Vendors
+            case 'p': setLocation('/operations/purchase-orders'); break; // Purchase Orders
+            case 'i': setLocation('/operations/inventory-hub'); break; // Inventory
+            case 'o': setLocation('/sales/orders'); break; // Orders
+            case 'w': setLocation('/operations/work-orders'); break; // Work Orders
+            case 's': setLocation('/settings'); break; // Settings
+            case 'm': setLocation('/operations/products'); break; // Products (Make)
           }
         };
         document.addEventListener('keydown', handleNextKey, { once: true });
@@ -291,13 +250,15 @@ function DashboardLayoutContent({
           'Keyboard Shortcuts:\n' +
           '⌘K - AI Command Bar\n' +
           'g d - Dashboard\n' +
-          'g a - AI Assistant\n' +
-          'g s - Sales Hub\n' +
-          'g c - CRM Hub\n' +
-          'g m - Manufacturing\n' +
-          'g p - Procurement\n' +
-          'g l - Logistics\n' +
-          'g e - Email Inbox',
+          'g a - Approvals\n' +
+          'g e - Email Inbox\n' +
+          'g v - Vendors\n' +
+          'g p - Purchase Orders\n' +
+          'g i - Inventory\n' +
+          'g o - Orders\n' +
+          'g w - Work Orders\n' +
+          'g s - Settings\n' +
+          'g m - Products',
           { duration: 5000 }
         );
         return;
@@ -485,35 +446,15 @@ function DashboardLayoutContent({
         <AutonomousAgentBar />
 
         {/* Lightfield-style top bar: clean, minimal, functional */}
-        <header className="flex h-12 items-center justify-between border-b border-border bg-background px-4 sticky top-0 z-40">
-          <div className="flex items-center gap-2">
+        <header className="flex h-12 items-center justify-between gap-4 border-b border-border bg-background px-4 sticky top-0 z-40">
+          <div className="flex items-center gap-2 shrink-0">
             {isMobile && <SidebarTrigger className="h-8 w-8 rounded-md" />}
-            {/* Search trigger */}
-            <button
-              onClick={() => setAiCommandOpen(true)}
-              className="relative hidden sm:flex items-center gap-2 w-64 h-8 px-3 bg-secondary hover:bg-accent rounded-lg text-sm text-muted-foreground transition-colors duration-100"
-            >
-              <Search className="h-3.5 w-3.5" />
-              <span className="flex-1 text-left text-[13px]">Search...</span>
-              <kbd className="pointer-events-none hidden h-[18px] select-none items-center gap-0.5 rounded border border-border bg-background px-1 font-mono text-[10px] font-medium text-muted-foreground sm:flex">
-                <span className="text-[10px]">⌘</span>K
-              </kbd>
-            </button>
-            {isMobile && (
-              <button
-                onClick={() => setAiCommandOpen(true)}
-                className="flex sm:hidden items-center justify-center h-8 w-8 rounded-md hover:bg-accent text-muted-foreground transition-colors"
-                aria-label="Search"
-              >
-                <Search className="h-4 w-4" />
-              </button>
-            )}
           </div>
-          <div className="flex items-center gap-1">
+          <AICommandBar />
+          <div className="flex items-center gap-1 shrink-0">
             <NotificationCenter />
           </div>
         </header>
-        <AICommandBar open={aiCommandOpen} onOpenChange={setAiCommandOpen} />
         <main className="flex-1 overflow-auto p-4 pb-20 md:p-6 md:pb-6 lg:p-8 lg:pb-8">{children}</main>
       </SidebarInset>
 

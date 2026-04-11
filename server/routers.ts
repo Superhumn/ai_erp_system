@@ -507,20 +507,22 @@ export const appRouter = router({
       .query(({ input }) => db.getProductById(input.id)),
     create: opsProcedure
       .input(z.object({
-        sku: z.string().min(1),
+        sku: z.string().optional().default(""),
         name: z.string().min(1),
         companyId: z.number().optional(),
         description: z.string().optional(),
         category: z.string().optional(),
         type: z.enum(['physical', 'digital', 'service']).optional(),
-        unitPrice: z.string(),
+        unitPrice: z.string().optional().default("0"),
         costPrice: z.string().optional(),
         currency: z.string().optional(),
         taxable: z.boolean().optional(),
         taxRate: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const result = await db.createProduct(input);
+        // Auto-generate SKU if not provided
+        const sku = input.sku || `SKU-${Date.now().toString(36).toUpperCase()}`;
+        const result = await db.createProduct({ ...input, sku });
         await createAuditLog(ctx.user.id, 'create', 'product', result.id, input.name);
         return result;
       }),
