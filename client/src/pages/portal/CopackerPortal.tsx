@@ -17,7 +17,7 @@ import { toast } from "sonner";
 import {
   Package, Truck, Upload, Warehouse, Edit2, Save, X, FileText,
   Plus, Send, Clock, AlertTriangle, CheckCircle, DollarSign,
-  Calendar, Eye, Trash2, ClipboardList, Search, Wrench,
+  Calendar, Eye, Trash2, ClipboardList, Search,
 } from "lucide-react";
 
 // ---- Helper types ----
@@ -679,31 +679,85 @@ export default function CopackerPortal() {
                           <span className="text-xs text-muted-foreground">-</span>
                         )}
                       </TableCell>
+                      {/* Work Order columns */}
+                      <TableCell className="text-sm font-mono">
+                        {row._woNumber ? (
+                          <span className="text-xs">{row._woNumber}</span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {row._woStatus ? (
+                          <Badge
+                            variant={
+                              row._woStatus === "in_progress"
+                                ? "default"
+                                : row._woStatus === "scheduled"
+                                  ? "secondary"
+                                  : "outline"
+                            }
+                            className="text-xs capitalize"
+                          >
+                            {row._woStatus.replace(/_/g, " ")}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        {row._woQty ? parseFloat(row._woQty).toLocaleString() : "-"}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {row._woDue || "-"}
+                      </TableCell>
                       <TableCell className="text-sm text-muted-foreground max-w-[120px] truncate">
                         {row._notes || "-"}
                       </TableCell>
                       <TableCell className="text-right">
-                        {editingId === row.id ? (
-                          <div className="flex justify-end gap-1">
-                            <Button
-                              size="sm"
-                              className="h-7 text-xs"
-                              onClick={() => saveEdit(row.id)}
-                              disabled={updateInventory.isPending}
-                            >
-                              <Save className="h-3 w-3 mr-1" />
-                              Save
-                            </Button>
-                            <Button size="sm" variant="ghost" className="h-7" onClick={cancelEdit}>
-                              <X className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        ) : (
-                          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => startEdit(row._original)}>
-                            <Edit2 className="h-3 w-3 mr-1" />
-                            Edit
-                          </Button>
-                        )}
+                        <div className="flex justify-end gap-1">
+                          {editingId === row.id ? (
+                            <>
+                              <Button
+                                size="sm"
+                                className="h-7 text-xs"
+                                onClick={() => saveEdit(row.id)}
+                                disabled={updateInventory.isPending}
+                              >
+                                <Save className="h-3 w-3 mr-1" />
+                                Save
+                              </Button>
+                              <Button size="sm" variant="ghost" className="h-7" onClick={cancelEdit}>
+                                <X className="h-3 w-3" />
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => startEdit(row._original)}>
+                                <Edit2 className="h-3 w-3 mr-1" />
+                                Edit
+                              </Button>
+                              {row._woId && row._woStatus === "in_progress" && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-xs"
+                                  disabled={completeProduction.isPending}
+                                  onClick={() =>
+                                    completeProduction.mutate({
+                                      id: row._woId,
+                                      completedQuantity: row._woQty,
+                                      warehouseId: row._woWarehouseId ?? undefined,
+                                    })
+                                  }
+                                >
+                                  <CheckCircle className="h-3 w-3 mr-1" />
+                                  Complete
+                                </Button>
+                              )}
+                            </>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}

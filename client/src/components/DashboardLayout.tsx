@@ -103,7 +103,6 @@ const menuGroups = [
     label: "Store",
     items: [
       { icon: Warehouse, label: "Inventory", path: "/operations/inventory-hub" },
-      { icon: ArrowLeftRight, label: "Transfers", path: "/operations/transfers" },
       { icon: MapPin, label: "Locations", path: "/operations/locations" },
     ],
   },
