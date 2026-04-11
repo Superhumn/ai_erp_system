@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -28,6 +28,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Slider } from "@/components/ui/slider";
 import { FileBarChart, Download, Printer, Loader2, Play, Upload, FileText, ExternalLink, Shield } from "lucide-react";
 import { toast } from "sonner";
 
@@ -181,6 +182,188 @@ export default function EquityReports() {
   }
 
   const stakeholdersQuery = trpc.capTable.stakeholders.list.useQuery();
+  const grantsQuery = trpc.capTable.grants.list.useQuery();
+
+  // SAFE/Convertible Note conversion modeler state
+  const [convPreMoneyVal, setConvPreMoneyVal] = useState(100_000_000);
+  const [convRoundPrice, setConvRoundPrice] = useState(10);
+
+  // Conversion model computation
+  const conversionModel = useMemo(() => {
+    const allGrants = grantsQuery.data ?? [];
+    const allStakeholders = stakeholdersQuery.data ?? [];
+
+    // Active SAFEs & convertible notes (not cancelled, not terminated, not converted)
+    const safeNotes = allGrants.filter(
+      (g: any) =>
+        (g.grantType === "safe" || g.grantType === "convertible_note") &&
+        g.status !== "cancelled" &&
+        g.status !== "expired" &&
+        g.status !== "converted"
+    );
+
+    // Pre-money shares: all non-SAFE, non-convertible-note grants that are not cancelled/terminated
+    const preMoneyShares = allGrants
+      .filter(
+        (g: any) =>
+          g.grantType !== "safe" &&
+          g.grantType !== "convertible_note" &&
+          g.status !== "cancelled" &&
+          g.status !== "expired"
+      )
+      .reduce((sum: number, g: any) => sum + parseFloat(g.shares || "0"), 0);
+
+    // Build per-investor rows
+    const rows = safeNotes.map((g: any) => {
+      const stakeholder = allStakeholders.find((s: any) => s.id === g.stakeholderId);
+      const investorName = stakeholder?.name || `Stakeholder #${g.stakeholderId}`;
+      const isNote = g.grantType === "convertible_note";
+
+      // Investment amount: for convertible notes, principal + accrued interest
+      const principal = parseFloat(g.principalAmount || g.totalValue || "0");
+      const interestRate = parseFloat(g.interestRate || "0") / 100;
+      // Approximate accrued interest from grant date to now
+      let accruedInterest = 0;
+      if (isNote && interestRate > 0 && g.grantDate) {
+        const grantDate = new Date(g.grantDate);
+        const now = new Date();
+        const yearsElapsed = (now.getTime() - grantDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000);
+        accruedInterest = principal * interestRate * yearsElapsed;
+      }
+      const investmentAmount = isNote ? principal + accruedInterest : principal;
+
+      const valuationCap = parseFloat(g.valuationCap || "0");
+      const discountRate = parseFloat(g.discountRate || "0") / 100;
+      const isUncapped = valuationCap === 0;
+
+      // Determine if this is a post-money SAFE (checked by certificate number prefix or notes)
+      const certNum = g.certificateNumber || "";
+      const notes = (g.notes || "").toLowerCase();
+      const isPostMoney = notes.includes("post-money") || notes.includes("post money");
+
+      // Calculate conversion price
+      let capPrice = Infinity;
+      if (!isUncapped) {
+        if (isPostMoney) {
+          // For post-money SAFEs, we need iterative solve; approximate:
+          // cap price = cap / (pre-money shares + all SAFE shares)
+          // We'll do a first-pass estimate
+          capPrice = valuationCap / (preMoneyShares + (valuationCap / convRoundPrice));
+        } else {
+          // Pre-money: cap / pre-money shares
+          capPrice = valuationCap / preMoneyShares;
+        }
+      }
+
+      let discountPrice = Infinity;
+      if (discountRate > 0) {
+        discountPrice = convRoundPrice * (1 - discountRate);
+      }
+
+      // Conversion price = min(cap price, discount price, round price)
+      let conversionPrice: number;
+      if (isUncapped && discountRate === 0) {
+        conversionPrice = convRoundPrice;
+      } else if (isUncapped) {
+        conversionPrice = Math.min(discountPrice, convRoundPrice);
+      } else {
+        conversionPrice = Math.min(capPrice, discountPrice, convRoundPrice);
+      }
+
+      const sharesIssued = investmentAmount / conversionPrice;
+
+      return {
+        id: g.id,
+        investorName,
+        type: isNote ? "Convertible Note" : "SAFE",
+        investmentAmount,
+        principal,
+        accruedInterest,
+        valuationCap,
+        isUncapped,
+        discountRate,
+        isPostMoney,
+        capPrice: isUncapped ? null : capPrice,
+        discountPrice: discountRate > 0 ? discountPrice : null,
+        conversionPrice,
+        sharesIssued,
+      };
+    });
+
+    // Post-money SAFE iterative correction
+    // For post-money SAFEs, shares = investment / (cap / (preMoneyShares + totalSAFEShares))
+    // This requires iteration since totalSAFEShares depends on all conversions
+    // Do 5 iterations to converge
+    for (let iter = 0; iter < 5; iter++) {
+      const totalSafeShares = rows.reduce((s, r) => s + r.sharesIssued, 0);
+      for (const row of rows) {
+        if (row.isPostMoney && !row.isUncapped) {
+          const adjustedCapPrice = row.valuationCap / (preMoneyShares + totalSafeShares);
+          row.capPrice = adjustedCapPrice;
+          const newConvPrice = Math.min(
+            adjustedCapPrice,
+            row.discountPrice ?? Infinity,
+            convRoundPrice
+          );
+          row.conversionPrice = newConvPrice;
+          row.sharesIssued = row.investmentAmount / newConvPrice;
+        }
+      }
+    }
+
+    const totalNewShares = rows.reduce((s, r) => s + r.sharesIssued, 0);
+    const fullyDiluted = preMoneyShares + totalNewShares;
+    const totalDilutionPct = (totalNewShares / fullyDiluted) * 100;
+    const postMoneyVal = convPreMoneyVal + rows.reduce((s, r) => s + r.investmentAmount, 0);
+
+    // Compute ownership percentages
+    const rowsWithOwnership = rows.map((r) => ({
+      ...r,
+      ownershipPct: (r.sharesIssued / fullyDiluted) * 100,
+    }));
+
+    // Pre vs post comparison for existing shareholders
+    // Group existing shares by stakeholder
+    const existingByStakeholder: Record<number, { name: string; shares: number }> = {};
+    for (const g of allGrants) {
+      if (
+        g.grantType === "safe" ||
+        g.grantType === "convertible_note" ||
+        g.status === "cancelled" ||
+        g.status === "expired"
+      )
+        continue;
+      const sid = (g as any).stakeholderId;
+      if (!existingByStakeholder[sid]) {
+        const sh = allStakeholders.find((s: any) => s.id === sid);
+        existingByStakeholder[sid] = { name: sh?.name || `#${sid}`, shares: 0 };
+      }
+      existingByStakeholder[sid].shares += parseFloat((g as any).shares || "0");
+    }
+
+    const prePostComparison = Object.entries(existingByStakeholder)
+      .map(([sid, data]) => ({
+        stakeholderId: Number(sid),
+        name: data.name,
+        shares: data.shares,
+        preOwnershipPct: (data.shares / preMoneyShares) * 100,
+        postOwnershipPct: (data.shares / fullyDiluted) * 100,
+        dilutionPct: ((data.shares / preMoneyShares) * 100) - ((data.shares / fullyDiluted) * 100),
+      }))
+      .sort((a, b) => b.shares - a.shares)
+      .slice(0, 15); // Top 15
+
+    return {
+      rows: rowsWithOwnership,
+      preMoneyShares,
+      totalNewShares,
+      fullyDiluted,
+      totalDilutionPct,
+      postMoneyVal,
+      prePostComparison,
+    };
+  }, [grantsQuery.data, stakeholdersQuery.data, convPreMoneyVal, convRoundPrice]);
+
   const generateMutation = trpc.capTable.generateReport.useMutation({
     onSuccess: (data) => {
       setReportData(data);
@@ -410,6 +593,217 @@ export default function EquityReports() {
               )}
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* ── SAFE & Convertible Conversion Model ──────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <FileBarChart className="h-5 w-5 text-purple-600" />
+            <CardTitle className="text-base">SAFE &amp; Convertible Conversion Model</CardTitle>
+          </div>
+          <CardDescription className="text-sm">
+            Model how SAFEs and convertible notes convert at a priced round. Adjust the pre-money valuation and round price to see dilution impact.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {grantsQuery.isLoading || stakeholdersQuery.isLoading ? (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading cap table data...
+            </div>
+          ) : conversionModel.rows.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4">
+              No active SAFEs or convertible notes found in the cap table.
+            </p>
+          ) : (
+            <>
+              {/* Inputs */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-3">
+                  <Label className="text-sm font-medium">Pre-Money Valuation</Label>
+                  <div className="flex items-center gap-3">
+                    <Slider
+                      value={[convPreMoneyVal]}
+                      onValueChange={(v) => setConvPreMoneyVal(v[0])}
+                      min={10_000_000}
+                      max={500_000_000}
+                      step={1_000_000}
+                      className="flex-1"
+                    />
+                    <span className="text-sm font-mono font-semibold w-20 text-right">
+                      ${(convPreMoneyVal / 1_000_000).toFixed(0)}M
+                    </span>
+                  </div>
+                  <Input
+                    type="number"
+                    value={convPreMoneyVal}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value);
+                      if (!isNaN(v) && v >= 10_000_000 && v <= 500_000_000) setConvPreMoneyVal(v);
+                    }}
+                    className="text-xs h-8"
+                  />
+                </div>
+                <div className="space-y-3">
+                  <Label className="text-sm font-medium">Round Price Per Share</Label>
+                  <Input
+                    type="number"
+                    value={convRoundPrice}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      if (!isNaN(v) && v > 0) setConvRoundPrice(v);
+                    }}
+                    step="0.01"
+                    min="0.01"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Implied pre-money shares: {conversionModel.preMoneyShares.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  </p>
+                </div>
+              </div>
+
+              {/* Conversion Table */}
+              <div className="border rounded-md overflow-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50">
+                      <TableHead className="text-xs whitespace-nowrap">Investor</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap">Type</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap text-right">Investment</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap text-right">Valuation Cap</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap text-right">Discount</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap text-right">Cap Price</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap text-right">Discount Price</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap text-right">Conversion Price</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap text-right">Shares Issued</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap text-right">Ownership %</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {conversionModel.rows.map((row) => (
+                      <TableRow key={row.id} className="text-sm">
+                        <TableCell className="py-1.5 font-medium text-xs">{row.investorName}</TableCell>
+                        <TableCell className="py-1.5 text-xs">
+                          <Badge variant="secondary" className="text-[10px]">
+                            {row.type}{row.isPostMoney ? " (Post)" : ""}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="py-1.5 text-xs text-right font-mono">
+                          ${row.investmentAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                          {row.accruedInterest > 0 && (
+                            <span className="block text-[10px] text-muted-foreground">
+                              (${row.principal.toLocaleString(undefined, { maximumFractionDigits: 0 })} + ${row.accruedInterest.toLocaleString(undefined, { maximumFractionDigits: 0 })} int.)
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="py-1.5 text-xs text-right font-mono">
+                          {row.isUncapped ? (
+                            <span className="text-muted-foreground italic">Uncapped</span>
+                          ) : (
+                            `$${(row.valuationCap / 1_000_000).toFixed(0)}M`
+                          )}
+                        </TableCell>
+                        <TableCell className="py-1.5 text-xs text-right font-mono">
+                          {row.discountRate > 0 ? `${(row.discountRate * 100).toFixed(0)}%` : "-"}
+                        </TableCell>
+                        <TableCell className="py-1.5 text-xs text-right font-mono">
+                          {row.capPrice != null ? `$${row.capPrice.toFixed(4)}` : "-"}
+                        </TableCell>
+                        <TableCell className="py-1.5 text-xs text-right font-mono">
+                          {row.discountPrice != null ? `$${row.discountPrice.toFixed(4)}` : "-"}
+                        </TableCell>
+                        <TableCell className="py-1.5 text-xs text-right font-mono font-semibold">
+                          ${row.conversionPrice.toFixed(4)}
+                        </TableCell>
+                        <TableCell className="py-1.5 text-xs text-right font-mono">
+                          {row.sharesIssued.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        </TableCell>
+                        <TableCell className="py-1.5 text-xs text-right font-mono">
+                          {row.ownershipPct.toFixed(2)}%
+                        </TableCell>
+                      </TableRow>
+                    ))}
+
+                    {/* Summary Row */}
+                    <TableRow className="bg-muted/50 font-semibold border-t-2">
+                      <TableCell className="py-2 text-xs" colSpan={2}>TOTALS</TableCell>
+                      <TableCell className="py-2 text-xs text-right font-mono">
+                        ${conversionModel.rows.reduce((s, r) => s + r.investmentAmount, 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      </TableCell>
+                      <TableCell colSpan={5} />
+                      <TableCell className="py-2 text-xs text-right font-mono">
+                        {conversionModel.totalNewShares.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      </TableCell>
+                      <TableCell className="py-2 text-xs text-right font-mono">
+                        {conversionModel.totalDilutionPct.toFixed(2)}%
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Summary Cards */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="border rounded-lg p-3 space-y-1">
+                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">New Shares Issued</p>
+                  <p className="text-lg font-bold">{conversionModel.totalNewShares.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+                </div>
+                <div className="border rounded-lg p-3 space-y-1">
+                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Total Dilution</p>
+                  <p className="text-lg font-bold text-red-600">{conversionModel.totalDilutionPct.toFixed(2)}%</p>
+                </div>
+                <div className="border rounded-lg p-3 space-y-1">
+                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Post-Money Valuation</p>
+                  <p className="text-lg font-bold">${(conversionModel.postMoneyVal / 1_000_000).toFixed(1)}M</p>
+                </div>
+                <div className="border rounded-lg p-3 space-y-1">
+                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Fully Diluted Shares</p>
+                  <p className="text-lg font-bold">{conversionModel.fullyDiluted.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+                </div>
+              </div>
+
+              {/* Pre vs Post Comparison */}
+              {conversionModel.prePostComparison.length > 0 && (
+                <div className="space-y-2">
+                  <h3 className="text-sm font-semibold">Pre vs Post Conversion Ownership</h3>
+                  <div className="border rounded-md overflow-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="bg-muted/50">
+                          <TableHead className="text-xs">Shareholder</TableHead>
+                          <TableHead className="text-xs text-right">Shares</TableHead>
+                          <TableHead className="text-xs text-right">Pre-Conversion %</TableHead>
+                          <TableHead className="text-xs text-right">Post-Conversion %</TableHead>
+                          <TableHead className="text-xs text-right">Dilution</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {conversionModel.prePostComparison.map((row) => (
+                          <TableRow key={row.stakeholderId} className="text-sm">
+                            <TableCell className="py-1.5 text-xs font-medium">{row.name}</TableCell>
+                            <TableCell className="py-1.5 text-xs text-right font-mono">
+                              {row.shares.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                            </TableCell>
+                            <TableCell className="py-1.5 text-xs text-right font-mono">
+                              {row.preOwnershipPct.toFixed(2)}%
+                            </TableCell>
+                            <TableCell className="py-1.5 text-xs text-right font-mono">
+                              {row.postOwnershipPct.toFixed(2)}%
+                            </TableCell>
+                            <TableCell className="py-1.5 text-xs text-right font-mono text-red-600">
+                              -{row.dilutionPct.toFixed(2)}%
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </CardContent>
       </Card>
 
