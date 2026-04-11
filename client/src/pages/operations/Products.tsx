@@ -53,6 +53,24 @@ export default function Products() {
 
   const utils = trpc.useUtils();
   const { data: products, isLoading } = trpc.products.list.useQuery();
+  const { data: boms } = (trpc as any).boms?.list?.useQuery?.() ?? { data: undefined };
+
+  // Map productId to BOM info
+  const bomByProduct = useMemo(() => {
+    const map = new Map<number, { id: number; name: string; componentCount: number }>();
+    if (boms) {
+      for (const bom of boms as any[]) {
+        if (bom.productId) {
+          map.set(bom.productId, {
+            id: bom.id,
+            name: bom.name || `BOM-${bom.id}`,
+            componentCount: bom.components?.length || 0,
+          });
+        }
+      }
+    }
+    return map;
+  }, [boms]);
   const createProduct = trpc.products.create.useMutation({
     onSuccess: () => {
       toast.success("Product created successfully");

@@ -86,15 +86,11 @@ const menuGroups = [
     label: "Buy",
     items: [
       { icon: Users, label: "Vendors", path: "/operations/vendors" },
-      { icon: FileText, label: "Purchase Orders", path: "/operations/purchase-orders" },
-      { icon: CircleDollarSign, label: "Costing", path: "/operations/inventory-costing" },
     ],
   },
   {
     label: "Make",
     items: [
-      { icon: Package, label: "Products", path: "/operations/products" },
-      { icon: ClipboardList, label: "BOMs & Recipes", path: "/operations/bom" },
       { icon: Wrench, label: "Work Orders", path: "/operations/work-orders" },
       { icon: Factory, label: "Copacker Portal", path: "/portal/copacker" },
     ],
@@ -109,10 +105,8 @@ const menuGroups = [
   {
     label: "Sell",
     items: [
-      { icon: UserCircle, label: "Customers & CRM", path: "/crm/hub" },
       { icon: ShoppingCart, label: "Orders", path: "/sales/orders" },
-      { icon: Receipt, label: "Invoices", path: "/finance/invoices" },
-      { icon: Truck, label: "Shipments", path: "/operations/shipments" },
+      { icon: UserCircle, label: "Customers & CRM", path: "/crm/hub" },
     ],
   },
   {
