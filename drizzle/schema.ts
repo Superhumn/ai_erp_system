@@ -5459,3 +5459,34 @@ export const bankTransactions = mysqlTable("bank_transactions", {
 
 export type BankTransaction = typeof bankTransactions.$inferSelect;
 export type InsertBankTransaction = typeof bankTransactions.$inferInsert;
+
+// ============================================
+// INVESTMENT COMMITMENTS (Investor Onboarding)
+// ============================================
+
+export const investmentCommitments = mysqlTable("investment_commitments", {
+  id: int("id").autoincrement().primaryKey(),
+  dataRoomId: int("dataRoomId"),
+  investorName: varchar("investorName", { length: 256 }).notNull(),
+  investorEmail: varchar("investorEmail", { length: 320 }).notNull(),
+  investorCompany: varchar("investorCompany", { length: 256 }),
+  investorTitle: varchar("investorTitle", { length: 128 }),
+  investmentAmount: decimal("investmentAmount", { precision: 18, scale: 2 }).notNull(),
+  shareClassName: varchar("shareClassName", { length: 128 }),
+  instrumentType: mysqlEnum("instrumentType", ["equity", "safe", "convertible_note", "warrant"]).default("safe"),
+  valuationCap: decimal("valuationCap", { precision: 18, scale: 2 }),
+  discountRate: decimal("discountRate", { precision: 10, scale: 4 }),
+  notes: text("notes"),
+  ndaSigned: boolean("ndaSigned").default(false),
+  ndaSignedAt: timestamp("ndaSignedAt"),
+  status: mysqlEnum("status", ["interested", "committed", "docs_sent", "signed", "funded", "completed", "declined"]).default("interested"),
+  signedDocumentUrl: text("signedDocumentUrl"),
+  fundedAt: timestamp("fundedAt"),
+  addedToCapTable: boolean("addedToCapTable").default(false),
+  stakeholderId: int("stakeholderId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export type InvestmentCommitment = typeof investmentCommitments.$inferSelect;
+export type InsertInvestmentCommitment = typeof investmentCommitments.$inferInsert;

@@ -12913,6 +12913,115 @@ Ask if they received the original request and if they can provide a quote.`;
           return { success: true };
         }),
     }),
+
+    // ============================================
+    // INVESTMENT COMMITMENTS (Investor Onboarding)
+    // ============================================
+
+    // Public endpoint — investor submits interest/commitment (no auth required)
+    submitInvestment: publicProcedure
+      .input(z.object({
+        dataRoomId: z.number(),
+        investorName: z.string().min(1),
+        investorEmail: z.string().email(),
+        investorCompany: z.string().optional(),
+        investorTitle: z.string().optional(),
+        investmentAmount: z.string(),
+        instrumentType: z.enum(["equity", "safe", "convertible_note", "warrant"]).optional(),
+        valuationCap: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const result = await db.createInvestmentCommitment({
+          ...input,
+          status: "interested",
+        });
+
+        // Notify admin
+        await db.createNotification({
+          userId: 1,
+          type: "system" as any,
+          title: `New investment interest: ${input.investorName}`,
+          message: `${input.investorName} (${input.investorCompany || ''}) expressed interest in investing $${input.investmentAmount}`,
+        });
+
+        // Send confirmation email to investor
+        try {
+          const { sendEmail: sendEmailFn } = await import("./_core/email");
+          await sendEmailFn({
+            to: input.investorEmail,
+            subject: "Investment Interest Received — Superhumn Inc",
+            html: `<p>Thank you for your interest in investing in Superhumn Inc.</p><p>We've received your indication of interest for $${Number(input.investmentAmount).toLocaleString()}. Our team will be in touch shortly with next steps.</p><p>Best regards,<br>The Superhumn Team</p>`,
+          });
+        } catch {}
+
+        return { id: result.id, message: "Thank you! We'll be in touch." };
+      }),
+
+    // Admin: list all commitments
+    listCommitments: protectedProcedure
+      .input(z.object({ dataRoomId: z.number().optional() }).optional())
+      .query(({ input }) => db.getInvestmentCommitments(input ?? undefined)),
+
+    // Admin: update commitment status
+    updateCommitmentStatus: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        status: z.enum(["interested", "committed", "docs_sent", "signed", "funded", "completed", "declined"]),
+      }))
+      .mutation(async ({ input }) => {
+        await db.updateInvestmentCommitment(input.id, { status: input.status });
+        return { success: true };
+      }),
+
+    // Admin: finalize investment -> add to cap table
+    finalizeInvestment: protectedProcedure
+      .input(z.object({
+        commitmentId: z.number(),
+        shareClassId: z.number(),
+        shares: z.string(),
+        pricePerShare: z.string(),
+      }))
+      .mutation(async ({ input }) => {
+        const commitment = await db.getInvestmentCommitmentById(input.commitmentId);
+        if (!commitment) throw new TRPCError({ code: "NOT_FOUND" });
+
+        // Create stakeholder
+        const stakeholder = await db.createStakeholder({
+          name: commitment.investorName,
+          email: commitment.investorEmail,
+          type: "investor",
+          relationship: commitment.investorCompany || undefined,
+          accreditedInvestor: true,
+        });
+
+        const stakeholderId = stakeholder.id || (stakeholder as any).insertId;
+
+        // Create equity grant
+        await db.createEquityGrant({
+          stakeholderId,
+          shareClassId: input.shareClassId,
+          grantType: commitment.instrumentType === "safe" ? "safe" : commitment.instrumentType === "convertible_note" ? "convertible_note" : "purchase",
+          grantDate: new Date(),
+          shares: input.shares,
+          pricePerShare: input.pricePerShare,
+          totalValue: commitment.investmentAmount?.toString(),
+          principalAmount: commitment.instrumentType !== "equity" ? commitment.investmentAmount?.toString() : undefined,
+          valuationCap: commitment.valuationCap?.toString(),
+          discountRate: commitment.discountRate?.toString(),
+          status: "active",
+        });
+
+        // Update commitment
+        await db.updateInvestmentCommitment(input.commitmentId, {
+          status: "completed",
+          addedToCapTable: true,
+          stakeholderId,
+          fundedAt: new Date(),
+        });
+
+        return { success: true, stakeholderId };
+      }),
   }),
 
   // ============================================

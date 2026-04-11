@@ -158,6 +158,8 @@ import {
   teamInvites, InsertTeamInvite,
   // Bank transactions (Mercury)
   bankTransactions, InsertBankTransaction,
+  // Investment commitments (Investor onboarding)
+  investmentCommitments, InsertInvestmentCommitment,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -11746,4 +11748,39 @@ export async function updateBankTransaction(id: number, data: Partial<InsertBank
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(bankTransactions).set({ ...data, updatedAt: new Date() }).where(eq(bankTransactions.id, id));
+}
+
+// ============================================
+// INVESTMENT COMMITMENTS (Investor Onboarding)
+// ============================================
+
+export async function getInvestmentCommitments(filters?: { dataRoomId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.dataRoomId) conditions.push(eq(investmentCommitments.dataRoomId, filters.dataRoomId));
+  if (conditions.length > 0) {
+    return db.select().from(investmentCommitments).where(and(...conditions)).orderBy(desc(investmentCommitments.createdAt));
+  }
+  return db.select().from(investmentCommitments).orderBy(desc(investmentCommitments.createdAt));
+}
+
+export async function getInvestmentCommitmentById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(investmentCommitments).where(eq(investmentCommitments.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function createInvestmentCommitment(data: InsertInvestmentCommitment) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(investmentCommitments).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateInvestmentCommitment(id: number, data: Partial<InsertInvestmentCommitment>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(investmentCommitments).set({ ...data, updatedAt: new Date() } as any).where(eq(investmentCommitments.id, id));
 }

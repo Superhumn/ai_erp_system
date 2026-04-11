@@ -120,6 +120,20 @@ export default function DataRoomPublic() {
   const [pageDirection, setPageDirection] = useState<"left" | "right">("right");
   const [pageKey, setPageKey] = useState(0);
 
+  // Invest form state
+  const [investFormOpen, setInvestFormOpen] = useState(false);
+  const [investSubmitted, setInvestSubmitted] = useState(false);
+  const [investForm, setInvestForm] = useState({
+    investorName: "",
+    investorEmail: "",
+    investorCompany: "",
+    investorTitle: "",
+    investmentAmount: "",
+    instrumentType: "safe" as "equity" | "safe" | "convertible_note" | "warrant",
+    valuationCap: "",
+    notes: "",
+  });
+
   // ---------------------------------------------------------------------------
   // tRPC
   // ---------------------------------------------------------------------------
@@ -159,6 +173,31 @@ export default function DataRoomPublic() {
   );
 
   const recordViewMutation = trpc.dataRoom.public.recordView.useMutation();
+
+  const investMutation = trpc.dataRoom.submitInvestment.useMutation({
+    onSuccess: () => {
+      setInvestSubmitted(true);
+      toast.success("Investment interest submitted successfully!");
+    },
+    onError: (error) => {
+      toast.error(error.message || "Failed to submit investment interest");
+    },
+  });
+
+  const handleInvestSubmit = () => {
+    if (!dataRoomId) return;
+    investMutation.mutate({
+      dataRoomId,
+      investorName: investForm.investorName,
+      investorEmail: investForm.investorEmail,
+      investorCompany: investForm.investorCompany || undefined,
+      investorTitle: investForm.investorTitle || undefined,
+      investmentAmount: investForm.investmentAmount,
+      instrumentType: investForm.instrumentType,
+      valuationCap: investForm.valuationCap || undefined,
+      notes: investForm.notes || undefined,
+    });
+  };
 
   // Initial access attempt
   useEffect(() => {
@@ -748,7 +787,7 @@ export default function DataRoomPublic() {
             <div className="space-y-6 dr-fade-in">
               {/* Folder cards (if no sidebar, or on mobile) */}
               {folders.length > 0 && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:hidden gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {folders.map((folder) => (
                     <button
                       key={`folder-${folder.id}`}
@@ -869,6 +908,222 @@ export default function DataRoomPublic() {
           )}
         </main>
       </div>
+
+      {/* Floating Invest Button */}
+      <div className="fixed bottom-6 right-6 z-40">
+        <button
+          onClick={() => setInvestFormOpen(true)}
+          className="group flex items-center gap-2.5 rounded-full px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 transition-all hover:scale-105 hover:shadow-indigo-500/40 active:scale-95"
+          style={{
+            background: `linear-gradient(135deg, ${brandColor || "#6366f1"}, ${brandColor ? brandColor + "cc" : "#818cf8"})`,
+          }}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          Interested in Investing?
+        </button>
+      </div>
+
+      {/* Invest Form Overlay */}
+      {investFormOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => { if (!investMutation.isPending) setInvestFormOpen(false); }}
+          />
+          {/* Panel */}
+          <div
+            className="relative w-full max-w-lg mx-4 rounded-2xl border border-white/[0.08] bg-[#0d1017] shadow-2xl overflow-y-auto max-h-[90vh]"
+            style={{ animation: "fadeIn 0.2s ease-out" }}
+          >
+            {/* Close */}
+            <button
+              onClick={() => { if (!investMutation.isPending) setInvestFormOpen(false); }}
+              className="absolute top-4 right-4 text-gray-500 hover:text-white transition-colors"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            {investSubmitted ? (
+              /* Success state */
+              <div className="p-8 text-center">
+                <div className="w-16 h-16 rounded-full bg-emerald-500/10 flex items-center justify-center mx-auto mb-4">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <h2 className="text-xl font-semibold text-white mb-2">Thank You!</h2>
+                <p className="text-gray-400 mb-6">
+                  We have received your indication of interest for ${Number(investForm.investmentAmount || 0).toLocaleString()}.
+                  Our team will be in touch shortly with next steps.
+                </p>
+                <button
+                  onClick={() => { setInvestFormOpen(false); setInvestSubmitted(false); }}
+                  className="rounded-xl px-6 py-2.5 text-sm font-medium text-white transition-colors"
+                  style={{ background: brandColor || "#6366f1" }}
+                >
+                  Close
+                </button>
+              </div>
+            ) : (
+              /* Form */
+              <div className="p-6">
+                <div className="mb-6">
+                  <h2 className="text-lg font-semibold text-white">Express Investment Interest</h2>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Submit your details and our team will follow up with next steps.
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  {/* Name & Email */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-xs text-gray-400 mb-1.5 block">Full Name *</Label>
+                      <Input
+                        className="bg-white/[0.04] border-white/[0.08] text-white placeholder:text-gray-600 rounded-xl h-10"
+                        placeholder="John Smith"
+                        value={investForm.investorName}
+                        onChange={(e) => setInvestForm(f => ({ ...f, investorName: e.target.value }))}
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-gray-400 mb-1.5 block">Email *</Label>
+                      <Input
+                        type="email"
+                        className="bg-white/[0.04] border-white/[0.08] text-white placeholder:text-gray-600 rounded-xl h-10"
+                        placeholder="john@firm.com"
+                        value={investForm.investorEmail}
+                        onChange={(e) => setInvestForm(f => ({ ...f, investorEmail: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Company & Title */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-xs text-gray-400 mb-1.5 block">Company / Fund</Label>
+                      <Input
+                        className="bg-white/[0.04] border-white/[0.08] text-white placeholder:text-gray-600 rounded-xl h-10"
+                        placeholder="Acme Ventures"
+                        value={investForm.investorCompany}
+                        onChange={(e) => setInvestForm(f => ({ ...f, investorCompany: e.target.value }))}
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-gray-400 mb-1.5 block">Title</Label>
+                      <Input
+                        className="bg-white/[0.04] border-white/[0.08] text-white placeholder:text-gray-600 rounded-xl h-10"
+                        placeholder="Managing Partner"
+                        value={investForm.investorTitle}
+                        onChange={(e) => setInvestForm(f => ({ ...f, investorTitle: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Investment Amount */}
+                  <div>
+                    <Label className="text-xs text-gray-400 mb-1.5 block">Investment Amount (USD) *</Label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
+                      <Input
+                        type="number"
+                        className="bg-white/[0.04] border-white/[0.08] text-white placeholder:text-gray-600 rounded-xl h-10 pl-7"
+                        placeholder="100,000"
+                        value={investForm.investmentAmount}
+                        onChange={(e) => setInvestForm(f => ({ ...f, investmentAmount: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Instrument Type */}
+                  <div>
+                    <Label className="text-xs text-gray-400 mb-1.5 block">Instrument Type</Label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {(["safe", "equity", "convertible_note", "warrant"] as const).map((type) => {
+                        const labels: Record<string, string> = { safe: "SAFE", equity: "Equity", convertible_note: "Conv. Note", warrant: "Warrant" };
+                        const isActive = investForm.instrumentType === type;
+                        return (
+                          <button
+                            key={type}
+                            type="button"
+                            onClick={() => setInvestForm(f => ({ ...f, instrumentType: type }))}
+                            className={`rounded-xl px-3 py-2 text-xs font-medium transition-all border ${
+                              isActive
+                                ? "text-white border-indigo-500/50 bg-indigo-500/10"
+                                : "text-gray-400 border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12]"
+                            }`}
+                            style={isActive ? { borderColor: (brandColor || "#6366f1") + "80", background: (brandColor || "#6366f1") + "1a" } : undefined}
+                          >
+                            {labels[type]}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Valuation Cap (for SAFE/Convertible Note) */}
+                  {(investForm.instrumentType === "safe" || investForm.instrumentType === "convertible_note") && (
+                    <div>
+                      <Label className="text-xs text-gray-400 mb-1.5 block">Valuation Cap (USD)</Label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
+                        <Input
+                          type="number"
+                          className="bg-white/[0.04] border-white/[0.08] text-white placeholder:text-gray-600 rounded-xl h-10 pl-7"
+                          placeholder="10,000,000"
+                          value={investForm.valuationCap}
+                          onChange={(e) => setInvestForm(f => ({ ...f, valuationCap: e.target.value }))}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Notes */}
+                  <div>
+                    <Label className="text-xs text-gray-400 mb-1.5 block">Notes / Questions</Label>
+                    <textarea
+                      className="w-full rounded-xl bg-white/[0.04] border border-white/[0.08] text-white placeholder:text-gray-600 text-sm p-3 min-h-[80px] resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/30"
+                      placeholder="Any additional information or questions..."
+                      value={investForm.notes}
+                      onChange={(e) => setInvestForm(f => ({ ...f, notes: e.target.value }))}
+                    />
+                  </div>
+
+                  {/* Submit */}
+                  <button
+                    onClick={handleInvestSubmit}
+                    disabled={
+                      !investForm.investorName ||
+                      !investForm.investorEmail ||
+                      !investForm.investmentAmount ||
+                      investMutation.isPending
+                    }
+                    className="w-full rounded-xl py-3 text-sm font-semibold text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 active:scale-[0.98]"
+                    style={{ background: brandColor || "#6366f1" }}
+                  >
+                    {investMutation.isPending ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Submitting...
+                      </span>
+                    ) : (
+                      "Submit Interest"
+                    )}
+                  </button>
+
+                  <p className="text-[11px] text-gray-600 text-center">
+                    By submitting, you agree to be contacted regarding this investment opportunity.
+                    This is a non-binding indication of interest.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <footer className="border-t border-white/[0.04] mt-auto">
