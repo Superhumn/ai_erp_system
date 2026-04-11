@@ -196,8 +196,6 @@ export default function EquityReports() {
               ))}
             </TableBody>
           </Table>
-        </CardContent>
-      </Card>
 
       {/* Parameters Dialog */}
       <Dialog open={showParamsDialog} onOpenChange={setShowParamsDialog}>
