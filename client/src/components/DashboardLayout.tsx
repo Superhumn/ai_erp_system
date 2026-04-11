@@ -89,7 +89,6 @@ function getMenuGroups(role: string = "user") {
     items: [
       { icon: LayoutDashboard, label: "Dashboard", path: "/" },
       { icon: Target, label: "Projects & Tasks", path: "/projects" },
-      { icon: ClipboardCheck, label: "Approvals", path: "/ai/approvals" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: Bell, label: "Notifications", path: "/notifications" },
     ],
@@ -107,9 +106,7 @@ function getMenuGroups(role: string = "user") {
     items: [
       { icon: ShoppingCart, label: "Orders", path: "/sales/orders" },
       { icon: UserCircle, label: "Customers & CRM", path: "/crm/hub" },
-      { icon: Landmark, label: "Accounts", path: "/finance/accounts" },
       { icon: CircleDollarSign, label: "Banking", path: "/finance/banking" },
-      { icon: ArrowRightLeft, label: "Transactions", path: "/finance/transactions" },
       { icon: BarChart3, label: "Reports", path: "/finance/reports" },
     ],
   },
