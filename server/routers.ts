@@ -3732,6 +3732,9 @@ export const appRouter = router({
             else if (headers.some((h: string) => h.includes('ingredient') || h.includes('raw material') || h.includes('material'))) type = 'raw_materials';
             else if (headers.some((h: string) => h.includes('order') || h.includes('po') || h.includes('purchase'))) type = 'purchase_orders';
             else if (headers.some((h: string) => h.includes('price') || h.includes('cost') || h.includes('rate'))) type = 'products';
+            else if (headers.some((h: string) => h.includes('contact') || h.includes('lead') || h.includes('prospect') || h.includes('pipeline'))) type = 'crm_contacts';
+            else if (headers.some((h: string) => h.includes('investor') || h.includes('fund') || h.includes('commitment') || h.includes('round') || h.includes('series'))) type = 'fundraising';
+            else if (headers.some((h: string) => h.includes('deal') || h.includes('opportunity') || h.includes('stage'))) type = 'crm_deals';
 
             if (type === 'unknown' || type === 'invoices' || type === 'purchase_orders') {
               results.push({ sheet: file.name, type, imported: 0, errors: type === 'unknown' ? ['Could not detect data type from headers'] : ['Auto-import not supported for this type'] });
