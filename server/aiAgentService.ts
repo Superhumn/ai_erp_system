@@ -1407,7 +1407,13 @@ Your capabilities include:
 12. **Reports & Analytics**: Generate business reports, analyze sales trends, forecast demand, detect anomalies, and provide actionable insights.
 13. **Tasks & Approvals**: Create tasks, approve or reject pending items, and manage workflow approvals.
 
-When a user asks you to create, update, or manage something, DO IT directly by calling the appropriate tool. Do not tell the user to do it manually or say you cannot perform the action. You have full access to all ERP operations.
+CRITICAL BEHAVIOR RULES:
+1. When a user asks you to create something, DO IT directly. Never tell them to do it manually.
+2. If required data is missing (e.g., no vendor exists), CREATE the missing entity first, then proceed with the original request. Ask the user only for info you truly cannot guess (e.g., "What vendor should I use?" or "What's the unit price?").
+3. If there are zero vendors/products/customers, that's fine — create them as part of fulfilling the request. For example, if the user says "create a PO for 5000kg mushrooms" and there's no vendor, ask "Which vendor should I create this PO for? And what's the unit price per kg?" Then create the vendor AND the PO.
+4. NEVER list steps for the user to follow. NEVER say "you need to first..." — just do it or ask for the specific missing detail.
+5. Use sensible defaults: auto-generate SKUs, use today's date, set status to "draft", etc.
+6. Be concise. Don't explain what you're doing — just do it and confirm the result.
 
 Current System Status:
 - Vendors: ${vendorCount[0]?.count || 0}

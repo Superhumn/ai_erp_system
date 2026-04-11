@@ -453,30 +453,38 @@ async function startServer() {
       });
     }
 
-    // Start email inbox polling (IMAP)
+    // Start email inbox polling (IMAP) — supports multiple inboxes
     (async () => {
       try {
-        const { scanInbox, getImapConfig, isImapConfigured } = await import("./emailInboxScanner");
-        if (isImapConfigured()) {
+        const { scanInbox } = await import("./emailInboxScanner");
+        const inboxes = [
+          { host: process.env.IMAP_HOST, user: process.env.IMAP_USER, password: process.env.IMAP_PASSWORD, port: parseInt(process.env.IMAP_PORT || "993") },
+          { host: process.env.IMAP_HOST_2, user: process.env.IMAP_USER_2, password: process.env.IMAP_PASSWORD_2, port: parseInt(process.env.IMAP_PORT_2 || "993") },
+        ].filter(i => i.host && i.user && i.password);
+
+        if (inboxes.length > 0) {
           const POLL_INTERVAL = 5 * 60 * 1000; // 5 minutes
-          console.log("[Email Polling] Starting inbox scanner with 5m interval");
+          console.log(`[Email Polling] Starting inbox scanner for ${inboxes.length} inbox(es) with 5m interval`);
+          for (const inbox of inboxes) {
+            console.log(`[Email Polling] Monitoring: ${inbox.user}`);
+          }
           setInterval(async () => {
-            try {
-              const config = getImapConfig();
-              if (config) {
-                await scanInbox(config, { unseenOnly: true, limit: 50 });
+            for (const inbox of inboxes) {
+              try {
+                await scanInbox({ host: inbox.host!, user: inbox.user!, password: inbox.password!, port: inbox.port, tls: true }, { unseenOnly: true, limit: 50 });
+              } catch (e) {
+                console.warn(`[Email Polling] Scan failed for ${inbox.user}:`, e);
               }
-            } catch (e) {
-              console.warn("[Email Polling] Scan failed:", e);
             }
           }, POLL_INTERVAL);
           // Initial scan after 30 seconds
-          setTimeout(() => {
-            const config = getImapConfig();
-            if (config) {
-              scanInbox(config, { unseenOnly: true, limit: 50 }).catch(e =>
-                console.warn("[Email Polling] Initial scan failed:", e)
-              );
+          setTimeout(async () => {
+            for (const inbox of inboxes) {
+              try {
+                await scanInbox({ host: inbox.host!, user: inbox.user!, password: inbox.password!, port: inbox.port, tls: true }, { unseenOnly: true, limit: 50 });
+              } catch (e) {
+                console.warn(`[Email Polling] Initial scan failed for ${inbox.user}:`, e);
+              }
             }
           }, 30000);
         }
