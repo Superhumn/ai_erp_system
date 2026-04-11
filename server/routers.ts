@@ -6460,11 +6460,17 @@ Provide a brief status summary, any missing documents, and next steps.`;
         })),
       }))
       .mutation(async ({ input, ctx }) => {
-        if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
-          throw new TRPCError({ code: 'FORBIDDEN', message: 'No warehouse assigned' });
+        if (!ctx.user.linkedWarehouseId) {
+          // For admin/ops users without a warehouse, use the first available warehouse
+          const locations = await db.getLocations();
+          if (!locations || locations.length === 0) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'No warehouses configured. Create a location first.' });
+          }
+          // Use first warehouse as default for admin users
+          ctx.user.linkedWarehouseId = locations[0].id;
         }
 
-        const warehouseId = ctx.user.linkedWarehouseId!;
+        const warehouseId = ctx.user.linkedWarehouseId;
         const { items, ...updateData } = input;
 
         const result = await db.createCopackerInventoryUpdate({
