@@ -15,7 +15,7 @@ import {
   quickbooksItems, InsertQuickBooksItem,
   quickbooksAccountMappings, InsertQuickBooksAccountMapping,
   freightCarriers, freightRfqs, freightQuotes, freightEmails,
-  customsClearances, customsDocuments, freightBookings,
+  customsClearances, customsDocuments, freightBookings, freightQuotesStandalone,
   inventoryTransfers, inventoryTransferItems,
   teamInvitations, userPermissions,
   billOfMaterials, bomComponents, rawMaterials, bomVersionHistory,
@@ -64,7 +64,7 @@ import {
   InsertEmployee, InsertContract, InsertDispute, InsertDocument,
   InsertProject, InsertAuditLog,
   InsertFreightCarrier, InsertFreightRfq, InsertFreightQuote, InsertFreightEmail,
-  InsertCustomsClearance, InsertCustomsDocument, InsertFreightBooking,
+  InsertCustomsClearance, InsertCustomsDocument, InsertFreightBooking, InsertFreightQuoteStandalone,
   InsertInventoryTransfer, InsertInventoryTransferItem,
   InsertTeamInvitation, InsertUserPermission,
   InsertBillOfMaterials, InsertBomComponent, InsertRawMaterial, InsertBomVersionHistory,
@@ -1423,7 +1423,22 @@ export async function getProjectTasks(projectId: number) {
 export async function getAllProjectTasks() {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(projectTasks).orderBy(desc(projectTasks.createdAt));
+  const rows = await db.select({
+    task: projectTasks,
+    projectName: projects.name,
+    projectNumber: projects.projectNumber,
+  })
+    .from(projectTasks)
+    .leftJoin(projects, eq(projectTasks.projectId, projects.id))
+    .orderBy(desc(projectTasks.createdAt));
+
+  return rows.map((row) => ({
+    ...row.task,
+    // Normalize legacy statuses
+    status: (row.task.status as string) === 'not_started' ? 'todo' : row.task.status,
+    projectName: row.projectName,
+    projectNumber: row.projectNumber,
+  }));
 }
 
 // ============================================
@@ -1894,6 +1909,47 @@ export async function updateFreightQuote(id: number, data: Partial<InsertFreight
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(freightQuotes).set(data).where(eq(freightQuotes.id, id));
+  return { success: true };
+}
+
+// ============================================
+// STANDALONE FREIGHT QUOTES
+// ============================================
+
+export async function getFreightQuotesStandalone(filters?: { shipmentId?: number; purchaseOrderId?: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.shipmentId) conditions.push(eq(freightQuotesStandalone.shipmentId, filters.shipmentId));
+  if (filters?.purchaseOrderId) conditions.push(eq(freightQuotesStandalone.purchaseOrderId, filters.purchaseOrderId));
+  if (filters?.status) conditions.push(eq(freightQuotesStandalone.status, filters.status as any));
+
+  if (conditions.length > 0) {
+    return db.select().from(freightQuotesStandalone).where(and(...conditions)).orderBy(desc(freightQuotesStandalone.createdAt));
+  }
+  return db.select().from(freightQuotesStandalone).orderBy(desc(freightQuotesStandalone.createdAt));
+}
+
+export async function getFreightQuotesStandaloneByShipment(shipmentId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(freightQuotesStandalone)
+    .where(eq(freightQuotesStandalone.shipmentId, shipmentId))
+    .orderBy(freightQuotesStandalone.quotedPrice);
+}
+
+export async function createFreightQuoteStandalone(data: InsertFreightQuoteStandalone) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(freightQuotesStandalone).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateFreightQuoteStandalone(id: number, data: Partial<InsertFreightQuoteStandalone>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(freightQuotesStandalone).set(data).where(eq(freightQuotesStandalone.id, id));
   return { success: true };
 }
 

@@ -49,11 +49,11 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 const taskStatusOptions = [
-  { value: "backlog", label: "Backlog", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
   { value: "todo", label: "To Do", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
   { value: "in_progress", label: "In Progress", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
   { value: "review", label: "Review", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
-  { value: "done", label: "Done", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+  { value: "completed", label: "Done", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+  { value: "cancelled", label: "Cancelled", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
 ];
 
 const priorityOptions = [
@@ -123,7 +123,7 @@ function KanbanCard({
   onStatusChange: (taskId: number, newStatus: string) => void;
 }) {
   const priority = priorityOptions.find(p => p.value === task.priority);
-  const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && task.status !== "done";
+  const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && task.status !== "completed";
 
   return (
     <Card 
@@ -200,7 +200,7 @@ function TaskDetailPanel({ task, onClose, onStatusChange }: {
 }) {
   const statusOption = taskStatusOptions.find(s => s.value === task.status);
   const priority = priorityOptions.find(p => p.value === task.priority);
-  const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && task.status !== "done";
+  const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && task.status !== "completed";
 
   return (
     <div className="p-6 space-y-4">
@@ -355,7 +355,7 @@ export default function Projects() {
     { key: "priority", header: "Priority", type: "badge", options: priorityOptions, editable: true, filterable: true },
     { key: "assignee", header: "Assignee", type: "text", render: (row) => row.assignee?.name || "-" },
     { key: "dueDate", header: "Due", type: "date", sortable: true, editable: true, render: (row) => {
-      const isOverdue = row.dueDate && new Date(row.dueDate) < new Date() && row.status !== "done";
+      const isOverdue = row.dueDate && new Date(row.dueDate) < new Date() && row.status !== "completed";
       return (
         <span className={cn(isOverdue && "text-red-600 font-medium")}>
           {formatDate(row.dueDate)}
@@ -368,13 +368,13 @@ export default function Projects() {
   // Stats
   const stats = {
     total: filteredTasks.length,
-    backlog: filteredTasks.filter((t: any) => t.status === "backlog").length,
     todo: filteredTasks.filter((t: any) => t.status === "todo").length,
     inProgress: filteredTasks.filter((t: any) => t.status === "in_progress").length,
     review: filteredTasks.filter((t: any) => t.status === "review").length,
-    done: filteredTasks.filter((t: any) => t.status === "done").length,
-    overdue: filteredTasks.filter((t: any) => 
-      t.dueDate && new Date(t.dueDate) < new Date() && t.status !== "done"
+    completed: filteredTasks.filter((t: any) => t.status === "completed").length,
+    cancelled: filteredTasks.filter((t: any) => t.status === "cancelled").length,
+    overdue: filteredTasks.filter((t: any) =>
+      t.dueDate && new Date(t.dueDate) < new Date() && t.status !== "completed"
     ).length,
   };
 
@@ -473,14 +473,7 @@ export default function Projects() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-6 gap-4">
-          <Card className="p-3">
-            <div className="flex items-center gap-2">
-              <Circle className="h-4 w-4 text-gray-400" />
-              <span className="text-sm text-muted-foreground">Backlog</span>
-            </div>
-            <div className="text-xl font-semibold tracking-[-0.02em] mt-1">{stats.backlog}</div>
-          </Card>
+        <div className="grid grid-cols-5 gap-4">
           <Card className="p-3">
             <div className="flex items-center gap-2">
               <Circle className="h-4 w-4 text-blue-500" />
@@ -507,7 +500,7 @@ export default function Projects() {
               <CheckCircle className="h-4 w-4 text-green-500" />
               <span className="text-sm text-muted-foreground">Done</span>
             </div>
-            <div className="text-xl font-semibold tracking-[-0.02em] mt-1">{stats.done}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-1">{stats.completed}</div>
           </Card>
           <Card className="p-3 border-red-200 bg-red-50/50">
             <div className="flex items-center gap-2">
@@ -521,14 +514,6 @@ export default function Projects() {
         {/* Main Content */}
         {viewMode === "kanban" ? (
           <div className="flex gap-4 overflow-x-auto pb-4">
-            <KanbanColumn
-              title="Backlog"
-              status="backlog"
-              tasks={filteredTasks}
-              onTaskClick={setSelectedTask}
-              onStatusChange={handleStatusChange}
-              color="border-gray-400"
-            />
             <KanbanColumn
               title="To Do"
               status="todo"
@@ -555,7 +540,7 @@ export default function Projects() {
             />
             <KanbanColumn
               title="Done"
-              status="done"
+              status="completed"
               tasks={filteredTasks}
               onTaskClick={setSelectedTask}
               onStatusChange={handleStatusChange}

@@ -13,8 +13,10 @@ import {
   RefreshCw,
   CloudDownload,
   FileUp,
+  History,
 } from "lucide-react";
 import React, { useState, useEffect, useCallback } from "react";
+import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { useLocation, useSearch } from "wouter";
 
@@ -39,6 +41,7 @@ export default function Import() {
   // CSV upload state
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
 
   // Google connection status — also check URL params for fresh connection
   const [forceConnected, setForceConnected] = useState(false);
@@ -66,12 +69,18 @@ export default function Import() {
     enabled: isAuthenticated && !isGoogleConnected,
   });
 
+  // Past sync history — persists across page reloads
+  const { data: syncHistory, refetch: refetchSyncHistory } = trpc.sheetsImport.getSyncHistory.useQuery(undefined, {
+    enabled: isAuthenticated && !!isGoogleConnected,
+  });
+
   // Sync mutation
   const syncMutation = trpc.sheetsImport.syncGoogleDrive.useMutation({
     onSuccess: (data) => {
       setSyncResults(data.results);
       setTotalSheets(data.totalSheets);
       setSyncState("done");
+      refetchSyncHistory();
       const totalImported = data.results.reduce((sum: number, r: SyncResult) => sum + r.imported, 0);
       if (totalImported > 0) {
         toast.success(`Imported ${totalImported} records from ${data.totalSheets} spreadsheets`);
@@ -140,23 +149,77 @@ export default function Import() {
     setIsDragging(false);
   }, []);
 
+  const isImageFile = useCallback((filename: string) => {
+    return /\.(png|jpe?g|gif|webp)$/i.test(filename);
+  }, []);
+
+  const handleImageFile = useCallback((file: File) => {
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    const url = URL.createObjectURL(file);
+    setImagePreviewUrl(url);
+    setCsvFile(file);
+    toast.success("Image uploaded. File storage coming soon.");
+  }, [imagePreviewUrl]);
+
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
     const file = e.dataTransfer.files[0];
-    if (file && (file.name.endsWith(".csv") || file.name.endsWith(".tsv"))) {
+    if (!file) return;
+    const name = file.name.toLowerCase();
+    if (isImageFile(name)) {
+      handleImageFile(file);
+      return;
+    }
+    if (name.endsWith(".csv") || name.endsWith(".tsv") || name.endsWith(".xlsx") || name.endsWith(".xls") || name.endsWith(".pdf")) {
+      if (name.endsWith(".pdf")) {
+        toast.info("PDF import coming soon — please use CSV or XLSX");
+        return;
+      }
+      setImagePreviewUrl(null);
       setCsvFile(file);
       toast.success(`File "${file.name}" ready for upload`);
     } else {
-      toast.error("Please drop a CSV or TSV file");
+      toast.error("Please drop a CSV, XLSX, PDF, or image file");
     }
-  }, []);
+  }, [isImageFile, handleImageFile]);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setCsvFile(file);
-      toast.success(`File "${file.name}" ready for upload`);
+    if (!file) return;
+    const name = file.name.toLowerCase();
+    if (isImageFile(name)) {
+      handleImageFile(file);
+      e.target.value = "";
+      return;
+    }
+    if (name.endsWith(".pdf")) {
+      toast.info("PDF import coming soon — please use CSV or XLSX");
+      e.target.value = "";
+      return;
+    }
+    setImagePreviewUrl(null);
+    setCsvFile(file);
+    toast.success(`File "${file.name}" ready for upload`);
+  }, [isImageFile, handleImageFile]);
+
+  const parseXlsxFile = useCallback(async (file: File): Promise<{ headers: string[]; rows: Record<string, unknown>[] } | null> => {
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) {
+        toast.error("No sheets found in the workbook");
+        return null;
+      }
+      const worksheet = workbook.Sheets[firstSheetName];
+      const jsonData = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet);
+      const headers = jsonData.length > 0 ? Object.keys(jsonData[0]) : [];
+      return { headers, rows: jsonData };
+    } catch (err) {
+      toast.error("Failed to parse XLSX file");
+      console.error("XLSX parse error:", err);
+      return null;
     }
   }, []);
 
@@ -277,6 +340,58 @@ export default function Import() {
               <p className="text-xs text-muted-foreground text-center">
                 Scans all Google Sheets in your Drive, detects data types from column headers, and imports to the matching ERP tables.
               </p>
+
+              {/* Previously imported — persisted sync history */}
+              {syncHistory && syncHistory.length > 0 && (
+                <div className="space-y-3 pt-2">
+                  <Separator />
+                  <div className="flex items-center gap-2">
+                    <History className="h-4 w-4 text-muted-foreground" />
+                    <h4 className="text-sm font-medium text-muted-foreground">Previously Imported</h4>
+                  </div>
+                  {syncHistory.map((entry: any) => {
+                    const entryResults: SyncResult[] = entry.results || [];
+                    const entryImported = entryResults.reduce((sum: number, r: SyncResult) => sum + r.imported, 0);
+                    const syncDate = new Date(entry.syncedAt);
+                    const dateStr = syncDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+                    const timeStr = syncDate.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+                    return (
+                      <details key={entry.id} className="border rounded-lg">
+                        <summary className="flex items-center justify-between p-3 cursor-pointer hover:bg-muted/50">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <CheckCircle className="h-4 w-4 text-green-600 flex-shrink-0" />
+                            <span className="text-sm font-medium">
+                              {entryImported} records from {entry.totalSheets} sheets
+                            </span>
+                          </div>
+                          <span className="text-xs text-muted-foreground flex-shrink-0 ml-2">
+                            {dateStr} at {timeStr}
+                          </span>
+                        </summary>
+                        <div className="px-3 pb-3 space-y-1">
+                          {entryResults.map((result: SyncResult, i: number) => (
+                            <div
+                              key={i}
+                              className="flex items-center justify-between py-1.5 px-2 text-sm"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <FileSpreadsheet className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                <span className="truncate text-muted-foreground">{result.sheet}</span>
+                                <Badge className={`text-[10px] ${getTypeBadgeColor(result.type)}`}>
+                                  {result.type}
+                                </Badge>
+                              </div>
+                              <span className="text-xs text-muted-foreground flex-shrink-0">
+                                {result.imported > 0 ? `+${result.imported}` : result.type === "error" ? "failed" : "skipped"}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           ) : syncState === "syncing" ? (
             /* Syncing in progress */
@@ -370,15 +485,15 @@ export default function Import() {
         </CardContent>
       </Card>
 
-      {/* Section 2: CSV Upload */}
+      {/* Section 2: File Upload */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <FileUp className="h-5 w-5" />
-            CSV Upload
+            File Upload
           </CardTitle>
           <CardDescription>
-            Upload a CSV file to import data manually
+            Upload a CSV, XLSX, PDF, or image file to import data manually
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -394,14 +509,14 @@ export default function Import() {
           >
             <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-3" />
             <p className="text-sm font-medium">
-              {csvFile ? csvFile.name : "Drop a CSV file here, or click to browse"}
+              {csvFile ? csvFile.name : "Drop a CSV, XLSX, PDF, or image file here, or click to browse"}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              Supports .csv and .tsv files
+              Supports .csv, .tsv, .xlsx, .xls, .pdf, .png, .jpg, .gif, and .webp files
             </p>
             <input
               type="file"
-              accept=".csv,.tsv"
+              accept=".csv,.tsv,.xlsx,.xls,.pdf,.png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp"
               className="hidden"
               id="csv-upload"
               onChange={handleFileSelect}
@@ -416,7 +531,38 @@ export default function Import() {
             </Button>
           </div>
 
-          {csvFile && (
+          {csvFile && imagePreviewUrl && (
+            <div className="mt-4 space-y-3">
+              <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                <div className="flex items-center gap-2">
+                  <Upload className="h-4 w-4" />
+                  <span className="text-sm">{csvFile.name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    ({(csvFile.size / 1024).toFixed(1)} KB)
+                  </span>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => {
+                  if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+                  setImagePreviewUrl(null);
+                  setCsvFile(null);
+                }}>
+                  Remove
+                </Button>
+              </div>
+              <div className="border rounded-lg p-4 flex justify-center bg-muted/30">
+                <img
+                  src={imagePreviewUrl}
+                  alt={`Preview of ${csvFile.name}`}
+                  className="max-h-64 max-w-full rounded object-contain"
+                />
+              </div>
+              <p className="text-xs text-muted-foreground text-center">
+                Image preview. Full file storage coming soon.
+              </p>
+            </div>
+          )}
+
+          {csvFile && !imagePreviewUrl && (
             <div className="mt-4 flex items-center justify-between p-3 bg-muted rounded-lg">
               <div className="flex items-center gap-2">
                 <FileSpreadsheet className="h-4 w-4" />
@@ -429,7 +575,19 @@ export default function Import() {
                 <Button variant="ghost" size="sm" onClick={() => setCsvFile(null)}>
                   Remove
                 </Button>
-                <Button size="sm" onClick={() => toast.info("CSV import coming soon. Use Google Drive sync for now.")}>
+                <Button size="sm" onClick={async () => {
+                  if (!csvFile) return;
+                  const name = csvFile.name.toLowerCase();
+                  if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
+                    const result = await parseXlsxFile(csvFile);
+                    if (result) {
+                      toast.success(`Parsed ${result.rows.length} rows with columns: ${result.headers.join(", ")}`);
+                      // TODO: send parsed rows to the import API
+                    }
+                  } else {
+                    toast.info("CSV import coming soon. Use Google Drive sync for now.");
+                  }
+                }}>
                   Import
                 </Button>
               </div>

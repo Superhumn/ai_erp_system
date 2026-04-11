@@ -100,6 +100,14 @@ const typeColors: Record<string, string> = {
   intern: "bg-pink-500/10 text-pink-600",
 };
 
+const statusColors: Record<string, string> = {
+  active: "bg-emerald-500/10 text-emerald-600",
+  inactive: "bg-gray-500/10 text-gray-600",
+  terminated: "bg-red-500/10 text-red-600",
+  departed: "bg-orange-500/10 text-orange-600",
+  on_leave: "bg-yellow-500/10 text-yellow-600",
+};
+
 // ── unified row type ─────────────────────────────────────────────
 interface UnifiedRow {
   key: string;
@@ -126,9 +134,11 @@ interface UnifiedRow {
 export default function PeopleAndEquity() {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isPersonOpen, setIsPersonOpen] = useState(false);
   const [isGrantOpen, setIsGrantOpen] = useState(false);
   const [isShareClassOpen, setIsShareClassOpen] = useState(false);
+  const [selectedPerson, setSelectedPerson] = useState<UnifiedRow | null>(null);
   const [scForm, setScForm] = useState({ name: "", type: "common", authorizedShares: "", pricePerShare: "", parValue: "0.0001", liquidationPreference: "1", votingRights: true, isParticipating: false });
 
   // ── form state: add person ──
@@ -185,6 +195,28 @@ export default function PeopleAndEquity() {
     return grants.reduce((sum, g) => sum + parseFloat((g as any).shares || "0"), 0);
   }, [grants]);
 
+  // ── ownership distribution for donut chart ──
+  const ownershipData = useMemo(() => {
+    if (!grants || !stakeholders) return [];
+    const colors = ["#8b5cf6", "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#06b6d4", "#ec4899", "#6366f1", "#14b8a6", "#f97316"];
+    const byStakeholder = new Map<number, { name: string; shares: number }>();
+    grants.forEach((g: any) => {
+      const sh = stakeholders.find((s: any) => s.id === g.stakeholderId);
+      const name = sh?.name || `Stakeholder #${g.stakeholderId}`;
+      const existing = byStakeholder.get(g.stakeholderId) || { name, shares: 0 };
+      existing.shares += parseFloat(g.shares || "0");
+      byStakeholder.set(g.stakeholderId, existing);
+    });
+    const entries = Array.from(byStakeholder.values()).sort((a, b) => b.shares - a.shares);
+    const total = entries.reduce((s, e) => s + e.shares, 0);
+    return entries.map((e, i) => ({
+      name: e.name,
+      shares: e.shares,
+      pct: total > 0 ? (e.shares / total) * 100 : 0,
+      color: colors[i % colors.length],
+    }));
+  }, [grants, stakeholders]);
+
   // ── build share-class lookup ──
   const scMap = useMemo(() => {
     const m = new Map<number, string>();
@@ -237,7 +269,7 @@ export default function PeopleAndEquity() {
           nextVestDate: "-",
           grantValue: "-",
           ownershipPct: null,
-          status: matchingEmp?.status || "active",
+          status: sh.status || matchingEmp?.status || "active",
         });
       } else {
         // one row per grant
@@ -263,7 +295,7 @@ export default function PeopleAndEquity() {
             nextVestDate: calcNextVestDate(g.vestingStartDate, g.cliffMonths, g.vestingSchedule, g.sharesVested, g.shares),
             grantValue: fmt$(g.totalValue || (granted * pps)),
             ownershipPct: totalOutstandingShares > 0 ? (granted / totalOutstandingShares) * 100 : null,
-            status: idx === 0 ? (matchingEmp?.status || "active") : "",
+            status: idx === 0 ? (sh.status || matchingEmp?.status || "active") : "",
           });
         });
       }
@@ -304,9 +336,10 @@ export default function PeopleAndEquity() {
         r.name.toLowerCase().includes(search.toLowerCase()) ||
         r.email.toLowerCase().includes(search.toLowerCase());
       const matchType = typeFilter === "all" || r.type === typeFilter;
-      return matchSearch && matchType;
+      const matchStatus = statusFilter === "all" || r.status === statusFilter;
+      return matchSearch && matchType && matchStatus;
     });
-  }, [rows, search, typeFilter]);
+  }, [rows, search, typeFilter, statusFilter]);
 
   const isLoading = loadingEmp || loadingSH || loadingGrants;
 
@@ -710,6 +743,47 @@ export default function PeopleAndEquity() {
         </div>
       </div>
 
+      {/* Cap Table Visual */}
+      {grants && grants.length > 0 && (
+        <Card>
+          <CardContent className="py-4">
+            <div className="flex items-center gap-8">
+              {/* CSS Donut Chart */}
+              <div className="relative w-32 h-32 shrink-0">
+                <svg viewBox="0 0 36 36" className="w-32 h-32 -rotate-90">
+                  {ownershipData.map((seg, i) => (
+                    <circle
+                      key={i}
+                      cx="18" cy="18" r="15.91549"
+                      fill="none"
+                      stroke={seg.color}
+                      strokeWidth="3.5"
+                      strokeDasharray={`${seg.pct} ${100 - seg.pct}`}
+                      strokeDashoffset={`-${ownershipData.slice(0, i).reduce((s, d) => s + d.pct, 0)}`}
+                    />
+                  ))}
+                </svg>
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-lg font-bold">{fmtNum(totalOutstandingShares)}</span>
+                  <span className="text-[10px] text-muted-foreground">shares</span>
+                </div>
+              </div>
+              {/* Legend */}
+              <div className="flex flex-wrap gap-x-6 gap-y-1.5">
+                {ownershipData.map((seg, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm">
+                    <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
+                    <span className="font-medium">{seg.name}</span>
+                    <span className="text-muted-foreground">{seg.pct.toFixed(1)}%</span>
+                    <span className="text-muted-foreground text-xs">({fmtNum(seg.shares)})</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Table card */}
       <Card>
         <CardHeader className="pb-3">
@@ -730,9 +804,18 @@ export default function PeopleAndEquity() {
                 <SelectItem value="advisor">Advisor</SelectItem>
                 <SelectItem value="board_member">Board Member</SelectItem>
                 <SelectItem value="contractor">Contractor</SelectItem>
-                <SelectItem value="full_time">Full Time</SelectItem>
-                <SelectItem value="part_time">Part Time</SelectItem>
-                <SelectItem value="intern">Intern</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-[160px]">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="terminated">Terminated</SelectItem>
+                <SelectItem value="departed">Departed</SelectItem>
+                <SelectItem value="inactive">Inactive</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -774,7 +857,7 @@ export default function PeopleAndEquity() {
                 </TableHeader>
                 <TableBody>
                   {filtered.map((r) => (
-                    <TableRow key={r.key} className="h-9">
+                    <TableRow key={r.key} className={`h-9${r.name ? " cursor-pointer hover:bg-muted/50" : ""}`} onClick={() => r.name && setSelectedPerson(r)}>
                       <TableCell className="sticky left-0 bg-background z-10 font-medium py-1.5 px-3">{r.name}</TableCell>
                       <TableCell className="py-1.5 px-3">{r.email || "-"}</TableCell>
                       <TableCell className="py-1.5 px-3">
@@ -799,7 +882,7 @@ export default function PeopleAndEquity() {
                       <TableCell className="py-1.5 px-3 text-right tabular-nums">{fmtPct(r.ownershipPct)}</TableCell>
                       <TableCell className="py-1.5 px-3">
                         {r.status && r.status !== "-" ? (
-                          <Badge className={getStatusColor(r.status)}>{r.status.replace(/_/g, " ")}</Badge>
+                          <Badge className={statusColors[r.status] || "bg-gray-500/10 text-gray-600"}>{r.status.replace(/_/g, " ")}</Badge>
                         ) : null}
                       </TableCell>
                     </TableRow>
@@ -810,6 +893,90 @@ export default function PeopleAndEquity() {
           )}
         </CardContent>
       </Card>
+
+      {/* Person Detail Dialog */}
+      <Dialog open={selectedPerson !== null} onOpenChange={(open) => { if (!open) setSelectedPerson(null); }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          {selectedPerson && (() => {
+            const personName = selectedPerson.name;
+            // Gather all grant rows for this person (rows sharing the same stakeholder key prefix)
+            const keyPrefix = selectedPerson.key.split("-g-")[0];
+            const allGrantRows = rows.filter((r) => r.key.startsWith(keyPrefix) && r.shareClass !== "-");
+
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="text-xl">{personName}</DialogTitle>
+                  <DialogDescription>{selectedPerson.title} {selectedPerson.department !== "-" ? `- ${selectedPerson.department}` : ""}</DialogDescription>
+                </DialogHeader>
+
+                <div className="space-y-5">
+                  {/* Basic Info */}
+                  <div>
+                    <h4 className="text-sm font-semibold text-muted-foreground mb-2">Personal Information</h4>
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
+                      <div className="flex justify-between"><span className="text-muted-foreground">Email</span><span>{selectedPerson.email || "-"}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Type</span><span>{selectedPerson.type ? selectedPerson.type.replace(/_/g, " ") : "-"}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Title</span><span>{selectedPerson.title}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Department</span><span>{selectedPerson.department}</span></div>
+                    </div>
+                  </div>
+
+                  {/* Employment Details */}
+                  <div>
+                    <h4 className="text-sm font-semibold text-muted-foreground mb-2">Employment Details</h4>
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
+                      <div className="flex justify-between"><span className="text-muted-foreground">Salary</span><span>{selectedPerson.salary}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Status</span><span>{selectedPerson.status ? selectedPerson.status.replace(/_/g, " ") : "-"}</span></div>
+                    </div>
+                  </div>
+
+                  {/* Equity Grants */}
+                  {allGrantRows.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-semibold text-muted-foreground mb-2">Equity Grants</h4>
+                      <div className="border rounded-lg overflow-hidden">
+                        <Table className="text-sm">
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Share Class</TableHead>
+                              <TableHead className="text-right">Granted</TableHead>
+                              <TableHead className="text-right">Vested</TableHead>
+                              <TableHead className="text-right">Unvested</TableHead>
+                              <TableHead className="text-right">Exercise Price</TableHead>
+                              <TableHead>Vesting Schedule</TableHead>
+                              <TableHead className="text-right">Grant Value</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {allGrantRows.map((gr) => (
+                              <TableRow key={gr.key}>
+                                <TableCell>{gr.shareClass}</TableCell>
+                                <TableCell className="text-right tabular-nums">{gr.sharesGranted}</TableCell>
+                                <TableCell className="text-right tabular-nums">{gr.sharesVested}</TableCell>
+                                <TableCell className="text-right tabular-nums">{gr.unvested}</TableCell>
+                                <TableCell className="text-right tabular-nums">{gr.exercisePrice}</TableCell>
+                                <TableCell>{gr.vestingStart !== "-" ? `${gr.vestingStart} (${gr.cliffMonths}mo cliff)` : "-"}</TableCell>
+                                <TableCell className="text-right tabular-nums">{gr.grantValue}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Related Documents (placeholder) */}
+                  <div>
+                    <h4 className="text-sm font-semibold text-muted-foreground mb-2">Related Documents</h4>
+                    <p className="text-sm text-muted-foreground italic">No documents linked yet.</p>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

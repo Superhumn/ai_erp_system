@@ -626,10 +626,10 @@ export const settingsRouter = router({
         return { url: null, error: 'Google OAuth not configured' };
       }
       
-      const url = getGoogleFullAccessAuthUrl(ctx.user.id);
+      const url = getGoogleFullAccessAuthUrl(ctx.user.id, '/settings/integrations');
       return { url, error: null };
     }),
-    
+
     // Create Google Doc
     createDoc: protectedProcedure
       .input(z.object({

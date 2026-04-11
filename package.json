@@ -91,6 +91,7 @@
     "twilio": "^5.13.1",
     "vaul": "^1.1.2",
     "wouter": "^3.7.1",
+    "xlsx": "^0.18.5",
     "zod": "^4.1.12"
   },
   "devDependencies": {

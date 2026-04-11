@@ -191,7 +191,8 @@ export async function scanInbox(
           // Quick categorize the email
           scannedEmail.categorization = quickCategorize(
             scannedEmail.subject,
-            scannedEmail.from.address
+            scannedEmail.from.address,
+            scannedEmail.bodyText
           );
 
           // Skip promotional/newsletter/spam emails
@@ -262,7 +263,7 @@ export async function scanInbox(
                         try {
                           // Create project task
                           if (projectId) {
-                            await db.createProjectTask?.({ projectId, name: item.task, description: `From: ${scannedEmail.from.name || scannedEmail.from.address} — ${scannedEmail.subject}`, priority: item.priority === "high" ? "high" : "medium", status: "not_started" } as any);
+                            await db.createProjectTask?.({ projectId, name: item.task, description: `From: ${scannedEmail.from.name || scannedEmail.from.address} — ${scannedEmail.subject}`, priority: item.priority === "high" ? "high" : "medium", status: "todo" } as any);
                           }
                           // Also create notification
                           await db.createNotification({ userId: 1, type: "reminder" as const, title: `📧 ${item.task}`, message: `From: ${scannedEmail.from.name || scannedEmail.from.address}` });

@@ -2416,7 +2416,7 @@ export const appRouter = router({
       .input(z.object({
         name: z.string().min(1),
         companyId: z.number().optional(),
-        type: z.enum(['contract', 'invoice', 'receipt', 'report', 'legal', 'hr', 'other']),
+        type: z.enum(['contract', 'invoice', 'receipt', 'report', 'legal', 'hr', 'freight', 'customs', 'bol', 'packing_list', 'certificate', 'po', 'other']),
         category: z.string().optional(),
         referenceType: z.string().optional(),
         referenceId: z.number().optional(),
@@ -2428,11 +2428,18 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         const { fileData, mimeType: inputMimeType, ...docData } = input;
         const mimeType = inputMimeType || 'application/octet-stream';
-
-        // Decode base64 and upload to S3
         const buffer = Buffer.from(fileData, 'base64');
         const fileKey = `documents/${ctx.user.id}/${nanoid()}-${input.name}`;
-        const { url } = await storagePut(fileKey, buffer, mimeType);
+
+        // Try S3 first, fall back to base64 data URL
+        let url: string;
+        try {
+          const uploaded = await storagePut(fileKey, buffer, mimeType);
+          url = uploaded.url;
+        } catch {
+          // S3 not configured — store as base64 data URL (works for files <5MB)
+          url = `data:${mimeType};base64,${fileData}`;
+        }
 
         const result = await db.createDocument({
           ...docData,
@@ -2574,7 +2581,7 @@ export const appRouter = router({
       }),
     tasks: protectedProcedure
       .input(z.object({ projectId: z.number() }))
-      .query(({ input }) => db.getProjectTasks(input.projectId)),
+      .query(({ input }) => input.projectId === 0 ? db.getAllProjectTasks() : db.getProjectTasks(input.projectId)),
   }),
 
   // ============================================
@@ -3265,15 +3272,31 @@ export const appRouter = router({
       if (!token) {
         return { connected: false, email: null };
       }
-      // Check if token is expired
+      // Check if token is expired and attempt refresh if so
       const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
-      return { 
-        connected: !isExpired, 
+      if (isExpired && token.refreshToken) {
+        // Attempt to refresh the token automatically
+        const refreshed = await refreshGoogleToken(token.refreshToken);
+        if (refreshed.accessToken && refreshed.expiresAt) {
+          await db.upsertGoogleOAuthToken({
+            userId: ctx.user.id,
+            accessToken: refreshed.accessToken,
+            refreshToken: token.refreshToken,
+            expiresAt: refreshed.expiresAt,
+            googleEmail: token.googleEmail,
+          });
+          return { connected: true, email: token.googleEmail, needsRefresh: false };
+        }
+        // Refresh failed — token is truly expired
+        return { connected: false, email: token.googleEmail, needsRefresh: true };
+      }
+      return {
+        connected: !isExpired,
         email: token.googleEmail,
-        needsRefresh: isExpired 
+        needsRefresh: false
       };
     }),
-    
+
     // Get Google OAuth URL for connecting account
     getAuthUrl: protectedProcedure.query(async ({ ctx }) => {
       const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -3929,8 +3952,37 @@ export const appRouter = router({
         const totalImported = results.reduce((sum, r) => sum + r.imported, 0);
         await createAuditLog(ctx.user.id, 'create', 'google_drive_sync', 0, `Synced ${totalImported} records from ${files.length} sheets`);
 
+        // Persist detailed sync results to syncLogs so they survive page reload
+        await db.createSyncLog({
+          integration: 'google_drive',
+          action: 'full_sync',
+          status: totalImported > 0 ? 'success' : 'warning',
+          details: `Synced ${totalImported} records from ${files.length} sheets`,
+          recordsProcessed: totalImported,
+          recordsFailed: results.reduce((sum, r) => sum + r.errors.length, 0),
+          metadata: { results, totalSheets: files.length, userId: ctx.user.id },
+        });
+
         return { results, totalSheets: files.length };
       }),
+
+    // Get past Google Drive sync history so results persist across page reloads
+    getSyncHistory: protectedProcedure.query(async ({ ctx }) => {
+      const history = await db.getSyncHistory(20);
+      // Filter to only google_drive syncs and include the current user's syncs
+      return history
+        .filter((log: any) => log.integration === 'google_drive')
+        .map((log: any) => ({
+          id: log.id,
+          status: log.status,
+          details: log.details,
+          recordsProcessed: log.recordsProcessed,
+          recordsFailed: log.recordsFailed,
+          results: (log.metadata as any)?.results || [],
+          totalSheets: (log.metadata as any)?.totalSheets || 0,
+          syncedAt: log.createdAt,
+        }));
+    }),
   }),
 
   // ============================================
@@ -3943,38 +3995,59 @@ export const appRouter = router({
       if (!token) {
         return { connected: false, email: null };
       }
-      // Check if token is expired
-      const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
-      
+      // Check if token is expired and attempt refresh
+      let isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+      let accessToken = token.accessToken;
+
+      if (isExpired && token.refreshToken) {
+        const refreshed = await refreshGoogleToken(token.refreshToken);
+        if (refreshed.accessToken && refreshed.expiresAt) {
+          await db.upsertGoogleOAuthToken({
+            userId: ctx.user.id,
+            accessToken: refreshed.accessToken,
+            refreshToken: token.refreshToken,
+            expiresAt: refreshed.expiresAt,
+            googleEmail: token.googleEmail,
+          });
+          accessToken = refreshed.accessToken;
+          isExpired = false;
+        }
+      }
+
       // Get Gmail profile if connected
       if (!isExpired) {
-        const profileResult = await getGmailProfile(token.accessToken);
-        return { 
-          connected: true, 
-          email: profileResult.profile?.emailAddress || token.googleEmail,
-          messagesTotal: profileResult.profile?.messagesTotal,
-          threadsTotal: profileResult.profile?.threadsTotal,
-        };
+        try {
+          const profileResult = await getGmailProfile(accessToken);
+          return {
+            connected: true,
+            email: profileResult.profile?.emailAddress || token.googleEmail,
+            messagesTotal: profileResult.profile?.messagesTotal,
+            threadsTotal: profileResult.profile?.threadsTotal,
+          };
+        } catch {
+          // If profile fetch fails, still report as connected with stored email
+          return { connected: true, email: token.googleEmail };
+        }
       }
-      
-      return { 
-        connected: false, 
+
+      return {
+        connected: false,
         email: token.googleEmail,
-        needsRefresh: isExpired 
+        needsRefresh: true
       };
     }),
     
-    // Get full access OAuth URL
+    // Get full access OAuth URL (redirects back to settings/integrations after auth)
     getAuthUrl: protectedProcedure.query(async ({ ctx }) => {
       const clientId = process.env.GOOGLE_CLIENT_ID;
       if (!clientId) {
         return { url: null, error: 'Google OAuth not configured' };
       }
-      
-      const url = getGoogleFullAccessAuthUrl(ctx.user.id);
+
+      const url = getGoogleFullAccessAuthUrl(ctx.user.id, '/settings/integrations');
       return { url, error: null };
     }),
-    
+
     // Send email via Gmail
     sendEmail: protectedProcedure
       .input(z.object({
@@ -4128,25 +4201,38 @@ export const appRouter = router({
       if (!token) {
         return { connected: false, email: null };
       }
-      const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
-      return { 
-        connected: !isExpired, 
+      let isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+      if (isExpired && token.refreshToken) {
+        const refreshed = await refreshGoogleToken(token.refreshToken);
+        if (refreshed.accessToken && refreshed.expiresAt) {
+          await db.upsertGoogleOAuthToken({
+            userId: ctx.user.id,
+            accessToken: refreshed.accessToken,
+            refreshToken: token.refreshToken,
+            expiresAt: refreshed.expiresAt,
+            googleEmail: token.googleEmail,
+          });
+          isExpired = false;
+        }
+      }
+      return {
+        connected: !isExpired,
         email: token.googleEmail,
-        needsRefresh: isExpired 
+        needsRefresh: !!isExpired
       };
     }),
-    
-    // Get full access OAuth URL
+
+    // Get full access OAuth URL (redirects back to settings/integrations after auth)
     getAuthUrl: protectedProcedure.query(async ({ ctx }) => {
       const clientId = process.env.GOOGLE_CLIENT_ID;
       if (!clientId) {
         return { url: null, error: 'Google OAuth not configured' };
       }
-      
-      const url = getGoogleFullAccessAuthUrl(ctx.user.id);
+
+      const url = getGoogleFullAccessAuthUrl(ctx.user.id, '/settings/integrations');
       return { url, error: null };
     }),
-    
+
     // Create Google Doc
     createDoc: protectedProcedure
       .input(z.object({
@@ -6222,7 +6308,132 @@ Extract and return as JSON:
         }),
     }),
   }),
-  
+
+  // ============================================
+  // STANDALONE FREIGHT QUOTES (simplified quoting)
+  // ============================================
+  freightQuotes: router({
+    list: protectedProcedure
+      .input(z.object({
+        shipmentId: z.number().optional(),
+        purchaseOrderId: z.number().optional(),
+        status: z.enum(['requested', 'received', 'selected', 'expired', 'declined']).optional(),
+      }).optional())
+      .query(({ input }) => db.getFreightQuotesStandalone(input)),
+    create: opsProcedure
+      .input(z.object({
+        shipmentId: z.number().optional(),
+        purchaseOrderId: z.number().optional(),
+        carrierName: z.string().min(1),
+        carrierEmail: z.string().email().optional(),
+        carrierPhone: z.string().optional(),
+        origin: z.string().min(1),
+        destination: z.string().min(1),
+        weight: z.string().optional(),
+        dimensions: z.string().optional(),
+        containerType: z.enum(['LTL', 'FTL', 'FCL', 'LCL']).optional(),
+        incoterms: z.enum(['FOB', 'CIF', 'EXW', 'DDP', 'DAP']).optional(),
+        quotedPrice: z.string().optional(),
+        currency: z.string().optional(),
+        transitDays: z.number().optional(),
+        validUntil: z.date().optional(),
+        status: z.enum(['requested', 'received', 'selected', 'expired', 'declined']).optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createFreightQuoteStandalone(input);
+        await createAuditLog(ctx.user.id, 'create', 'freight_quote_standalone', result.id, input.carrierName);
+        return result;
+      }),
+    update: opsProcedure
+      .input(z.object({
+        id: z.number(),
+        carrierName: z.string().optional(),
+        carrierEmail: z.string().email().optional(),
+        carrierPhone: z.string().optional(),
+        origin: z.string().optional(),
+        destination: z.string().optional(),
+        weight: z.string().optional(),
+        dimensions: z.string().optional(),
+        containerType: z.enum(['LTL', 'FTL', 'FCL', 'LCL']).optional(),
+        incoterms: z.enum(['FOB', 'CIF', 'EXW', 'DDP', 'DAP']).optional(),
+        quotedPrice: z.string().optional(),
+        currency: z.string().optional(),
+        transitDays: z.number().optional(),
+        validUntil: z.date().optional(),
+        status: z.enum(['requested', 'received', 'selected', 'expired', 'declined']).optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateFreightQuoteStandalone(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'freight_quote_standalone', id);
+        return { success: true };
+      }),
+    sendRfq: opsProcedure
+      .input(z.object({
+        carriers: z.array(z.object({
+          name: z.string(),
+          email: z.string().email(),
+        })),
+        origin: z.string(),
+        destination: z.string(),
+        weight: z.string().optional(),
+        dimensions: z.string().optional(),
+        containerType: z.enum(['LTL', 'FTL', 'FCL', 'LCL']).optional(),
+        incoterms: z.enum(['FOB', 'CIF', 'EXW', 'DDP', 'DAP']).optional(),
+        shipmentId: z.number().optional(),
+        purchaseOrderId: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const results = { sent: 0, failed: 0, quoteIds: [] as number[] };
+
+        for (const carrier of input.carriers) {
+          // Create a quote record in "requested" status
+          const quote = await db.createFreightQuoteStandalone({
+            shipmentId: input.shipmentId,
+            purchaseOrderId: input.purchaseOrderId,
+            carrierName: carrier.name,
+            carrierEmail: carrier.email,
+            origin: input.origin,
+            destination: input.destination,
+            weight: input.weight,
+            dimensions: input.dimensions,
+            containerType: input.containerType,
+            incoterms: input.incoterms,
+            notes: input.notes,
+            status: 'requested',
+          });
+          results.quoteIds.push(quote.id);
+
+          // Send RFQ email via SendGrid
+          if (isEmailConfigured()) {
+            const emailBody = `Dear ${carrier.name},\n\nWe are requesting a freight quote for the following shipment:\n\nOrigin: ${input.origin}\nDestination: ${input.destination}\nWeight: ${input.weight || 'TBD'}\nDimensions: ${input.dimensions || 'TBD'}\nContainer Type: ${input.containerType || 'TBD'}\nIncoterms: ${input.incoterms || 'TBD'}\n${input.notes ? `\nAdditional Notes: ${input.notes}` : ''}\n\nPlease provide your best rate, transit time, and quote validity.\n\nThank you.`;
+            const sendResult = await sendEmail({
+              to: carrier.email,
+              subject: `Request for Freight Quote - ${input.origin} to ${input.destination}`,
+              text: emailBody,
+              html: formatEmailHtml(emailBody),
+            });
+            if (sendResult.success) {
+              results.sent++;
+            } else {
+              results.failed++;
+            }
+          } else {
+            results.failed++;
+          }
+        }
+
+        await createAuditLog(ctx.user.id, 'create', 'freight_rfq_standalone', 0, `RFQ sent to ${input.carriers.length} carriers`);
+        return { ...results, emailConfigured: isEmailConfigured() };
+      }),
+    compare: protectedProcedure
+      .input(z.object({ shipmentId: z.number() }))
+      .query(({ input }) => db.getFreightQuotesStandaloneByShipment(input.shipmentId)),
+  }),
+
   // ============================================
   // CUSTOMS CLEARANCE
   // ============================================
@@ -11704,25 +11915,7 @@ Ask if they received the original request and if they can provide a quote.`;
             } catch { /* download failed, keep Google link */ }
           }
 
-          if (false) {
-            // Placeholder for S3 storage
-            try {
-              const fileKey = `dataroom/${input.dataRoomId}/${nanoid()}-${displayName}`;
-              const result = await storagePut(fileKey, downloaded.buffer, downloaded.exportedMimeType);
-              storageUrl = result.url;
-              storageKey = result.key;
-              storageType = 's3';
-            } catch {
-              // Storage not configured — store as base64 data URL for small files (<5MB)
-              if (downloaded.buffer.length < 5 * 1024 * 1024) {
-                storageUrl = `data:${downloaded.exportedMimeType};base64,${downloaded.buffer.toString('base64')}`;
-                storageType = 's3'; // treat as locally-stored, not a Drive link
-              }
-              // For larger files without storage, keep Google link as fallback
-            }
-          } else {
-            console.warn(`[GoogleDrive Sync] Failed to download ${driveFile.name}: ${downloaded.error}`);
-          }
+          const effectiveMimeType = isGoogleWorkspaceFile ? 'application/pdf' : driveFile.mimeType;
 
           await db.createDataRoomDocument({
             dataRoomId: input.dataRoomId,

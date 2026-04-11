@@ -747,7 +747,7 @@ export const documents = mysqlTable("documents", {
   id: int("id").autoincrement().primaryKey(),
   companyId: int("companyId"),
   name: varchar("name", { length: 255 }).notNull(),
-  type: mysqlEnum("type", ["contract", "invoice", "receipt", "report", "legal", "hr", "other"]).notNull(),
+  type: mysqlEnum("type", ["contract", "invoice", "receipt", "report", "legal", "hr", "freight", "customs", "bol", "packing_list", "certificate", "po", "other"]).notNull(),
   category: varchar("category", { length: 128 }),
   referenceType: varchar("referenceType", { length: 64 }),
   referenceId: int("referenceId"),
@@ -1471,6 +1471,33 @@ export type InsertCustomsDocument = typeof customsDocuments.$inferInsert;
 
 export type FreightBooking = typeof freightBookings.$inferSelect;
 export type InsertFreightBooking = typeof freightBookings.$inferInsert;
+
+// Standalone freight quotes (simplified, denormalized for quick quoting)
+export const freightQuotesStandalone = mysqlTable("freight_quotes", {
+  id: int("id").autoincrement().primaryKey(),
+  shipmentId: int("shipmentId"),
+  purchaseOrderId: int("purchaseOrderId"),
+  carrierName: varchar("carrierName", { length: 255 }).notNull(),
+  carrierEmail: varchar("carrierEmail", { length: 320 }),
+  carrierPhone: varchar("carrierPhone", { length: 32 }),
+  origin: varchar("origin", { length: 500 }).notNull(),
+  destination: varchar("destination", { length: 500 }).notNull(),
+  weight: decimal("weight", { precision: 12, scale: 2 }),
+  dimensions: text("dimensions"),
+  containerType: mysqlEnum("containerType", ["LTL", "FTL", "FCL", "LCL"]),
+  incoterms: mysqlEnum("incoterms", ["FOB", "CIF", "EXW", "DDP", "DAP"]),
+  quotedPrice: decimal("quotedPrice", { precision: 15, scale: 2 }),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  transitDays: int("transitDays"),
+  validUntil: timestamp("validUntil"),
+  status: mysqlEnum("freight_quote_status", ["requested", "received", "selected", "expired", "declined"]).default("requested").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FreightQuoteStandalone = typeof freightQuotesStandalone.$inferSelect;
+export type InsertFreightQuoteStandalone = typeof freightQuotesStandalone.$inferInsert;
 
 
 // ============================================
@@ -5119,6 +5146,8 @@ export const stakeholders = mysqlTable("stakeholders", {
   address: text("address"),
   taxId: varchar("taxId", { length: 64 }),
   accreditedInvestor: boolean("accreditedInvestor").default(false),
+  status: mysqlEnum("status", ["active", "inactive", "terminated", "departed"]).default("active"),
+  terminationDate: timestamp("terminationDate"),
   notes: text("notes"),
   userId: int("userId"), // Link to ERP user if they have an account
   createdAt: timestamp("createdAt").defaultNow().notNull(),

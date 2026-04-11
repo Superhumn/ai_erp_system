@@ -695,6 +695,128 @@ export default function CRMHub() {
         </Card>
       </div>
 
+      {/* Contacts Table */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Users className="h-5 w-5" />
+                Contacts
+              </CardTitle>
+              <CardDescription>{contacts?.length || 0} contacts in your CRM</CardDescription>
+            </div>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search contacts..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-8 w-[250px]"
+              />
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {contactsLoading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : !contacts || contacts.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p>No contacts yet. Add your first contact to get started.</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="min-w-[160px]">Name</TableHead>
+                    <TableHead className="min-w-[120px]">Organization</TableHead>
+                    <TableHead className="min-w-[160px]">Email</TableHead>
+                    <TableHead className="min-w-[110px]">Phone</TableHead>
+                    <TableHead className="min-w-[90px]">Type</TableHead>
+                    <TableHead className="min-w-[90px]">Source</TableHead>
+                    <TableHead className="min-w-[100px]">Last Contact</TableHead>
+                    <TableHead className="w-[40px]"></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(contacts as any[]).map((contact: any) => (
+                    <TableRow
+                      key={contact.id}
+                      className="hover:bg-muted/50 cursor-pointer"
+                      onClick={() => {
+                        setSelectedContact(contact);
+                        setIsDetailOpen(true);
+                      }}
+                    >
+                      <TableCell className="font-medium">
+                        {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-'}
+                      </TableCell>
+                      <TableCell>{contact.organization || '-'}</TableCell>
+                      <TableCell className="text-sm">
+                        {contact.email ? (
+                          <a
+                            href={`mailto:${contact.email}`}
+                            className="text-blue-600 hover:underline"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {contact.email}
+                          </a>
+                        ) : '-'}
+                      </TableCell>
+                      <TableCell className="text-sm">{contact.phone || '-'}</TableCell>
+                      <TableCell>
+                        <Badge variant="secondary" className="capitalize text-xs">
+                          {contact.contactType || '-'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm capitalize">
+                        {(contact.source || '-').replace(/_/g, ' ')}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {contact.lastContactedAt
+                          ? format(new Date(contact.lastContactedAt), 'MMM d, yyyy')
+                          : '-'}
+                      </TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm" onClick={(e) => e.stopPropagation()}>
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => {
+                              setSelectedContact(contact);
+                              setIsDetailOpen(true);
+                            }}>
+                              View Details
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="text-red-600"
+                              onClick={() => {
+                                if (confirm('Delete this contact?')) {
+                                  deleteContact.mutate({ id: contact.id });
+                                }
+                              }}
+                            >
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Single Deals Table */}
       <Card>
         <CardHeader>

@@ -34,6 +34,7 @@ import { Building2, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { getStatusColor } from "@/lib/statusColors";
 import { useLocation } from "wouter";
+import DocumentsCell from "@/components/DocumentsCell";
 
 function formatCurrency(value: number): string {
   return "$" + value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -444,6 +445,7 @@ export default function Vendors() {
                     <TableHead className="text-sm whitespace-nowrap">Negotiation Status</TableHead>
                     <TableHead className="text-sm whitespace-nowrap">Notes</TableHead>
                     <TableHead className="text-sm whitespace-nowrap">Status</TableHead>
+                    <TableHead className="text-sm whitespace-nowrap">Docs</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -501,6 +503,9 @@ export default function Vendors() {
                           <Badge className={getStatusColor(vendor.status)}>
                             {vendor.status}
                           </Badge>
+                        </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          <DocumentsCell referenceType="vendor" referenceId={vendor.id} />
                         </TableCell>
                       </TableRow>
                     );

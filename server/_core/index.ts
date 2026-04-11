@@ -314,37 +314,43 @@ async function startServer() {
   // Google OAuth callback
   app.get('/api/google/callback', oauthCallbackLimiter, async (req, res) => {
     const { code, state } = req.query;
-    if (!code || !state) return res.redirect('/import?error=missing_params');
+    // Determine the redirect page from the state (defaults to /import)
+    let returnTo = '/import';
+    if (!code || !state) return res.redirect(`${returnTo}?error=missing_params`);
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    if (!clientId || !clientSecret) return res.redirect('/import?error=not_configured');
+    if (!clientId || !clientSecret) return res.redirect(`${returnTo}?error=not_configured`);
     try {
       // Verify HMAC-signed state and authenticate session
       const { verifySignedOAuthState } = await import('./crypto');
       const stateData = verifySignedOAuthState(state as string);
-      if (!stateData) return res.redirect('/import?error=invalid_state');
+      if (!stateData) return res.redirect(`${returnTo}?error=invalid_state`);
+      // Use returnTo from state if the caller encoded one (e.g. Gmail pages)
+      if (typeof stateData.returnTo === 'string' && stateData.returnTo.startsWith('/')) {
+        returnTo = stateData.returnTo;
+      }
       const { sdk: authSdk } = await import('./sdk');
       let user: any;
-      try { user = await authSdk.authenticateRequest(req); } catch { return res.redirect('/import?error=not_authenticated'); }
-      if (!user) return res.redirect('/import?error=not_authenticated');
-      if (stateData.userId !== user.id) return res.redirect('/import?error=user_mismatch');
+      try { user = await authSdk.authenticateRequest(req); } catch { return res.redirect(`${returnTo}?error=not_authenticated`); }
+      if (!user) return res.redirect(`${returnTo}?error=not_authenticated`);
+      if (stateData.userId !== user.id) return res.redirect(`${returnTo}?error=user_mismatch`);
       const userId = user.id;
       const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, code: code as string, grant_type: 'authorization_code', redirect_uri: `${process.env.VITE_APP_URL || 'http://localhost:3000'}/api/google/callback` }),
       });
-      if (!tokenResponse.ok) return res.redirect('/import?error=token_exchange_failed');
+      if (!tokenResponse.ok) return res.redirect(`${returnTo}?error=token_exchange_failed`);
       const tokens = await tokenResponse.json();
       const userInfoResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', { headers: { Authorization: `Bearer ${tokens.access_token}` } });
       let googleEmail = null;
       if (userInfoResponse.ok) { const userInfo = await userInfoResponse.json(); googleEmail = userInfo.email; }
       const { upsertGoogleOAuthToken } = await import('../db');
       await upsertGoogleOAuthToken({ userId, accessToken: tokens.access_token, refreshToken: tokens.refresh_token, expiresAt: new Date(Date.now() + tokens.expires_in * 1000), scope: tokens.scope, googleEmail });
-      res.redirect('/import?success=connected');
+      res.redirect(`${returnTo}?success=connected&google_connected=true`);
     } catch (error) {
       logger.error("Google OAuth error", { error: error instanceof Error ? error.message : String(error) });
-      res.redirect('/import?error=oauth_failed');
+      res.redirect(`${returnTo}?error=oauth_failed`);
     }
   });
 

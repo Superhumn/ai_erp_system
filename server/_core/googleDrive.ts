@@ -67,10 +67,10 @@ export function getGoogleDriveAuthUrl(userId: number): string {
 /**
  * Get comprehensive OAuth URL for all Google services (Drive, Gmail, Workspace)
  */
-export function getGoogleFullAccessAuthUrl(userId: number): string {
+export function getGoogleFullAccessAuthUrl(userId: number, returnTo?: string): string {
   const clientId = ENV.googleClientId;
   const redirectUri = ENV.googleRedirectUri || `${ENV.appUrl}/api/oauth/google/callback`;
-  
+
   // Request all necessary scopes for Drive, Gmail, Docs, Sheets, and Calendar
   // NOTE: You must enable the Google Calendar API in your Google Cloud Console:
   // https://console.cloud.google.com/apis/library/calendar-json.googleapis.com
@@ -85,8 +85,10 @@ export function getGoogleFullAccessAuthUrl(userId: number): string {
     "https://www.googleapis.com/auth/calendar " +
     "https://www.googleapis.com/auth/calendar.events"
   );
-  
-  const state = createSignedOAuthState({ userId, provider: 'google' });
+
+  const statePayload: Record<string, unknown> = { userId, provider: 'google' };
+  if (returnTo) statePayload.returnTo = returnTo;
+  const state = createSignedOAuthState(statePayload);
 
   return `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${encodeURIComponent(state)}`;
 }
