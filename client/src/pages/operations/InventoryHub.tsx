@@ -16,10 +16,6 @@ import {
   Truck,
   Factory,
   Shield,
-  Clock,
-  CheckCircle,
-  Layers,
-  Send,
   RefreshCw,
   Plus,
   Loader2,
@@ -27,6 +23,8 @@ import {
   Plug,
   CloudUpload,
   FileSpreadsheet,
+  Layers,
+  Send,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -51,9 +49,13 @@ export default function InventoryHub() {
   const [qcHoldReason, setQcHoldReason] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
-  // Data fetching
+  // Data fetching - all sources
   const { data: warehouses, isLoading: warehousesLoading } = trpc.warehouses.list.useQuery();
   const { data: inventory, isLoading: inventoryLoading } = trpc.inventory.list.useQuery();
+  const { data: products, isLoading: productsLoading } = trpc.products.list.useQuery();
+  const { data: purchaseOrders } = trpc.purchaseOrders.list.useQuery();
+  const { data: shipments } = trpc.shipments.list.useQuery();
+  const { data: vendors } = trpc.vendors.list.useQuery();
   const { data: rawMaterials, isLoading: materialsLoading } = trpc.rawMaterials.list.useQuery();
   const { data: workOrders } = trpc.workOrders.list.useQuery();
   const { data: transfers } = trpc.transfers.list.useQuery();
@@ -135,21 +137,157 @@ export default function InventoryHub() {
     setSelectedItem(null);
   };
 
-  // Build flat inventory rows - one row per product-location combination
+  // Pre-compute lookup maps for joins
+  const productMap = useMemo(() => {
+    const m = new Map<number, any>();
+    products?.forEach((p: any) => m.set(p.id, p));
+    return m;
+  }, [products]);
+
+  const vendorMap = useMemo(() => {
+    const m = new Map<number, any>();
+    vendors?.forEach((v: any) => m.set(v.id, v));
+    return m;
+  }, [vendors]);
+
+  const warehouseMap = useMemo(() => {
+    const m = new Map<number, any>();
+    warehouses?.forEach((w: any) => m.set(w.id, w));
+    return m;
+  }, [warehouses]);
+
+  // Build PO data per product: { productId -> { openQty, poNumbers[], latestPOStatus, latestPODate, vendorId } }
+  const poByProduct = useMemo(() => {
+    const m = new Map<number, { openQty: number; poNumbers: string[]; latestStatus: string; latestDate: string | null; vendorId: number | null }>();
+    if (!purchaseOrders) return m;
+
+    // POs that are open (not received or cancelled)
+    const openStatuses = new Set(["draft", "sent", "confirmed", "partial"]);
+    purchaseOrders.forEach((po: any) => {
+      if (!openStatuses.has(po.status)) return;
+      // Since PO items have productId, but we don't fetch items separately for each PO here,
+      // we associate the PO with its vendor and track by vendorId.
+      // For now, associate PO data at the PO level (not per-product-item).
+      // We'll also note the PO for any product that has this vendor as preferred.
+    });
+
+    // Instead, iterate POs and match to products via vendor
+    // But first, let's build from pendingFromPOs which already gives us productId-level data
+    pendingFromPOs?.forEach((pending: any) => {
+      const existing = m.get(pending.productId);
+      if (existing) {
+        existing.openQty += parseFloat(pending.pendingQuantity) || 0;
+      } else {
+        m.set(pending.productId, {
+          openQty: parseFloat(pending.pendingQuantity) || 0,
+          poNumbers: [],
+          latestStatus: "",
+          latestDate: null,
+          vendorId: null,
+        });
+      }
+    });
+
+    // Now enrich with PO-level data
+    purchaseOrders.forEach((po: any) => {
+      if (!openStatuses.has(po.status)) return;
+      // For each product, check if this PO's vendor is the preferred vendor
+      products?.forEach((prod: any) => {
+        if (prod.preferredVendorId && prod.preferredVendorId === po.vendorId) {
+          const existing = m.get(prod.id);
+          if (existing) {
+            if (!existing.poNumbers.includes(po.poNumber)) {
+              existing.poNumbers.push(po.poNumber);
+            }
+            // Update latest PO info
+            const poDate = po.orderDate || po.createdAt;
+            if (!existing.latestDate || (poDate && new Date(poDate) > new Date(existing.latestDate))) {
+              existing.latestStatus = po.status;
+              existing.latestDate = poDate;
+              existing.vendorId = po.vendorId;
+            }
+          } else {
+            m.set(prod.id, {
+              openQty: 0,
+              poNumbers: [po.poNumber],
+              latestStatus: po.status,
+              latestDate: po.orderDate || po.createdAt,
+              vendorId: po.vendorId,
+            });
+          }
+        }
+      });
+    });
+
+    // Also scan all POs for recent PO info per vendor
+    purchaseOrders.forEach((po: any) => {
+      products?.forEach((prod: any) => {
+        if (prod.preferredVendorId === po.vendorId) {
+          const existing = m.get(prod.id);
+          if (existing) {
+            const poDate = po.orderDate || po.createdAt;
+            if (!existing.latestDate || (poDate && new Date(poDate) > new Date(existing.latestDate))) {
+              existing.latestStatus = po.status;
+              existing.latestDate = poDate;
+            }
+          }
+        }
+      });
+    });
+
+    return m;
+  }, [purchaseOrders, pendingFromPOs, products]);
+
+  // Build shipment data per product via PO link
+  const shipmentByProduct = useMemo(() => {
+    const m = new Map<number, { tracking: string; status: string; date: string | null }>();
+    if (!shipments || !purchaseOrders) return m;
+
+    // Map PO id -> vendorId
+    const poVendorMap = new Map<number, number>();
+    purchaseOrders.forEach((po: any) => poVendorMap.set(po.id, po.vendorId));
+
+    // For each shipment linked to a PO, find products by vendor match
+    shipments.forEach((ship: any) => {
+      if (!ship.purchaseOrderId) return;
+      const vendorId = poVendorMap.get(ship.purchaseOrderId);
+      if (!vendorId) return;
+
+      products?.forEach((prod: any) => {
+        if (prod.preferredVendorId === vendorId) {
+          const existing = m.get(prod.id);
+          const shipDate = ship.shipDate || ship.createdAt;
+          if (!existing || (shipDate && new Date(shipDate) > new Date(existing.date || ""))) {
+            m.set(prod.id, {
+              tracking: ship.trackingNumber || (shipDate ? new Date(shipDate).toLocaleDateString() : ""),
+              status: ship.status || "",
+              date: shipDate,
+            });
+          }
+        }
+      });
+    });
+
+    return m;
+  }, [shipments, purchaseOrders, products]);
+
+  // Build flat inventory rows - unified view
   const inventoryRows = useMemo(() => {
     if (!inventory && !rawMaterials) return [];
 
     const rows: any[] = [];
 
-    // Add finished goods inventory (already per-location)
+    // Add finished goods inventory
     inventory?.forEach((inv: any) => {
       const qty = parseFloat(inv.quantity) || 0;
       const reserved = parseFloat(inv.reservedQuantity) || 0;
       const reorderPoint = parseFloat(inv.reorderPoint) || parseFloat(inv.reorderLevel) || 0;
-      const reorderQty = parseFloat(inv.reorderQuantity) || 0;
       const available = qty - reserved;
 
-      // Find in-transit for this product
+      const product = productMap.get(inv.productId);
+      const warehouse = warehouseMap.get(inv.warehouseId);
+
+      // In-transit from transfers
       let inTransitQty = 0;
       transfers?.forEach((t: any) => {
         if (t.status === "in_transit") {
@@ -161,7 +299,7 @@ export default function InventoryHub() {
         }
       });
 
-      // Find on-order from POs
+      // On-order from POs
       let onOrderQty = 0;
       pendingFromPOs?.forEach((pending: any) => {
         if (pending.productId === inv.productId) {
@@ -169,27 +307,46 @@ export default function InventoryHub() {
         }
       });
 
-      const warehouse = warehouses?.find((w: any) => w.id === inv.warehouseId);
+      // PO info
+      const poInfo = poByProduct.get(inv.productId);
+      // Shipment info
+      const shipInfo = shipmentByProduct.get(inv.productId);
+
+      // Vendor - from product's preferredVendorId or from PO data
+      const vendorId = product?.preferredVendorId || poInfo?.vendorId;
+      const vendor = vendorId ? vendorMap.get(vendorId) : null;
+
+      // Unit cost from product costPrice or inventory averageCost
+      const unitCost = parseFloat(inv.averageCost) || parseFloat(product?.costPrice) || 0;
+      const totalValue = qty * unitCost;
+
       let status = "ok";
       if (qty <= 0) status = "out_of_stock";
       else if (reorderPoint > 0 && qty <= reorderPoint) status = "low";
 
       rows.push({
         id: inv.id,
-        sku: inv.product?.sku || "",
-        productName: inv.product?.name || `Product #${inv.productId}`,
-        location: warehouse?.name || "—",
+        sku: product?.sku || "",
+        productName: product?.name || `Product #${inv.productId}`,
+        category: product?.category || "",
+        location: warehouse?.name || "",
         locationId: inv.warehouseId,
         qtyOnHand: qty,
         reserved,
         available,
-        inTransit: inTransitQty,
-        onOrder: onOrderQty,
         reorderPoint,
-        reorderQty,
+        inTransit: inTransitQty,
+        onOrderQty: onOrderQty || (poInfo?.openQty || 0),
+        openPONumbers: poInfo?.poNumbers?.join(", ") || "",
+        poStatus: poInfo?.latestStatus || "",
+        lastPODate: poInfo?.latestDate || null,
+        vendorName: vendor?.name || "",
+        lastShipment: shipInfo?.tracking || "",
+        shipStatus: shipInfo?.status || "",
+        unitCost,
+        totalValue,
         lastUpdated: inv.updatedAt || inv.createdAt,
         status,
-        unit: inv.unit || "EA",
         productId: inv.productId,
         productType: "finished",
       });
@@ -200,10 +357,13 @@ export default function InventoryHub() {
       const qty = parseFloat(mat.quantityOnHand) || 0;
       const reserved = parseFloat(mat.quantityOnOrder) || 0;
       const reorderPoint = parseFloat(mat.reorderPoint) || parseFloat(mat.reorderLevel) || 0;
-      const reorderQty = parseFloat(mat.reorderQuantity) || 0;
       const available = qty - reserved;
 
-      const warehouse = mat.warehouseId ? warehouses?.find((w: any) => w.id === mat.warehouseId) : null;
+      const warehouse = mat.warehouseId ? warehouseMap.get(mat.warehouseId) : null;
+      const vendor = mat.preferredVendorId ? vendorMap.get(mat.preferredVendorId) : null;
+      const unitCost = parseFloat(mat.costPerUnit) || parseFloat(mat.unitCost) || 0;
+      const totalValue = qty * unitCost;
+
       let status = "ok";
       if (qty <= 0) status = "out_of_stock";
       else if (reorderPoint > 0 && qty <= reorderPoint) status = "low";
@@ -212,42 +372,52 @@ export default function InventoryHub() {
         id: -mat.id,
         sku: mat.sku || "",
         productName: mat.name || `Material #${mat.id}`,
-        location: warehouse?.name || "—",
+        category: mat.category || "Raw Material",
+        location: warehouse?.name || "",
         locationId: mat.warehouseId,
         qtyOnHand: qty,
         reserved,
         available,
-        inTransit: 0,
-        onOrder: 0,
         reorderPoint,
-        reorderQty,
+        inTransit: 0,
+        onOrderQty: 0,
+        openPONumbers: "",
+        poStatus: "",
+        lastPODate: null,
+        vendorName: vendor?.name || "",
+        lastShipment: "",
+        shipStatus: "",
+        unitCost,
+        totalValue,
         lastUpdated: mat.updatedAt || mat.createdAt,
         status,
-        unit: mat.unit || "LB",
         productId: mat.id,
         productType: "material",
       });
     });
 
     // Apply search filter
+    let filtered = rows;
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
-      return rows.filter(r =>
+      filtered = filtered.filter(r =>
         r.productName.toLowerCase().includes(term) ||
         r.sku.toLowerCase().includes(term) ||
-        r.location.toLowerCase().includes(term)
+        r.location.toLowerCase().includes(term) ||
+        r.category.toLowerCase().includes(term) ||
+        r.vendorName.toLowerCase().includes(term)
       );
     }
 
     // Apply status filter
     if (statusFilter === "low") {
-      return rows.filter(r => r.status === "low");
+      filtered = filtered.filter(r => r.status === "low");
     } else if (statusFilter === "out_of_stock") {
-      return rows.filter(r => r.status === "out_of_stock");
+      filtered = filtered.filter(r => r.status === "out_of_stock");
     }
 
-    return rows;
-  }, [inventory, rawMaterials, warehouses, transfers, pendingFromPOs, searchTerm, statusFilter]);
+    return filtered;
+  }, [inventory, rawMaterials, products, warehouses, transfers, pendingFromPOs, vendors, purchaseOrders, shipments, productMap, warehouseMap, vendorMap, poByProduct, shipmentByProduct, searchTerm, statusFilter]);
 
   // Summary stats
   const stats = useMemo(() => {
@@ -263,29 +433,64 @@ export default function InventoryHub() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "low":
-        return <Badge className="bg-amber-500/8 text-amber-600 dark:text-amber-400">Low Stock</Badge>;
+        return <Badge className="bg-amber-500/8 text-amber-600 dark:text-amber-400 text-[10px] px-1.5 py-0">Low</Badge>;
       case "out_of_stock":
-        return <Badge className="bg-red-500/8 text-red-600 dark:text-red-400">Out of Stock</Badge>;
+        return <Badge className="bg-red-500/8 text-red-600 dark:text-red-400 text-[10px] px-1.5 py-0">Out</Badge>;
       default:
-        return <Badge className="bg-emerald-500/8 text-emerald-600 dark:text-emerald-400">OK</Badge>;
+        return <Badge className="bg-emerald-500/8 text-emerald-600 dark:text-emerald-400 text-[10px] px-1.5 py-0">OK</Badge>;
     }
   };
 
-  const isLoading = warehousesLoading || inventoryLoading || materialsLoading || pendingLoading || inboundLoading;
+  const getPOStatusBadge = (status: string) => {
+    if (!status) return <span className="text-muted-foreground">—</span>;
+    const colors: Record<string, string> = {
+      draft: "bg-gray-500/8 text-gray-600",
+      sent: "bg-blue-500/8 text-blue-600",
+      confirmed: "bg-emerald-500/8 text-emerald-600",
+      partial: "bg-amber-500/8 text-amber-600",
+      received: "bg-green-500/8 text-green-600",
+      cancelled: "bg-red-500/8 text-red-600",
+    };
+    return <Badge className={`${colors[status] || "bg-gray-500/8 text-gray-600"} text-[10px] px-1.5 py-0`}>{status}</Badge>;
+  };
+
+  const getShipStatusBadge = (status: string) => {
+    if (!status) return <span className="text-muted-foreground">—</span>;
+    const colors: Record<string, string> = {
+      pending: "bg-gray-500/8 text-gray-600",
+      in_transit: "bg-blue-500/8 text-blue-600",
+      delivered: "bg-emerald-500/8 text-emerald-600",
+      returned: "bg-amber-500/8 text-amber-600",
+      cancelled: "bg-red-500/8 text-red-600",
+    };
+    return <Badge className={`${colors[status] || "bg-gray-500/8 text-gray-600"} text-[10px] px-1.5 py-0`}>{status.replace("_", " ")}</Badge>;
+  };
+
+  const fmtDate = (d: any) => {
+    if (!d) return "—";
+    try { return new Date(d).toLocaleDateString(); } catch { return "—"; }
+  };
+
+  const fmtCurrency = (n: number) => {
+    if (!n) return "—";
+    return "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  const isLoading = warehousesLoading || inventoryLoading || productsLoading || materialsLoading || pendingLoading || inboundLoading;
 
   return (
-    <div className="p-6 space-y-4 max-w-[1600px] mx-auto">
+    <div className="p-6 space-y-4 max-w-[1800px] mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Inventory</h1>
-          <p className="text-muted-foreground">Multi-location inventory tracking</p>
+          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Products & Inventory</h1>
+          <p className="text-muted-foreground">Unified view — inventory, POs, shipments, costing, vendors</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search by name, SKU, location..."
+              placeholder="Search SKU, name, vendor, category..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-9 w-[280px]"
@@ -440,9 +645,9 @@ export default function InventoryHub() {
         </Card>
       </div>
 
-      {/* Inventory Table */}
+      {/* Unified Products & Inventory Table */}
       <Card>
-        <CardContent className="pt-6">
+        <CardContent className="pt-6 px-0">
           {isLoading ? (
             <div className="text-center py-12">
               <RefreshCw className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
@@ -455,88 +660,95 @@ export default function InventoryHub() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <Table>
+              <Table className="text-xs">
                 <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[100px]">SKU</TableHead>
-                    <TableHead>Product Name</TableHead>
-                    <TableHead>Location</TableHead>
-                    <TableHead className="text-right">Qty on Hand</TableHead>
-                    <TableHead className="text-right">Reserved</TableHead>
-                    <TableHead className="text-right">Available</TableHead>
-                    <TableHead className="text-right">In Transit</TableHead>
-                    <TableHead className="text-right">Reorder Pt</TableHead>
-                    <TableHead className="text-right">Reorder Qty</TableHead>
-                    <TableHead>Last Updated</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                  <TableRow className="border-b">
+                    {/* Sticky left columns */}
+                    <TableHead className="sticky left-0 z-20 bg-background min-w-[80px] px-2 py-2 text-xs font-semibold">SKU</TableHead>
+                    <TableHead className="sticky left-[80px] z-20 bg-background min-w-[160px] px-2 py-2 text-xs font-semibold border-r">Product Name</TableHead>
+                    {/* Scrollable columns */}
+                    <TableHead className="min-w-[90px] px-2 py-2 text-xs font-semibold">Category</TableHead>
+                    <TableHead className="min-w-[100px] px-2 py-2 text-xs font-semibold">Location</TableHead>
+                    <TableHead className="min-w-[70px] px-2 py-2 text-xs font-semibold text-right">Stock Qty</TableHead>
+                    <TableHead className="min-w-[70px] px-2 py-2 text-xs font-semibold text-right">Reserved</TableHead>
+                    <TableHead className="min-w-[70px] px-2 py-2 text-xs font-semibold text-right">Available</TableHead>
+                    <TableHead className="min-w-[70px] px-2 py-2 text-xs font-semibold text-right">Reorder Pt</TableHead>
+                    <TableHead className="min-w-[70px] px-2 py-2 text-xs font-semibold text-right">In Transit</TableHead>
+                    <TableHead className="min-w-[80px] px-2 py-2 text-xs font-semibold text-right">Open PO Qty</TableHead>
+                    <TableHead className="min-w-[100px] px-2 py-2 text-xs font-semibold">Open PO#</TableHead>
+                    <TableHead className="min-w-[75px] px-2 py-2 text-xs font-semibold">PO Status</TableHead>
+                    <TableHead className="min-w-[85px] px-2 py-2 text-xs font-semibold">Last PO Date</TableHead>
+                    <TableHead className="min-w-[110px] px-2 py-2 text-xs font-semibold">Vendor</TableHead>
+                    <TableHead className="min-w-[100px] px-2 py-2 text-xs font-semibold">Last Shipment</TableHead>
+                    <TableHead className="min-w-[80px] px-2 py-2 text-xs font-semibold">Ship Status</TableHead>
+                    <TableHead className="min-w-[80px] px-2 py-2 text-xs font-semibold text-right">Unit Cost</TableHead>
+                    <TableHead className="min-w-[90px] px-2 py-2 text-xs font-semibold text-right">Total Value</TableHead>
+                    <TableHead className="min-w-[85px] px-2 py-2 text-xs font-semibold">Last Updated</TableHead>
+                    <TableHead className="min-w-[50px] px-2 py-2 text-xs font-semibold text-center">Status</TableHead>
+                    <TableHead className="min-w-[110px] px-2 py-2 text-xs font-semibold text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {inventoryRows.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell className="font-mono text-sm">{row.sku || "—"}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{row.productName}</span>
+                    <TableRow key={row.id} className="hover:bg-muted/50 h-8">
+                      {/* Sticky left columns */}
+                      <TableCell className="sticky left-0 z-10 bg-background px-2 py-1 font-mono text-xs">{row.sku || "—"}</TableCell>
+                      <TableCell className="sticky left-[80px] z-10 bg-background px-2 py-1 border-r max-w-[160px]">
+                        <div className="flex items-center gap-1 truncate">
+                          <span className="font-medium truncate text-xs">{row.productName}</span>
                           {row.productType === "material" && (
-                            <Badge variant="outline" className="text-xs">Material</Badge>
+                            <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">Mat</Badge>
                           )}
                         </div>
                       </TableCell>
-                      <TableCell>{row.location}</TableCell>
-                      <TableCell className="text-right font-mono">
-                        {row.qtyOnHand.toLocaleString()} <span className="text-muted-foreground text-xs">{row.unit}</span>
+                      {/* Scrollable columns */}
+                      <TableCell className="px-2 py-1 text-xs truncate max-w-[90px]">{row.category || "—"}</TableCell>
+                      <TableCell className="px-2 py-1 text-xs truncate max-w-[100px]">{row.location || "—"}</TableCell>
+                      <TableCell className="px-2 py-1 text-right font-mono text-xs">{row.qtyOnHand.toLocaleString()}</TableCell>
+                      <TableCell className="px-2 py-1 text-right font-mono text-xs text-muted-foreground">{row.reserved > 0 ? row.reserved.toLocaleString() : "—"}</TableCell>
+                      <TableCell className="px-2 py-1 text-right font-mono text-xs font-medium">{row.available.toLocaleString()}</TableCell>
+                      <TableCell className="px-2 py-1 text-right font-mono text-xs text-muted-foreground">{row.reorderPoint > 0 ? row.reorderPoint.toLocaleString() : "—"}</TableCell>
+                      <TableCell className="px-2 py-1 text-right font-mono text-xs">
+                        {row.inTransit > 0 ? <span className="text-blue-600">+{row.inTransit.toLocaleString()}</span> : "—"}
                       </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {row.reserved > 0 ? row.reserved.toLocaleString() : "—"}
+                      <TableCell className="px-2 py-1 text-right font-mono text-xs">
+                        {row.onOrderQty > 0 ? <span className="text-violet-600">{row.onOrderQty.toLocaleString()}</span> : "—"}
                       </TableCell>
-                      <TableCell className="text-right font-mono font-medium">
-                        {row.available.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {row.inTransit > 0 ? (
-                          <span className="text-blue-600">+{row.inTransit.toLocaleString()}</span>
-                        ) : "—"}
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {row.reorderPoint > 0 ? row.reorderPoint.toLocaleString() : "—"}
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {row.reorderQty > 0 ? row.reorderQty.toLocaleString() : "—"}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {row.lastUpdated ? new Date(row.lastUpdated).toLocaleDateString() : "—"}
-                      </TableCell>
-                      <TableCell>{getStatusBadge(row.status)}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
+                      <TableCell className="px-2 py-1 text-xs font-mono truncate max-w-[100px]">{row.openPONumbers || "—"}</TableCell>
+                      <TableCell className="px-2 py-1">{getPOStatusBadge(row.poStatus)}</TableCell>
+                      <TableCell className="px-2 py-1 text-xs text-muted-foreground">{fmtDate(row.lastPODate)}</TableCell>
+                      <TableCell className="px-2 py-1 text-xs truncate max-w-[110px]">{row.vendorName || "—"}</TableCell>
+                      <TableCell className="px-2 py-1 text-xs font-mono truncate max-w-[100px]">{row.lastShipment || "—"}</TableCell>
+                      <TableCell className="px-2 py-1">{getShipStatusBadge(row.shipStatus)}</TableCell>
+                      <TableCell className="px-2 py-1 text-right font-mono text-xs">{fmtCurrency(row.unitCost)}</TableCell>
+                      <TableCell className="px-2 py-1 text-right font-mono text-xs font-medium">{fmtCurrency(row.totalValue)}</TableCell>
+                      <TableCell className="px-2 py-1 text-xs text-muted-foreground">{fmtDate(row.lastUpdated)}</TableCell>
+                      <TableCell className="px-2 py-1 text-center">{getStatusBadge(row.status)}</TableCell>
+                      <TableCell className="px-2 py-1 text-right">
+                        <div className="flex justify-end gap-0.5">
                           <Button
                             size="sm"
                             variant="ghost"
-                            className="h-7 px-2 text-xs"
+                            className="h-6 px-1.5 text-[10px]"
                             onClick={() => { setSelectedItem(row); setShowShipmentDialog(true); }}
                           >
-                            <Send className="h-3 w-3 mr-1" />
-                            Ship
+                            <Send className="h-3 w-3" />
                           </Button>
                           <Button
                             size="sm"
                             variant="ghost"
-                            className="h-7 px-2 text-xs"
+                            className="h-6 px-1.5 text-[10px]"
                             onClick={() => { setSelectedItem(row); setShowProductionDialog(true); }}
                           >
-                            <Factory className="h-3 w-3 mr-1" />
-                            Allocate
+                            <Factory className="h-3 w-3" />
                           </Button>
                           <Button
                             size="sm"
                             variant="ghost"
-                            className="h-7 px-2 text-xs"
+                            className="h-6 px-1.5 text-[10px]"
                             onClick={() => handleQcHold(row)}
                           >
-                            <Shield className="h-3 w-3 mr-1" />
-                            Hold
+                            <Shield className="h-3 w-3" />
                           </Button>
                         </div>
                       </TableCell>

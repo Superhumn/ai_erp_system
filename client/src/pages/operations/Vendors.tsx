@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,6 +34,26 @@ import { Building2, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { getStatusColor } from "@/lib/statusColors";
 
+function formatCurrency(value: number): string {
+  return "$" + value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatDate(date: Date | string | null | undefined): string {
+  if (!date) return "-";
+  const d = typeof date === "string" ? new Date(date) : date;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+const ACTIVE_NEGOTIATION_STATUSES = new Set([
+  "draft",
+  "analyzing",
+  "ready",
+  "in_progress",
+  "counter_offered",
+]);
+
+const OPEN_PO_STATUSES = new Set(["draft", "sent", "confirmed"]);
+
 export default function Vendors() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -58,8 +78,11 @@ export default function Vendors() {
 
   const utils = trpc.useUtils();
 
-  // Vendors queries
+  // Data queries
   const { data: vendors, isLoading: vendorsLoading } = trpc.vendors.list.useQuery();
+  const { data: purchaseOrders } = trpc.purchaseOrders.list.useQuery();
+  const { data: negotiations } = trpc.vendorNegotiations.list.useQuery({});
+
   const createVendor = trpc.vendors.create.useMutation({
     onSuccess: () => {
       toast.success("Vendor created successfully");
@@ -79,6 +102,92 @@ export default function Vendors() {
       paymentTerms: 30, defaultLeadTimeDays: 14, notes: "",
     });
   };
+
+  // Aggregate PO data per vendor
+  const poAggregates = useMemo(() => {
+    if (!purchaseOrders) return new Map<number, {
+      totalSpend: number;
+      poCount: number;
+      openPOs: number;
+      avgLeadTimeDays: number | null;
+      lastPODate: Date | string | null;
+      lastPOAmount: number;
+    }>();
+
+    const map = new Map<number, {
+      totalSpend: number;
+      poCount: number;
+      openPOs: number;
+      leadTimeDaysSum: number;
+      leadTimeCount: number;
+      avgLeadTimeDays: number | null;
+      lastPODate: Date | string | null;
+      lastPOAmount: number;
+    }>();
+
+    for (const po of purchaseOrders) {
+      const vendorId = po.vendorId;
+      if (!map.has(vendorId)) {
+        map.set(vendorId, {
+          totalSpend: 0,
+          poCount: 0,
+          openPOs: 0,
+          leadTimeDaysSum: 0,
+          leadTimeCount: 0,
+          avgLeadTimeDays: null,
+          lastPODate: null,
+          lastPOAmount: 0,
+        });
+      }
+      const agg = map.get(vendorId)!;
+      agg.totalSpend += parseFloat(po.totalAmount || "0");
+      agg.poCount += 1;
+
+      if (OPEN_PO_STATUSES.has(po.status)) {
+        agg.openPOs += 1;
+      }
+
+      // Compute lead time from orderDate to receivedDate
+      if (po.orderDate && po.receivedDate) {
+        const ordered = new Date(po.orderDate).getTime();
+        const received = new Date(po.receivedDate).getTime();
+        const days = Math.round((received - ordered) / (1000 * 60 * 60 * 24));
+        if (days >= 0) {
+          agg.leadTimeDaysSum += days;
+          agg.leadTimeCount += 1;
+        }
+      }
+
+      // Track the most recent PO by orderDate
+      const poDate = po.orderDate ? new Date(po.orderDate) : null;
+      const currentLastDate = agg.lastPODate ? new Date(agg.lastPODate) : null;
+      if (poDate && (!currentLastDate || poDate > currentLastDate)) {
+        agg.lastPODate = po.orderDate;
+        agg.lastPOAmount = parseFloat(po.totalAmount || "0");
+      }
+    }
+
+    // Compute averages
+    for (const agg of map.values()) {
+      agg.avgLeadTimeDays = agg.leadTimeCount > 0
+        ? Math.round(agg.leadTimeDaysSum / agg.leadTimeCount)
+        : null;
+    }
+
+    return map;
+  }, [purchaseOrders]);
+
+  // Active negotiation status per vendor
+  const negotiationStatusByVendor = useMemo(() => {
+    if (!negotiations) return new Map<number, string>();
+    const map = new Map<number, string>();
+    for (const neg of negotiations) {
+      if (ACTIVE_NEGOTIATION_STATUSES.has(neg.status)) {
+        map.set(neg.vendorId, "active");
+      }
+    }
+    return map;
+  }, [negotiations]);
 
   const filteredVendors = vendors?.filter((vendor) => {
     const matchesSearch =
@@ -113,6 +222,8 @@ export default function Vendors() {
       notes: formData.notes || undefined,
     });
   };
+
+  const isLoading = vendorsLoading;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -300,55 +411,94 @@ export default function Vendors() {
         </CardContent>
       </Card>
 
-      {/* Vendors Table */}
+      {/* Unified Vendors Table */}
       <Card>
         <CardHeader>
           <CardTitle>Vendors ({filteredVendors?.length || 0})</CardTitle>
         </CardHeader>
         <CardContent>
-          {vendorsLoading ? (
+          {isLoading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
           ) : filteredVendors && filteredVendors.length > 0 ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Contact Name</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Phone</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Payment Terms</TableHead>
-                  <TableHead>Notes</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredVendors.map((vendor) => (
-                  <TableRow key={vendor.id}>
-                    <TableCell className="font-medium">{vendor.name}</TableCell>
-                    <TableCell>{vendor.contactName || "-"}</TableCell>
-                    <TableCell className="text-sm">{vendor.email || "-"}</TableCell>
-                    <TableCell className="text-sm">{vendor.phone || "-"}</TableCell>
-                    <TableCell>
-                      <Badge className={typeColors[vendor.type] || ""}>
-                        {vendor.type}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>Net {vendor.paymentTerms}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
-                      {vendor.notes || "-"}
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={getStatusColor(vendor.status)}>
-                        {vendor.status}
-                      </Badge>
-                    </TableCell>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-sm whitespace-nowrap">Vendor Name</TableHead>
+                    <TableHead className="text-sm whitespace-nowrap">Contact</TableHead>
+                    <TableHead className="text-sm whitespace-nowrap">Email</TableHead>
+                    <TableHead className="text-sm whitespace-nowrap">Phone</TableHead>
+                    <TableHead className="text-sm whitespace-nowrap">Type</TableHead>
+                    <TableHead className="text-sm whitespace-nowrap text-right">Total Spend</TableHead>
+                    <TableHead className="text-sm whitespace-nowrap text-right">PO Count</TableHead>
+                    <TableHead className="text-sm whitespace-nowrap text-right">Open POs</TableHead>
+                    <TableHead className="text-sm whitespace-nowrap text-right">Avg Lead Time</TableHead>
+                    <TableHead className="text-sm whitespace-nowrap">Payment Terms</TableHead>
+                    <TableHead className="text-sm whitespace-nowrap">Last PO Date</TableHead>
+                    <TableHead className="text-sm whitespace-nowrap text-right">Last PO Amount</TableHead>
+                    <TableHead className="text-sm whitespace-nowrap">Negotiation Status</TableHead>
+                    <TableHead className="text-sm whitespace-nowrap">Notes</TableHead>
+                    <TableHead className="text-sm whitespace-nowrap">Status</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {filteredVendors.map((vendor) => {
+                    const agg = poAggregates.get(vendor.id);
+                    const negStatus = negotiationStatusByVendor.get(vendor.id) || "none";
+
+                    return (
+                      <TableRow key={vendor.id}>
+                        <TableCell className="text-sm font-medium whitespace-nowrap">{vendor.name}</TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">{vendor.contactName || "-"}</TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">{vendor.email || "-"}</TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">{vendor.phone || "-"}</TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          <Badge className={typeColors[vendor.type] || ""}>
+                            {vendor.type}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap text-right font-mono">
+                          {agg ? formatCurrency(agg.totalSpend) : "$0.00"}
+                        </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap text-right font-mono">
+                          {agg?.poCount ?? 0}
+                        </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap text-right font-mono">
+                          {agg?.openPOs ?? 0}
+                        </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap text-right font-mono">
+                          {agg?.avgLeadTimeDays != null ? `${agg.avgLeadTimeDays}d` : "-"}
+                        </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          Net {vendor.paymentTerms ?? 30}
+                        </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          {agg ? formatDate(agg.lastPODate) : "-"}
+                        </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap text-right font-mono">
+                          {agg && agg.lastPODate ? formatCurrency(agg.lastPOAmount) : "-"}
+                        </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          <Badge className={negStatus === "active" ? "bg-amber-500/10 text-amber-600" : "bg-gray-500/10 text-gray-500"}>
+                            {negStatus}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
+                          {vendor.notes || "-"}
+                        </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          <Badge className={getStatusColor(vendor.status)}>
+                            {vendor.status}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           ) : (
             <div className="text-center py-8 text-muted-foreground">
               <Building2 className="h-12 w-12 mx-auto mb-2 opacity-50" />
