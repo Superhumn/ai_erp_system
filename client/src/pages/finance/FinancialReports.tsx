@@ -125,20 +125,20 @@ export default function FinancialReports() {
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
 
-  const generateMutation = trpc.financialReports.generate.useMutation({
-    onSuccess: (data) => {
+  const generateMutation = (trpc as any).financialReports.generate.useMutation({
+    onSuccess: (data: any) => {
       setReportData(data as ReportData);
       setAiAnalysis(null);
     },
   });
 
-  const aiMutation = trpc.financialReports.aiAnalysis.useMutation({
-    onSuccess: (data) => {
+  const aiMutation = (trpc as any).financialReports.aiAnalysis.useMutation({
+    onSuccess: (data: any) => {
       setAiAnalysis(data.analysis);
     },
   });
 
-  const autoCategorize = trpc.financialReports.autoCategorize.useMutation();
+  const autoCategorize = (trpc as any).financialReports.autoCategorize.useMutation();
 
   const handleGenerate = (reportId: string) => {
     setSelectedReport(reportId);

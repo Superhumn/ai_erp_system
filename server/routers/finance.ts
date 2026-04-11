@@ -885,7 +885,7 @@ export const financeRouter = router({
           case "balance_sheet": {
             const payments = await db.getPayments();
             const cashIn = payments.filter(p => p.type === 'received' && p.status === 'completed').reduce((s, p) => s + toNum(p.amount), 0);
-            const cashOut = payments.filter(p => p.type === 'payment' && p.status === 'completed').reduce((s, p) => s + toNum(p.amount), 0);
+            const cashOut = payments.filter(p => p.type === 'made' && p.status === 'completed').reduce((s, p) => s + toNum(p.amount), 0);
             const cashBalance = cashIn - cashOut;
 
             const allInvoices = await db.getInvoices();
@@ -931,9 +931,9 @@ export const financeRouter = router({
 
           // ---- Cash Flow ----
           case "cash_flow": {
-            const payments = (await db.getPayments()).filter(p => inRange(p.date) && p.status === 'completed');
+            const payments = (await db.getPayments()).filter(p => inRange(p.paymentDate) && p.status === 'completed');
             const operatingIn = payments.filter(p => p.type === 'received').reduce((s, p) => s + toNum(p.amount), 0);
-            const operatingOut = payments.filter(p => p.type === 'payment').reduce((s, p) => s + toNum(p.amount), 0);
+            const operatingOut = payments.filter(p => p.type === 'made').reduce((s, p) => s + toNum(p.amount), 0);
             const operatingNet = operatingIn - operatingOut;
 
             const rows: any[] = [
@@ -963,15 +963,15 @@ export const financeRouter = router({
             const sixMonthsAgo = new Date();
             sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
             const recentPayments = (await db.getPayments()).filter(p => {
-              const d = p.date ? new Date(p.date) : null;
-              return d && d >= sixMonthsAgo && p.type === 'payment' && p.status === 'completed';
+              const d = p.paymentDate ? new Date(p.paymentDate) : null;
+              return d && d >= sixMonthsAgo && p.type === 'made' && p.status === 'completed';
             });
             const totalExpenses6m = recentPayments.reduce((s, p) => s + toNum(p.amount), 0);
             const monthlyBurn = totalExpenses6m / 6;
 
             const allPayments = await db.getPayments();
             const totalCashIn = allPayments.filter(p => p.type === 'received' && p.status === 'completed').reduce((s, p) => s + toNum(p.amount), 0);
-            const totalCashOut = allPayments.filter(p => p.type === 'payment' && p.status === 'completed').reduce((s, p) => s + toNum(p.amount), 0);
+            const totalCashOut = allPayments.filter(p => p.type === 'made' && p.status === 'completed').reduce((s, p) => s + toNum(p.amount), 0);
             const cashOnHand = totalCashIn - totalCashOut;
             const runwayMonths = monthlyBurn > 0 ? cashOnHand / monthlyBurn : Infinity;
 
@@ -1328,7 +1328,7 @@ Report data: ${input.reportData}`,
                 role: 'user',
                 content: `Categorize this business transaction for a CPG food company:
 Description: ${(txn as any).description || (txn as any).reference || 'N/A'}
-Amount: ${txn.amount}
+Amount: ${txn.totalAmount}
 Date: ${txn.date}
 Type: ${txn.type}
 
