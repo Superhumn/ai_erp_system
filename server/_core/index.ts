@@ -129,9 +129,14 @@ async function startServer() {
     // In production, validate origin matches our app URL
     if (ENV.isProduction && ENV.publicAppUrl) {
       try {
-        const allowedHost = new URL(ENV.publicAppUrl).host;
         const requestHost = new URL(origin as string).host;
-        if (requestHost !== allowedHost) {
+        // Allow both the Railway domain and custom domain
+        const allowedHosts = new Set([
+          new URL(ENV.publicAppUrl).host,
+          "app.superhumn.co",
+          "aierpsystem-production.up.railway.app",
+        ]);
+        if (!allowedHosts.has(requestHost)) {
           return res.status(403).json({ error: "Origin mismatch" });
         }
       } catch {
