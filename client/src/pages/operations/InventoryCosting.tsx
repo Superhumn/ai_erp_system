@@ -159,21 +159,13 @@ export default function InventoryCosting() {
         <div>
           <h1 className="text-xl font-semibold tracking-[-0.02em]">Inventory Costing & COGS</h1>
           <p className="text-muted-foreground">
-            FIFO, LIFO, and Weighted Average costing methods with automated COGS tracking
+            COGS auto-calculated from PO prices, freight, and copacker fees. No manual entry needed.
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setConfigDialogOpen(true)}>
+          <Button variant="outline" size="sm" onClick={() => setConfigDialogOpen(true)}>
             <Settings2 className="h-4 w-4 mr-2" />
-            Configure Method
-          </Button>
-          <Button variant="outline" onClick={() => setLayerDialogOpen(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add Cost Layer
-          </Button>
-          <Button onClick={() => setCogsDialogOpen(true)}>
-            <Calculator className="h-4 w-4 mr-2" />
-            Record COGS
+            Method
           </Button>
         </div>
       </div>
