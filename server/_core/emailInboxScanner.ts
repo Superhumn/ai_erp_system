@@ -121,6 +121,9 @@ export async function scanInbox(
     markAsSeen = false,
   } = options;
 
+  // Reset AI parse counter for this scan cycle
+  (globalThis as any).__aiParseCount = 0;
+
   const result: InboxScanResult = {
     success: false,
     totalEmails: 0,
@@ -228,6 +231,14 @@ export async function scanInbox(
             entries.slice(0, 2500).forEach(e => processedEmailIds.delete(e));
           }
           try {
+            // Rate limit: max 2 AI-parsed emails per scan to avoid API rate limits
+            const AI_PARSE_LIMIT = 2;
+            if (!((globalThis as any).__aiParseCount)) (globalThis as any).__aiParseCount = 0;
+            if ((globalThis as any).__aiParseCount >= AI_PARSE_LIMIT) {
+              // Skip AI parsing for this email — already hit the limit this cycle
+            } else {
+            (globalThis as any).__aiParseCount++;
+
             const { invokeLLM } = await import("./llm");
             const emailText = scannedEmail.bodyText || scannedEmail.subject;
 
@@ -323,6 +334,7 @@ Return JSON only. No markdown.`;
                 // JSON parse failed, skip
               }
             }
+          } // end AI parse limit check
           } catch {
             // Action item extraction failed, skip
           }

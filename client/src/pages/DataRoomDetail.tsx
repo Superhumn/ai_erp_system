@@ -399,10 +399,7 @@ export default function DataRoomDetail() {
               <ClipboardList className="h-4 w-4 mr-2" />
               Checklist
             </TabsTrigger>
-            <TabsTrigger value="driveSync">
-              <HardDrive className="h-4 w-4 mr-2" />
-              Drive Sync
-            </TabsTrigger>
+            {/* Drive Sync removed — use header button instead */}
             <TabsTrigger value="emailRules">
               <Shield className="h-4 w-4 mr-2" />
               Email Rules
@@ -956,9 +953,7 @@ export default function DataRoomDetail() {
           </TabsContent>
 
           {/* Google Drive Sync Tab */}
-          <TabsContent value="driveSync" className="mt-4">
-            <GoogleDriveSyncSettings dataRoomId={roomId} />
-          </TabsContent>
+          {/* Drive Sync tab removed — use header button */}
 
           {/* Email Access Rules Tab */}
           <TabsContent value="emailRules" className="mt-4">
