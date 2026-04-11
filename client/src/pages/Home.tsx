@@ -58,7 +58,7 @@ function KPICard({
       className={`group relative ${onClick ? "cursor-pointer hover:border-border/80 transition-colors duration-100" : ""}`}
       onClick={onClick}
     >
-      <CardContent className="pt-5 pb-4">
+      <CardContent className="pt-3 pb-2.5 px-3">
         {loading ? (
           <div className="space-y-3">
             <Skeleton className="h-3 w-24" />
@@ -74,7 +74,7 @@ function KPICard({
               <Icon className={`h-3.5 w-3.5 ${iconColors[variant]}`} />
             </div>
             <div className="flex items-baseline gap-2">
-              <span className="text-2xl font-semibold tracking-[-0.02em]">
+              <span className="text-xl font-semibold tracking-[-0.02em]">
                 {value}
               </span>
               {trend === "up" && (
@@ -207,23 +207,18 @@ export default function Home() {
   const recentActivity = (auditEntries as any[])?.slice(0, 10) ?? [];
 
   return (
-    <div className="space-y-8 animate-fade-in max-w-6xl">
+    <div className="space-y-2 animate-fade-in">
       {/* Header */}
-      <div>
-        <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">
-          Dashboard
-        </h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Key metrics for your business
-        </p>
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-semibold">Dashboard</h1>
       </div>
 
       {/* Row 1 — Financial Health */}
       <div>
-        <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
+        <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5">
           Financial Health
         </h2>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           <KPICard
             label="Cash on Hand"
             value={formatCurrency(cashOnHand, { whole: true })}
@@ -281,10 +276,10 @@ export default function Home() {
 
       {/* Row 2 — Operations */}
       <div>
-        <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
+        <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5">
           Operations
         </h2>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           <KPICard
             label="Outstanding AR"
             value={formatCurrency(outstandingAR, { whole: true })}
@@ -326,10 +321,10 @@ export default function Home() {
 
       {/* Row 3 — Activity */}
       <div>
-        <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
+        <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5">
           Activity
         </h2>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           <KPICard
             label="Active Work Orders"
             value={activeWorkOrders}
@@ -360,7 +355,7 @@ export default function Home() {
 
       {/* Recent Activity Feed */}
       <div>
-        <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
+        <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5">
           Recent Activity
         </h2>
         <Card>
