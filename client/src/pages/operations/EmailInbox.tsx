@@ -85,6 +85,13 @@ export default function EmailInbox() {
   const [activeFolder, setActiveFolder] = useState<string>("all");
   const [selectedEmails, setSelectedEmails] = useState<Set<number>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showCreateTaskDialog, setShowCreateTaskDialog] = useState(false);
+  const [taskForm, setTaskForm] = useState({
+    projectId: 0,
+    name: "",
+    description: "",
+    priority: "medium" as "low" | "medium" | "high" | "critical",
+  });
 
   // Form state for manual email submission
   const [emailForm, setEmailForm] = useState({
@@ -319,6 +326,44 @@ export default function EmailInbox() {
       toast.error(`Error creating task: ${error.message}`);
     },
   });
+
+  // Projects query and task creation for "Create Task from Email"
+  const { data: projectsList } = trpc.projects.list.useQuery();
+
+  const createProjectTaskMutation = trpc.projects.addTask.useMutation({
+    onSuccess: () => {
+      toast.success("Task created from email successfully!");
+      setShowCreateTaskDialog(false);
+      setTaskForm({ projectId: 0, name: "", description: "", priority: "medium" });
+    },
+    onError: (error: any) => {
+      toast.error(`Failed to create task: ${error.message}`);
+    },
+  });
+
+  const handleOpenCreateTask = () => {
+    if (!emailDetail) return;
+    setTaskForm({
+      projectId: 0,
+      name: emailDetail.subject || "Task from email",
+      description: `From: ${emailDetail.fromName || emailDetail.fromEmail}\nSubject: ${emailDetail.subject || ""}\n\n${(emailDetail.bodyText || "").substring(0, 500)}`,
+      priority: (emailDetail.priority === "high" ? "high" : "medium") as "low" | "medium" | "high" | "critical",
+    });
+    setShowCreateTaskDialog(true);
+  };
+
+  const handleCreateTaskFromEmail = () => {
+    if (!taskForm.projectId || !taskForm.name) {
+      toast.error("Please select a project and enter a task name");
+      return;
+    }
+    createProjectTaskMutation.mutate({
+      projectId: taskForm.projectId,
+      name: taskForm.name,
+      description: taskForm.description,
+      priority: taskForm.priority,
+    });
+  };
 
   // Handle AI reply generation
   const handleGenerateAiReply = async () => {
@@ -1145,6 +1190,14 @@ export default function EmailInbox() {
                         <Button
                           variant="outline"
                           size="sm"
+                          onClick={handleOpenCreateTask}
+                        >
+                          <Plus className="h-4 w-4 mr-2" />
+                          Create Task
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
                           onClick={() => reparseEmailMutation.mutate({ id: selectedEmail })}
                           disabled={reparseEmailMutation.isPending}
                         >
@@ -1541,6 +1594,88 @@ export default function EmailInbox() {
                 <Send className="h-4 w-4 mr-2" />
               )}
               Send Now
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Task from Email Dialog */}
+      <Dialog open={showCreateTaskDialog} onOpenChange={setShowCreateTaskDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Create Task from Email</DialogTitle>
+            <DialogDescription>
+              Create a project task based on this email's content.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Project</Label>
+              <Select
+                value={taskForm.projectId ? taskForm.projectId.toString() : ""}
+                onValueChange={(val) => setTaskForm({ ...taskForm, projectId: parseInt(val) || 0 })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a project" />
+                </SelectTrigger>
+                <SelectContent>
+                  {projectsList?.map((project: any) => (
+                    <SelectItem key={project.id} value={project.id.toString()}>
+                      {project.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Task Name</Label>
+              <Input
+                value={taskForm.name}
+                onChange={(e) => setTaskForm({ ...taskForm, name: e.target.value })}
+                placeholder="Enter task name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Textarea
+                value={taskForm.description}
+                onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })}
+                rows={5}
+                placeholder="Task description"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Priority</Label>
+              <Select
+                value={taskForm.priority}
+                onValueChange={(val) => setTaskForm({ ...taskForm, priority: val as any })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                  <SelectItem value="critical">Critical</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCreateTaskDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCreateTaskFromEmail}
+              disabled={createProjectTaskMutation.isPending || !taskForm.projectId}
+            >
+              {createProjectTaskMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Plus className="h-4 w-4 mr-2" />
+              )}
+              Create Task
             </Button>
           </DialogFooter>
         </DialogContent>

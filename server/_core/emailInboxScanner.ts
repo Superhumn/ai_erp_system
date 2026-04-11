@@ -213,6 +213,87 @@ export async function scanInbox(
 
           result.processedEmails.push(scannedEmail);
 
+          // Extract action items from email and create tasks/notifications
+          try {
+            const { invokeLLM } = await import("./llm");
+            const emailText = scannedEmail.bodyText || scannedEmail.subject;
+
+            // Only extract tasks from substantive emails (not short/empty ones)
+            if (emailText && emailText.length > 50) {
+              const prompt = `Analyze this email and extract any action items, to-dos, or requests. Return JSON:
+{
+  "actionItems": [
+    { "task": "description of the task", "priority": "high|medium|low", "dueDate": "YYYY-MM-DD or null", "category": "follow_up|send_document|schedule_meeting|review|approval|payment|other" }
+  ],
+  "hasTasks": true/false
+}
+
+Email from: ${scannedEmail.from.name || ""} <${scannedEmail.from.address}>
+Subject: ${scannedEmail.subject}
+Body: ${emailText.substring(0, 2000)}
+
+Return JSON only. No markdown.`;
+
+              const response = await invokeLLM({
+                messages: [
+                  { role: "system", content: "You extract action items from emails. Return valid JSON only." },
+                  { role: "user", content: prompt },
+                ],
+              });
+              const textContent = response.choices?.[0]?.message?.content;
+              const responseText = typeof textContent === "string" ? textContent : "";
+              const cleaned = responseText.replace(/```json\n?|\n?```/g, "").trim();
+
+              try {
+                const parsed = JSON.parse(cleaned);
+                if (parsed.hasTasks && parsed.actionItems?.length > 0) {
+                  const db = await import("../db");
+
+                  for (const item of parsed.actionItems) {
+                    try {
+                      await db.createNotification({
+                        userId: 1, // Admin user
+                        type: "reminder" as const,
+                        title: `[Email Task] ${item.task}`,
+                        message: `From email: "${scannedEmail.subject}" by ${scannedEmail.from.name || scannedEmail.from.address}. Priority: ${item.priority || "medium"}. Category: ${item.category || "other"}.`,
+                      });
+                    } catch {
+                      // Notification creation failed, skip
+                    }
+                  }
+                }
+              } catch {
+                // JSON parse failed, skip
+              }
+            }
+          } catch {
+            // Action item extraction failed, skip
+          }
+
+          // Auto-log to CRM if sender is a known contact
+          try {
+            const db = await import("../db");
+            const contacts = await db.getCrmContacts?.();
+            if (contacts) {
+              const contactList = Array.isArray(contacts) ? contacts : [];
+              const contact = contactList.find(
+                (c: any) => c.email?.toLowerCase() === scannedEmail.from.address?.toLowerCase()
+              );
+              if (contact) {
+                await db.createCrmInteraction?.({
+                  contactId: contact.id,
+                  channel: "email",
+                  interactionType: "received",
+                  subject: scannedEmail.subject,
+                  content: `Email received: ${scannedEmail.subject}`,
+                  userId: 1,
+                } as any);
+              }
+            }
+          } catch {
+            // CRM linking failed, skip
+          }
+
           // Mark as seen if requested
           if (markAsSeen) {
             await client.messageFlagsAdd(uid.toString(), ["\\Seen"], { uid: true });

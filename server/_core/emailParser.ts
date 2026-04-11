@@ -11,6 +11,8 @@ export type EmailCategory =
   | "order_confirmation"
   | "payment_confirmation"
   | "inventory_report"
+  | "hr_recruiting"
+  | "legal"
   | "general";
 
 export interface EmailCategorization {
@@ -186,7 +188,7 @@ function validateCategory(category: string): EmailCategory {
   const validCategories: EmailCategory[] = [
     "receipt", "purchase_order", "invoice", "shipping_confirmation",
     "freight_quote", "delivery_notification", "order_confirmation",
-    "payment_confirmation", "inventory_report", "general"
+    "payment_confirmation", "inventory_report", "hr_recruiting", "legal", "general"
   ];
   return validCategories.includes(category as EmailCategory) 
     ? (category as EmailCategory) 
@@ -280,6 +282,20 @@ export function quickCategorize(subject: string, fromEmail: string): EmailCatego
       emailPatterns: [/bank/i, /paypal/i, /stripe/i],
       priority: "medium",
       action: "Reconcile payment"
+    },
+    {
+      category: "legal",
+      subjectPatterns: [/trademark/i, /patent/i, /copyright/i, /legal.*notice/i, /cancellation.*request/i, /cancel.*confirm/i, /compliance/i, /regulatory/i, /subpoena/i, /litigation/i, /nda/i, /non.?disclosure/i, /contract.*review/i, /terms.*condition/i],
+      emailPatterns: [/legal/i, /law.*firm/i, /attorney/i, /trademark/i, /govdelivery/i, /fda\.gov/i, /sec\.gov/i],
+      priority: "high",
+      action: "Review legal/compliance matter"
+    },
+    {
+      category: "hr_recruiting",
+      subjectPatterns: [/fractional/i, /cfo/i, /cto/i, /vp\b/i, /hire/i, /hiring/i, /recruit/i, /candidate/i, /resume/i, /cv\b/i, /job.*application/i, /offer.*letter/i, /onboard/i, /interview/i, /headhunt/i, /talent/i, /staffing/i, /payroll/i, /benefits.*enrollment/i, /w-?2/i, /i-?9/i, /background.*check/i],
+      emailPatterns: [/linkedin/i, /indeed/i, /greenhouse/i, /lever\.co/i, /workday/i, /gusto/i, /rippling/i, /adp\./i],
+      priority: "medium",
+      action: "Review HR/recruiting matter"
     },
     {
       category: "inventory_report",
@@ -643,6 +659,8 @@ export function getCategoryDisplayInfo(category: EmailCategory): {
     order_confirmation: { label: "Order Confirmation", color: "indigo", icon: "check-circle" },
     payment_confirmation: { label: "Payment", color: "teal", icon: "credit-card" },
     inventory_report: { label: "Inventory Report", color: "amber", icon: "clipboard-check" },
+    hr_recruiting: { label: "HR / Recruiting", color: "pink", icon: "users" },
+    legal: { label: "Legal", color: "red", icon: "scale" },
     general: { label: "General", color: "gray", icon: "mail" }
   };
   
