@@ -11682,31 +11682,30 @@ Ask if they received the original request and if they can provide a quote.`;
             fileFolderId = folderMap.get(parentDriveId) || existingFoldersByDriveId.get(parentDriveId) || null;
           }
 
-          // Download the actual file content from Google Drive
-          const downloaded = await downloadDriveFile(accessToken, driveFile.id, driveFile.mimeType);
-
-          // Determine display name — exported Google Workspace files get .pdf extension
+          // Create file record first (fast), download content async later
           const isGoogleWorkspaceFile = driveFile.mimeType.startsWith('application/vnd.google-apps.');
-          const displayName = isGoogleWorkspaceFile
-            ? `${driveFile.name}.pdf`
-            : driveFile.name;
-
-          // Determine the effective MIME type and file type after export
-          const effectiveMimeType = ('exportedMimeType' in downloaded)
-            ? downloaded.exportedMimeType
-            : driveFile.mimeType;
-          const fileType = getSimpleFileType(effectiveMimeType);
-
+          const displayName = isGoogleWorkspaceFile ? `${driveFile.name}.pdf` : driveFile.name;
+          const fileType = getSimpleFileType(isGoogleWorkspaceFile ? 'application/pdf' : driveFile.mimeType);
           let storageType: 'google_drive' | 's3' = 'google_drive';
-          let storageUrl: string | undefined;
-          let storageKey: string | undefined;
-          let fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
+          let storageUrl: string | undefined = driveFile.webViewLink || undefined;
+          let storageKey: string | undefined = undefined;
+          const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
             ? parseInt(driveFile.size)
             : undefined;
 
-          if ('buffer' in downloaded) {
-            fileSize = downloaded.buffer.length;
-            // Try to store via storagePut (S3/storage proxy)
+          // Try to download small files (<2MB) inline, skip large ones
+          if (fileSize && fileSize < 2 * 1024 * 1024) {
+            try {
+              const downloaded = await downloadDriveFile(accessToken, driveFile.id, driveFile.mimeType);
+              if ('buffer' in downloaded && downloaded.buffer.length < 5 * 1024 * 1024) {
+                storageUrl = `data:${downloaded.exportedMimeType};base64,${downloaded.buffer.toString('base64')}`;
+                storageType = 's3';
+              }
+            } catch { /* download failed, keep Google link */ }
+          }
+
+          if (false) {
+            // Placeholder for S3 storage
             try {
               const fileKey = `dataroom/${input.dataRoomId}/${nanoid()}-${displayName}`;
               const result = await storagePut(fileKey, downloaded.buffer, downloaded.exportedMimeType);
