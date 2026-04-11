@@ -128,7 +128,7 @@ function getMenuGroups(role: string = "user") {
     items: [
       ...(isAdmin ? [
         { icon: Upload, label: "Import Data", path: "/import" },
-        { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
+        { icon: FolderLock, label: "Data Room", path: "/dataroom/1" },
         { icon: Megaphone, label: "Investor Updates", path: "/investor-updates" },
         { icon: Network, label: "EDI", path: "/edi" },
       ] : []),
