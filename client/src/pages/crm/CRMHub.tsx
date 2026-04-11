@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -51,10 +50,7 @@ type ContactSource = "iphone_bump" | "whatsapp" | "linkedin_scan" | "business_ca
 type PipelineStage = "new" | "contacted" | "qualified" | "proposal" | "negotiation" | "won" | "lost";
 
 export default function CRMHub() {
-  const [activeTab, setActiveTab] = useState("contacts");
   const [search, setSearch] = useState("");
-  const [contactTypeFilter, setContactTypeFilter] = useState<string>("all");
-  const [sourceFilter, setSourceFilter] = useState<string>("all");
   const [isContactDialogOpen, setIsContactDialogOpen] = useState(false);
   const [isCaptureDialogOpen, setIsCaptureDialogOpen] = useState(false);
   const [captureMethod, setCaptureMethod] = useState<string>("manual");
@@ -90,16 +86,12 @@ export default function CRMHub() {
 
   // Queries
   const { data: contacts, isLoading: contactsLoading, refetch: refetchContacts } = trpc.crm.contacts.list.useQuery({
-    contactType: contactTypeFilter !== "all" ? contactTypeFilter : undefined,
-    source: sourceFilter !== "all" ? sourceFilter : undefined,
     search: search || undefined,
   });
 
   const { data: contactStats } = trpc.crm.contacts.getStats.useQuery();
   const { data: dealStats } = trpc.crm.deals.getStats.useQuery();
-  const { data: pipelines } = trpc.crm.pipelines.list.useQuery();
-  const { data: deals } = trpc.crm.deals.list.useQuery({ status: "open" });
-  const { data: tags } = trpc.crm.tags.list.useQuery();
+  const { data: deals, isLoading: dealsLoading } = trpc.crm.deals.list.useQuery({ status: "open" });
 
   // Mutations
   const createContact = trpc.crm.contacts.create.useMutation({
@@ -107,14 +99,6 @@ export default function CRMHub() {
       toast.success("Contact created successfully");
       setIsContactDialogOpen(false);
       resetContactForm();
-      refetchContacts();
-    },
-    onError: (error) => toast.error(error.message),
-  });
-
-  const updateContact = trpc.crm.contacts.update.useMutation({
-    onSuccess: () => {
-      toast.success("Contact updated");
       refetchContacts();
     },
     onError: (error) => toast.error(error.message),
@@ -129,7 +113,7 @@ export default function CRMHub() {
   });
 
   const captureVCard = trpc.crm.captures.captureVCard.useMutation({
-    onSuccess: (result) => {
+    onSuccess: () => {
       toast.success("Contact captured from vCard");
       setIsCaptureDialogOpen(false);
       resetCaptureForm();
@@ -139,7 +123,7 @@ export default function CRMHub() {
   });
 
   const captureLinkedIn = trpc.crm.captures.captureLinkedIn.useMutation({
-    onSuccess: (result) => {
+    onSuccess: () => {
       toast.success("Contact captured from LinkedIn");
       setIsCaptureDialogOpen(false);
       resetCaptureForm();
@@ -240,39 +224,54 @@ export default function CRMHub() {
     }
   };
 
-  const contactTypeColors: Record<string, string> = {
-    lead: "bg-blue-500/10 text-blue-600",
-    prospect: "bg-purple-500/10 text-purple-600",
-    customer: "bg-green-500/10 text-green-600",
-    partner: "bg-orange-500/10 text-orange-600",
-    investor: "bg-yellow-500/10 text-yellow-700",
-    donor: "bg-pink-500/10 text-pink-600",
-    vendor: "bg-gray-500/10 text-gray-600",
-    other: "bg-slate-500/10 text-slate-600",
-  };
-
-  const sourceIcons: Record<string, any> = {
-    iphone_bump: Smartphone,
-    whatsapp: MessageSquare,
-    linkedin_scan: Linkedin,
-    business_card: CreditCard,
-    website: Building2,
-    referral: Users,
-    event: Calendar,
-    cold_outreach: Mail,
-    import: QrCode,
-    manual: UserPlus,
-  };
-
   const stageColors: Record<string, string> = {
-    new: "bg-gray-500",
-    contacted: "bg-blue-500",
-    qualified: "bg-purple-500",
-    proposal: "bg-yellow-500",
-    negotiation: "bg-orange-500",
-    won: "bg-green-500",
-    lost: "bg-red-500",
+    new: "bg-gray-500/10 text-gray-600",
+    contacted: "bg-blue-500/10 text-blue-600",
+    qualified: "bg-purple-500/10 text-purple-600",
+    proposal: "bg-yellow-500/10 text-yellow-700",
+    negotiation: "bg-orange-500/10 text-orange-600",
+    won: "bg-green-500/10 text-green-600",
+    lost: "bg-red-500/10 text-red-600",
   };
+
+  // Build contact lookup
+  const contactById = useMemo(() => {
+    const map: Record<number, any> = {};
+    contacts?.forEach((c: any) => { map[c.id] = c; });
+    return map;
+  }, [contacts]);
+
+  // Enrich deals with contact data
+  const enrichedDeals = useMemo(() => {
+    return (deals || []).map((deal: any) => {
+      const contact = deal.contactId ? contactById[deal.contactId] : null;
+      return {
+        ...deal,
+        _contactName: contact?.fullName || deal.contactName || "-",
+        _company: contact?.organization || deal.company || "-",
+        _email: contact?.email || deal.email || "-",
+        _phone: contact?.phone || deal.phone || "-",
+        _probability: deal.probability != null ? `${deal.probability}%` : "-",
+        _value: deal.amount || deal.value || "0",
+        _source: contact?.source?.replace(/_/g, " ") || deal.source || "-",
+        _lastContact: contact?.lastContactedAt || deal.lastContactDate || null,
+        _nextStep: deal.nextStep || deal.nextAction || "-",
+        _createdDate: deal.createdAt || null,
+      };
+    });
+  }, [deals, contactById]);
+
+  // Filter deals by search
+  const filteredDeals = useMemo(() => {
+    if (!search) return enrichedDeals;
+    const q = search.toLowerCase();
+    return enrichedDeals.filter((d: any) =>
+      d.name?.toLowerCase().includes(q) ||
+      d._contactName?.toLowerCase().includes(q) ||
+      d._company?.toLowerCase().includes(q) ||
+      d._email?.toLowerCase().includes(q)
+    );
+  }, [enrichedDeals, search]);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -283,7 +282,7 @@ export default function CRMHub() {
             CRM Hub
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Manage contacts, track deals, and capture leads
+            Deal pipeline with contact details
           </p>
         </div>
         <div className="flex gap-2">
@@ -648,309 +647,113 @@ export default function CRMHub() {
         </Card>
       </div>
 
-      {/* Main Content Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="contacts" className="flex items-center gap-2">
-            <Users className="h-4 w-4" />
-            Contacts
-          </TabsTrigger>
-          <TabsTrigger value="deals" className="flex items-center gap-2">
-            <TrendingUp className="h-4 w-4" />
-            Deals
-          </TabsTrigger>
-          <TabsTrigger value="messaging" className="flex items-center gap-2">
-            <MessageCircle className="h-4 w-4" />
-            Messaging
-          </TabsTrigger>
-        </TabsList>
-
-        {/* Contacts Tab */}
-        <TabsContent value="contacts" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Contacts</CardTitle>
-                  <CardDescription>Manage your contacts across all channels</CardDescription>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="relative">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Search contacts..."
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      className="pl-8 w-[250px]"
-                    />
-                  </div>
-                  <Select value={contactTypeFilter} onValueChange={setContactTypeFilter}>
-                    <SelectTrigger className="w-[130px]">
-                      <SelectValue placeholder="Type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Types</SelectItem>
-                      <SelectItem value="lead">Leads</SelectItem>
-                      <SelectItem value="prospect">Prospects</SelectItem>
-                      <SelectItem value="customer">Customers</SelectItem>
-                      <SelectItem value="investor">Investors</SelectItem>
-                      <SelectItem value="donor">Donors</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Select value={sourceFilter} onValueChange={setSourceFilter}>
-                    <SelectTrigger className="w-[140px]">
-                      <SelectValue placeholder="Source" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Sources</SelectItem>
-                      <SelectItem value="iphone_bump">iPhone Bump</SelectItem>
-                      <SelectItem value="whatsapp">WhatsApp</SelectItem>
-                      <SelectItem value="linkedin_scan">LinkedIn</SelectItem>
-                      <SelectItem value="business_card">Business Card</SelectItem>
-                      <SelectItem value="website">Website</SelectItem>
-                      <SelectItem value="referral">Referral</SelectItem>
-                      <SelectItem value="event">Event</SelectItem>
-                      <SelectItem value="manual">Manual</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+      {/* Single Deals Table */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Deals</CardTitle>
+              <CardDescription>All open deals with contact details</CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search deals..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="pl-8 w-[250px]"
+                />
               </div>
-            </CardHeader>
-            <CardContent>
-              {contactsLoading ? (
-                <div className="flex justify-center py-8">
-                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                </div>
-              ) : contacts?.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No contacts found. Add your first contact or capture one from your device.</p>
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Organization</TableHead>
-                      <TableHead>Contact Info</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Source</TableHead>
-                      <TableHead>Last Contact</TableHead>
-                      <TableHead></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {contacts?.map((contact) => {
-                      const SourceIcon = sourceIcons[contact.source] || UserPlus;
-                      return (
-                        <TableRow key={contact.id} className="cursor-pointer hover:bg-muted/50">
-                          <TableCell>
-                            <div>
-                              <div className="font-medium">{contact.fullName}</div>
-                              {contact.jobTitle && (
-                                <div className="text-sm text-muted-foreground">{contact.jobTitle}</div>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            {contact.organization || "-"}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              {contact.email && (
-                                <a href={`mailto:${contact.email}`} className="text-muted-foreground hover:text-primary">
-                                  <Mail className="h-4 w-4" />
-                                </a>
-                              )}
-                              {contact.phone && (
-                                <a href={`tel:${contact.phone}`} className="text-muted-foreground hover:text-primary">
-                                  <Phone className="h-4 w-4" />
-                                </a>
-                              )}
-                              {contact.whatsappNumber && (
-                                <a href={`https://wa.me/${contact.whatsappNumber.replace(/[^0-9]/g, '')}`} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-green-600">
-                                  <MessageSquare className="h-4 w-4" />
-                                </a>
-                              )}
-                              {contact.linkedinUrl && (
-                                <a href={contact.linkedinUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-blue-600">
-                                  <Linkedin className="h-4 w-4" />
-                                </a>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge className={contactTypeColors[contact.contactType] || "bg-gray-500/10 text-gray-600"}>
-                              {contact.contactType}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-1 text-muted-foreground">
-                              <SourceIcon className="h-3 w-3" />
-                              <span className="text-xs">{contact.source.replace(/_/g, " ")}</span>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            {contact.lastContactedAt ? (
-                              <span className="text-sm text-muted-foreground">
-                                {format(new Date(contact.lastContactedAt), "MMM d, yyyy")}
-                              </span>
-                            ) : (
-                              <span className="text-sm text-muted-foreground">Never</span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="sm">
-                                  <MoreHorizontal className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={() => {
-                                  setSelectedContact(contact);
-                                  setIsDetailOpen(true);
-                                }}>
-                                  View Details
-                                </DropdownMenuItem>
-                                <DropdownMenuItem>
-                                  Send Email
-                                </DropdownMenuItem>
-                                <DropdownMenuItem>
-                                  Log Call
-                                </DropdownMenuItem>
-                                <DropdownMenuItem>
-                                  Create Deal
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  className="text-red-600"
-                                  onClick={() => {
-                                    if (confirm("Are you sure you want to delete this contact?")) {
-                                      deleteContact.mutate({ id: contact.id });
-                                    }
-                                  }}
-                                >
-                                  Delete
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Deals Tab */}
-        <TabsContent value="deals" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Deal Pipeline</CardTitle>
-                  <CardDescription>Track your sales and fundraising opportunities</CardDescription>
-                </div>
-                <Button>
-                  <Plus className="h-4 w-4 mr-2" />
-                  New Deal
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {!deals || deals.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <TrendingUp className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No open deals yet. Create your first deal to start tracking opportunities.</p>
-                </div>
-              ) : (
-                <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-5">
-                  {["new", "contacted", "qualified", "proposal", "negotiation"].map((stage) => {
-                    const stageDeals = deals.filter((d) => d.stage === stage);
-                    return (
-                      <div key={stage} className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <div className={`w-2 h-2 rounded-full ${stageColors[stage]}`} />
-                            <span className="text-sm font-medium capitalize">{stage}</span>
-                          </div>
-                          <Badge variant="secondary" className="text-xs">
-                            {stageDeals.length}
-                          </Badge>
-                        </div>
-                        <div className="space-y-2 min-h-[200px] bg-muted/30 rounded-lg p-2">
-                          {stageDeals.map((deal) => (
-                            <Card key={deal.id} className="p-3 cursor-pointer hover:border-border/80 transition-shadow">
-                              <div className="font-medium text-sm">{deal.name}</div>
-                              {deal.amount && (
-                                <div className="text-sm text-green-600 font-semibold mt-1">
-                                  ${Number(deal.amount).toLocaleString()}
-                                </div>
-                              )}
-                              {deal.expectedCloseDate && (
-                                <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-                                  <Clock className="h-3 w-3" />
-                                  {format(new Date(deal.expectedCloseDate), "MMM d")}
-                                </div>
-                              )}
-                            </Card>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Messaging Tab */}
-        <TabsContent value="messaging" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <MessageSquare className="h-5 w-5 text-green-600" />
-                  WhatsApp Messages
-                </CardTitle>
-                <CardDescription>Track WhatsApp conversations with contacts</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="text-center py-8 text-muted-foreground">
-                  <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>Connect WhatsApp Business API to track messages.</p>
-                  <Button variant="outline" className="mt-4">
-                    Configure WhatsApp
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Mail className="h-5 w-5 text-blue-600" />
-                  Email Tracking
-                </CardTitle>
-                <CardDescription>View email interactions with contacts</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="text-center py-8 text-muted-foreground">
-                  <Mail className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>Email tracking is integrated with the Email Inbox module.</p>
-                  <Button variant="outline" className="mt-4" onClick={() => window.location.href = "/operations/email-inbox"}>
-                    Go to Email Inbox
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+              <Button>
+                <Plus className="h-4 w-4 mr-2" />
+                New Deal
+              </Button>
+            </div>
           </div>
-        </TabsContent>
-      </Tabs>
+        </CardHeader>
+        <CardContent>
+          {dealsLoading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : filteredDeals.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <TrendingUp className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p>No open deals yet. Create your first deal to start tracking opportunities.</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="min-w-[160px]">Deal Name</TableHead>
+                    <TableHead className="min-w-[120px]">Contact</TableHead>
+                    <TableHead className="min-w-[120px]">Company</TableHead>
+                    <TableHead className="min-w-[160px]">Email</TableHead>
+                    <TableHead className="min-w-[110px]">Phone</TableHead>
+                    <TableHead className="min-w-[100px] text-right">Value</TableHead>
+                    <TableHead className="min-w-[100px]">Stage</TableHead>
+                    <TableHead className="min-w-[80px]">Prob.</TableHead>
+                    <TableHead className="min-w-[100px]">Source</TableHead>
+                    <TableHead className="min-w-[100px]">Last Contact</TableHead>
+                    <TableHead className="min-w-[140px]">Next Step</TableHead>
+                    <TableHead className="min-w-[100px]">Created</TableHead>
+                    <TableHead className="w-[40px]"></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredDeals.map((deal: any) => (
+                    <TableRow key={deal.id} className="hover:bg-muted/50">
+                      <TableCell className="font-medium">{deal.name}</TableCell>
+                      <TableCell>{deal._contactName}</TableCell>
+                      <TableCell>{deal._company}</TableCell>
+                      <TableCell className="text-sm">
+                        {deal._email !== "-" ? (
+                          <a href={`mailto:${deal._email}`} className="text-blue-600 hover:underline">{deal._email}</a>
+                        ) : "-"}
+                      </TableCell>
+                      <TableCell className="text-sm">{deal._phone}</TableCell>
+                      <TableCell className="text-right font-semibold text-green-600">
+                        {parseFloat(deal._value) > 0 ? `$${Number(deal._value).toLocaleString()}` : "-"}
+                      </TableCell>
+                      <TableCell>
+                        <Badge className={stageColors[deal.stage] || "bg-gray-500/10 text-gray-600"}>
+                          {deal.stage}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm">{deal._probability}</TableCell>
+                      <TableCell className="text-sm capitalize">{deal._source}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {deal._lastContact ? format(new Date(deal._lastContact), "MMM d, yyyy") : "-"}
+                      </TableCell>
+                      <TableCell className="text-sm max-w-[140px] truncate">{deal._nextStep}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {deal._createdDate ? format(new Date(deal._createdDate), "MMM d, yyyy") : "-"}
+                      </TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem>View Details</DropdownMenuItem>
+                            <DropdownMenuItem>Edit Deal</DropdownMenuItem>
+                            <DropdownMenuItem>Move Stage</DropdownMenuItem>
+                            <DropdownMenuItem className="text-red-600">Delete</DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Contact Detail Dialog */}
       <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
@@ -989,7 +792,7 @@ export default function CRMHub() {
                 </div>
                 <div className="space-y-2">
                   <Label className="text-muted-foreground">Type</Label>
-                  <Badge className={contactTypeColors[selectedContact.contactType]}>{selectedContact.contactType}</Badge>
+                  <Badge>{selectedContact.contactType}</Badge>
                 </div>
                 <div className="space-y-2">
                   <Label className="text-muted-foreground">Source</Label>

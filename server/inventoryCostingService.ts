@@ -7,6 +7,14 @@ import * as db from "./db";
 
 export type CostingMethod = "fifo" | "lifo" | "weighted_average";
 
+/**
+ * System-wide costing method. Set via COSTING_METHOD env var.
+ * Options: "fifo", "lifo", "weighted_average" (default)
+ * This applies uniformly across all products — no per-product override.
+ */
+const SYSTEM_COSTING_METHOD: CostingMethod =
+  (process.env.COSTING_METHOD as CostingMethod) || "weighted_average";
+
 interface CostLayerConsumption {
   layerId: number;
   quantityConsumed: number;
@@ -328,8 +336,8 @@ export async function recordCogs(params: {
   calculatedBy?: number;
 }): Promise<{ cogsRecordId: number; totalCogs: number; unitCogs: number; grossMargin: number | null }> {
   // Fetch costing config outside the transaction (read-only, no locking needed)
-  const config = await db.getInventoryCostingConfigByProduct(params.productId);
-  const method: CostingMethod = config?.costingMethod || "weighted_average";
+  // Use system-wide costing method (not per-product)
+  const method: CostingMethod = SYSTEM_COSTING_METHOD;
 
   return db.dbTransaction(async (tx) => {
     // Lock the relevant cost layer rows for the duration of the transaction.
@@ -421,8 +429,8 @@ export async function getInventoryValuation(productId: number): Promise<{
   averageUnitCost: number;
   layerCount: number;
 }> {
-  const config = await db.getInventoryCostingConfigByProduct(productId);
-  const method: CostingMethod = config?.costingMethod || "weighted_average";
+  // Use system-wide costing method (not per-product)
+  const method: CostingMethod = SYSTEM_COSTING_METHOD;
 
   const layers = await db.getActiveCostLayers(productId, "asc");
   const totalQuantity = layers.reduce(

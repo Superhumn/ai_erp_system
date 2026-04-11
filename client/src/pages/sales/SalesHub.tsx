@@ -2,9 +2,7 @@ import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import SpreadsheetTable, { Column } from "@/components/SpreadsheetTable";
 import {
@@ -37,36 +35,11 @@ const invoiceStatuses = [
   { value: "partial", label: "Partial", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
 ];
 
-function ProductDetailPanel({ product }: { product: any }) {
-  return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-start justify-between">
-        <div>
-          <h3 className="text-lg font-semibold">{product.name}</h3>
-          <p className="text-sm text-muted-foreground">SKU: {product.sku}</p>
-        </div>
-        <div className="text-right">
-          <div className="text-xl font-semibold tracking-[-0.02em]">${product.price || "0.00"}</div>
-          <p className="text-sm text-muted-foreground">Unit Price</p>
-        </div>
-      </div>
-      <div className="grid grid-cols-3 gap-4 text-sm">
-        <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">In Stock</div>
-          <div className="font-medium">{product.stockQuantity || 0}</div>
-        </div>
-        <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">Category</div>
-          <div className="font-medium">{product.category || "N/A"}</div>
-        </div>
-        <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">Status</div>
-          <div className="font-medium">{product.isActive ? "Active" : "Inactive"}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
+const paymentStatuses = [
+  { value: "unpaid", label: "Unpaid", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
+  { value: "partial", label: "Partial", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
+  { value: "paid", label: "Paid", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+];
 
 function OrderDetailPanel({ order, onStatusChange }: { order: any; onStatusChange: (id: number, status: string) => void }) {
   const statusOption = orderStatuses.find(s => s.value === order.status);
@@ -109,122 +82,15 @@ function OrderDetailPanel({ order, onStatusChange }: { order: any; onStatusChang
   );
 }
 
-function InvoiceDetailPanel({ invoice, onSendEmail, onDownloadPdf }: { invoice: any; onSendEmail: (inv: any) => void; onDownloadPdf: (inv: any) => void }) {
-  const statusOption = invoiceStatuses.find(s => s.value === invoice.status);
-  return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-start justify-between">
-        <div>
-          <h3 className="text-lg font-semibold">Invoice #{invoice.invoiceNumber}</h3>
-          <p className="text-sm text-muted-foreground">{invoice.customer?.name || "No customer"}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Badge className={statusOption?.color}>{statusOption?.label}</Badge>
-          <Button size="sm" variant="outline" onClick={() => onDownloadPdf(invoice)}>
-            <Download className="h-4 w-4 mr-1" /> PDF
-          </Button>
-          {invoice.status !== "paid" && (
-            <Button size="sm" variant="outline" onClick={() => onSendEmail(invoice)}>
-              <Send className="h-4 w-4 mr-1" /> Email
-            </Button>
-          )}
-        </div>
-      </div>
-      <div className="grid grid-cols-4 gap-4 text-sm">
-        <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">Subtotal</div>
-          <div className="font-medium">${invoice.subtotal || "0.00"}</div>
-        </div>
-        <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">Tax</div>
-          <div className="font-medium">${invoice.tax || "0.00"}</div>
-        </div>
-        <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">Total</div>
-          <div className="font-medium">${invoice.totalAmount || "0.00"}</div>
-        </div>
-        <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">Due Date</div>
-          <div className="font-medium">{invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : "N/A"}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CustomerDetailPanel({ customer }: { customer: any }) {
-  return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-start justify-between">
-        <div>
-          <h3 className="text-lg font-semibold">{customer.name}</h3>
-          <p className="text-sm text-muted-foreground">{customer.email}</p>
-        </div>
-        <Badge variant={customer.isActive ? "default" : "secondary"}>{customer.isActive ? "Active" : "Inactive"}</Badge>
-      </div>
-      <div className="grid grid-cols-3 gap-4 text-sm">
-        <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">Phone</div>
-          <div className="font-medium">{customer.phone || "N/A"}</div>
-        </div>
-        <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">Company</div>
-          <div className="font-medium">{customer.company || "N/A"}</div>
-        </div>
-        <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">Address</div>
-          <div className="font-medium">{customer.address || "N/A"}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PaymentDetailPanel({ payment }: { payment: any }) {
-  return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-start justify-between">
-        <div>
-          <h3 className="text-lg font-semibold">Payment #{payment.id}</h3>
-          <p className="text-sm text-muted-foreground">{payment.invoice?.invoiceNumber ? `Invoice #${payment.invoice.invoiceNumber}` : "No invoice"}</p>
-        </div>
-        <div className="text-right">
-          <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">${payment.amount}</div>
-          <p className="text-sm text-muted-foreground capitalize">{payment.method}</p>
-        </div>
-      </div>
-      <div className="grid grid-cols-3 gap-4 text-sm">
-        <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">Date</div>
-          <div className="font-medium">{payment.paymentDate ? new Date(payment.paymentDate).toLocaleDateString() : "N/A"}</div>
-        </div>
-        <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">Method</div>
-          <div className="font-medium capitalize">{payment.method || "N/A"}</div>
-        </div>
-        <div className="p-3 bg-muted rounded-lg">
-          <div className="text-muted-foreground">Reference</div>
-          <div className="font-medium">{payment.reference || "N/A"}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function SalesHub() {
-  const [activeTab, setActiveTab] = useState("products");
   const [isSyncing, setIsSyncing] = useState(false);
-  const [expandedProductId, setExpandedProductId] = useState<number | string | null>(null);
   const [expandedOrderId, setExpandedOrderId] = useState<number | string | null>(null);
-  const [expandedInvoiceId, setExpandedInvoiceId] = useState<number | string | null>(null);
-  const [expandedCustomerId, setExpandedCustomerId] = useState<number | string | null>(null);
-  const [expandedPaymentId, setExpandedPaymentId] = useState<number | string | null>(null);
 
-  const { data: products, isLoading: productsLoading } = trpc.products.list.useQuery();
+  const { data: products } = trpc.products.list.useQuery();
   const { data: orders, isLoading: ordersLoading, refetch: refetchOrders } = trpc.orders.list.useQuery();
-  const { data: invoices, isLoading: invoicesLoading } = trpc.invoices.list.useQuery();
-  const { data: customers, isLoading: customersLoading } = trpc.customers.list.useQuery();
-  const { data: payments, isLoading: paymentsLoading } = trpc.payments.list.useQuery();
+  const { data: invoices } = trpc.invoices.list.useQuery();
+  const { data: customers } = trpc.customers.list.useQuery();
+  const { data: payments } = trpc.payments.list.useQuery();
 
   const updateOrderStatus = trpc.orders.update.useMutation({
     onSuccess: () => { toast.success("Order updated"); refetchOrders(); },
@@ -260,21 +126,9 @@ export default function SalesHub() {
     onError: (err: any) => { toast.error(err.message); setIsSyncing(false); },
   });
 
-  const handleSyncOrders = () => {
-    setIsSyncing(true);
-    syncShopifyOrders.mutate({});
-  };
-
-  const handleSyncProducts = () => {
-    setIsSyncing(true);
-    syncShopifyProducts.mutate({});
-  };
-
-  const handleSyncCustomers = () => {
-    setIsSyncing(true);
-    syncShopifyCustomers.mutate({});
-  };
-
+  const handleSyncOrders = () => { setIsSyncing(true); syncShopifyOrders.mutate({}); };
+  const handleSyncProducts = () => { setIsSyncing(true); syncShopifyProducts.mutate({}); };
+  const handleSyncCustomers = () => { setIsSyncing(true); syncShopifyCustomers.mutate({}); };
   const handleSyncAll = () => {
     setIsSyncing(true);
     syncShopifyOrders.mutate({});
@@ -292,62 +146,85 @@ export default function SalesHub() {
     onError: (err: any) => toast.error(err.message),
   });
 
-  const productColumns: Column<any>[] = [
-    { key: "sku", header: "SKU", type: "text", sortable: true },
-    { key: "name", header: "Name", type: "text", sortable: true },
-    { key: "category", header: "Category", type: "text" },
-    { key: "price", header: "Price", type: "currency", sortable: true },
-    { key: "stockQuantity", header: "Stock", type: "number", sortable: true },
-    { key: "isActive", header: "Status", type: "badge", render: (val) => val ? "Active" : "Inactive" },
-  ];
+  // Build a lookup for invoices and payments by order
+  const invoiceByOrder = useMemo(() => {
+    const map: Record<number, any> = {};
+    invoices?.forEach((inv: any) => {
+      if (inv.orderId) map[inv.orderId] = inv;
+    });
+    return map;
+  }, [invoices]);
+
+  const paymentsByInvoice = useMemo(() => {
+    const map: Record<number, any[]> = {};
+    payments?.forEach((p: any) => {
+      if (p.invoiceId) {
+        if (!map[p.invoiceId]) map[p.invoiceId] = [];
+        map[p.invoiceId].push(p);
+      }
+    });
+    return map;
+  }, [payments]);
+
+  // Enrich orders with invoice/payment data
+  const enrichedOrders = useMemo(() => {
+    return (orders || []).map((order: any) => {
+      const invoice = invoiceByOrder[order.id];
+      const orderPayments = invoice ? (paymentsByInvoice[invoice.id] || []) : [];
+      const totalPaid = orderPayments.reduce((sum: number, p: any) => sum + parseFloat(p.amount || "0"), 0);
+      const orderTotal = parseFloat(order.totalAmount || "0");
+      let paymentStatus = "unpaid";
+      if (totalPaid >= orderTotal && orderTotal > 0) paymentStatus = "paid";
+      else if (totalPaid > 0) paymentStatus = "partial";
+
+      return {
+        ...order,
+        _invoiceNumber: invoice?.invoiceNumber || "-",
+        _invoiceStatus: invoice?.status || null,
+        _paymentStatus: paymentStatus,
+        _itemCount: order.items?.length || order.lineItems?.length || "-",
+        _subtotal: order.subtotal || "0.00",
+        _tax: order.tax || "0.00",
+        _channel: order.shopifyOrderId ? "Shopify" : "Manual",
+      };
+    });
+  }, [orders, invoiceByOrder, paymentsByInvoice]);
 
   const orderColumns: Column<any>[] = [
     { key: "orderNumber", header: "Order #", type: "text", sortable: true },
-    { key: "customer.name", header: "Customer", type: "text", sortable: true },
     { key: "orderDate", header: "Date", type: "date", sortable: true },
-    { key: "totalAmount", header: "Total", type: "currency", sortable: true },
-    { key: "status", header: "Status", type: "badge", sortable: true, render: (val) => orderStatuses.find(s => s.value === val)?.label || val },
-  ];
-
-  const invoiceColumns: Column<any>[] = [
-    { key: "invoiceNumber", header: "Invoice #", type: "text", sortable: true },
     { key: "customer.name", header: "Customer", type: "text", sortable: true },
-    { key: "issueDate", header: "Issued", type: "date", sortable: true },
-    { key: "dueDate", header: "Due", type: "date", sortable: true },
-    { key: "totalAmount", header: "Amount", type: "currency", sortable: true },
-    { key: "status", header: "Status", type: "badge", sortable: true, render: (val) => invoiceStatuses.find(s => s.value === val)?.label || val },
+    { key: "_itemCount", header: "Items", type: "text" },
+    { key: "_subtotal", header: "Subtotal", type: "currency", sortable: true },
+    { key: "_tax", header: "Tax", type: "currency" },
+    { key: "totalAmount", header: "Total", type: "currency", sortable: true },
+    { key: "status", header: "Status", type: "status", options: orderStatuses, filterable: true },
+    { key: "_invoiceNumber", header: "Invoice #", type: "text" },
+    { key: "_paymentStatus", header: "Payment", type: "status", options: paymentStatuses, filterable: true },
+    { key: "_channel", header: "Channel", type: "badge", options: [
+      { value: "Shopify", label: "Shopify", color: "bg-green-500/8 text-green-600 dark:text-green-400" },
+      { value: "Manual", label: "Manual", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
+    ]},
   ];
 
-  const customerColumns: Column<any>[] = [
-    { key: "name", header: "Name", type: "text", sortable: true },
-    { key: "email", header: "Email", type: "text", sortable: true },
-    { key: "phone", header: "Phone", type: "text" },
-    { key: "company", header: "Company", type: "text" },
-    { key: "isActive", header: "Status", type: "badge", render: (val) => val ? "Active" : "Inactive" },
-  ];
-
-  const paymentColumns: Column<any>[] = [
-    { key: "id", header: "ID", type: "text", sortable: true },
-    { key: "invoice.invoiceNumber", header: "Invoice", type: "text" },
-    { key: "paymentDate", header: "Date", type: "date", sortable: true },
-    { key: "amount", header: "Amount", type: "currency", sortable: true },
-    { key: "method", header: "Method", type: "text" },
-  ];
-
-  const stats = useMemo(() => ({
-    totalProducts: products?.length || 0,
-    pendingOrders: orders?.filter((o: any) => o.status === "pending").length || 0,
-    unpaidInvoices: invoices?.filter((i: any) => i.status !== "paid").length || 0,
-    totalCustomers: customers?.length || 0,
-    recentPayments: payments?.length || 0,
-  }), [products, orders, invoices, customers, payments]);
+  const stats = useMemo(() => {
+    const totalRevenue = (orders || []).reduce((sum: number, o: any) => sum + parseFloat(o.totalAmount || "0"), 0);
+    return {
+      totalProducts: products?.length || 0,
+      totalOrders: orders?.length || 0,
+      pendingOrders: orders?.filter((o: any) => o.status === "pending").length || 0,
+      unpaidInvoices: invoices?.filter((i: any) => i.status !== "paid").length || 0,
+      totalCustomers: customers?.length || 0,
+      totalRevenue,
+    };
+  }, [products, orders, invoices, customers]);
 
   return (
     <div className="p-6 space-y-4">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Sales Hub</h1>
-            <p className="text-muted-foreground">Products, Orders, Invoices, Customers, and Payments</p>
+            <p className="text-muted-foreground">Sales overview -- orders, invoices, and payments</p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -439,16 +316,25 @@ export default function SalesHub() {
           </div>
         </div>
 
+        {/* KPI Cards */}
         <div className="grid grid-cols-5 gap-4">
-          <Card className="cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("products")}>
+          <Card>
             <CardContent className="pt-4">
               <div className="flex items-center justify-between">
-                <div><p className="text-sm text-muted-foreground">Products</p><p className="text-xl font-semibold tracking-[-0.02em]">{stats.totalProducts}</p></div>
-                <Package className="h-8 w-8 text-muted-foreground" />
+                <div><p className="text-sm text-muted-foreground">Revenue</p><p className="text-xl font-semibold tracking-[-0.02em] text-green-600">${stats.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div>
+                <CreditCard className="h-8 w-8 text-green-500" />
               </div>
             </CardContent>
           </Card>
-          <Card className="cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("orders")}>
+          <Card>
+            <CardContent className="pt-4">
+              <div className="flex items-center justify-between">
+                <div><p className="text-sm text-muted-foreground">Total Orders</p><p className="text-xl font-semibold tracking-[-0.02em]">{stats.totalOrders}</p></div>
+                <ShoppingCart className="h-8 w-8 text-muted-foreground" />
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
             <CardContent className="pt-4">
               <div className="flex items-center justify-between">
                 <div><p className="text-sm text-muted-foreground">Pending Orders</p><p className="text-xl font-semibold tracking-[-0.02em] text-amber-600">{stats.pendingOrders}</p></div>
@@ -456,7 +342,7 @@ export default function SalesHub() {
               </div>
             </CardContent>
           </Card>
-          <Card className="cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("invoices")}>
+          <Card>
             <CardContent className="pt-4">
               <div className="flex items-center justify-between">
                 <div><p className="text-sm text-muted-foreground">Unpaid Invoices</p><p className="text-xl font-semibold tracking-[-0.02em] text-red-600">{stats.unpaidInvoices}</p></div>
@@ -464,7 +350,7 @@ export default function SalesHub() {
               </div>
             </CardContent>
           </Card>
-          <Card className="cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("customers")}>
+          <Card>
             <CardContent className="pt-4">
               <div className="flex items-center justify-between">
                 <div><p className="text-sm text-muted-foreground">Customers</p><p className="text-xl font-semibold tracking-[-0.02em]">{stats.totalCustomers}</p></div>
@@ -472,55 +358,32 @@ export default function SalesHub() {
               </div>
             </CardContent>
           </Card>
-          <Card className="cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("payments")}>
-            <CardContent className="pt-4">
-              <div className="flex items-center justify-between">
-                <div><p className="text-sm text-muted-foreground">Payments</p><p className="text-xl font-semibold tracking-[-0.02em] text-green-600">{stats.recentPayments}</p></div>
-                <CreditCard className="h-8 w-8 text-green-500" />
-              </div>
-            </CardContent>
-          </Card>
         </div>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList>
-            <TabsTrigger value="products"><Package className="h-4 w-4 mr-2" /> Products</TabsTrigger>
-            <TabsTrigger value="orders"><ShoppingCart className="h-4 w-4 mr-2" /> Orders</TabsTrigger>
-            <TabsTrigger value="invoices"><FileText className="h-4 w-4 mr-2" /> Invoices</TabsTrigger>
-            <TabsTrigger value="customers"><Users className="h-4 w-4 mr-2" /> Customers</TabsTrigger>
-            <TabsTrigger value="payments"><CreditCard className="h-4 w-4 mr-2" /> Payments</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="products" className="mt-4">
-            <Card><CardContent className="pt-6">
-              <SpreadsheetTable data={products || []} columns={productColumns} isLoading={productsLoading} showSearch expandedRowId={expandedProductId} onExpandChange={setExpandedProductId} renderExpanded={(product, onClose) => <ProductDetailPanel product={product} />} />
-            </CardContent></Card>
-          </TabsContent>
-
-          <TabsContent value="orders" className="mt-4">
-            <Card><CardContent className="pt-6">
-              <SpreadsheetTable data={orders || []} columns={orderColumns} isLoading={ordersLoading} showSearch expandedRowId={expandedOrderId} onExpandChange={setExpandedOrderId} renderExpanded={(order, onClose) => <OrderDetailPanel order={order} onStatusChange={(id, status) => updateOrderStatus.mutate({ id, status } as any)} />} />
-            </CardContent></Card>
-          </TabsContent>
-
-          <TabsContent value="invoices" className="mt-4">
-            <Card><CardContent className="pt-6">
-              <SpreadsheetTable data={invoices || []} columns={invoiceColumns} isLoading={invoicesLoading} showSearch expandedRowId={expandedInvoiceId} onExpandChange={setExpandedInvoiceId} renderExpanded={(invoice, onClose) => <InvoiceDetailPanel invoice={invoice} onSendEmail={(inv) => sendInvoiceEmail.mutate({ invoiceId: inv.id })} onDownloadPdf={(inv) => generatePdf.mutate({ invoiceId: inv.id })} />} />
-            </CardContent></Card>
-          </TabsContent>
-
-          <TabsContent value="customers" className="mt-4">
-            <Card><CardContent className="pt-6">
-              <SpreadsheetTable data={customers || []} columns={customerColumns} isLoading={customersLoading} showSearch expandedRowId={expandedCustomerId} onExpandChange={setExpandedCustomerId} renderExpanded={(customer, onClose) => <CustomerDetailPanel customer={customer} />} />
-            </CardContent></Card>
-          </TabsContent>
-
-          <TabsContent value="payments" className="mt-4">
-            <Card><CardContent className="pt-6">
-              <SpreadsheetTable data={payments || []} columns={paymentColumns} isLoading={paymentsLoading} showSearch expandedRowId={expandedPaymentId} onExpandChange={setExpandedPaymentId} renderExpanded={(payment, onClose) => <PaymentDetailPanel payment={payment} />} />
-            </CardContent></Card>
-          </TabsContent>
-        </Tabs>
+        {/* Single Orders Table */}
+        <Card>
+          <CardContent className="pt-6">
+            <SpreadsheetTable
+              data={enrichedOrders}
+              columns={orderColumns}
+              isLoading={ordersLoading}
+              emptyMessage="No orders found"
+              showSearch
+              showFilters
+              showExport
+              expandable
+              expandedRowId={expandedOrderId}
+              onExpandChange={setExpandedOrderId}
+              renderExpanded={(order, onClose) => (
+                <OrderDetailPanel
+                  order={order}
+                  onStatusChange={(id, status) => updateOrderStatus.mutate({ id, status } as any)}
+                />
+              )}
+              compact
+            />
+          </CardContent>
+        </Card>
       </div>
   );
 }

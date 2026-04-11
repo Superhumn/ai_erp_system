@@ -21,19 +21,20 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   DollarSign,
   Layers,
-  BarChart3,
-  Settings2,
-  Plus,
   TrendingUp,
   TrendingDown,
+  Settings2,
+  Plus,
   Calculator,
   Loader2,
 } from "lucide-react";
@@ -54,7 +55,6 @@ const methodDescriptions: Record<CostingMethod, string> = {
 };
 
 export default function InventoryCosting() {
-  const [activeTab, setActiveTab] = useState("dashboard");
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [layerDialogOpen, setLayerDialogOpen] = useState(false);
   const [cogsDialogOpen, setCogsDialogOpen] = useState(false);
@@ -80,7 +80,7 @@ export default function InventoryCosting() {
   // Queries
   const { data: configs, isLoading: configsLoading } = trpc.inventoryCosting.configs.list.useQuery({});
   const { data: costLayers, isLoading: layersLoading } = trpc.inventoryCosting.layers.list.useQuery({});
-  const { data: cogsRecords, isLoading: cogsLoading } = trpc.inventoryCosting.cogs.list.useQuery({});
+  const { data: cogsRecords } = trpc.inventoryCosting.cogs.list.useQuery({});
   const { data: cogsDashboard } = trpc.inventoryCosting.cogs.dashboard.useQuery({});
   const { data: products } = trpc.products.list.useQuery({});
 
@@ -143,6 +143,13 @@ export default function InventoryCosting() {
   function getProductName(productId: number): string {
     const product = products?.find((p: any) => p.id === productId);
     return product ? `${product.name} (${product.sku})` : `Product #${productId}`;
+  }
+
+  function getProductMethod(productId: number): string {
+    const config = configs?.find((c: any) => c.productId === productId);
+    if (!config) return "-";
+    const method = config.costingMethod as CostingMethod;
+    return method === "weighted_average" ? "WA" : method.toUpperCase();
   }
 
   return (
@@ -235,247 +242,103 @@ export default function InventoryCosting() {
         </Card>
       </div>
 
-      {/* Main Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
-          <TabsTrigger value="dashboard">
-            <BarChart3 className="h-4 w-4 mr-2" />
-            COGS Records
-          </TabsTrigger>
-          <TabsTrigger value="layers">
-            <Layers className="h-4 w-4 mr-2" />
-            Cost Layers
-          </TabsTrigger>
-          <TabsTrigger value="config">
-            <Settings2 className="h-4 w-4 mr-2" />
-            Costing Config
-          </TabsTrigger>
-        </TabsList>
-
-        {/* COGS Records Tab */}
-        <TabsContent value="dashboard" className="space-y-4">
-          {cogsLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin" />
+      {/* Costing Config Summary */}
+      {!configsLoading && configs && configs.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <Settings2 className="h-4 w-4" />
+              Costing Configuration
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="flex flex-wrap gap-3">
+              {(["fifo", "lifo", "weighted_average"] as CostingMethod[]).map((method) => {
+                const count = configs?.filter((c: any) => c.costingMethod === method).length || 0;
+                if (count === 0) return null;
+                return (
+                  <div key={method} className="flex items-center gap-2 text-sm">
+                    <Badge variant="outline">{method === "weighted_average" ? "WA" : method.toUpperCase()}</Badge>
+                    <span className="text-muted-foreground">{count} product{count !== 1 ? "s" : ""}</span>
+                  </div>
+                );
+              })}
             </div>
-          ) : (cogsRecords?.length || 0) === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12">
-                <Calculator className="h-12 w-12 text-muted-foreground mb-4" />
-                <h3 className="text-lg font-semibold">No COGS Records Yet</h3>
-                <p className="text-muted-foreground text-center max-w-sm mt-2">
-                  Record your first COGS entry by clicking "Record COGS" above. Configure costing methods per product first.
-                </p>
-              </CardContent>
-            </Card>
-          ) : (
-            <Card>
-              <CardContent className="p-0">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-muted/50">
-                        <th className="text-left p-3 font-medium">Date</th>
-                        <th className="text-left p-3 font-medium">Product</th>
-                        <th className="text-left p-3 font-medium">Method</th>
-                        <th className="text-right p-3 font-medium">Qty Sold</th>
-                        <th className="text-right p-3 font-medium">Unit COGS</th>
-                        <th className="text-right p-3 font-medium">Total COGS</th>
-                        <th className="text-right p-3 font-medium">Revenue</th>
-                        <th className="text-right p-3 font-medium">Margin</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {cogsRecords?.map((record: any) => {
-                        const margin = parseFloat(record.grossMarginPercent || "0");
-                        return (
-                          <tr key={record.id} className="border-b hover:bg-muted/25">
-                            <td className="p-3">
-                              {new Date(record.periodDate).toLocaleDateString()}
-                            </td>
-                            <td className="p-3">{getProductName(record.productId)}</td>
-                            <td className="p-3">
-                              <Badge variant="outline">
-                                {record.costingMethod === "weighted_average" ? "WA" : record.costingMethod.toUpperCase()}
-                              </Badge>
-                            </td>
-                            <td className="p-3 text-right">{parseFloat(record.quantitySold).toFixed(2)}</td>
-                            <td className="p-3 text-right">${parseFloat(record.unitCogs).toFixed(4)}</td>
-                            <td className="p-3 text-right font-medium">${parseFloat(record.totalCogs).toFixed(2)}</td>
-                            <td className="p-3 text-right">
-                              {record.totalRevenue ? `$${parseFloat(record.totalRevenue).toFixed(2)}` : "-"}
-                            </td>
-                            <td className="p-3 text-right">
-                              {record.grossMarginPercent ? (
-                                <span className={margin >= 0 ? "text-green-600" : "text-red-600"}>
-                                  {margin.toFixed(1)}%
-                                </span>
-                              ) : "-"}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </TabsContent>
+          </CardContent>
+        </Card>
+      )}
 
-        {/* Cost Layers Tab */}
-        <TabsContent value="layers" className="space-y-4">
+      {/* Cost Layers Table */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Cost Layers ({costLayers?.length || 0})</CardTitle>
+        </CardHeader>
+        <CardContent>
           {layersLoading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin" />
             </div>
           ) : (costLayers?.length || 0) === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12">
-                <Layers className="h-12 w-12 text-muted-foreground mb-4" />
-                <h3 className="text-lg font-semibold">No Cost Layers</h3>
-                <p className="text-muted-foreground text-center max-w-sm mt-2">
-                  Add cost layers when receiving inventory to track purchase costs for FIFO/LIFO/Weighted Average calculations.
-                </p>
-              </CardContent>
-            </Card>
-          ) : (
-            <Card>
-              <CardContent className="p-0">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-muted/50">
-                        <th className="text-left p-3 font-medium">Layer Date</th>
-                        <th className="text-left p-3 font-medium">Product</th>
-                        <th className="text-right p-3 font-medium">Original Qty</th>
-                        <th className="text-right p-3 font-medium">Remaining Qty</th>
-                        <th className="text-right p-3 font-medium">Unit Cost</th>
-                        <th className="text-right p-3 font-medium">Total Value</th>
-                        <th className="text-left p-3 font-medium">Reference</th>
-                        <th className="text-left p-3 font-medium">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {costLayers?.map((layer: any) => {
-                        const remainingQty = parseFloat(layer.remainingQuantity);
-                        const unitCost = parseFloat(layer.unitCost);
-                        return (
-                          <tr key={layer.id} className="border-b hover:bg-muted/25">
-                            <td className="p-3">
-                              {new Date(layer.layerDate).toLocaleDateString()}
-                            </td>
-                            <td className="p-3">{getProductName(layer.productId)}</td>
-                            <td className="p-3 text-right">{parseFloat(layer.originalQuantity).toFixed(2)}</td>
-                            <td className="p-3 text-right">{remainingQty.toFixed(2)}</td>
-                            <td className="p-3 text-right">${unitCost.toFixed(4)}</td>
-                            <td className="p-3 text-right font-medium">
-                              ${(remainingQty * unitCost).toFixed(2)}
-                            </td>
-                            <td className="p-3">
-                              {layer.referenceType ? (
-                                <span className="text-muted-foreground">
-                                  {layer.referenceId != null && layer.referenceId !== ""
-                                    ? `${layer.referenceType} #${layer.referenceId}`
-                                    : layer.referenceType}
-                                </span>
-                              ) : (
-                                "-"
-                              )}
-                            </td>
-                            <td className="p-3">
-                              <Badge variant={layer.status === "active" ? "default" : "secondary"}>
-                                {layer.status}
-                              </Badge>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </TabsContent>
-
-        {/* Config Tab */}
-        <TabsContent value="config" className="space-y-4">
-          {/* Method Explanation Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {(["fifo", "lifo", "weighted_average"] as CostingMethod[]).map((method) => (
-              <Card key={method}>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">{methodLabels[method]}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-xs text-muted-foreground">{methodDescriptions[method]}</p>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    {configs?.filter((c: any) => c.costingMethod === method).length || 0} products using this method
-                  </p>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-
-          {configsLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin" />
+            <div className="flex flex-col items-center justify-center py-12">
+              <Layers className="h-12 w-12 text-muted-foreground mb-4" />
+              <h3 className="text-lg font-semibold">No Cost Layers</h3>
+              <p className="text-muted-foreground text-center max-w-sm mt-2">
+                Add cost layers when receiving inventory to track purchase costs for FIFO/LIFO/Weighted Average calculations.
+              </p>
             </div>
-          ) : (configs?.length || 0) === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12">
-                <Settings2 className="h-12 w-12 text-muted-foreground mb-4" />
-                <h3 className="text-lg font-semibold">No Costing Methods Configured</h3>
-                <p className="text-muted-foreground text-center max-w-sm mt-2">
-                  Configure a costing method per product to enable COGS tracking. Default is Weighted Average.
-                </p>
-                <Button className="mt-4" onClick={() => setConfigDialogOpen(true)}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Configure Product
-                </Button>
-              </CardContent>
-            </Card>
           ) : (
-            <Card>
-              <CardContent className="p-0">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-muted/50">
-                        <th className="text-left p-3 font-medium">Product</th>
-                        <th className="text-left p-3 font-medium">Costing Method</th>
-                        <th className="text-left p-3 font-medium">Status</th>
-                        <th className="text-left p-3 font-medium">Effective Date</th>
-                        <th className="text-left p-3 font-medium">Notes</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {configs?.map((config: any) => (
-                        <tr key={config.id} className="border-b hover:bg-muted/25">
-                          <td className="p-3">{getProductName(config.productId)}</td>
-                          <td className="p-3">
-                            <Badge>{methodLabels[config.costingMethod as CostingMethod]}</Badge>
-                          </td>
-                          <td className="p-3">
-                            <Badge variant={config.isActive ? "default" : "secondary"}>
-                              {config.isActive ? "Active" : "Inactive"}
-                            </Badge>
-                          </td>
-                          <td className="p-3">
-                            {config.effectiveDate ? new Date(config.effectiveDate).toLocaleDateString() : "-"}
-                          </td>
-                          <td className="p-3 text-muted-foreground">{config.notes || "-"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </CardContent>
-            </Card>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Product</TableHead>
+                  <TableHead className="text-right">Quantity</TableHead>
+                  <TableHead className="text-right">Unit Cost</TableHead>
+                  <TableHead className="text-right">Total Cost</TableHead>
+                  <TableHead>Method</TableHead>
+                  <TableHead>Reference</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Remaining Qty</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {costLayers?.map((layer: any) => {
+                  const remainingQty = parseFloat(layer.remainingQuantity);
+                  const originalQty = parseFloat(layer.originalQuantity);
+                  const unitCost = parseFloat(layer.unitCost);
+                  return (
+                    <TableRow key={layer.id}>
+                      <TableCell className="font-medium">{getProductName(layer.productId)}</TableCell>
+                      <TableCell className="text-right">{originalQty.toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-mono">${unitCost.toFixed(4)}</TableCell>
+                      <TableCell className="text-right font-mono">${(remainingQty * unitCost).toFixed(2)}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{getProductMethod(layer.productId)}</Badge>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {layer.referenceType ? (
+                          layer.referenceId != null && layer.referenceId !== ""
+                            ? `${layer.referenceType} #${layer.referenceId}`
+                            : layer.referenceType
+                        ) : (
+                          "-"
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {new Date(layer.layerDate).toLocaleDateString()}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <span className={remainingQty === 0 ? "text-muted-foreground" : ""}>
+                          {remainingQty.toFixed(2)}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
           )}
-        </TabsContent>
-      </Tabs>
+        </CardContent>
+      </Card>
 
       {/* Configure Costing Method Dialog */}
       <Dialog open={configDialogOpen} onOpenChange={setConfigDialogOpen}>

@@ -6462,7 +6462,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
       .mutation(async ({ input, ctx }) => {
         if (!ctx.user.linkedWarehouseId) {
           // For admin/ops users without a warehouse, use the first available warehouse
-          const locations = await db.getLocations();
+          const locations = await db.getWarehouses();
           if (!locations || locations.length === 0) {
             throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'No warehouses configured. Create a location first.' });
           }
