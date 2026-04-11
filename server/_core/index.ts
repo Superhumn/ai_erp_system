@@ -468,8 +468,8 @@ async function startServer() {
         ].filter(i => i.host && i.user && i.password);
 
         if (inboxes.length > 0) {
-          const POLL_INTERVAL = 5 * 60 * 1000; // 5 minutes
-          console.log(`[Email Polling] Starting inbox scanner for ${inboxes.length} inbox(es) with 5m interval`);
+          const POLL_INTERVAL = 30 * 60 * 1000; // 30 minutes
+          console.log(`[Email Polling] Starting inbox scanner for ${inboxes.length} inbox(es) with 30m interval`);
           for (const inbox of inboxes) {
             console.log(`[Email Polling] Monitoring: ${inbox.user}`);
           }
@@ -760,8 +760,8 @@ async function startServer() {
     // Data Room Google Drive auto-sync (hourly)
     (async () => {
       try {
-        const SYNC_INTERVAL = 60 * 60 * 1000; // 1 hour
-        console.log("[Data Room Sync] Starting hourly auto-sync");
+        const SYNC_INTERVAL = 24 * 60 * 60 * 1000; // Daily
+        console.log("[Data Room Sync] Starting daily auto-sync");
         setInterval(async () => {
           try {
             const { syncDriveFolder, downloadDriveFile, getSimpleFileType } = await import("../routers").then(() => import("./googleDrive"));
