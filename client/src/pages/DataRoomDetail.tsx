@@ -1297,44 +1297,7 @@ export default function DataRoomDetail() {
                     )}
                   </div>
                 </div>
-                <div className="border-t pt-6 mt-6">
-                  <h3 className="font-medium mb-4">Google Drive Sync</h3>
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <Label>Google Drive Folder</Label>
-                        <p className="text-sm text-muted-foreground">
-                          {room.googleDriveFolderId 
-                            ? `Synced to Google Drive folder` 
-                            : "Not connected to Google Drive"}
-                        </p>
-                        {room.lastSyncedAt && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Last synced: {new Date(room.lastSyncedAt).toLocaleString()}
-                          </p>
-                        )}
-                      </div>
-                      <Button
-                        onClick={() => setGoogleDriveSyncOpen(true)}
-                        variant={room.googleDriveFolderId ? "outline" : "default"}
-                      >
-                        {room.googleDriveFolderId ? "Re-sync" : "Connect"}
-                      </Button>
-                    </div>
-                    {room.googleDriveFolderId && (
-                      <div className="pl-4 border-l-2 border-muted text-sm text-muted-foreground">
-                        <p>Files and folders from Google Drive will inherit all security settings from this data room, including:</p>
-                        <ul className="list-disc list-inside mt-2 space-y-1">
-                          <li>Password protection</li>
-                          <li>NDA requirements</li>
-                          <li>Download and print permissions</li>
-                          <li>Access controls and invitations</li>
-                          <li>Visitor tracking and analytics</li>
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                {/* Google Drive sync — use header button only */}
               </CardContent>
             </Card>
           </TabsContent>
