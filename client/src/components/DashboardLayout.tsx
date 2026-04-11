@@ -93,7 +93,6 @@ const menuGroups = [
     items: [
       { icon: Users, label: "Vendors", path: "/operations/vendors" },
       { icon: Wrench, label: "Work Orders", path: "/operations/work-orders" },
-      { icon: Factory, label: "Copacker Portal", path: "/portal/copacker" },
       { icon: Warehouse, label: "Inventory", path: "/operations/inventory-hub" },
       { icon: MapPin, label: "Locations", path: "/operations/locations" },
     ],
