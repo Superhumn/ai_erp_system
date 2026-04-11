@@ -204,7 +204,9 @@ export default function Import() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {!connectionStatus?.connected ? (
+          {connectionLoading ? (
+            <div className="text-center py-4 text-sm text-muted-foreground">Checking connection...</div>
+          ) : !connectionStatus?.connected ? (
             /* Not connected - show connect button */
             <div className="space-y-4">
               <div className="p-4 bg-muted rounded-lg">

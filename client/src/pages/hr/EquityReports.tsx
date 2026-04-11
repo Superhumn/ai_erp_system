@@ -163,31 +163,21 @@ export default function EquityReports() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-          <FileBarChart className="h-6 w-6" />
-          Equity Reports
-        </h1>
-        <p className="text-muted-foreground mt-1">Generate cap table and equity reports</p>
-      </div>
-
-      <Card>
-        <CardHeader />
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[250px]">Name</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead className="w-[150px] text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {reportTypes.map((report) => (
-                <TableRow key={report.id}>
-                  <TableCell className="font-medium">{report.name}</TableCell>
-                  <TableCell className="text-muted-foreground">{report.description}</TableCell>
+    <div className="p-4 space-y-2">
+      <h1 className="text-lg font-semibold">Equity Reports</h1>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="text-xs">Name</TableHead>
+            <TableHead className="text-xs">Description</TableHead>
+            <TableHead className="text-xs text-right w-[100px]">Actions</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {reportTypes.map((report) => (
+            <TableRow key={report.id} className="text-sm">
+              <TableCell className="font-medium py-1.5 text-sm">{report.name}</TableCell>
+              <TableCell className="text-muted-foreground py-1.5 text-xs">{report.description}</TableCell>
                   <TableCell className="text-right">
                     <Button
                       size="sm"
