@@ -9908,6 +9908,12 @@ export async function deleteFirefliesConfig(userId: number) {
   await db.delete(firefliesConfigs).where(eq(firefliesConfigs.userId, userId));
 }
 
+export async function getAllFirefliesConfigs() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(firefliesConfigs);
+}
+
 export async function getFirefliesMeetings(filters?: { status?: string }) {
   const db = await getDb();
   if (!db) return [];

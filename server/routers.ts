@@ -15836,6 +15836,49 @@ Ask if they received the original request and if they can provide a quote.`;
           await createAuditLog(ctx.user.id, 'update', 'crm_deal', input.id, existing?.name, { stage: existing?.stage }, { stage: input.stage });
           return { success: true };
         }),
+
+      getNextSteps: protectedProcedure
+        .input(z.object({ dealId: z.number() }))
+        .query(async ({ input }) => {
+          const deal = await db.getCrmDealById(input.dealId);
+          if (!deal) return { steps: [] };
+
+          // Get the contact for this deal
+          const contact = deal.contactId ? await db.getCrmContactById(deal.contactId) : null;
+
+          // Get recent interactions
+          const interactions = deal.contactId ? await db.getCrmInteractions({ contactId: deal.contactId }) : [];
+
+          const response = await invokeLLM({
+            messages: [
+              {
+                role: "system",
+                content: `You are a sales coach. Based on the deal details and interaction history, suggest 3-5 concrete next steps to advance this deal. Be specific and actionable.
+
+Return JSON: { "steps": [{ "action": "what to do", "priority": "high|medium|low", "reasoning": "why this matters", "suggestedDate": "when to do it (relative like 'tomorrow', 'this week', 'next Monday')" }] }`
+              },
+              {
+                role: "user",
+                content: `Deal: ${deal.name}
+Stage: ${deal.stage}
+Amount: $${deal.amount || 'not set'}
+Contact: ${contact?.fullName || contact?.firstName || 'Unknown'} at ${contact?.organization || 'Unknown'}
+Title: ${contact?.jobTitle || 'Unknown'}
+Source: ${deal.source || 'Unknown'}
+Notes: ${deal.notes || 'None'}
+Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.type || i.channel}: ${i.subject || i.notes || ''}`).join('; ') || 'None'}`
+              },
+            ],
+          });
+
+          try {
+            const content = response.choices?.[0]?.message?.content;
+            const cleaned = (typeof content === 'string' ? content : '').replace(/```json\n?|\n?```/g, '').trim();
+            return JSON.parse(cleaned);
+          } catch {
+            return { steps: [{ action: "Follow up with contact", priority: "high", reasoning: "Keep the conversation going", suggestedDate: "this week" }] };
+          }
+        }),
     }),
 
     // --- CONTACT CAPTURES ---

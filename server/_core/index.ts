@@ -834,6 +834,39 @@ async function startServer() {
         console.warn("[Data Room Sync] Could not initialize:", e);
       }
     })();
+
+    // ── Fireflies meeting auto-sync (every 30 minutes) ──
+    (async () => {
+      try {
+        if (process.env.FIREFLIES_API_KEY) {
+          const FIREFLIES_INTERVAL = 30 * 60 * 1000; // 30 minutes
+          console.log("[Fireflies Sync] Starting auto-sync with 30m interval");
+          setInterval(async () => {
+            try {
+              const { syncAllFirefliesMeetings } = await import("../firefliesSyncService");
+              const result = await syncAllFirefliesMeetings();
+              if (result.totalSynced > 0) {
+                console.log(`[Fireflies Sync] Synced ${result.totalSynced} meetings, created ${result.contactsCreated} contacts, ${result.dealsCreated} deals, ${result.notificationsCreated} notifications`);
+              }
+            } catch (e) {
+              console.warn("[Fireflies Sync] Failed:", e);
+            }
+          }, FIREFLIES_INTERVAL);
+          // Initial sync after 3 minutes
+          setTimeout(async () => {
+            try {
+              const { syncAllFirefliesMeetings } = await import("../firefliesSyncService");
+              await syncAllFirefliesMeetings();
+              console.log("[Fireflies Sync] Initial sync complete");
+            } catch (e) {
+              console.warn("[Fireflies Sync] Initial sync failed:", e);
+            }
+          }, 3 * 60 * 1000);
+        }
+      } catch (e) {
+        console.warn("[Fireflies Sync] Could not initialize:", e);
+      }
+    })();
   });
 
   function gracefulShutdown(signal: string) {

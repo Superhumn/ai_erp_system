@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -34,7 +34,8 @@ import {
   Users, Plus, Search, Loader2, Phone, Mail, MessageSquare,
   Linkedin, Building2, DollarSign, TrendingUp, UserPlus,
   Smartphone, QrCode, CreditCard, Filter, MoreHorizontal,
-  Calendar, Clock, MessageCircle, Target, Handshake, HardDrive
+  Calendar, Clock, MessageCircle, Target, Handshake, HardDrive,
+  Sparkles, ChevronDown, ChevronUp, ArrowRight
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -58,6 +59,7 @@ export default function CRMHub() {
   const [captureMethod, setCaptureMethod] = useState<string>("manual");
   const [selectedContact, setSelectedContact] = useState<any>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [expandedDealId, setExpandedDealId] = useState<number | null>(null);
 
   const [contactForm, setContactForm] = useState({
     firstName: "",
@@ -94,6 +96,12 @@ export default function CRMHub() {
   const { data: contactStats } = trpc.crm.contacts.getStats.useQuery();
   const { data: dealStats } = trpc.crm.deals.getStats.useQuery();
   const { data: deals, isLoading: dealsLoading, refetch: refetchDeals } = trpc.crm.deals.list.useQuery({ status: "open" });
+
+  // AI Next Steps for expanded deal
+  const { data: nextStepsData, isLoading: nextStepsLoading } = (trpc.crm as any).deals.getNextSteps.useQuery(
+    { dealId: expandedDealId! },
+    { enabled: !!expandedDealId }
+  );
 
   // Mutations
   const createContact = trpc.crm.contacts.create.useMutation({
@@ -744,8 +752,14 @@ export default function CRMHub() {
                 </TableHeader>
                 <TableBody>
                   {filteredDeals.map((deal: any) => (
-                    <TableRow key={deal.id} className="hover:bg-muted/50">
-                      <TableCell className="font-medium">{deal.name}</TableCell>
+                    <React.Fragment key={deal.id}>
+                    <TableRow className="hover:bg-muted/50 cursor-pointer" onClick={() => setExpandedDealId(expandedDealId === deal.id ? null : deal.id)}>
+                      <TableCell className="font-medium">
+                        <div className="flex items-center gap-1">
+                          {expandedDealId === deal.id ? <ChevronUp className="h-3 w-3 text-muted-foreground" /> : <ChevronDown className="h-3 w-3 text-muted-foreground" />}
+                          {deal.name}
+                        </div>
+                      </TableCell>
                       <TableCell>{deal._contactName}</TableCell>
                       <TableCell>{deal._company}</TableCell>
                       <TableCell className="text-sm">
@@ -774,7 +788,7 @@ export default function CRMHub() {
                       <TableCell>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="sm">
+                            <Button variant="ghost" size="sm" onClick={(e) => e.stopPropagation()}>
                               <MoreHorizontal className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
@@ -787,6 +801,52 @@ export default function CRMHub() {
                         </DropdownMenu>
                       </TableCell>
                     </TableRow>
+                    {expandedDealId === deal.id && (
+                      <TableRow>
+                        <TableCell colSpan={13} className="bg-muted/30 p-0">
+                          <div className="px-6 py-4">
+                            <div className="flex items-center gap-2 mb-3">
+                              <Sparkles className="h-4 w-4 text-purple-500" />
+                              <h4 className="font-medium text-sm">AI-Recommended Next Steps</h4>
+                            </div>
+                            {nextStepsLoading ? (
+                              <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Analyzing deal and generating recommendations...
+                              </div>
+                            ) : nextStepsData?.steps?.length > 0 ? (
+                              <div className="space-y-2">
+                                {nextStepsData.steps.map((step: any, idx: number) => (
+                                  <div key={idx} className="flex items-start gap-3 p-3 bg-background rounded-lg border">
+                                    <div className="mt-0.5">
+                                      <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 mb-1">
+                                        <span className="font-medium text-sm">{step.action}</span>
+                                        <Badge variant={step.priority === "high" ? "destructive" : step.priority === "medium" ? "default" : "secondary"} className="text-xs">
+                                          {step.priority}
+                                        </Badge>
+                                        {step.suggestedDate && (
+                                          <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                            <Clock className="h-3 w-3" />
+                                            {step.suggestedDate}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="text-xs text-muted-foreground">{step.reasoning}</p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-sm text-muted-foreground">No recommendations available for this deal.</p>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    </React.Fragment>
                   ))}
                 </TableBody>
               </Table>

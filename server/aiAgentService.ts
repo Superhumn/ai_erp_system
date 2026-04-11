@@ -468,6 +468,41 @@ const AI_TOOLS: Tool[] = [
       },
     },
   },
+  // CRM Natural Language Query Tool
+  {
+    type: "function",
+    function: {
+      name: "query_crm",
+      description: "Query the CRM to answer questions about contacts, deals, pipeline, meetings, revenue, and customer relationships. Use for questions like 'What deals are closing this month?', 'Who did I meet with last week?', 'What's our pipeline value?', 'Show me all leads from conferences'",
+      parameters: {
+        type: "object",
+        properties: {
+          question: { type: "string", description: "The natural language question about CRM data" },
+        },
+        required: ["question"],
+      },
+    },
+  },
+  // Natural Language Query Tool for ALL Modules
+  {
+    type: "function",
+    function: {
+      name: "query_system",
+      description: "Query ANY module in the ERP system using natural language. Use this for questions about work orders, manufacturing, inventory, purchase orders, vendors, cap table, equity, data room, projects, tasks, banking, transactions, reports, copacker operations, invoices, payments, shipments, or any other business data.",
+      parameters: {
+        type: "object",
+        properties: {
+          question: { type: "string", description: "The natural language question about any business data" },
+          module: {
+            type: "string",
+            enum: ["inventory", "work_orders", "purchase_orders", "vendors", "customers", "orders", "invoices", "payments", "shipments", "cap_table", "equity", "data_room", "projects", "tasks", "banking", "manufacturing", "copacker", "reports", "employees", "contracts", "general"],
+            description: "Which module to query (helps narrow down the data)",
+          },
+        },
+        required: ["question"],
+      },
+    },
+  },
 ];
 
 // ============================================
@@ -1374,6 +1409,47 @@ async function executeManageCalendar(params: any, ctx: AIAgentContext): Promise<
   return { error: "Unknown calendar action" };
 }
 
+async function executeQueryCrm(params: any, _ctx: AIAgentContext): Promise<any> {
+  const dbModule = await import("./db");
+
+  // Gather all CRM data
+  const [contacts, deals, pipelines] = await Promise.all([
+    dbModule.getCrmContacts?.() || [],
+    dbModule.getCrmDeals?.() || [],
+    dbModule.getCrmPipelines?.() || [],
+  ]);
+
+  // Use AI to answer the question based on CRM data
+  const { invokeLLM } = await import("./_core/llm");
+  const response = await invokeLLM({
+    messages: [
+      {
+        role: "system",
+        content: `You are a CRM assistant. Answer questions about contacts, deals, and pipeline using this data. Be concise and specific.
+
+Contacts (${(contacts as any[]).length}):
+${(contacts as any[]).slice(0, 30).map((c: any) => `- ${c.fullName || c.firstName}: ${c.email || ''} | ${c.organization || ''} | ${c.jobTitle || ''} | Source: ${c.source || ''}`).join('\n')}
+
+Deals (${(deals as any[]).length}):
+${(deals as any[]).slice(0, 30).map((d: any) => `- ${d.name}: Stage=${d.stage} | Amount=$${d.amount || 0} | Source=${d.source || ''}`).join('\n')}
+
+Pipelines (${(pipelines as any[]).length}):
+${(pipelines as any[]).slice(0, 10).map((p: any) => `- ${p.name}: Type=${p.type}`).join('\n')}
+
+Answer the user's question based on this data. If specific data isn't available, say so.`
+      },
+      { role: "user", content: params.question },
+    ],
+  });
+
+  const answer = response.choices?.[0]?.message?.content;
+  return {
+    answer: typeof answer === 'string' ? answer : 'Unable to query CRM data',
+    contactCount: (contacts as any[]).length,
+    dealCount: (deals as any[]).length,
+  };
+}
+
 // ============================================
 // TOOL EXECUTION DISPATCHER
 // ============================================
@@ -1412,6 +1488,8 @@ async function executeTool(toolName: string, params: any, ctx: AIAgentContext): 
       return executeRunAiAnalytics(params, ctx);
     case "manage_calendar":
       return executeManageCalendar(params, ctx);
+    case "query_crm":
+      return executeQueryCrm(params, ctx);
     default:
       throw new Error(`Unknown tool: ${toolName}`);
   }
