@@ -26,7 +26,7 @@ interface SchedulerConfig {
 }
 
 const defaultConfig: SchedulerConfig = {
-  checkIntervalMs: 60000, // Check every minute
+  checkIntervalMs: 15 * 60 * 1000, // Check every 15 minutes
   maxConcurrentTasks: 5,
   autoApproveThreshold: 500, // Auto-approve POs under $500
 };
