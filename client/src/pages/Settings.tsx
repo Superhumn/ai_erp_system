@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Settings as SettingsIcon, User, Shield, Bell, Database, Link, ExternalLink } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { useLocation } from "wouter";
 
 export default function Settings() {
@@ -109,9 +110,43 @@ export default function Settings() {
             <CardDescription>Configure alert preferences</CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground">
-              Notification settings will be available in a future update.
-            </p>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-sm">
+                <div>
+                  <span>Email notifications</span>
+                  <p className="text-xs text-muted-foreground">Receive email alerts for important events</p>
+                </div>
+                <Switch defaultChecked />
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <div>
+                  <span>Task reminders</span>
+                  <p className="text-xs text-muted-foreground">Get reminded about upcoming due dates</p>
+                </div>
+                <Switch defaultChecked />
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <div>
+                  <span>Invoice alerts</span>
+                  <p className="text-xs text-muted-foreground">Notify when invoices are overdue</p>
+                </div>
+                <Switch defaultChecked />
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <div>
+                  <span>Inventory alerts</span>
+                  <p className="text-xs text-muted-foreground">Alert when stock drops below reorder point</p>
+                </div>
+                <Switch defaultChecked />
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <div>
+                  <span>Data Room activity</span>
+                  <p className="text-xs text-muted-foreground">Notify when investors view your data room</p>
+                </div>
+                <Switch defaultChecked />
+              </div>
+            </div>
           </CardContent>
         </Card>
 

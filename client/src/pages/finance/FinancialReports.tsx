@@ -281,14 +281,12 @@ export default function FinancialReports() {
   };
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <div className="p-4 space-y-3">
       {/* Header */}
-      <div className="flex justify-between items-start">
+      <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">
-            Financial Reports
-          </h1>
-          <p className="text-muted-foreground mt-2">
+          <h1 className="text-lg font-semibold">Financial Reports</h1>
+          <p className="text-muted-foreground text-sm">
             Generate comprehensive financial reports for your startup
           </p>
         </div>

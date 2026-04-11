@@ -3,6 +3,7 @@ import { NotificationCenter } from "@/components/NotificationCenter";
 import { AutonomousAgentBar } from "@/components/AutonomousAgentBar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import  {
   DropdownMenu,
   DropdownMenuContent,
@@ -63,11 +64,14 @@ import {
   Megaphone,
   FileBarChart,
   Clock,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { AICommandBar } from './AICommandBar';
+import { useTheme } from "@/contexts/ThemeContext";
 // FloatingAIAssistant removed — toolbar only
 import { toast } from "sonner";
 import {
@@ -202,6 +206,7 @@ function DashboardLayoutContent({
   const { user, logout } = useAuth();
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar } = useSidebar();
+  const { theme, toggleTheme } = useTheme();
   const isCollapsed = state === "collapsed";
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
@@ -369,6 +374,16 @@ function DashboardLayoutContent({
 
           {/* Lightfield-style footer: clean user section */}
           <SidebarFooter className="p-2 border-t border-sidebar-border">
+            <div className="flex items-center gap-1 px-1 mb-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0"
+                onClick={() => toggleTheme?.()}
+              >
+                {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </Button>
+            </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="flex items-center gap-2.5 rounded-lg px-2 py-2 hover:bg-accent transition-colors duration-100 w-full text-left group-data-[collapsible=icon]:justify-center focus:outline-none">

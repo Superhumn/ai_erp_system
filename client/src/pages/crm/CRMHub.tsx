@@ -93,7 +93,7 @@ export default function CRMHub() {
 
   const { data: contactStats } = trpc.crm.contacts.getStats.useQuery();
   const { data: dealStats } = trpc.crm.deals.getStats.useQuery();
-  const { data: deals, isLoading: dealsLoading } = trpc.crm.deals.list.useQuery({ status: "open" });
+  const { data: deals, isLoading: dealsLoading, refetch: refetchDeals } = trpc.crm.deals.list.useQuery({ status: "open" });
 
   // Mutations
   const createContact = trpc.crm.contacts.create.useMutation({
