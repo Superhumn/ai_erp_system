@@ -77,7 +77,9 @@ import {
 } from "@/components/ui/collapsible";
 import { Input } from "./ui/input";
 
-const menuGroups = [
+function getMenuGroups(role: string = "user") {
+  const isAdmin = ["admin", "exec"].includes(role);
+  return [
   {
     label: "_main",
     items: [
@@ -110,22 +112,30 @@ const menuGroups = [
   {
     label: "_people",
     items: [
-      { icon: Users, label: "People & Equity", path: "/hr/employees" },
-      { icon: FileBarChart, label: "Equity Reports", path: "/hr/equity-reports" },
-      { icon: Scale, label: "Contracts", path: "/legal/contracts" },
+      ...(isAdmin ? [
+        { icon: Users, label: "People & Equity", path: "/hr/employees" },
+        { icon: FileBarChart, label: "Equity Reports", path: "/hr/equity-reports" },
+        { icon: Scale, label: "Contracts", path: "/legal/contracts" },
+      ] : [
+        { icon: Clock, label: "Time Tracking", path: "/hr/time-tracking" },
+        { icon: LineChart, label: "Equity Portal", path: "/hr/equity-portal" },
+      ]),
     ],
   },
   {
     label: "_tools",
     items: [
-      { icon: Upload, label: "Import Data", path: "/import" },
-      { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
-      { icon: Megaphone, label: "Investor Updates", path: "/investor-updates" },
-      { icon: Network, label: "EDI", path: "/edi" },
+      ...(isAdmin ? [
+        { icon: Upload, label: "Import Data", path: "/import" },
+        { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
+        { icon: Megaphone, label: "Investor Updates", path: "/investor-updates" },
+        { icon: Network, label: "EDI", path: "/edi" },
+      ] : []),
       { icon: Settings, label: "Settings", path: "/settings" },
     ],
   },
 ];
+}
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
 const DEFAULT_WIDTH = 260;
@@ -331,7 +341,7 @@ function DashboardLayoutContent({
           {/* Flat navigation — all items visible, no dropdowns */}
           <SidebarContent className="overflow-y-auto px-2 py-2">
             <nav className="flex flex-col gap-px">
-              {menuGroups.map((group, gi) => (
+              {getMenuGroups(user?.role).map((group, gi) => (
                 <div key={group.label}>
                   {gi > 0 && !isCollapsed && <div className="border-t border-border/30 my-1.5" />}
                   {group.items.map(item => {
