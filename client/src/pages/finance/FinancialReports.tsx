@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { trpc } from "../../lib/trpc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
@@ -6,6 +6,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { Calendar } from "../../components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { Badge } from "../../components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../components/ui/select";
 import {
   CalendarIcon,
   Download,
@@ -15,6 +22,12 @@ import {
   ChevronDown,
   ChevronUp,
   BarChart3,
+  TrendingUp,
+  TrendingDown,
+  Target,
+  ArrowUpRight,
+  ArrowDownRight,
+  Minus,
 } from "lucide-react";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
@@ -115,6 +128,43 @@ function downloadPDF(report: ReportData) {
   URL.revokeObjectURL(url);
 }
 
+// ── Model vs Actual helpers ────────────────────────────────────
+function fmtCompact(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return "-";
+  const num = typeof value === "string" ? parseFloat(value) : value;
+  if (isNaN(num)) return "-";
+  if (Math.abs(num) >= 1_000_000) return `$${(num / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(num) >= 1_000) return `$${(num / 1_000).toFixed(0)}K`;
+  return `$${num.toFixed(0)}`;
+}
+
+function varianceColor(variancePct: number | null): string {
+  if (variancePct === null) return "";
+  if (variancePct >= 0) return "text-green-600 dark:text-green-400";
+  return "text-red-600 dark:text-red-400";
+}
+
+function kpiStatusBadge(status: string | null | undefined) {
+  const styles: Record<string, string> = {
+    on_track: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
+    exceeded: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
+    at_risk: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
+    behind: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
+    not_started: "bg-gray-100 text-gray-600 dark:bg-gray-800/30 dark:text-gray-400",
+  };
+  const s = status || "not_started";
+  return styles[s] || styles.not_started;
+}
+
+function progressPct(actual: string | number | null | undefined, target: string | number | null | undefined): number {
+  const a = typeof actual === "string" ? parseFloat(actual) : (actual ?? 0);
+  const t = typeof target === "string" ? parseFloat(target) : (target ?? 1);
+  if (!t || isNaN(a) || isNaN(t)) return 0;
+  return Math.min(Math.round((a / t) * 100), 150);
+}
+
+// ── Component ──────────────────────────────────────────────────
+
 export default function FinancialReports() {
   const [dateRange, setDateRange] = useState<{ from: Date | undefined; to: Date | undefined }>({
     from: new Date(new Date().getFullYear(), 0, 1),
@@ -124,6 +174,9 @@ export default function FinancialReports() {
   const [reportData, setReportData] = useState<ReportData | null>(null);
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
+  const [modelYear, setModelYear] = useState(new Date().getFullYear());
+  const [modelCategory, setModelCategory] = useState<string>("all");
+  const [kpiYear, setKpiYear] = useState(new Date().getFullYear());
 
   const generateMutation = (trpc as any).financialReports.generate.useMutation({
     onSuccess: (data: any) => {
@@ -139,6 +192,81 @@ export default function FinancialReports() {
   });
 
   const autoCategorize = (trpc as any).financialReports.autoCategorize.useMutation();
+
+  // Financial Model vs Actual queries
+  const financialModelQuery = trpc.financialModel.list.useQuery({
+    year: modelYear,
+    ...(modelCategory !== "all" ? { category: modelCategory } : {}),
+  });
+  const modelCategories = trpc.financialModel.categories.useQuery();
+  const modelData = financialModelQuery.data ?? [];
+
+  // Group model data by category
+  const groupedModelData = useMemo(() => {
+    const groups: Record<string, typeof modelData> = {};
+    for (const row of modelData) {
+      const cat = row.category || "Uncategorized";
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(row);
+    }
+    return groups;
+  }, [modelData]);
+
+  // Aggregate model data by metric (sum months for annual view)
+  const aggregatedModelData = useMemo(() => {
+    const byMetric: Record<string, {
+      category: string;
+      metricName: string;
+      unit: string | null;
+      projectedTotal: number;
+      actualTotal: number;
+      hasProjected: boolean;
+      hasActual: boolean;
+    }> = {};
+    for (const row of modelData) {
+      const key = `${row.category}::${row.metricName}`;
+      if (!byMetric[key]) {
+        byMetric[key] = {
+          category: row.category || "Uncategorized",
+          metricName: row.metricName,
+          unit: row.unit,
+          projectedTotal: 0,
+          actualTotal: 0,
+          hasProjected: false,
+          hasActual: false,
+        };
+      }
+      if (row.projectedValue) {
+        byMetric[key].projectedTotal += parseFloat(row.projectedValue);
+        byMetric[key].hasProjected = true;
+      }
+      if (row.actualValue) {
+        byMetric[key].actualTotal += parseFloat(row.actualValue);
+        byMetric[key].hasActual = true;
+      }
+    }
+    // Group by category
+    const groups: Record<string, Array<typeof byMetric[string]>> = {};
+    for (const item of Object.values(byMetric)) {
+      if (!groups[item.category]) groups[item.category] = [];
+      groups[item.category].push(item);
+    }
+    return groups;
+  }, [modelData]);
+
+  // KPI Goals queries
+  const kpiGoalsQuery = trpc.kpiGoals.list.useQuery({ year: kpiYear });
+  const kpiGoals = kpiGoalsQuery.data ?? [];
+
+  const groupedKpis = useMemo(() => {
+    const groups: Record<string, typeof kpiGoals> = {};
+    for (const kpi of kpiGoals) {
+      const cat = kpi.category || "Uncategorized";
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(kpi);
+    }
+    return groups;
+  }, [kpiGoals]);
 
   const handleGenerate = (reportId: string) => {
     setSelectedReport(reportId);
@@ -502,6 +630,228 @@ export default function FinancialReports() {
           );
         })}
       </div>
+
+      {/* ── Model vs Actual Comparison ────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <TrendingUp className="h-5 w-5 text-indigo-600" />
+              <div>
+                <CardTitle className="text-base">Model vs Actual</CardTitle>
+                <CardDescription className="text-sm">
+                  Financial model projections compared with actual performance
+                </CardDescription>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Select value={modelCategory} onValueChange={setModelCategory}>
+                <SelectTrigger className="w-[150px] h-8 text-xs">
+                  <SelectValue placeholder="Category" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Categories</SelectItem>
+                  {(modelCategories.data ?? []).map((cat: string) => (
+                    <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={String(modelYear)} onValueChange={(v) => setModelYear(Number(v))}>
+                <SelectTrigger className="w-[100px] h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[2024, 2025, 2026, 2027].map((y) => (
+                    <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {financialModelQuery.isLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              <span className="ml-2 text-sm text-muted-foreground">Loading financial model...</span>
+            </div>
+          ) : Object.keys(aggregatedModelData).length === 0 ? (
+            <div className="text-center py-8 text-sm text-muted-foreground">
+              No financial model data found for {modelYear}.
+              Import a financial model to see projections vs actuals.
+            </div>
+          ) : (
+            <div className="border rounded-md overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[250px]">Metric</TableHead>
+                    <TableHead className="text-right">Y{modelYear % 100} Projected</TableHead>
+                    <TableHead className="text-right">Y{modelYear % 100} Actual</TableHead>
+                    <TableHead className="text-right">Variance</TableHead>
+                    <TableHead className="text-right">Variance %</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {Object.entries(aggregatedModelData).map(([category, metrics]) => (
+                    <>
+                      <TableRow key={`cat-${category}`} className="bg-muted/60">
+                        <TableCell colSpan={5} className="font-semibold text-primary text-sm py-2">
+                          {category}
+                        </TableCell>
+                      </TableRow>
+                      {metrics.map((m, idx) => {
+                        const variance = m.hasProjected && m.hasActual
+                          ? m.actualTotal - m.projectedTotal
+                          : null;
+                        const variancePctVal = variance !== null && m.projectedTotal !== 0
+                          ? (variance / Math.abs(m.projectedTotal)) * 100
+                          : null;
+
+                        return (
+                          <TableRow key={`${category}-${idx}`}>
+                            <TableCell className="text-sm">{m.metricName}</TableCell>
+                            <TableCell className="text-right text-sm font-medium">
+                              {m.hasProjected ? fmtCompact(m.projectedTotal) : "-"}
+                            </TableCell>
+                            <TableCell className="text-right text-sm font-medium">
+                              {m.hasActual ? fmtCompact(m.actualTotal) : "-"}
+                            </TableCell>
+                            <TableCell className={`text-right text-sm font-medium ${varianceColor(variance)}`}>
+                              {variance !== null ? (
+                                <span className="flex items-center justify-end gap-1">
+                                  {variance >= 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                                  {fmtCompact(Math.abs(variance))}
+                                </span>
+                              ) : (
+                                <Minus className="h-3 w-3 inline text-muted-foreground" />
+                              )}
+                            </TableCell>
+                            <TableCell className={`text-right text-sm font-medium ${varianceColor(variancePctVal)}`}>
+                              {variancePctVal !== null
+                                ? `${variancePctVal >= 0 ? "+" : ""}${variancePctVal.toFixed(1)}%`
+                                : "-"}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── KPI Dashboard ─────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Target className="h-5 w-5 text-emerald-600" />
+              <div>
+                <CardTitle className="text-base">KPI Goals</CardTitle>
+                <CardDescription className="text-sm">
+                  Track progress against key performance targets
+                </CardDescription>
+              </div>
+            </div>
+            <Select value={String(kpiYear)} onValueChange={(v) => setKpiYear(Number(v))}>
+              <SelectTrigger className="w-[100px] h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[2024, 2025, 2026, 2027].map((y) => (
+                  <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {kpiGoalsQuery.isLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              <span className="ml-2 text-sm text-muted-foreground">Loading KPI goals...</span>
+            </div>
+          ) : kpiGoals.length === 0 ? (
+            <div className="text-center py-8 text-sm text-muted-foreground">
+              No KPI goals configured for {kpiYear}. Create goals to track performance.
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {Object.entries(groupedKpis).map(([category, kpis]) => (
+                <div key={category}>
+                  <h3 className="text-sm font-semibold text-muted-foreground mb-3 uppercase tracking-wide">
+                    {category}
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {kpis.map((kpi: any) => {
+                      const pct = progressPct(kpi.actualValue, kpi.targetValue);
+                      const actual = kpi.actualValue ? parseFloat(kpi.actualValue) : 0;
+                      const target = kpi.targetValue ? parseFloat(kpi.targetValue) : 0;
+                      const isOverTarget = actual >= target && target > 0;
+
+                      return (
+                        <div
+                          key={kpi.id}
+                          className="border rounded-lg p-3 space-y-2 hover:bg-muted/30 transition-colors"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium truncate">{kpi.metricName}</span>
+                            <Badge
+                              variant="secondary"
+                              className={`text-xs shrink-0 ${kpiStatusBadge(kpi.status)}`}
+                            >
+                              {(kpi.status || "not_started").replace("_", " ")}
+                            </Badge>
+                          </div>
+                          <div className="flex items-end justify-between">
+                            <div>
+                              <span className="text-lg font-bold">
+                                {kpi.unit === "USD" || kpi.unit === "$"
+                                  ? fmtCompact(actual)
+                                  : `${actual.toLocaleString()}${kpi.unit === "%" ? "%" : ""}`}
+                              </span>
+                              <span className="text-xs text-muted-foreground ml-1">
+                                / {kpi.unit === "USD" || kpi.unit === "$"
+                                  ? fmtCompact(target)
+                                  : `${target.toLocaleString()}${kpi.unit === "%" ? "%" : ""}`}
+                              </span>
+                            </div>
+                            <span className={`text-xs font-medium ${isOverTarget ? "text-green-600" : pct >= 70 ? "text-yellow-600" : "text-red-600"}`}>
+                              {pct}%
+                            </span>
+                          </div>
+                          {/* Progress bar */}
+                          <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                            <div
+                              className={`h-2 rounded-full transition-all ${
+                                isOverTarget
+                                  ? "bg-green-500"
+                                  : pct >= 70
+                                    ? "bg-yellow-500"
+                                    : "bg-red-500"
+                              }`}
+                              style={{ width: `${Math.min(pct, 100)}%` }}
+                            />
+                          </div>
+                          {kpi.month && (
+                            <p className="text-xs text-muted-foreground">
+                              Month {kpi.month}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

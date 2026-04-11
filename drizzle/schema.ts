@@ -5541,3 +5541,26 @@ export const financialModel = mysqlTable("financial_model", {
 
 export type FinancialModel = typeof financialModel.$inferSelect;
 export type InsertFinancialModel = typeof financialModel.$inferInsert;
+
+// ============================================
+// KPI GOALS
+// ============================================
+
+export const kpiGoals = mysqlTable("kpi_goals", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  category: varchar("category", { length: 128 }).notNull(), // "P&L", "Cash", "Operations", "Growth", "HR"
+  metricName: varchar("metricName", { length: 255 }).notNull(),
+  year: int("year").notNull(),
+  month: int("month"), // null = annual target
+  targetValue: decimal("targetValue", { precision: 20, scale: 2 }).notNull(),
+  actualValue: decimal("actualValue", { precision: 20, scale: 2 }),
+  unit: varchar("unit", { length: 32 }).default("USD"),
+  status: mysqlEnum("status", ["on_track", "at_risk", "behind", "exceeded", "not_started"]).default("not_started"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type KpiGoal = typeof kpiGoals.$inferSelect;
+export type InsertKpiGoal = typeof kpiGoals.$inferInsert;

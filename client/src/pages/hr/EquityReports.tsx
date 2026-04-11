@@ -1,9 +1,10 @@
 import { useState, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -27,7 +28,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { FileBarChart, Download, Printer, Loader2, Play } from "lucide-react";
+import { FileBarChart, Download, Printer, Loader2, Play, Upload, FileText, ExternalLink, Shield } from "lucide-react";
 import { toast } from "sonner";
 
 // ── Report type definitions ──────────────────────────────────────
@@ -81,11 +82,39 @@ function downloadCSV(report: ReportData) {
   URL.revokeObjectURL(url);
 }
 
+// ── Valuation helpers ──────────────────────────────────────────
+function formatValuationCurrency(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return "-";
+  const num = typeof value === "string" ? parseFloat(value) : value;
+  if (isNaN(num)) return "-";
+  if (num >= 1_000_000) return `$${(num / 1_000_000).toFixed(1)}M`;
+  if (num >= 1_000) return `$${(num / 1_000).toFixed(0)}K`;
+  return `$${num.toFixed(2)}`;
+}
+
+function formatFMV(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return "-";
+  const num = typeof value === "string" ? parseFloat(value) : value;
+  if (isNaN(num)) return "-";
+  return `$${num.toFixed(2)}`;
+}
+
+function statusColor(status: string | null | undefined): string {
+  switch (status) {
+    case "approved": return "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300";
+    case "pending": return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300";
+    case "expired": return "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300";
+    case "draft": return "bg-gray-100 text-gray-800 dark:bg-gray-800/30 dark:text-gray-300";
+    default: return "bg-gray-100 text-gray-700";
+  }
+}
+
 export default function EquityReports() {
   const [selectedReport, setSelectedReport] = useState<ReportType | null>(null);
   const [showParamsDialog, setShowParamsDialog] = useState(false);
   const [showResultDialog, setShowResultDialog] = useState(false);
   const [reportData, setReportData] = useState<ReportData | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
   // Parameters
   const [stakeholderId, setStakeholderId] = useState<string>("");
@@ -94,6 +123,62 @@ export default function EquityReports() {
   const [exitValuation, setExitValuation] = useState("");
 
   const printRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 409A Valuations query
+  const valuationsQuery = trpc.capTable.valuations.list.useQuery();
+  const valuations = valuationsQuery.data ?? [];
+  const currentValuation = valuations.length > 0 ? valuations[0] : null;
+
+  // Documents linked to valuations
+  const valuationDocsQuery = trpc.documents.list.useQuery({
+    referenceType: "valuation",
+  });
+  const valuationDocs = valuationDocsQuery.data ?? [];
+
+  // Upload mutation
+  const uploadDoc = trpc.documents.upload.useMutation({
+    onSuccess: () => {
+      toast.success("Valuation report uploaded successfully");
+      valuationDocsQuery.refetch();
+    },
+    onError: (err: any) => {
+      toast.error("Upload failed: " + err.message);
+    },
+    onSettled: () => {
+      setIsUploading(false);
+    },
+  });
+
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("File too large. Maximum 10MB.");
+      return;
+    }
+    setIsUploading(true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(",")[1];
+      uploadDoc.mutate({
+        name: file.name,
+        type: "report",
+        referenceType: "valuation",
+        referenceId: currentValuation?.id,
+        fileData: base64,
+        mimeType: file.type || "application/pdf",
+        description: `409A Valuation Report - ${file.name}`,
+      });
+    };
+    reader.onerror = () => {
+      toast.error("Failed to read file");
+      setIsUploading(false);
+    };
+    reader.readAsDataURL(file);
+    // Reset input
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
 
   const stakeholdersQuery = trpc.capTable.stakeholders.list.useQuery();
   const generateMutation = trpc.capTable.generateReport.useMutation({
@@ -163,8 +248,172 @@ export default function EquityReports() {
   }
 
   return (
-    <div className="p-4 space-y-2">
+    <div className="p-4 space-y-4">
       <h1 className="text-lg font-semibold">Equity Reports</h1>
+
+      {/* ── 409A Valuation Section ─────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <Shield className="h-5 w-5 text-blue-600" />
+            <CardTitle className="text-base">409A Valuation</CardTitle>
+          </div>
+          <CardDescription className="text-sm">
+            Current company valuation and FMV per share for equity pricing
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Left: Valuation Info */}
+            <div className="space-y-4">
+              {valuationsQuery.isLoading ? (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading valuation data...
+                </div>
+              ) : currentValuation ? (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Total Valuation</p>
+                      <p className="text-2xl font-bold text-primary">
+                        {formatValuationCurrency(currentValuation.totalValuation)}
+                      </p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">FMV Per Share</p>
+                      <p className="text-2xl font-bold">
+                        {formatFMV(currentValuation.fairMarketValue)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-muted-foreground">Valuation Date: </span>
+                      <span className="font-medium">
+                        {new Date(currentValuation.valuationDate).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Expiration: </span>
+                      <span className="font-medium">
+                        {currentValuation.expirationDate
+                          ? new Date(currentValuation.expirationDate).toLocaleDateString()
+                          : "N/A"}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Provider: </span>
+                      <span className="font-medium">{currentValuation.provider || "N/A"}</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Status: </span>
+                      <Badge variant="secondary" className={`text-xs ${statusColor(currentValuation.status)}`}>
+                        {currentValuation.status || "draft"}
+                      </Badge>
+                    </div>
+                  </div>
+                  {currentValuation.methodology && (
+                    <p className="text-xs text-muted-foreground">
+                      Methodology: {currentValuation.methodology}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <div className="text-sm text-muted-foreground py-4">
+                  No 409A valuation on file. Upload a valuation report to get started.
+                </div>
+              )}
+
+              {/* Historical valuations */}
+              {valuations.length > 1 && (
+                <div className="border-t pt-3 mt-2">
+                  <p className="text-xs font-medium text-muted-foreground mb-2">Previous Valuations</p>
+                  <div className="space-y-1">
+                    {valuations.slice(1, 4).map((v: any) => (
+                      <div key={v.id} className="flex items-center justify-between text-xs">
+                        <span>{new Date(v.valuationDate).toLocaleDateString()}</span>
+                        <span className="font-medium">{formatFMV(v.fairMarketValue)}/share</span>
+                        <Badge variant="secondary" className={`text-xs ${statusColor(v.status)}`}>
+                          {v.status}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Right: Upload Area + Uploaded Documents */}
+            <div className="space-y-4">
+              <div className="border-2 border-dashed rounded-lg p-4 text-center space-y-2">
+                <Upload className="h-8 w-8 mx-auto text-muted-foreground" />
+                <p className="text-sm font-medium">Upload Valuation Report</p>
+                <p className="text-xs text-muted-foreground">PDF, DOC, or XLSX up to 10MB</p>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.doc,.docx,.xlsx,.xls"
+                  className="hidden"
+                  onChange={handleFileUpload}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploading}
+                >
+                  {isUploading ? (
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                  ) : (
+                    <Upload className="h-4 w-4 mr-1" />
+                  )}
+                  {isUploading ? "Uploading..." : "Choose File"}
+                </Button>
+              </div>
+
+              {/* Uploaded docs list */}
+              {valuationDocsQuery.isLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Loading documents...
+                </div>
+              ) : valuationDocs.length > 0 ? (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">Uploaded Reports</p>
+                  {valuationDocs.map((doc: any) => (
+                    <div
+                      key={doc.id}
+                      className="flex items-center justify-between p-2 border rounded-md text-sm hover:bg-muted/50"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <FileText className="h-4 w-4 text-red-500 shrink-0" />
+                        <span className="truncate">{doc.name}</span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-xs text-muted-foreground">
+                          {doc.createdAt ? new Date(doc.createdAt).toLocaleDateString() : ""}
+                        </span>
+                        {doc.fileUrl && (
+                          <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer">
+                            <ExternalLink className="h-3 w-3 text-blue-600" />
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground text-center py-2">
+                  No valuation reports uploaded yet
+                </p>
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Reports Table ─────────────────────────────────────── */}
       <Table>
         <TableHeader>
           <TableRow>

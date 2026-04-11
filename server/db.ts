@@ -162,6 +162,8 @@ import {
   investmentCommitments, InsertInvestmentCommitment,
   // Financial model
   financialModel, InsertFinancialModel,
+  // KPI Goals
+  kpiGoals, InsertKpiGoal,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
