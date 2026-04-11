@@ -326,7 +326,8 @@ export async function getFolderInfo(
     
     if (!response.ok) {
       const error = await response.text();
-      return { folder: null, error: `Failed to get folder: ${response.status}` };
+      console.error("[GoogleDrive] getFolderInfo failed:", response.status, error);
+      return { folder: null, error: `Failed to get folder (${response.status}): ${error}. Make sure the folder is shared with your Google account and you've connected Google with full Drive access.` };
     }
     
     const folder = await response.json();
