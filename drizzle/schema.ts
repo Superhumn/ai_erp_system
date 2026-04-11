@@ -5326,3 +5326,56 @@ export const investorUpdates = mysqlTable("investor_updates", {
 
 export type InvestorUpdate = typeof investorUpdates.$inferSelect;
 export type InsertInvestorUpdate = typeof investorUpdates.$inferInsert;
+
+// ============================================
+// TIME TRACKING
+// ============================================
+
+export const timeEntries = mysqlTable("time_entries", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  userId: int("userId").notNull(),
+  projectId: int("projectId"),
+  taskDescription: varchar("taskDescription", { length: 512 }).notNull(),
+  date: timestamp("date").notNull(),
+  hours: decimal("hours", { precision: 8, scale: 2 }).notNull(),
+  hourlyRate: decimal("hourlyRate", { precision: 10, scale: 2 }),
+  totalAmount: decimal("totalAmount", { precision: 12, scale: 2 }),
+  category: mysqlEnum("category", ["development", "design", "consulting", "management", "operations", "admin", "sales", "support", "other"]).default("other"),
+  billable: boolean("billable").default(true),
+  status: mysqlEnum("status", ["draft", "submitted", "approved", "invoiced", "paid"]).default("draft"),
+  approvedBy: int("approvedBy"),
+  approvedAt: timestamp("approvedAt"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export const timeInvoices = mysqlTable("time_invoices", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  userId: int("userId").notNull(),
+  invoiceNumber: varchar("invoiceNumber", { length: 64 }).notNull(),
+  periodStart: timestamp("periodStart").notNull(),
+  periodEnd: timestamp("periodEnd").notNull(),
+  totalHours: decimal("totalHours", { precision: 10, scale: 2 }).notNull(),
+  hourlyRate: decimal("hourlyRate", { precision: 10, scale: 2 }).notNull(),
+  subtotal: decimal("subtotal", { precision: 12, scale: 2 }).notNull(),
+  taxAmount: decimal("taxAmount", { precision: 12, scale: 2 }).default("0"),
+  totalAmount: decimal("totalAmount", { precision: 12, scale: 2 }).notNull(),
+  status: mysqlEnum("status", ["draft", "submitted", "approved", "sent", "paid"]).default("draft"),
+  submittedAt: timestamp("submittedAt"),
+  approvedBy: int("approvedBy"),
+  approvedAt: timestamp("approvedAt"),
+  sentAt: timestamp("sentAt"),
+  sentTo: varchar("sentTo", { length: 320 }),
+  paidAt: timestamp("paidAt"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export type TimeEntry = typeof timeEntries.$inferSelect;
+export type InsertTimeEntry = typeof timeEntries.$inferInsert;
+export type TimeInvoice = typeof timeInvoices.$inferSelect;
+export type InsertTimeInvoice = typeof timeInvoices.$inferInsert;

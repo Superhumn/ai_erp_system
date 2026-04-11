@@ -78,53 +78,37 @@ import { Input } from "./ui/input";
 
 const menuGroups = [
   {
-    label: "Command Center",
+    label: "_main",
     items: [
       { icon: LayoutDashboard, label: "Dashboard", path: "/" },
       { icon: Target, label: "Projects & Tasks", path: "/projects" },
       { icon: ClipboardCheck, label: "Approvals", path: "/ai/approvals" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: Bell, label: "Notifications", path: "/notifications" },
-      { icon: Megaphone, label: "Investor Updates", path: "/investor-updates" },
     ],
   },
   {
-    label: "Buy",
+    label: "_ops",
     items: [
       { icon: Users, label: "Vendors", path: "/operations/vendors" },
-    ],
-  },
-  {
-    label: "Make",
-    items: [
       { icon: Wrench, label: "Work Orders", path: "/operations/work-orders" },
       { icon: Factory, label: "Copacker Portal", path: "/portal/copacker" },
-    ],
-  },
-  {
-    label: "Store",
-    items: [
       { icon: Warehouse, label: "Inventory", path: "/operations/inventory-hub" },
       { icon: MapPin, label: "Locations", path: "/operations/locations" },
     ],
   },
   {
-    label: "Sell",
+    label: "_sell",
     items: [
       { icon: ShoppingCart, label: "Orders", path: "/sales/orders" },
       { icon: UserCircle, label: "Customers & CRM", path: "/crm/hub" },
-    ],
-  },
-  {
-    label: "Money",
-    items: [
       { icon: Landmark, label: "Accounts", path: "/finance/accounts" },
       { icon: ArrowRightLeft, label: "Transactions", path: "/finance/transactions" },
       { icon: BarChart3, label: "Reports", path: "/operations/profitability" },
     ],
   },
   {
-    label: "People & Legal",
+    label: "_people",
     items: [
       { icon: Users, label: "People & Equity", path: "/hr/employees" },
       { icon: LineChart, label: "Equity Portal", path: "/hr/equity-portal" },
@@ -133,10 +117,11 @@ const menuGroups = [
     ],
   },
   {
-    label: "Tools",
+    label: "_tools",
     items: [
       { icon: Upload, label: "Import Data", path: "/import" },
       { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
+      { icon: Megaphone, label: "Investor Updates", path: "/investor-updates" },
       { icon: Network, label: "EDI", path: "/edi" },
       { icon: Settings, label: "Settings", path: "/settings" },
     ],
@@ -344,42 +329,30 @@ function DashboardLayoutContent({
             </div>
           </SidebarHeader>
 
-          {/* Lightfield-style navigation: clean groups, minimal icons */}
+          {/* Flat navigation — all items visible, no dropdowns */}
           <SidebarContent className="overflow-y-auto px-2 py-2">
-            <nav className="flex flex-col gap-0.5">
-              {menuGroups.map((group) => (
-                <div key={group.label} className="mb-0.5">
-                  {!isCollapsed && (
-                    <button
-                      onClick={() => toggleGroup(group.label)}
-                      className="w-full flex items-center justify-between px-2 py-1.5 text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-[0.1em] hover:text-muted-foreground transition-colors duration-100 mt-2 first:mt-0"
-                    >
-                      <span>{group.label}</span>
-                      <ChevronDown className={`h-2.5 w-2.5 transition-transform duration-150 ${openGroups.includes(group.label) ? "" : "-rotate-90"}`} />
-                    </button>
-                  )}
-                  {(isCollapsed || openGroups.includes(group.label)) && (
-                    <div className="flex flex-col gap-px mt-0.5">
-                      {group.items.map(item => {
-                        const isActive = location === item.path;
-                        return (
-                          <button
-                            key={item.path}
-                            onClick={() => setLocation(item.path)}
-                            className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] transition-colors duration-100 ${
-                              isActive
-                                ? "bg-accent text-foreground font-medium"
-                                : "text-sidebar-foreground hover:bg-accent/60 hover:text-foreground"
-                            } ${isCollapsed ? "justify-center" : ""}`}
-                            title={isCollapsed ? item.label : undefined}
-                          >
-                            <item.icon className={`h-[14px] w-[14px] shrink-0 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
-                            {!isCollapsed && <span className="truncate">{item.label}</span>}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
+            <nav className="flex flex-col gap-px">
+              {menuGroups.map((group, gi) => (
+                <div key={group.label}>
+                  {gi > 0 && !isCollapsed && <div className="border-t border-border/30 my-1.5" />}
+                  {group.items.map(item => {
+                    const isActive = location === item.path;
+                    return (
+                      <button
+                        key={item.path}
+                        onClick={() => setLocation(item.path)}
+                        className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] transition-colors duration-100 w-full ${
+                          isActive
+                            ? "bg-accent text-foreground font-medium"
+                            : "text-sidebar-foreground hover:bg-accent/60 hover:text-foreground"
+                        } ${isCollapsed ? "justify-center" : ""}`}
+                        title={isCollapsed ? item.label : undefined}
+                      >
+                        <item.icon className={`h-[14px] w-[14px] shrink-0 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
+                        {!isCollapsed && <span className="truncate">{item.label}</span>}
+                      </button>
+                    );
+                  })}
                 </div>
               ))}
             </nav>

@@ -151,6 +151,9 @@ import {
   boardSignatures, InsertBoardSignature,
   // Investor updates
   investorUpdates, InsertInvestorUpdate,
+  // Time tracking
+  timeEntries, InsertTimeEntry,
+  timeInvoices, InsertTimeInvoice,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
