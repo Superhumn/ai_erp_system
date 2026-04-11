@@ -111,8 +111,6 @@ const menuGroups = [
     label: "_people",
     items: [
       { icon: Users, label: "People & Equity", path: "/hr/employees" },
-      { icon: Clock, label: "Time Tracking", path: "/hr/time-tracking" },
-      { icon: LineChart, label: "Equity Portal", path: "/hr/equity-portal" },
       { icon: FileBarChart, label: "Equity Reports", path: "/hr/equity-reports" },
       { icon: Scale, label: "Contracts", path: "/legal/contracts" },
     ],
