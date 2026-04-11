@@ -249,16 +249,60 @@ Return JSON only. No markdown.`;
                 if (parsed.hasTasks && parsed.actionItems?.length > 0) {
                   const db = await import("../db");
 
+                  // Auto-create or find the right project based on email category
+                  let projectId: number | null = null;
+                  try {
+                    const projects = await db.getProjects();
+                    const categoryProjectMap: Record<string, string> = {
+                      "follow_up": "Follow-Ups",
+                      "send_document": "Document Tasks",
+                      "schedule_meeting": "Meetings",
+                      "review": "Reviews & Approvals",
+                      "approval": "Reviews & Approvals",
+                      "payment": "Finance Tasks",
+                      "other": "General Tasks",
+                    };
+                    const projectName = categoryProjectMap[parsed.actionItems[0]?.category] || "Email Tasks";
+                    let project = projects.find((p: any) => p.name === projectName);
+                    if (!project) {
+                      // Auto-create the project
+                      const result = await db.createProject({
+                        name: projectName,
+                        projectNumber: `PRJ-${Date.now().toString(36).toUpperCase()}`,
+                        description: `Auto-created from email tasks`,
+                        status: "active",
+                        createdBy: 1,
+                      });
+                      projectId = result.id;
+                    } else {
+                      projectId = project.id;
+                    }
+                  } catch {
+                    // Project creation failed, fall back to notification only
+                  }
+
                   for (const item of parsed.actionItems) {
                     try {
+                      // Create as project task if we have a project
+                      if (projectId) {
+                        await db.createProjectTask?.({
+                          projectId,
+                          name: item.task,
+                          description: `From email: "${scannedEmail.subject}" by ${scannedEmail.from.name || scannedEmail.from.address}`,
+                          priority: item.priority === "high" ? "high" : item.priority === "low" ? "low" : "medium",
+                          status: "not_started",
+                          dueDate: item.dueDate ? new Date(item.dueDate) : undefined,
+                        });
+                      }
+                      // Also create notification
                       await db.createNotification({
-                        userId: 1, // Admin user
+                        userId: 1,
                         type: "reminder" as const,
-                        title: `[Email Task] ${item.task}`,
-                        message: `From email: "${scannedEmail.subject}" by ${scannedEmail.from.name || scannedEmail.from.address}. Priority: ${item.priority || "medium"}. Category: ${item.category || "other"}.`,
+                        title: `📧 ${item.task}`,
+                        message: `From: ${scannedEmail.from.name || scannedEmail.from.address} | Project: ${projectId ? "auto-assigned" : "none"}`,
                       });
                     } catch {
-                      // Notification creation failed, skip
+                      // Task creation failed, skip
                     }
                   }
                 }
