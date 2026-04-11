@@ -271,9 +271,9 @@ function DashboardLayoutContent({
   }, []);
 
   // Find active menu item for mobile header (memoized to avoid recalculation)
-  const activeMenuItem = useMemo(() => menuGroups
+  const activeMenuItem = useMemo(() => getMenuGroups(user?.role)
     .flatMap(g => g.items)
-    .find(item => item.path === location), [location]);
+    .find(item => item.path === location), [location, user?.role]);
 
   useEffect(() => {
     if (isCollapsed) {
