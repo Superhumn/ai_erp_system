@@ -309,6 +309,52 @@ export async function downloadFile(
 }
 
 /**
+ * Download a Drive file's content, exporting Google Workspace files as PDF.
+ * Returns the raw buffer and the effective MIME type after any export conversion.
+ */
+export async function downloadDriveFile(
+  accessToken: string,
+  fileId: string,
+  mimeType: string
+): Promise<{ buffer: Buffer; exportedMimeType: string } | { error: string }> {
+  try {
+    let url: string;
+    let exportedMimeType = mimeType;
+
+    // Google Workspace files need to be exported
+    if (mimeType === 'application/vnd.google-apps.spreadsheet') {
+      url = `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=application/pdf`;
+      exportedMimeType = 'application/pdf';
+    } else if (mimeType === 'application/vnd.google-apps.document') {
+      url = `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=application/pdf`;
+      exportedMimeType = 'application/pdf';
+    } else if (mimeType === 'application/vnd.google-apps.presentation') {
+      url = `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=application/pdf`;
+      exportedMimeType = 'application/pdf';
+    } else if (mimeType === 'application/vnd.google-apps.drawing') {
+      url = `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=image/png`;
+      exportedMimeType = 'image/png';
+    } else {
+      // Regular files — download directly
+      url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`;
+    }
+
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!response.ok) {
+      return { error: `Download failed: ${response.status}` };
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    return { buffer: Buffer.from(arrayBuffer), exportedMimeType };
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
+/**
  * Get folder info
  */
 export async function getFolderInfo(

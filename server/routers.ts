@@ -32,7 +32,7 @@ import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
-import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
+import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType, downloadDriveFile } from "./_core/googleDrive";
 import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems } from "./_core/quickbooks";
 import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
@@ -11436,7 +11436,7 @@ Ask if they received the original request and if they can provide a quote.`;
           results.push({ name: driveFolder.name, type: 'folder', status: 'created' });
         }
 
-        // Process files
+        // Process files — download actual content instead of just linking
         for (const driveFile of syncResult.files) {
           if (existingDocsByDriveId.has(driveFile.id)) {
             results.push({ name: driveFile.name, type: 'file', status: 'exists' });
@@ -11451,26 +11451,66 @@ Ask if they received the original request and if they can provide a quote.`;
             fileFolderId = folderMap.get(parentDriveId) || existingFoldersByDriveId.get(parentDriveId) || null;
           }
 
-          const fileType = getSimpleFileType(driveFile.mimeType);
-          const fileSize = driveFile.size && !isNaN(parseInt(driveFile.size))
+          // Download the actual file content from Google Drive
+          const downloaded = await downloadDriveFile(accessToken, driveFile.id, driveFile.mimeType);
+
+          // Determine display name — exported Google Workspace files get .pdf extension
+          const isGoogleWorkspaceFile = driveFile.mimeType.startsWith('application/vnd.google-apps.');
+          const displayName = isGoogleWorkspaceFile
+            ? `${driveFile.name}.pdf`
+            : driveFile.name;
+
+          // Determine the effective MIME type and file type after export
+          const effectiveMimeType = ('exportedMimeType' in downloaded)
+            ? downloaded.exportedMimeType
+            : driveFile.mimeType;
+          const fileType = getSimpleFileType(effectiveMimeType);
+
+          let storageType: 'google_drive' | 's3' = 'google_drive';
+          let storageUrl: string | undefined;
+          let storageKey: string | undefined;
+          let fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
             ? parseInt(driveFile.size)
             : undefined;
+
+          if ('buffer' in downloaded) {
+            fileSize = downloaded.buffer.length;
+            // Try to store via storagePut (S3/storage proxy)
+            try {
+              const fileKey = `dataroom/${input.dataRoomId}/${nanoid()}-${displayName}`;
+              const result = await storagePut(fileKey, downloaded.buffer, downloaded.exportedMimeType);
+              storageUrl = result.url;
+              storageKey = result.key;
+              storageType = 's3';
+            } catch {
+              // Storage not configured — store as base64 data URL for small files (<5MB)
+              if (downloaded.buffer.length < 5 * 1024 * 1024) {
+                storageUrl = `data:${downloaded.exportedMimeType};base64,${downloaded.buffer.toString('base64')}`;
+                storageType = 's3'; // treat as locally-stored, not a Drive link
+              }
+              // For larger files without storage, keep Google link as fallback
+            }
+          } else {
+            console.warn(`[GoogleDrive Sync] Failed to download ${driveFile.name}: ${downloaded.error}`);
+          }
 
           await db.createDataRoomDocument({
             dataRoomId: input.dataRoomId,
             folderId: fileFolderId,
-            name: driveFile.name,
+            name: displayName,
             fileType,
-            mimeType: driveFile.mimeType,
+            mimeType: effectiveMimeType,
             fileSize,
-            storageType: 'google_drive',
+            storageType,
+            storageUrl,
+            storageKey,
             googleDriveFileId: driveFile.id,
             googleDriveWebViewLink: driveFile.webViewLink,
             thumbnailUrl: driveFile.thumbnailLink,
             uploadedBy: ctx.user.id,
           });
 
-          results.push({ name: driveFile.name, type: 'file', status: 'synced' });
+          results.push({ name: displayName, type: 'file', status: 'synced' });
         }
 
         // Update data room with Google Drive folder ID and last sync time
@@ -11598,7 +11638,7 @@ Ask if they received the original request and if they can provide a quote.`;
             foldersCreated++;
           }
 
-          // Process files
+          // Process files — download actual content instead of just linking
           let filesCreated = 0;
           for (const driveFile of syncResult.files) {
             // Check if file already exists
@@ -11615,26 +11655,66 @@ Ask if they received the original request and if they can provide a quote.`;
               folderId = null;
             } else if (parentDriveId) {
               folderId = folderMap.get(parentDriveId) || existingFoldersByDriveId.get(parentDriveId) || null;
-              
+
               // Log warning if parent folder is missing
               if (!folderId) {
                 console.warn(`[GoogleDrive Sync] Parent folder ${parentDriveId} not found for file ${driveFile.name}`);
               }
             }
 
-            const fileType = getSimpleFileType(driveFile.mimeType);
-            const fileSize = driveFile.size && !isNaN(parseInt(driveFile.size)) 
-              ? parseInt(driveFile.size) 
+            // Download the actual file content from Google Drive
+            const downloaded = await downloadDriveFile(accessToken, driveFile.id, driveFile.mimeType);
+
+            // Determine display name — exported Google Workspace files get .pdf extension
+            const isGoogleWorkspaceFile = driveFile.mimeType.startsWith('application/vnd.google-apps.');
+            const displayName = isGoogleWorkspaceFile
+              ? `${driveFile.name}.pdf`
+              : driveFile.name;
+
+            // Determine the effective MIME type and file type after export
+            const effectiveMimeType = ('exportedMimeType' in downloaded)
+              ? downloaded.exportedMimeType
+              : driveFile.mimeType;
+            const fileType = getSimpleFileType(effectiveMimeType);
+
+            let storageType: 'google_drive' | 's3' = 'google_drive';
+            let storageUrl: string | undefined;
+            let storageKey: string | undefined;
+            let fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
+              ? parseInt(driveFile.size)
               : undefined;
+
+            if ('buffer' in downloaded) {
+              fileSize = downloaded.buffer.length;
+              // Try to store via storagePut (S3/storage proxy)
+              try {
+                const fileKey = `dataroom/${input.dataRoomId}/${nanoid()}-${displayName}`;
+                const result = await storagePut(fileKey, downloaded.buffer, downloaded.exportedMimeType);
+                storageUrl = result.url;
+                storageKey = result.key;
+                storageType = 's3';
+              } catch {
+                // Storage not configured — store as base64 data URL for small files (<5MB)
+                if (downloaded.buffer.length < 5 * 1024 * 1024) {
+                  storageUrl = `data:${downloaded.exportedMimeType};base64,${downloaded.buffer.toString('base64')}`;
+                  storageType = 's3'; // treat as locally-stored, not a Drive link
+                }
+                // For larger files without storage, keep Google link as fallback
+              }
+            } else {
+              console.warn(`[GoogleDrive Sync] Failed to download ${driveFile.name}: ${downloaded.error}`);
+            }
 
             await db.createDataRoomDocument({
               dataRoomId: input.dataRoomId,
               folderId,
-              name: driveFile.name,
+              name: displayName,
               fileType,
-              mimeType: driveFile.mimeType,
+              mimeType: effectiveMimeType,
               fileSize,
-              storageType: 'google_drive',
+              storageType,
+              storageUrl,
+              storageKey,
               googleDriveFileId: driveFile.id,
               googleDriveWebViewLink: driveFile.webViewLink,
               thumbnailUrl: driveFile.thumbnailLink,
