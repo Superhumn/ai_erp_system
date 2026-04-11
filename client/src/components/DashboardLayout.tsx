@@ -105,7 +105,7 @@ function getMenuGroups(role: string = "user") {
       { icon: UserCircle, label: "Customers & CRM", path: "/crm/hub" },
       { icon: Landmark, label: "Accounts", path: "/finance/accounts" },
       { icon: ArrowRightLeft, label: "Transactions", path: "/finance/transactions" },
-      { icon: BarChart3, label: "Reports", path: "/operations/profitability" },
+      { icon: BarChart3, label: "Reports", path: "/finance/reports" },
     ],
   },
   {
