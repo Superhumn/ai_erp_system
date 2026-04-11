@@ -717,7 +717,7 @@ async function startServer() {
     if (process.env.MERCURY_API_TOKEN) {
       (async () => {
         try {
-          const MERCURY_INTERVAL = 15 * 60 * 1000; // 15 minutes
+          const MERCURY_INTERVAL = 24 * 60 * 60 * 1000; // Daily
           console.log("[Mercury Sync] Starting background sync with 15m interval");
           setInterval(async () => {
             try {
@@ -839,7 +839,7 @@ async function startServer() {
     (async () => {
       try {
         if (process.env.FIREFLIES_API_KEY) {
-          const FIREFLIES_INTERVAL = 30 * 60 * 1000; // 30 minutes
+          const FIREFLIES_INTERVAL = 24 * 60 * 60 * 1000; // Daily
           console.log("[Fireflies Sync] Starting auto-sync with 30m interval");
           setInterval(async () => {
             try {
