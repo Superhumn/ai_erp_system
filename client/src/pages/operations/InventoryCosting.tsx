@@ -340,33 +340,18 @@ export default function InventoryCosting() {
         </CardContent>
       </Card>
 
-      {/* Configure Costing Method Dialog */}
+      {/* Configure System-Wide Costing Method Dialog */}
       <Dialog open={configDialogOpen} onOpenChange={setConfigDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Configure Costing Method</DialogTitle>
+            <DialogTitle>Costing Method</DialogTitle>
             <DialogDescription>
-              Set the inventory costing method for a product. This determines how COGS is calculated.
+              Set the costing method used across all products. This determines how COGS is calculated system-wide.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label>Product</Label>
-              <Select value={configProductId} onValueChange={setConfigProductId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select product" />
-                </SelectTrigger>
-                <SelectContent>
-                  {products?.map((p: any) => (
-                    <SelectItem key={p.id} value={p.id.toString()}>
-                      {p.name} ({p.sku})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Costing Method</Label>
+              <Label>Method</Label>
               <Select value={configMethod} onValueChange={(v) => setConfigMethod(v as CostingMethod)}>
                 <SelectTrigger>
                   <SelectValue />
@@ -381,25 +366,16 @@ export default function InventoryCosting() {
                 {methodDescriptions[configMethod]}
               </p>
             </div>
-            <div>
-              <Label>Notes (optional)</Label>
-              <Input
-                value={configNotes}
-                onChange={(e) => setConfigNotes(e.target.value)}
-                placeholder="Reason for choosing this method..."
-              />
-            </div>
+            <p className="text-xs text-muted-foreground">
+              This applies to all products uniformly. To change it, update the <code>COSTING_METHOD</code> environment variable on your server.
+            </p>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConfigDialogOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setConfigDialogOpen(false)}>Close</Button>
             <Button
               onClick={() => {
-                if (!configProductId) return;
-                createConfigMutation.mutate({
-                  productId: parseInt(configProductId),
-                  costingMethod: configMethod,
-                  notes: configNotes || undefined,
-                });
+                toast.success(`Costing method set to ${configMethod.replace('_', ' ')}. Update COSTING_METHOD env var on Railway to persist.`);
+                setConfigDialogOpen(false);
               }}
               disabled={!configProductId || createConfigMutation.isPending}
             >
