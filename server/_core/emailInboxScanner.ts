@@ -2,6 +2,9 @@ import { ImapFlow } from "imapflow";
 import { ENV } from "./env";
 import { quickCategorize, parseEmailContent, type EmailCategorization, type EmailParseResult } from "./emailParser";
 
+// Track processed email IDs to prevent duplicate task creation
+const processedEmailIds = new Set<string>();
+
 // Email inbox configuration
 export interface EmailInboxConfig {
   host: string;
@@ -213,7 +216,17 @@ export async function scanInbox(
 
           result.processedEmails.push(scannedEmail);
 
-          // Extract action items from email and create tasks/notifications
+          // Extract action items — but skip if already processed (dedup)
+          const emailKey = `${scannedEmail.from?.address || ""}:${scannedEmail.subject || ""}:${scannedEmail.date || ""}`;
+          if (processedEmailIds.has(emailKey)) {
+            // Already processed this email, skip task extraction
+          } else {
+          processedEmailIds.add(emailKey);
+          // Limit set size to prevent memory leak
+          if (processedEmailIds.size > 5000) {
+            const entries = Array.from(processedEmailIds);
+            entries.slice(0, 2500).forEach(e => processedEmailIds.delete(e));
+          }
           try {
             const { invokeLLM } = await import("./llm");
             const emailText = scannedEmail.bodyText || scannedEmail.subject;

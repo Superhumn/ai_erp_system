@@ -68,7 +68,7 @@ import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { AICommandBar } from './AICommandBar';
-import { FloatingAIAssistant } from './FloatingAIAssistant';
+// FloatingAIAssistant removed — toolbar only
 import { toast } from "sonner";
 import {
   Collapsible,
@@ -441,8 +441,7 @@ function DashboardLayoutContent({
         <main className="flex-1 overflow-auto p-4 pb-20 md:p-6 md:pb-6 lg:p-8 lg:pb-8">{children}</main>
       </SidebarInset>
 
-      {/* Floating AI Assistant */}
-      <FloatingAIAssistant />
+      {/* Floating AI removed — using toolbar only */}
     </>
   );
 }

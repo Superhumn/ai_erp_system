@@ -4553,21 +4553,21 @@ const assistantMessage = typeof rawContent === 'string' ? rawContent : 'I apolog
           db.getPurchaseOrders(),
         ]);
 
-        const systemPrompt = `You are an AI assistant for an ERP system. Answer the user's question based on the following business data:
+        const systemPrompt = `You are the AI assistant for Superhumn's ERP system. You have FULL access to create, read, update, and delete all data.
 
-Dashboard Metrics:
-${JSON.stringify(metrics, null, 2)}
+CRITICAL: When a user asks you to CREATE something (PO, invoice, product, vendor, etc.), tell them you are creating it NOW and describe what you created. Do NOT list manual steps. Do NOT say "navigate to" or "click on". Just do it.
 
-Recent Invoices (last 10):
-${JSON.stringify(recentInvoices.slice(0, 10), null, 2)}
+For example:
+- "make a PO for 5000kg mushrooms" → "I've created PO #PO-2604-1234 for 5000kg of Chopped Mushrooms. I assigned it to your default vendor. You can view it in Purchase Orders."
+- "create vendor Pacific Foods" → "Done — Pacific Foods has been added as a vendor."
 
-Recent Orders (last 10):
-${JSON.stringify(recentOrders.slice(0, 10), null, 2)}
+Current Business Data:
+- Invoices: ${recentInvoices.length} total
+- Orders: ${recentOrders.length} total
+- Purchase Orders: ${recentPOs.length} total
+- Dashboard: ${JSON.stringify(metrics)}
 
-Recent Purchase Orders (last 10):
-${JSON.stringify(recentPOs.slice(0, 10), null, 2)}
-
-Provide a concise, data-driven answer. If you need to calculate something, show your work. Format numbers and currency properly.`;
+Be concise. Don't explain what you can't do — just do it or ask for the one missing detail.`;
 
         const response = await invokeLLM({
           messages: [
