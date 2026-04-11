@@ -34,6 +34,7 @@ import { UserCircle, Plus, Search, Loader2, Award, Layers } from "lucide-react";
 import { toast } from "sonner";
 import { format, addMonths } from "date-fns";
 import { getStatusColor } from "@/lib/statusColors";
+import DocumentsCell from "@/components/DocumentsCell";
 
 // ── helpers ──────────────────────────────────────────────────────
 function fmt$(v: string | number | null | undefined): string {
@@ -108,24 +109,18 @@ const statusColors: Record<string, string> = {
   on_leave: "bg-yellow-500/10 text-yellow-600",
 };
 
-// ── unified row type ─────────────────────────────────────────────
+// ── unified row type (one row per person) ───────────────────────
 interface UnifiedRow {
   key: string;
+  stakeholderId: number | null;
   name: string;
   email: string;
   type: string;
   title: string;
   department: string;
   salary: string;
-  shareClass: string;
-  sharesGranted: string;
-  sharesVested: string;
-  unvested: string;
-  exercisePrice: string;
-  vestingStart: string;
-  cliffMonths: string;
-  nextVestDate: string;
-  grantValue: string;
+  totalShares: number;
+  totalGrantValue: number;
   ownershipPct: number | null;
   status: string;
 }
@@ -134,7 +129,7 @@ interface UnifiedRow {
 export default function PeopleAndEquity() {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("active");
   const [isPersonOpen, setIsPersonOpen] = useState(false);
   const [isGrantOpen, setIsGrantOpen] = useState(false);
   const [isShareClassOpen, setIsShareClassOpen] = useState(false);
@@ -189,33 +184,61 @@ export default function PeopleAndEquity() {
     onError: (e) => toast.error(e.message),
   });
 
-  // ── compute total shares for ownership % ──
+  // ── set of terminated stakeholder IDs (excluded from equity calcs) ──
+  const terminatedStakeholderIds = useMemo(() => {
+    const ids = new Set<number>();
+    stakeholders?.forEach((sh: any) => {
+      if (sh.status === "terminated") ids.add(sh.id);
+    });
+    return ids;
+  }, [stakeholders]);
+
+  // ── compute total shares for ownership % (exclude terminated) ──
   const totalOutstandingShares = useMemo(() => {
     if (!grants) return 0;
-    return grants.reduce((sum, g) => sum + parseFloat((g as any).shares || "0"), 0);
-  }, [grants]);
+    return grants.reduce((sum, g) => {
+      if (terminatedStakeholderIds.has((g as any).stakeholderId)) return sum;
+      return sum + parseFloat((g as any).shares || "0");
+    }, 0);
+  }, [grants, terminatedStakeholderIds]);
 
-  // ── ownership distribution for donut chart ──
+  // ── ownership distribution for donut chart (by type, excluding terminated) ──
   const ownershipData = useMemo(() => {
     if (!grants || !stakeholders) return [];
-    const colors = ["#8b5cf6", "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#06b6d4", "#ec4899", "#6366f1", "#14b8a6", "#f97316"];
-    const byStakeholder = new Map<number, { name: string; shares: number }>();
+    const typeColorMap: Record<string, string> = {
+      founder: "#8b5cf6",
+      employee: "#3b82f6",
+      investor: "#10b981",
+      advisor: "#f59e0b",
+      board_member: "#6366f1",
+      contractor: "#06b6d4",
+    };
+    const typeLabelMap: Record<string, string> = {
+      founder: "Founders",
+      employee: "Employees",
+      investor: "Investors",
+      advisor: "Advisors",
+      board_member: "Board Members",
+      contractor: "Contractors",
+    };
+    const byType = new Map<string, number>();
     grants.forEach((g: any) => {
+      if (terminatedStakeholderIds.has(g.stakeholderId)) return;
       const sh = stakeholders.find((s: any) => s.id === g.stakeholderId);
-      const name = sh?.name || `Stakeholder #${g.stakeholderId}`;
-      const existing = byStakeholder.get(g.stakeholderId) || { name, shares: 0 };
-      existing.shares += parseFloat(g.shares || "0");
-      byStakeholder.set(g.stakeholderId, existing);
+      const type = sh?.type || "employee";
+      byType.set(type, (byType.get(type) || 0) + parseFloat(g.shares || "0"));
     });
-    const entries = Array.from(byStakeholder.values()).sort((a, b) => b.shares - a.shares);
+    const entries = Array.from(byType.entries())
+      .map(([type, shares]) => ({ type, shares }))
+      .sort((a, b) => b.shares - a.shares);
     const total = entries.reduce((s, e) => s + e.shares, 0);
-    return entries.map((e, i) => ({
-      name: e.name,
+    return entries.map((e) => ({
+      name: typeLabelMap[e.type] || e.type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) + "s",
       shares: e.shares,
       pct: total > 0 ? (e.shares / total) * 100 : 0,
-      color: colors[i % colors.length],
+      color: typeColorMap[e.type] || "#9ca3af",
     }));
-  }, [grants, stakeholders]);
+  }, [grants, stakeholders, terminatedStakeholderIds]);
 
   // ── build share-class lookup ──
   const scMap = useMemo(() => {
@@ -235,7 +258,7 @@ export default function PeopleAndEquity() {
     return m;
   }, [grants]);
 
-  // ── merge employees + stakeholders into unified rows ──
+  // ── merge employees + stakeholders into unified rows (one per person) ──
   const rows: UnifiedRow[] = useMemo(() => {
     const result: UnifiedRow[] = [];
     const seenEmails = new Set<string>();
@@ -249,56 +272,33 @@ export default function PeopleAndEquity() {
       const email = sh.email || matchingEmp?.email || "";
       if (email) seenEmails.add(email.toLowerCase());
 
-      if (sGrants.length === 0) {
-        // stakeholder with no grants — single row
-        result.push({
-          key: `sh-${sh.id}`,
-          name: sh.name || (matchingEmp ? `${matchingEmp.firstName} ${matchingEmp.lastName}` : "-"),
-          email,
-          type: sh.type || (matchingEmp ? matchingEmp.employmentType : "-"),
-          title: sh.title || matchingEmp?.jobTitle || "-",
-          department: matchingEmp ? (matchingEmp.departmentId ? `Dept #${matchingEmp.departmentId}` : "-") : "-",
-          salary: matchingEmp?.salary ? fmt$(matchingEmp.salary) : "-",
-          shareClass: "-",
-          sharesGranted: "-",
-          sharesVested: "-",
-          unvested: "-",
-          exercisePrice: "-",
-          vestingStart: "-",
-          cliffMonths: "-",
-          nextVestDate: "-",
-          grantValue: "-",
-          ownershipPct: null,
-          status: sh.status || matchingEmp?.status || "active",
-        });
-      } else {
-        // one row per grant
-        sGrants.forEach((g: any, idx: number) => {
-          const granted = parseFloat(g.shares || "0");
-          const vested = parseFloat(g.sharesVested || "0");
-          const pps = parseFloat(g.pricePerShare || "0");
-          result.push({
-            key: `sh-${sh.id}-g-${g.id}`,
-            name: idx === 0 ? (sh.name || (matchingEmp ? `${matchingEmp.firstName} ${matchingEmp.lastName}` : "-")) : "",
-            email: idx === 0 ? email : "",
-            type: idx === 0 ? (sh.type || (matchingEmp ? matchingEmp.employmentType : "-")) : "",
-            title: idx === 0 ? (sh.title || matchingEmp?.jobTitle || "-") : "",
-            department: idx === 0 ? (matchingEmp ? (matchingEmp.departmentId ? `Dept #${matchingEmp.departmentId}` : "-") : "-") : "",
-            salary: idx === 0 ? (matchingEmp?.salary ? fmt$(matchingEmp.salary) : "-") : "",
-            shareClass: scMap.get(g.shareClassId) || "-",
-            sharesGranted: fmtNum(granted),
-            sharesVested: fmtNum(vested),
-            unvested: fmtNum(Math.max(0, granted - vested)),
-            exercisePrice: g.exercisePrice ? fmt$(g.exercisePrice) : "-",
-            vestingStart: fmtDate(g.vestingStartDate),
-            cliffMonths: g.cliffMonths != null ? String(g.cliffMonths) : "-",
-            nextVestDate: calcNextVestDate(g.vestingStartDate, g.cliffMonths, g.vestingSchedule, g.sharesVested, g.shares),
-            grantValue: fmt$(g.totalValue || (granted * pps)),
-            ownershipPct: totalOutstandingShares > 0 ? (granted / totalOutstandingShares) * 100 : null,
-            status: idx === 0 ? (sh.status || matchingEmp?.status || "active") : "",
-          });
-        });
-      }
+      // aggregate totals across all grants
+      let totalShares = 0;
+      let totalValue = 0;
+      sGrants.forEach((g: any) => {
+        const granted = parseFloat(g.shares || "0");
+        const pps = parseFloat(g.pricePerShare || "0");
+        totalShares += granted;
+        totalValue += parseFloat(g.totalValue || "0") || (granted * pps);
+      });
+
+      const personName = sh.name || (matchingEmp ? `${matchingEmp.firstName} ${matchingEmp.lastName}`.trim() : "");
+      if (!personName || personName === "-") return; // skip blank entries
+
+      result.push({
+        key: `sh-${sh.id}`,
+        stakeholderId: sh.id,
+        name: personName,
+        email,
+        type: sh.type || (matchingEmp ? matchingEmp.employmentType : "-"),
+        title: sh.title || matchingEmp?.jobTitle || "-",
+        department: matchingEmp ? (matchingEmp.departmentId ? `Dept #${matchingEmp.departmentId}` : "-") : "-",
+        salary: matchingEmp?.salary ? fmt$(matchingEmp.salary) : "-",
+        totalShares,
+        totalGrantValue: totalValue,
+        ownershipPct: totalOutstandingShares > 0 && totalShares > 0 ? (totalShares / totalOutstandingShares) * 100 : null,
+        status: sh.status || matchingEmp?.status || "active",
+      });
     });
 
     // add employees that aren't already covered by a stakeholder
@@ -306,37 +306,36 @@ export default function PeopleAndEquity() {
       if (e.email && seenEmails.has(e.email.toLowerCase())) return;
       result.push({
         key: `emp-${e.id}`,
+        stakeholderId: null,
         name: `${e.firstName} ${e.lastName}`,
         email: e.email || "-",
         type: e.employmentType || "employee",
         title: e.jobTitle || "-",
         department: e.departmentId ? `Dept #${e.departmentId}` : "-",
         salary: e.salary ? fmt$(e.salary) : "-",
-        shareClass: "-",
-        sharesGranted: "-",
-        sharesVested: "-",
-        unvested: "-",
-        exercisePrice: "-",
-        vestingStart: "-",
-        cliffMonths: "-",
-        nextVestDate: "-",
-        grantValue: "-",
+        totalShares: 0,
+        totalGrantValue: 0,
         ownershipPct: null,
         status: e.status || "active",
       });
     });
 
     return result;
-  }, [employees, stakeholders, grants, grantsByStakeholder, scMap, totalOutstandingShares]);
+  }, [employees, stakeholders, grantsByStakeholder, totalOutstandingShares]);
 
-  // ── filter ──
+  // ── filter (hide terminated unless explicitly selecting "terminated" status) ──
   const filtered = useMemo(() => {
     return rows.filter((r) => {
       const matchSearch =
         r.name.toLowerCase().includes(search.toLowerCase()) ||
         r.email.toLowerCase().includes(search.toLowerCase());
       const matchType = typeFilter === "all" || r.type === typeFilter;
-      const matchStatus = statusFilter === "all" || r.status === statusFilter;
+      const matchStatus =
+        statusFilter === "all"
+          ? r.status !== "terminated"
+          : statusFilter === "terminated"
+            ? r.status === "terminated"
+            : r.status === statusFilter;
       return matchSearch && matchType && matchStatus;
     });
   }, [rows, search, typeFilter, statusFilter]);
@@ -837,29 +836,18 @@ export default function PeopleAndEquity() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="sticky left-0 bg-background z-10 min-w-[160px]">Name</TableHead>
-                    <TableHead className="min-w-[180px]">Email</TableHead>
                     <TableHead className="min-w-[100px]">Type</TableHead>
-                    <TableHead className="min-w-[120px]">Title</TableHead>
-                    <TableHead className="min-w-[100px]">Department</TableHead>
-                    <TableHead className="min-w-[100px] text-right">Salary</TableHead>
-                    <TableHead className="min-w-[110px]">Share Class</TableHead>
-                    <TableHead className="min-w-[110px] text-right">Shares Granted</TableHead>
-                    <TableHead className="min-w-[100px] text-right">Shares Vested</TableHead>
-                    <TableHead className="min-w-[90px] text-right">Unvested</TableHead>
-                    <TableHead className="min-w-[100px] text-right">Exercise Price</TableHead>
-                    <TableHead className="min-w-[110px]">Vesting Start</TableHead>
-                    <TableHead className="min-w-[60px] text-right">Cliff</TableHead>
-                    <TableHead className="min-w-[110px]">Next Vest Date</TableHead>
-                    <TableHead className="min-w-[110px] text-right">Grant Value</TableHead>
-                    <TableHead className="min-w-[90px] text-right">Ownership %</TableHead>
                     <TableHead className="min-w-[90px]">Status</TableHead>
+                    <TableHead className="min-w-[110px] text-right">Shares</TableHead>
+                    <TableHead className="min-w-[90px] text-right">Ownership %</TableHead>
+                    <TableHead className="min-w-[110px] text-right">Grant Value</TableHead>
+                    <TableHead className="min-w-[100px]">Documents</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filtered.map((r) => (
-                    <TableRow key={r.key} className={`h-9${r.name ? " cursor-pointer hover:bg-muted/50" : ""}`} onClick={() => r.name && setSelectedPerson(r)}>
+                    <TableRow key={r.key} className="h-9 cursor-pointer hover:bg-muted/50" onClick={() => setSelectedPerson(r)}>
                       <TableCell className="sticky left-0 bg-background z-10 font-medium py-1.5 px-3">{r.name}</TableCell>
-                      <TableCell className="py-1.5 px-3">{r.email || "-"}</TableCell>
                       <TableCell className="py-1.5 px-3">
                         {r.type && r.type !== "-" ? (
                           <Badge className={typeColors[r.type] || "bg-gray-500/10 text-gray-600"}>
@@ -867,23 +855,18 @@ export default function PeopleAndEquity() {
                           </Badge>
                         ) : null}
                       </TableCell>
-                      <TableCell className="py-1.5 px-3">{r.title}</TableCell>
-                      <TableCell className="py-1.5 px-3">{r.department}</TableCell>
-                      <TableCell className="py-1.5 px-3 text-right tabular-nums">{r.salary}</TableCell>
-                      <TableCell className="py-1.5 px-3">{r.shareClass}</TableCell>
-                      <TableCell className="py-1.5 px-3 text-right tabular-nums">{r.sharesGranted}</TableCell>
-                      <TableCell className="py-1.5 px-3 text-right tabular-nums">{r.sharesVested}</TableCell>
-                      <TableCell className="py-1.5 px-3 text-right tabular-nums">{r.unvested}</TableCell>
-                      <TableCell className="py-1.5 px-3 text-right tabular-nums">{r.exercisePrice}</TableCell>
-                      <TableCell className="py-1.5 px-3">{r.vestingStart}</TableCell>
-                      <TableCell className="py-1.5 px-3 text-right tabular-nums">{r.cliffMonths}</TableCell>
-                      <TableCell className="py-1.5 px-3">{r.nextVestDate}</TableCell>
-                      <TableCell className="py-1.5 px-3 text-right tabular-nums">{r.grantValue}</TableCell>
-                      <TableCell className="py-1.5 px-3 text-right tabular-nums">{fmtPct(r.ownershipPct)}</TableCell>
                       <TableCell className="py-1.5 px-3">
                         {r.status && r.status !== "-" ? (
                           <Badge className={statusColors[r.status] || "bg-gray-500/10 text-gray-600"}>{r.status.replace(/_/g, " ")}</Badge>
                         ) : null}
+                      </TableCell>
+                      <TableCell className="py-1.5 px-3 text-right tabular-nums">{r.totalShares > 0 ? fmtNum(r.totalShares) : "-"}</TableCell>
+                      <TableCell className="py-1.5 px-3 text-right tabular-nums">{fmtPct(r.ownershipPct)}</TableCell>
+                      <TableCell className="py-1.5 px-3 text-right tabular-nums">{r.totalGrantValue > 0 ? fmt$(r.totalGrantValue) : "-"}</TableCell>
+                      <TableCell className="py-1.5 px-3" onClick={(e) => e.stopPropagation()}>
+                        {r.stakeholderId ? (
+                          <DocumentsCell referenceType="stakeholder" referenceId={r.stakeholderId} />
+                        ) : "-"}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -896,45 +879,46 @@ export default function PeopleAndEquity() {
 
       {/* Person Detail Dialog */}
       <Dialog open={selectedPerson !== null} onOpenChange={(open) => { if (!open) setSelectedPerson(null); }}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
           {selectedPerson && (() => {
-            const personName = selectedPerson.name;
-            // Gather all grant rows for this person (rows sharing the same stakeholder key prefix)
-            const keyPrefix = selectedPerson.key.split("-g-")[0];
-            const allGrantRows = rows.filter((r) => r.key.startsWith(keyPrefix) && r.shareClass !== "-");
+            const personGrants = selectedPerson.stakeholderId
+              ? (grantsByStakeholder.get(selectedPerson.stakeholderId) || [])
+              : [];
 
             return (
               <>
                 <DialogHeader>
-                  <DialogTitle className="text-xl">{personName}</DialogTitle>
-                  <DialogDescription>{selectedPerson.title} {selectedPerson.department !== "-" ? `- ${selectedPerson.department}` : ""}</DialogDescription>
+                  <DialogTitle className="text-xl">{selectedPerson.name}</DialogTitle>
+                  <DialogDescription>{selectedPerson.title !== "-" ? selectedPerson.title : ""} {selectedPerson.department !== "-" ? `- ${selectedPerson.department}` : ""}</DialogDescription>
                 </DialogHeader>
 
                 <div className="space-y-5">
-                  {/* Basic Info */}
+                  {/* Personal Information */}
                   <div>
                     <h4 className="text-sm font-semibold text-muted-foreground mb-2">Personal Information</h4>
                     <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
+                      <div className="flex justify-between"><span className="text-muted-foreground">Name</span><span>{selectedPerson.name}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Email</span><span>{selectedPerson.email || "-"}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Type</span><span>{selectedPerson.type ? selectedPerson.type.replace(/_/g, " ") : "-"}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Type</span><span>
+                        {selectedPerson.type && selectedPerson.type !== "-" ? (
+                          <Badge className={typeColors[selectedPerson.type] || "bg-gray-500/10 text-gray-600"}>{selectedPerson.type.replace(/_/g, " ")}</Badge>
+                        ) : "-"}
+                      </span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Title</span><span>{selectedPerson.title}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Department</span><span>{selectedPerson.department}</span></div>
-                    </div>
-                  </div>
-
-                  {/* Employment Details */}
-                  <div>
-                    <h4 className="text-sm font-semibold text-muted-foreground mb-2">Employment Details</h4>
-                    <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
                       <div className="flex justify-between"><span className="text-muted-foreground">Salary</span><span>{selectedPerson.salary}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Status</span><span>{selectedPerson.status ? selectedPerson.status.replace(/_/g, " ") : "-"}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Status</span><span>
+                        {selectedPerson.status && selectedPerson.status !== "-" ? (
+                          <Badge className={statusColors[selectedPerson.status] || "bg-gray-500/10 text-gray-600"}>{selectedPerson.status.replace(/_/g, " ")}</Badge>
+                        ) : "-"}
+                      </span></div>
                     </div>
                   </div>
 
                   {/* Equity Grants */}
-                  {allGrantRows.length > 0 && (
-                    <div>
-                      <h4 className="text-sm font-semibold text-muted-foreground mb-2">Equity Grants</h4>
+                  <div>
+                    <h4 className="text-sm font-semibold text-muted-foreground mb-2">Equity Grants</h4>
+                    {personGrants.length > 0 ? (
                       <div className="border rounded-lg overflow-hidden">
                         <Table className="text-sm">
                           <TableHeader>
@@ -944,32 +928,47 @@ export default function PeopleAndEquity() {
                               <TableHead className="text-right">Vested</TableHead>
                               <TableHead className="text-right">Unvested</TableHead>
                               <TableHead className="text-right">Exercise Price</TableHead>
-                              <TableHead>Vesting Schedule</TableHead>
+                              <TableHead>Vesting Start</TableHead>
+                              <TableHead className="text-right">Cliff</TableHead>
+                              <TableHead>Next Vest Date</TableHead>
                               <TableHead className="text-right">Grant Value</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {allGrantRows.map((gr) => (
-                              <TableRow key={gr.key}>
-                                <TableCell>{gr.shareClass}</TableCell>
-                                <TableCell className="text-right tabular-nums">{gr.sharesGranted}</TableCell>
-                                <TableCell className="text-right tabular-nums">{gr.sharesVested}</TableCell>
-                                <TableCell className="text-right tabular-nums">{gr.unvested}</TableCell>
-                                <TableCell className="text-right tabular-nums">{gr.exercisePrice}</TableCell>
-                                <TableCell>{gr.vestingStart !== "-" ? `${gr.vestingStart} (${gr.cliffMonths}mo cliff)` : "-"}</TableCell>
-                                <TableCell className="text-right tabular-nums">{gr.grantValue}</TableCell>
-                              </TableRow>
-                            ))}
+                            {personGrants.map((g: any) => {
+                              const granted = parseFloat(g.shares || "0");
+                              const vested = parseFloat(g.sharesVested || "0");
+                              const pps = parseFloat(g.pricePerShare || "0");
+                              return (
+                                <TableRow key={g.id}>
+                                  <TableCell>{scMap.get(g.shareClassId) || "-"}</TableCell>
+                                  <TableCell className="text-right tabular-nums">{fmtNum(granted)}</TableCell>
+                                  <TableCell className="text-right tabular-nums">{fmtNum(vested)}</TableCell>
+                                  <TableCell className="text-right tabular-nums">{fmtNum(Math.max(0, granted - vested))}</TableCell>
+                                  <TableCell className="text-right tabular-nums">{g.exercisePrice ? fmt$(g.exercisePrice) : "-"}</TableCell>
+                                  <TableCell>{fmtDate(g.vestingStartDate)}</TableCell>
+                                  <TableCell className="text-right tabular-nums">{g.cliffMonths != null ? `${g.cliffMonths}mo` : "-"}</TableCell>
+                                  <TableCell>{calcNextVestDate(g.vestingStartDate, g.cliffMonths, g.vestingSchedule, g.sharesVested, g.shares)}</TableCell>
+                                  <TableCell className="text-right tabular-nums">{fmt$(g.totalValue || (granted * pps))}</TableCell>
+                                </TableRow>
+                              );
+                            })}
                           </TableBody>
                         </Table>
                       </div>
-                    </div>
-                  )}
+                    ) : (
+                      <p className="text-sm text-muted-foreground italic">No equity grants.</p>
+                    )}
+                  </div>
 
-                  {/* Related Documents (placeholder) */}
+                  {/* Documents */}
                   <div>
-                    <h4 className="text-sm font-semibold text-muted-foreground mb-2">Related Documents</h4>
-                    <p className="text-sm text-muted-foreground italic">No documents linked yet.</p>
+                    <h4 className="text-sm font-semibold text-muted-foreground mb-2">Documents</h4>
+                    {selectedPerson.stakeholderId ? (
+                      <DocumentsCell referenceType="stakeholder" referenceId={selectedPerson.stakeholderId} />
+                    ) : (
+                      <p className="text-sm text-muted-foreground italic">No stakeholder record linked for document uploads.</p>
+                    )}
                   </div>
                 </div>
               </>

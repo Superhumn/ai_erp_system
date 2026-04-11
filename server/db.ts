@@ -160,6 +160,8 @@ import {
   bankTransactions, InsertBankTransaction,
   // Investment commitments (Investor onboarding)
   investmentCommitments, InsertInvestmentCommitment,
+  // Financial model
+  financialModel, InsertFinancialModel,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 

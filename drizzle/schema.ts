@@ -5519,3 +5519,25 @@ export const investmentCommitments = mysqlTable("investment_commitments", {
 
 export type InvestmentCommitment = typeof investmentCommitments.$inferSelect;
 export type InsertInvestmentCommitment = typeof investmentCommitments.$inferInsert;
+
+// ============================================
+// FINANCIAL MODEL (Imported from XLSX)
+// ============================================
+
+export const financialModel = mysqlTable("financial_model", {
+  id: int("id").autoincrement().primaryKey(),
+  sheetName: varchar("sheetName", { length: 128 }).notNull(),
+  category: varchar("category", { length: 128 }),
+  metricName: varchar("metricName", { length: 255 }).notNull(),
+  year: int("year"),
+  month: int("month"),
+  projectedValue: decimal("projectedValue", { precision: 20, scale: 2 }),
+  actualValue: decimal("actualValue", { precision: 20, scale: 2 }),
+  unit: varchar("unit", { length: 32 }).default("USD"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FinancialModel = typeof financialModel.$inferSelect;
+export type InsertFinancialModel = typeof financialModel.$inferInsert;
