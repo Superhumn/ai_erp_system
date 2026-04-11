@@ -11150,6 +11150,7 @@ Ask if they received the original request and if they can provide a quote.`;
         .input(z.object({
           dataRoomId: z.number(),
           name: z.string().optional(),
+          customSlug: z.string().optional(), // Custom URL slug (e.g., "sequoia" → /dataroom/sequoia)
           password: z.string().optional(),
           expiresAt: z.date().optional(),
           maxViews: z.number().optional(),
@@ -11162,7 +11163,12 @@ Ask if they received the original request and if they can provide a quote.`;
           restrictedDocumentIds: z.array(z.number()).optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const linkCode = nanoid(12);
+          // Use custom slug, or generate from name, or random
+          const linkCode = input.customSlug
+            ? input.customSlug.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+            : input.name
+              ? input.name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+              : nanoid(12);
           let hashedPassword = null;
           if (input.password) {
             hashedPassword = hashPassword(input.password);

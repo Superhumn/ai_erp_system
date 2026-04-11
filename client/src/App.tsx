@@ -327,6 +327,7 @@ function App() {
                 <Route path="/reset-password" component={ResetPassword} />
                 {/* Public Data Room Access (outside dashboard) */}
                 <Route path="/share/:code" component={DataRoomPublic} />
+                <Route path="/dataroom/:code" component={DataRoomPublic} />
                 {/* Supplier Portal (public) */}
                 <Route path="/supplier-portal/:token" component={SupplierPortal} />
                 {/* All other routes go through dashboard */}
