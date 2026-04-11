@@ -483,18 +483,17 @@ async function startServer() {
               }
             }
           }, POLL_INTERVAL);
-          // Initial full sync after 30 seconds — get recent emails (last 30 days)
+          // Initial sync after 2 minutes — only unseen, small batch (no AI flood)
           setTimeout(async () => {
             for (const inbox of inboxes) {
               try {
-                const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-                await scanInbox({ host: inbox.host!, port: inbox.port, secure: true, auth: { user: inbox.user!, pass: inbox.password! } }, { unseenOnly: false, limit: 500, since: thirtyDaysAgo });
+                await scanInbox({ host: inbox.host!, port: inbox.port, secure: true, auth: { user: inbox.user!, pass: inbox.password! } }, { unseenOnly: true, limit: 20 });
                 console.log(`[Email Polling] Initial sync complete for ${inbox.user}`);
               } catch (e) {
                 console.warn(`[Email Polling] Initial sync failed for ${inbox.user}:`, e);
               }
             }
-          }, 30000);
+          }, 2 * 60 * 1000);
         }
       } catch (e) {
         console.warn("[Email Polling] Could not initialize:", e);
