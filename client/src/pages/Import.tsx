@@ -14,7 +14,7 @@ import {
   CloudDownload,
   FileUp,
 } from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { useLocation, useSearch } from "wouter";
 
@@ -40,15 +40,30 @@ export default function Import() {
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
-  // Google connection status
+  // Google connection status — also check URL params for fresh connection
+  const [forceConnected, setForceConnected] = useState(false);
   const { data: connectionStatus, refetch: refetchConnection, isLoading: connectionLoading } =
     trpc.sheetsImport.getConnectionStatus.useQuery(undefined, {
       enabled: isAuthenticated,
-    });
+      onSuccess: (data) => {
+        if (data?.connected) setForceConnected(true);
+      },
+    } as any);
+
+  // Check if we just returned from Google OAuth
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('google_connected') === 'true' || params.get('success')) {
+      setForceConnected(true);
+      refetchConnection();
+    }
+  }, [refetchConnection]);
+
+  const isGoogleConnected = forceConnected || connectionStatus?.connected;
 
   // Google OAuth URL
   const { data: authUrlData } = trpc.sheetsImport.getAuthUrl.useQuery(undefined, {
-    enabled: isAuthenticated && !connectionStatus?.connected,
+    enabled: isAuthenticated && !isGoogleConnected,
   });
 
   // Sync mutation
@@ -206,7 +221,7 @@ export default function Import() {
         <CardContent>
           {connectionLoading ? (
             <div className="text-center py-4 text-sm text-muted-foreground">Checking connection...</div>
-          ) : !connectionStatus?.connected ? (
+          ) : !isGoogleConnected ? (
             /* Not connected - show connect button */
             <div className="space-y-4">
               <div className="p-4 bg-muted rounded-lg">
