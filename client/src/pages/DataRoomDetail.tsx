@@ -160,6 +160,18 @@ export default function DataRoomDetail() {
     },
   });
 
+  const syncFromDriveMutation = trpc.dataRoom.syncFromDrive.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Synced ${data.filesCreated} files and ${data.foldersCreated} folders from Google Drive${data.folderName ? ` (${data.folderName})` : ''}`);
+      refetchFolders();
+      refetchDocuments();
+      refetchRoom();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -242,6 +254,29 @@ export default function DataRoomDetail() {
           <Button variant="outline" onClick={() => window.open(`/share/${room.slug}`, '_blank')}>
             <ExternalLink className="h-4 w-4 mr-2" />
             Preview
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              if (room.googleDriveFolderId) {
+                syncFromDriveMutation.mutate({ dataRoomId: roomId, driveFolderId: room.googleDriveFolderId });
+              } else {
+                setGoogleDriveSyncOpen(true);
+              }
+            }}
+            disabled={syncFromDriveMutation.isPending}
+          >
+            {syncFromDriveMutation.isPending ? (
+              <>
+                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                Syncing...
+              </>
+            ) : (
+              <>
+                <HardDrive className="h-4 w-4 mr-2" />
+                Sync from Google Drive
+              </>
+            )}
           </Button>
         </div>
 

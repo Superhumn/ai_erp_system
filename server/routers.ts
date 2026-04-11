@@ -190,8 +190,7 @@ export function generateNumber(prefix: string) {
   const date = new Date();
   const year = date.getFullYear().toString().slice(-2);
   const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const cryptoModule = require('crypto');
-  const random = cryptoModule.randomBytes(2).readUInt16BE(0).toString().slice(-4).padStart(4, '0');
+  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
   return `${prefix}-${year}${month}-${random}`;
 }
 // Secure password hashing helpers using scrypt
@@ -3668,6 +3667,176 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'create', `${targetModule}_import`, 0, `Imported ${results.imported} records`);
         
         return results;
+      }),
+
+    // Sync all Google Drive spreadsheets automatically
+    syncGoogleDrive: protectedProcedure
+      .mutation(async ({ ctx }) => {
+        const results: { sheet: string; type: string; imported: number; errors: string[] }[] = [];
+
+        // 1. Get valid Google OAuth token
+        const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
+        if (tokenError || !accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected. Go to Settings to connect your Google account.' });
+        }
+
+        // 2. List all Google Sheets in Drive
+        const sheetsResponse = await fetch(
+          'https://www.googleapis.com/drive/v3/files?q=mimeType%3D%27application%2Fvnd.google-apps.spreadsheet%27&fields=files(id,name,modifiedTime)&orderBy=modifiedTime%20desc&pageSize=50',
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        if (!sheetsResponse.ok) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list Google Sheets from Drive' });
+        }
+        const sheetsData = await sheetsResponse.json();
+        const files = sheetsData.files || [];
+
+        // 3. For each spreadsheet, read the first sheet, detect type, and import
+        for (const file of files) {
+          try {
+            const dataResponse = await fetch(
+              `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/Sheet1?majorDimension=ROWS`,
+              { headers: { Authorization: `Bearer ${accessToken}` } },
+            );
+            if (!dataResponse.ok) {
+              // Try without sheet name (default first sheet)
+              const fallbackResponse = await fetch(
+                `https://sheets.googleapis.com/v4/spreadsheets/${file.id}/values/A:ZZ?majorDimension=ROWS`,
+                { headers: { Authorization: `Bearer ${accessToken}` } },
+              );
+              if (!fallbackResponse.ok) {
+                results.push({ sheet: file.name, type: 'error', imported: 0, errors: ['Could not read sheet data'] });
+                continue;
+              }
+              var data = await fallbackResponse.json();
+            } else {
+              var data = await dataResponse.json();
+            }
+
+            const rows = data.values || [];
+            if (rows.length < 2) {
+              results.push({ sheet: file.name, type: 'skipped', imported: 0, errors: ['No data rows found'] });
+              continue;
+            }
+
+            const headers: string[] = rows[0].map((h: string) => h.toLowerCase().trim());
+            const dataRows: string[][] = rows.slice(1);
+
+            // Auto-detect type based on column headers
+            let type = 'unknown';
+            if (headers.some((h: string) => h.includes('vendor') || h.includes('supplier'))) type = 'vendors';
+            else if (headers.some((h: string) => h.includes('customer') || h.includes('client') || h.includes('buyer'))) type = 'customers';
+            else if (headers.some((h: string) => h.includes('sku') || h.includes('product') || h.includes('item'))) type = 'products';
+            else if (headers.some((h: string) => h.includes('invoice') || h.includes('bill'))) type = 'invoices';
+            else if (headers.some((h: string) => h.includes('employee') || h.includes('team') || h.includes('staff'))) type = 'employees';
+            else if (headers.some((h: string) => h.includes('ingredient') || h.includes('raw material') || h.includes('material'))) type = 'raw_materials';
+            else if (headers.some((h: string) => h.includes('order') || h.includes('po') || h.includes('purchase'))) type = 'purchase_orders';
+            else if (headers.some((h: string) => h.includes('price') || h.includes('cost') || h.includes('rate'))) type = 'products';
+
+            if (type === 'unknown' || type === 'invoices' || type === 'purchase_orders') {
+              results.push({ sheet: file.name, type, imported: 0, errors: type === 'unknown' ? ['Could not detect data type from headers'] : ['Auto-import not supported for this type'] });
+              continue;
+            }
+
+            let imported = 0;
+            const errors: string[] = [];
+
+            for (const row of dataRows) {
+              try {
+                const record: Record<string, string> = {};
+                headers.forEach((h: string, i: number) => { record[h] = row[i] || ''; });
+
+                switch (type) {
+                  case 'vendors': {
+                    const name = record.name || record.vendor || record.company || record['vendor name'];
+                    if (!name) { errors.push(`Row ${imported + 1}: Missing vendor name`); continue; }
+                    await db.createVendor({
+                      name,
+                      email: record.email || record['email address'] || null,
+                      phone: record.phone || record.telephone || null,
+                      address: record.address || null,
+                      city: record.city || null,
+                      state: record.state || null,
+                      country: record.country || null,
+                    });
+                    imported++;
+                    break;
+                  }
+                  case 'customers': {
+                    const name = record.name || record.customer || record.company || record['customer name'];
+                    if (!name) { errors.push(`Row ${imported + 1}: Missing customer name`); continue; }
+                    await db.createCustomer({
+                      name,
+                      email: record.email || null,
+                      phone: record.phone || null,
+                      address: record.address || null,
+                      city: record.city || null,
+                      state: record.state || null,
+                    });
+                    imported++;
+                    break;
+                  }
+                  case 'products': {
+                    const name = record.name || record.product || record.item || record.description;
+                    if (!name) { errors.push(`Row ${imported + 1}: Missing product name`); continue; }
+                    const sku = record.sku || record['product code'] || record.code || generateNumber('PROD');
+                    await db.createProduct({
+                      name,
+                      sku,
+                      unitPrice: record.price || record['unit price'] || record.cost || record.rate || '0',
+                      category: record.category || record.type || null,
+                      description: record.description || record.notes || null,
+                    });
+                    imported++;
+                    break;
+                  }
+                  case 'employees': {
+                    const firstName = record['first name'] || record.firstname || record['first'];
+                    const lastName = record['last name'] || record.lastname || record['last'];
+                    if (!firstName || !lastName) { errors.push(`Row ${imported + 1}: Missing first/last name`); continue; }
+                    const employeeNumber = generateNumber('EMP');
+                    await db.createEmployee({
+                      employeeNumber,
+                      firstName,
+                      lastName,
+                      email: record.email || null,
+                      phone: record.phone || null,
+                      jobTitle: record.title || record.position || record['job title'] || null,
+                    });
+                    imported++;
+                    break;
+                  }
+                  case 'raw_materials': {
+                    const name = record.name || record.ingredient || record.material || record['material name'];
+                    if (!name) { errors.push(`Row ${imported + 1}: Missing material name`); continue; }
+                    await db.createRawMaterial({
+                      name,
+                      sku: record.sku || record.code || `RM-${Date.now().toString(36)}-${imported}`,
+                      unit: record.unit || record.uom || 'kg',
+                      unitCost: record.cost || record['unit cost'] || record.price || '0',
+                    });
+                    imported++;
+                    break;
+                  }
+                  default:
+                    break;
+                }
+              } catch (e: any) {
+                errors.push(`Row ${imported + 1}: ${e.message}`);
+              }
+            }
+
+            results.push({ sheet: file.name, type, imported, errors });
+          } catch (e: any) {
+            results.push({ sheet: file.name, type: 'error', imported: 0, errors: [e.message] });
+          }
+        }
+
+        // Create audit log
+        const totalImported = results.reduce((sum, r) => sum + r.imported, 0);
+        await createAuditLog(ctx.user.id, 'create', 'google_drive_sync', 0, `Synced ${totalImported} records from ${files.length} sheets`);
+
+        return { results, totalSheets: files.length };
       }),
   }),
 
@@ -11162,6 +11331,165 @@ Ask if they received the original request and if they can provide a quote.`;
           return { success: true };
         }),
     }),
+
+    // Sync from Google Drive — one-click sync of an entire Drive folder (and subfolders) into the data room
+    syncFromDrive: protectedProcedure
+      .input(z.object({
+        dataRoomId: z.number(),
+        driveFolderId: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Verify data room ownership
+        const room = await db.getDataRoomById(input.dataRoomId);
+        if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+        if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+        }
+
+        // Get valid Google OAuth token
+        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+        if (error) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+        }
+
+        let folderId = input.driveFolderId || room.googleDriveFolderId;
+
+        // If no folder ID provided and none linked, search for a "Data Room" folder in Drive
+        if (!folderId) {
+          const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+            "name contains 'Data Room' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+          )}&fields=files(id,name)&pageSize=5`;
+          const searchResponse = await fetch(searchUrl, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          if (searchResponse.ok) {
+            const searchData = await searchResponse.json();
+            if (searchData.files?.length > 0) {
+              folderId = searchData.files[0].id;
+            }
+          }
+          if (!folderId) {
+            throw new TRPCError({
+              code: 'NOT_FOUND',
+              message: 'No Google Drive folder specified and no "Data Room" folder found in Google Drive. Please provide a folder ID or create a folder named "Data Room" in your Google Drive.',
+            });
+          }
+        }
+
+        // Verify folder exists and get info
+        const folderInfo = await getFolderInfo(accessToken, folderId);
+        if (folderInfo.error || !folderInfo.folder) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: folderInfo.error || 'Folder not found in Google Drive' });
+        }
+
+        // Sync folder structure and files recursively
+        const syncResult = await syncDriveFolder(accessToken, folderId);
+        if (!syncResult.success) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: syncResult.error || 'Sync failed' });
+        }
+
+        // Get existing folders and documents to avoid duplicates
+        const allExistingFolders = await db.getDataRoomFolders(input.dataRoomId);
+        const allExistingDocs = await db.getDataRoomDocuments(input.dataRoomId);
+        const existingFoldersByDriveId = new Map(
+          allExistingFolders
+            .filter(f => f.googleDriveFolderId)
+            .map(f => [f.googleDriveFolderId!, f.id])
+        );
+        const existingDocsByDriveId = new Set(
+          allExistingDocs
+            .filter(d => d.googleDriveFileId)
+            .map(d => d.googleDriveFileId!)
+        );
+
+        // Create folder hierarchy in data room
+        const folderMap = new Map<string, number>();
+        const sortedFolders = [...syncResult.folders].sort((a, b) => {
+          const aDepth = a.parents?.length || 0;
+          const bDepth = b.parents?.length || 0;
+          return aDepth - bDepth;
+        });
+
+        const results: { name: string; type: string; status: string }[] = [];
+
+        // Process folders
+        for (const driveFolder of sortedFolders) {
+          if (existingFoldersByDriveId.has(driveFolder.id)) {
+            folderMap.set(driveFolder.id, existingFoldersByDriveId.get(driveFolder.id)!);
+            results.push({ name: driveFolder.name, type: 'folder', status: 'exists' });
+            continue;
+          }
+
+          const parentDriveId = driveFolder.parents?.[0];
+          const parentDataRoomId = parentDriveId && parentDriveId !== folderId
+            ? folderMap.get(parentDriveId)
+            : null;
+
+          const { id: newFolderId } = await db.createDataRoomFolder({
+            dataRoomId: input.dataRoomId,
+            parentId: parentDataRoomId,
+            name: driveFolder.name,
+            googleDriveFolderId: driveFolder.id,
+          });
+
+          folderMap.set(driveFolder.id, newFolderId);
+          results.push({ name: driveFolder.name, type: 'folder', status: 'created' });
+        }
+
+        // Process files
+        for (const driveFile of syncResult.files) {
+          if (existingDocsByDriveId.has(driveFile.id)) {
+            results.push({ name: driveFile.name, type: 'file', status: 'exists' });
+            continue;
+          }
+
+          const parentDriveId = driveFile.parents?.[0];
+          let fileFolderId: number | null = null;
+          if (parentDriveId === folderId) {
+            fileFolderId = null;
+          } else if (parentDriveId) {
+            fileFolderId = folderMap.get(parentDriveId) || existingFoldersByDriveId.get(parentDriveId) || null;
+          }
+
+          const fileType = getSimpleFileType(driveFile.mimeType);
+          const fileSize = driveFile.size && !isNaN(parseInt(driveFile.size))
+            ? parseInt(driveFile.size)
+            : undefined;
+
+          await db.createDataRoomDocument({
+            dataRoomId: input.dataRoomId,
+            folderId: fileFolderId,
+            name: driveFile.name,
+            fileType,
+            mimeType: driveFile.mimeType,
+            fileSize,
+            storageType: 'google_drive',
+            googleDriveFileId: driveFile.id,
+            googleDriveWebViewLink: driveFile.webViewLink,
+            thumbnailUrl: driveFile.thumbnailLink,
+            uploadedBy: ctx.user.id,
+          });
+
+          results.push({ name: driveFile.name, type: 'file', status: 'synced' });
+        }
+
+        // Update data room with Google Drive folder ID and last sync time
+        await db.updateDataRoom(input.dataRoomId, {
+          googleDriveFolderId: folderId,
+          lastSyncedAt: new Date(),
+        });
+
+        const totalSynced = results.filter(r => r.status === 'synced').length;
+        const totalCreated = results.filter(r => r.status === 'created').length;
+
+        return {
+          results,
+          totalSynced,
+          foldersCreated: totalCreated,
+          filesCreated: totalSynced,
+          folderName: folderInfo.folder.name,
+        };
+      }),
 
     // Google Drive sync
     googleDrive: router({

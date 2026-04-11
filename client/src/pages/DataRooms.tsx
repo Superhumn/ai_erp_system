@@ -11,10 +11,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { 
-  Plus, FolderOpen, Link2, Users, BarChart3, Settings, 
+import {
+  Plus, FolderOpen, Link2, Users, BarChart3, Settings,
   Eye, Download, Clock, Trash2, Copy, ExternalLink,
-  FileText, Lock, Globe, Archive
+  FileText, Lock, Globe, Archive, HardDrive, RefreshCw
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -34,6 +34,7 @@ export default function DataRooms() {
     enableWatermark: false,
     brandingCompanyName: "",
     brandingColor: "",
+    googleDriveFolderId: "",
   });
 
   const utils = trpc.useUtils();
@@ -62,6 +63,7 @@ export default function DataRooms() {
         enableWatermark: false,
         brandingCompanyName: "",
         brandingColor: "",
+        googleDriveFolderId: "",
       });
       utils.dataRoom.list.invalidate();
       // Navigate to the new data room
@@ -82,6 +84,19 @@ export default function DataRooms() {
     },
   });
 
+  const [syncingRoomId, setSyncingRoomId] = useState<number | null>(null);
+  const syncFromDriveMutation = trpc.dataRoom.syncFromDrive.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Synced ${data.filesCreated} files and ${data.foldersCreated} folders from Google Drive`);
+      setSyncingRoomId(null);
+      utils.dataRoom.list.invalidate();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+      setSyncingRoomId(null);
+    },
+  });
+
   const handleCreate = () => {
     if (!newRoom.name || !newRoom.slug) {
       toast.error("Name and slug are required");
@@ -92,6 +107,7 @@ export default function DataRooms() {
       password: newRoom.password || undefined,
       brandingCompanyName: newRoom.brandingCompanyName || undefined,
       brandingColor: newRoom.brandingColor || undefined,
+      googleDriveFolderId: newRoom.googleDriveFolderId || undefined,
     });
   };
 
@@ -238,6 +254,20 @@ export default function DataRooms() {
                     value={newRoom.brandingColor || "#000000"}
                     onChange={(e) => setNewRoom({ ...newRoom, brandingColor: e.target.value })}
                   />
+                </div>
+                <div className="border-t pt-4 mt-2">
+                  <div className="flex items-center gap-2 mb-2">
+                    <HardDrive className="h-4 w-4 text-muted-foreground" />
+                    <Label>Sync from Google Drive (optional)</Label>
+                  </div>
+                  <Input
+                    placeholder="Google Drive folder ID"
+                    value={newRoom.googleDriveFolderId}
+                    onChange={(e) => setNewRoom({ ...newRoom, googleDriveFolderId: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Paste a Google Drive folder ID to auto-sync files after creation. Find it in the folder URL after /folders/.
+                  </p>
                 </div>
               </div>
               <DialogFooter>
@@ -388,6 +418,22 @@ export default function DataRooms() {
                             title="Open in new tab"
                           >
                             <ExternalLink className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              setSyncingRoomId(room.id);
+                              syncFromDriveMutation.mutate({ dataRoomId: room.id });
+                            }}
+                            disabled={syncFromDriveMutation.isPending && syncingRoomId === room.id}
+                            title="Sync from Google Drive"
+                          >
+                            {syncFromDriveMutation.isPending && syncingRoomId === room.id ? (
+                              <RefreshCw className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <HardDrive className="h-4 w-4" />
+                            )}
                           </Button>
                           <Button
                             variant="ghost"
