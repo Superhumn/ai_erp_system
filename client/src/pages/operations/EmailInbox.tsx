@@ -391,8 +391,12 @@ export default function EmailInbox() {
               )}
               Categorize
             </Button>
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-green-500/10 text-green-500 text-xs">
+              <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
+              Auto-syncing
+            </div>
             <Dialog open={showScanDialog} onOpenChange={setShowScanDialog}>
-              <DialogTrigger asChild>
+              <DialogTrigger asChild className="hidden">
                 <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
                   <Inbox className="h-3.5 w-3.5" />
                   Scan
