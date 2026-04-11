@@ -681,6 +681,34 @@ async function startServer() {
       }
     })();
 
+    // ── Data Room follow-up emails (daily check) ──
+    (async () => {
+      try {
+        const DR_FOLLOWUP_INTERVAL = 24 * 60 * 60 * 1000; // Daily
+        console.log("[Data Room Follow-Up] Starting daily follow-up scheduler");
+        setInterval(async () => {
+          try {
+            const { sendDataRoomFollowUps } = await import("../dataRoomFollowUp");
+            const result = await sendDataRoomFollowUps();
+            if (result.sent > 0) {
+              console.log(`[Data Room Follow-Up] Sent ${result.sent} follow-up emails`);
+            }
+          } catch (e) {
+            console.warn("[Data Room Follow-Up] Failed:", e);
+          }
+        }, DR_FOLLOWUP_INTERVAL);
+        // Initial check after 10 minutes
+        setTimeout(async () => {
+          try {
+            const { sendDataRoomFollowUps } = await import("../dataRoomFollowUp");
+            await sendDataRoomFollowUps();
+          } catch {}
+        }, 10 * 60 * 1000);
+      } catch (e) {
+        console.warn("[Data Room Follow-Up] Could not initialize:", e);
+      }
+    })();
+
     // ── Automation #8: Mercury transaction sync (every 15 minutes) ──
     if (process.env.MERCURY_API_TOKEN) {
       (async () => {
@@ -724,6 +752,84 @@ async function startServer() {
         }
       })();
     }
+
+    // Data Room Google Drive auto-sync (hourly)
+    (async () => {
+      try {
+        const SYNC_INTERVAL = 60 * 60 * 1000; // 1 hour
+        console.log("[Data Room Sync] Starting hourly auto-sync");
+        setInterval(async () => {
+          try {
+            const { syncDriveFolder, downloadDriveFile, getSimpleFileType } = await import("../routers").then(() => import("./googleDrive"));
+            const rooms = await db.getDataRooms();
+            for (const room of rooms) {
+              if (room.googleDriveFolderId) {
+                const token = await db.getGoogleOAuthTokenByUserId(room.ownerId);
+                if (token?.accessToken) {
+                  try {
+                    const syncResult = await syncDriveFolder(token.accessToken, room.googleDriveFolderId);
+                    if (syncResult.success && syncResult.files.length > 0) {
+                      // Check for new files not yet in the data room
+                      const existingDocs = await db.getDataRoomDocuments(room.id);
+                      const existingDriveIds = new Set(
+                        existingDocs.filter(d => d.googleDriveFileId).map(d => d.googleDriveFileId!)
+                      );
+
+                      let newFilesCount = 0;
+                      for (const driveFile of syncResult.files) {
+                        if (existingDriveIds.has(driveFile.id)) continue;
+
+                        // Download actual file content
+                        const downloaded = await downloadDriveFile(token.accessToken, driveFile.id, driveFile.mimeType);
+                        const isGoogleWorkspaceFile = driveFile.mimeType.startsWith('application/vnd.google-apps.');
+                        const displayName = isGoogleWorkspaceFile ? `${driveFile.name}.pdf` : driveFile.name;
+                        const effectiveMimeType = ('exportedMimeType' in downloaded) ? downloaded.exportedMimeType : driveFile.mimeType;
+                        const fileType = getSimpleFileType(effectiveMimeType);
+
+                        let storageUrl: string | undefined;
+                        let storageType: string = 'google_drive';
+
+                        if ('buffer' in downloaded && downloaded.buffer.length < 5 * 1024 * 1024) {
+                          storageUrl = `data:${downloaded.exportedMimeType};base64,${downloaded.buffer.toString('base64')}`;
+                          storageType = 's3';
+                        }
+
+                        await db.createDataRoomDocument({
+                          dataRoomId: room.id,
+                          folderId: null,
+                          name: displayName,
+                          fileType,
+                          mimeType: effectiveMimeType,
+                          fileSize: ('buffer' in downloaded) ? downloaded.buffer.length : (driveFile.size ? parseInt(driveFile.size) : undefined),
+                          storageType: storageType as any,
+                          storageUrl,
+                          googleDriveFileId: driveFile.id,
+                          googleDriveWebViewLink: driveFile.webViewLink,
+                          thumbnailUrl: driveFile.thumbnailLink,
+                          uploadedBy: room.ownerId,
+                        });
+                        newFilesCount++;
+                      }
+
+                      if (newFilesCount > 0) {
+                        console.log(`[Data Room Sync] Synced room ${room.id}: ${newFilesCount} new files added`);
+                        await db.updateDataRoom(room.id, { lastSyncedAt: new Date() });
+                      }
+                    }
+                  } catch (roomErr) {
+                    console.warn(`[Data Room Sync] Failed to sync room ${room.id}:`, roomErr);
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            console.warn("[Data Room Sync] Failed:", e);
+          }
+        }, SYNC_INTERVAL);
+      } catch (e) {
+        console.warn("[Data Room Sync] Could not initialize:", e);
+      }
+    })();
   });
 
   function gracefulShutdown(signal: string) {

@@ -26,6 +26,7 @@ interface DocumentItem {
   fileSize: number | null;
   pageCount: number | null;
   storageUrl: string | null;
+  googleDriveWebViewLink: string | null;
   thumbnailUrl: string | null;
   folderId: number | null;
   sortOrder: number;
@@ -427,7 +428,7 @@ export default function DataRoomPublic() {
             </div>
 
             <div className="flex items-center gap-2">
-              {permissions.allowDownload && doc.storageUrl && (
+              {permissions.allowDownload && (doc.storageUrl || doc.googleDriveWebViewLink) && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -436,7 +437,7 @@ export default function DataRoomPublic() {
                     if (visitorId) {
                       recordViewMutation.mutate({ documentId: doc.id, visitorId, downloaded: true });
                     }
-                    window.open(doc.storageUrl!, "_blank");
+                    window.open(doc.storageUrl || doc.googleDriveWebViewLink || '', "_blank");
                   }}
                 >
                   <Download className="h-4 w-4 mr-1.5" />
@@ -501,17 +502,17 @@ export default function DataRoomPublic() {
               key={pageKey}
               className={`w-full h-full ${pageDirection === "left" ? "dr-page-left" : "dr-page-right"}`}
             >
-              {isImage && doc.storageUrl ? (
+              {isImage && (doc.storageUrl || doc.googleDriveWebViewLink) ? (
                 <div className="flex items-center justify-center h-full p-6">
                   <img
-                    src={doc.storageUrl}
+                    src={doc.storageUrl || doc.googleDriveWebViewLink || ''}
                     alt={doc.name}
                     className="max-w-full max-h-full object-contain rounded-lg"
                   />
                 </div>
-              ) : doc.storageUrl ? (
+              ) : (doc.storageUrl || doc.googleDriveWebViewLink) ? (
                 <iframe
-                  src={doc.storageUrl}
+                  src={doc.storageUrl || doc.googleDriveWebViewLink || ''}
                   className="w-full h-full border-0"
                   title={doc.name}
                 />
@@ -825,7 +826,7 @@ export default function DataRoomPublic() {
                           <Eye className="h-3.5 w-3.5 mr-1" />
                           View
                         </Button>
-                        {permissions.allowDownload && doc.storageUrl && (
+                        {permissions.allowDownload && (doc.storageUrl || doc.googleDriveWebViewLink) && (
                           <Button
                             variant="ghost"
                             size="sm"
@@ -839,7 +840,7 @@ export default function DataRoomPublic() {
                                   downloaded: true,
                                 });
                               }
-                              window.open(doc.storageUrl!, "_blank");
+                              window.open(doc.storageUrl || doc.googleDriveWebViewLink || '', "_blank");
                             }}
                           >
                             <Download className="h-3.5 w-3.5 mr-1" />

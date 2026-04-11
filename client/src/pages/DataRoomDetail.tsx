@@ -247,11 +247,31 @@ export default function DataRoomDetail() {
             <h1 className="text-xl font-semibold tracking-[-0.02em]">{room.name}</h1>
             <p className="text-muted-foreground">/dataroom/{room.slug}</p>
           </div>
-          <Button variant="outline" onClick={() => copyLinkUrl(room.slug)}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              const firstLink = links?.[0];
+              if (firstLink) {
+                copyLinkUrl(firstLink.linkCode);
+              } else {
+                toast.error("No share link exists yet. Create one first.");
+              }
+            }}
+          >
             <Copy className="h-4 w-4 mr-2" />
             Copy Link
           </Button>
-          <Button variant="outline" onClick={() => window.open(`/share/${room.slug}`, '_blank')}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              const firstLink = links?.[0];
+              if (firstLink) {
+                window.open(`/share/${firstLink.linkCode}`, '_blank');
+              } else {
+                toast.error("No share link exists yet. Create one first.");
+              }
+            }}
+          >
             <ExternalLink className="h-4 w-4 mr-2" />
             Preview
           </Button>
