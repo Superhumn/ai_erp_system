@@ -192,6 +192,7 @@ export default function Locations() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="factory">Factory</SelectItem>
                         <SelectItem value="copacker">Co-Packer</SelectItem>
                         <SelectItem value="warehouse">Warehouse</SelectItem>
                         <SelectItem value="3pl">3PL Provider</SelectItem>

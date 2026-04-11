@@ -466,7 +466,7 @@ export const warehouses = mysqlTable("warehouses", {
   state: varchar("state", { length: 64 }),
   country: varchar("country", { length: 64 }),
   postalCode: varchar("postalCode", { length: 20 }),
-  type: mysqlEnum("type", ["warehouse", "store", "distribution", "copacker", "3pl"]).default("warehouse").notNull(),
+  type: mysqlEnum("type", ["warehouse", "store", "distribution", "copacker", "3pl", "factory"]).default("warehouse").notNull(),
   status: mysqlEnum("status", ["active", "inactive"]).default("active").notNull(),
   contactName: varchar("contactName", { length: 255 }),
   contactEmail: varchar("contactEmail", { length: 320 }),
