@@ -221,15 +221,15 @@ function DashboardLayoutContent({
           document.removeEventListener('keydown', handleNextKey);
           switch (nextE.key) {
             case 'd': setLocation('/'); break; // Dashboard
-            case 'a': setLocation('/ai/approvals'); break; // Approvals
             case 'e': setLocation('/operations/email-inbox'); break; // Email Inbox
             case 'v': setLocation('/operations/vendors'); break; // Vendors
-            case 'p': setLocation('/operations/purchase-orders'); break; // Purchase Orders
             case 'i': setLocation('/operations/inventory-hub'); break; // Inventory
             case 'o': setLocation('/sales/orders'); break; // Orders
             case 'w': setLocation('/operations/work-orders'); break; // Work Orders
+            case 'c': setLocation('/crm/hub'); break; // CRM
+            case 'a': setLocation('/finance/accounts'); break; // Accounts
+            case 't': setLocation('/finance/transactions'); break; // Transactions
             case 's': setLocation('/settings'); break; // Settings
-            case 'm': setLocation('/operations/products'); break; // Products (Make)
           }
         };
         document.addEventListener('keydown', handleNextKey, { once: true });
@@ -243,15 +243,15 @@ function DashboardLayoutContent({
           'Keyboard Shortcuts:\n' +
           '⌘K - AI Command Bar\n' +
           'g d - Dashboard\n' +
-          'g a - Approvals\n' +
           'g e - Email Inbox\n' +
           'g v - Vendors\n' +
-          'g p - Purchase Orders\n' +
           'g i - Inventory\n' +
           'g o - Orders\n' +
           'g w - Work Orders\n' +
-          'g s - Settings\n' +
-          'g m - Products',
+          'g c - CRM\n' +
+          'g a - Accounts\n' +
+          'g t - Transactions\n' +
+          'g s - Settings',
           { duration: 5000 }
         );
         return;
