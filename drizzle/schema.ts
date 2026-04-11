@@ -1703,6 +1703,28 @@ export const workOrders = mysqlTable("workOrders", {
   actualStartDate: timestamp("actualStartDate"),
   actualEndDate: timestamp("actualEndDate"),
   notes: text("notes"),
+  // Equipment needed (JSON array: [{name, type, model}])
+  equipmentNeeded: text("equipmentNeeded"),
+  // Procedure / special instructions (markdown/text)
+  procedure: text("procedure"),
+  // Quality Control checklist (JSON array: [{check, spec, result, passed}])
+  qcChecklist: text("qcChecklist"),
+  // QC specs
+  moistureContent: varchar("moistureContent", { length: 32 }),
+  targetTemperature: varchar("targetTemperature", { length: 64 }),
+  // Packaging specifications
+  packagingType: varchar("packagingType", { length: 128 }),
+  packagingSize: varchar("packagingSize", { length: 128 }),
+  labelInfo: text("labelInfo"),
+  storageInstructions: varchar("storageInstructions", { length: 256 }),
+  // Sign-off
+  productionManagerId: int("productionManagerId"),
+  productionManagerSignedAt: timestamp("productionManagerSignedAt"),
+  qcManagerId: int("qcManagerId"),
+  qcManagerSignedAt: timestamp("qcManagerSignedAt"),
+  // Department
+  department: varchar("department", { length: 128 }).default("Production"),
+  batchNumber: varchar("batchNumber", { length: 64 }),
   createdBy: int("createdBy").references(() => users.id),
   assignedTo: int("assignedTo").references(() => users.id),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
