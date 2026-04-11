@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useLocation } from "wouter";
 
 type FormMode = "login" | "register" | "forgotPassword";
@@ -15,6 +15,17 @@ export default function Login() {
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
+
+  // Check for invite token in URL on mount
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const invite = params.get("invite");
+    if (invite) {
+      setInviteToken(invite);
+      setMode("register");
+    }
+  }, []);
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -45,6 +56,7 @@ export default function Login() {
         const endpoint = mode === "register" ? "/api/auth/register" : "/api/auth/login";
         const body: Record<string, string> = { email, password };
         if (mode === "register" && name) body.name = name;
+        if (mode === "register" && inviteToken) body.invite = inviteToken;
 
         const res = await fetch(endpoint, {
           method: "POST",
@@ -67,7 +79,7 @@ export default function Login() {
         setLoading(false);
       }
     },
-    [email, password, name, mode]
+    [email, password, name, mode, inviteToken]
   );
 
   const switchMode = (newMode: FormMode) => {
@@ -91,6 +103,16 @@ export default function Login() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
       <div className="w-full max-w-sm space-y-6 p-8 animate-fade-in">
+        {inviteToken && (
+          <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-4 text-center dark:border-indigo-800 dark:bg-indigo-950">
+            <p className="text-sm font-medium text-indigo-700 dark:text-indigo-300">
+              You've been invited to join Superhumn
+            </p>
+            <p className="mt-1 text-xs text-indigo-600 dark:text-indigo-400">
+              Create your account below to get started
+            </p>
+          </div>
+        )}
         <div className="text-center">
           <h1 className="text-xl font-semibold tracking-[-0.02em] tracking-tight">
             {title}

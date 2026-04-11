@@ -468,22 +468,25 @@ async function startServer() {
           for (const inbox of inboxes) {
             console.log(`[Email Polling] Monitoring: ${inbox.user}`);
           }
+          // Ongoing polling — only new/unseen emails
           setInterval(async () => {
             for (const inbox of inboxes) {
               try {
-                await scanInbox({ host: inbox.host!, port: inbox.port, secure: true, auth: { user: inbox.user!, pass: inbox.password! } }, { unseenOnly: true, limit: 50 });
+                await scanInbox({ host: inbox.host!, port: inbox.port, secure: true, auth: { user: inbox.user!, pass: inbox.password! } }, { unseenOnly: true, limit: 100 });
               } catch (e) {
                 console.warn(`[Email Polling] Scan failed for ${inbox.user}:`, e);
               }
             }
           }, POLL_INTERVAL);
-          // Initial scan after 30 seconds
+          // Initial full sync after 30 seconds — get recent emails (last 30 days)
           setTimeout(async () => {
             for (const inbox of inboxes) {
               try {
-                await scanInbox({ host: inbox.host!, port: inbox.port, secure: true, auth: { user: inbox.user!, pass: inbox.password! } }, { unseenOnly: true, limit: 50 });
+                const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+                await scanInbox({ host: inbox.host!, port: inbox.port, secure: true, auth: { user: inbox.user!, pass: inbox.password! } }, { unseenOnly: false, limit: 500, since: thirtyDaysAgo });
+                console.log(`[Email Polling] Initial sync complete for ${inbox.user}`);
               } catch (e) {
-                console.warn(`[Email Polling] Initial scan failed for ${inbox.user}:`, e);
+                console.warn(`[Email Polling] Initial sync failed for ${inbox.user}:`, e);
               }
             }
           }, 30000);

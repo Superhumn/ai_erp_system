@@ -104,6 +104,16 @@ export default function CopackerPortal() {
   const [shipDocShipmentId, setShipDocShipmentId] = useState<string>("");
   const [shipDocFile, setShipDocFile] = useState<File | null>(null);
 
+  // --- AI Invoice Upload ---
+  const [showUploadInvoice, setShowUploadInvoice] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadNotes, setUploadNotes] = useState("");
+  const [uploadResult, setUploadResult] = useState<{
+    id: number;
+    parsedData: any;
+    message: string;
+  } | null>(null);
+
   // --- Detail view ---
   const [viewUpdateId, setViewUpdateId] = useState<number | null>(null);
   const [viewInvoiceId, setViewInvoiceId] = useState<number | null>(null);
@@ -175,6 +185,15 @@ export default function CopackerPortal() {
       refetchShipDocs();
     },
     onError: (error: any) => toast.error("Failed to upload document", { description: error.message }),
+  });
+
+  const uploadInvoiceMutation = (trpc.copackerPortal as any).uploadInvoice.useMutation({
+    onSuccess: (data: any) => {
+      setUploadResult(data);
+      toast.success("Invoice uploaded and sent to AP");
+      refetchInvoices();
+    },
+    onError: (error: any) => toast.error("Failed to upload invoice", { description: error.message }),
   });
 
   const completeProduction = trpc.workOrders.completeProduction.useMutation({
@@ -487,6 +506,10 @@ export default function CopackerPortal() {
               </div>
             </Card>
           )}
+          <Button variant="outline" onClick={() => { setShowUploadInvoice(true); setUploadResult(null); setUploadFile(null); setUploadNotes(""); }}>
+            <FileText className="h-4 w-4 mr-1" />
+            Upload Invoice
+          </Button>
           <Button variant="outline" onClick={() => setShowInvoiceForm(true)}>
             <DollarSign className="h-4 w-4 mr-1" />
             New Invoice
@@ -1310,6 +1333,191 @@ export default function CopackerPortal() {
               Close
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Upload Invoice Dialog (AI-parsed) */}
+      <Dialog open={showUploadInvoice} onOpenChange={setShowUploadInvoice}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Upload Invoice</DialogTitle>
+            <DialogDescription>
+              Upload a PDF or image of your invoice. It will be parsed by AI and emailed to accounts payable.
+            </DialogDescription>
+          </DialogHeader>
+
+          {uploadResult ? (
+            <div className="space-y-4 py-2">
+              <Alert>
+                <CheckCircle className="h-4 w-4" />
+                <AlertTitle>Invoice Submitted</AlertTitle>
+                <AlertDescription>{uploadResult.message}</AlertDescription>
+              </Alert>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                {uploadResult.parsedData?.invoiceNumber && (
+                  <div>
+                    <p className="text-muted-foreground">Invoice #</p>
+                    <p className="font-medium">{uploadResult.parsedData.invoiceNumber}</p>
+                  </div>
+                )}
+                {uploadResult.parsedData?.totalAmount && (
+                  <div>
+                    <p className="text-muted-foreground">Total Amount</p>
+                    <p className="font-medium font-mono">${uploadResult.parsedData.totalAmount}</p>
+                  </div>
+                )}
+                {uploadResult.parsedData?.vendorName && (
+                  <div>
+                    <p className="text-muted-foreground">Vendor</p>
+                    <p className="font-medium">{uploadResult.parsedData.vendorName}</p>
+                  </div>
+                )}
+                {uploadResult.parsedData?.invoiceDate && (
+                  <div>
+                    <p className="text-muted-foreground">Date</p>
+                    <p className="font-medium">{uploadResult.parsedData.invoiceDate}</p>
+                  </div>
+                )}
+              </div>
+              {uploadResult.parsedData?.lineItems?.length > 0 && (
+                <div>
+                  <p className="text-sm font-medium mb-2">Parsed Line Items</p>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Description</TableHead>
+                        <TableHead className="text-right">Qty</TableHead>
+                        <TableHead className="text-right">Rate</TableHead>
+                        <TableHead className="text-right">Amount</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {uploadResult.parsedData.lineItems.map((item: any, idx: number) => (
+                        <TableRow key={idx}>
+                          <TableCell>{item.description}</TableCell>
+                          <TableCell className="text-right font-mono">{item.quantity}</TableCell>
+                          <TableCell className="text-right font-mono">${item.unitPrice}</TableCell>
+                          <TableCell className="text-right font-mono">${item.totalAmount}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowUploadInvoice(false)}>
+                  Done
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <Label>Invoice File</Label>
+                <div
+                  className="border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 transition-colors"
+                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const file = e.dataTransfer.files?.[0];
+                    if (file) setUploadFile(file);
+                  }}
+                  onClick={() => document.getElementById('upload-invoice-input')?.click()}
+                >
+                  <input
+                    id="upload-invoice-input"
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) setUploadFile(file);
+                    }}
+                  />
+                  {uploadFile ? (
+                    <div className="flex items-center justify-center gap-2">
+                      <FileText className="h-5 w-5 text-muted-foreground" />
+                      <span className="font-medium">{uploadFile.name}</span>
+                      <span className="text-xs text-muted-foreground">
+                        ({(uploadFile.size / 1024).toFixed(0)} KB)
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0"
+                        onClick={(e) => { e.stopPropagation(); setUploadFile(null); }}
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <Upload className="h-8 w-8 mx-auto text-muted-foreground" />
+                      <p className="text-sm text-muted-foreground">
+                        Drag & drop or click to select
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        PDF, PNG, JPG (max 10MB)
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Notes (optional)</Label>
+                <Textarea
+                  placeholder="Any additional notes about this invoice..."
+                  value={uploadNotes}
+                  onChange={(e) => setUploadNotes(e.target.value)}
+                  rows={3}
+                />
+              </div>
+
+              {uploadInvoiceMutation.isPending && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Clock className="h-4 w-4 animate-spin" />
+                    Parsing invoice with AI and emailing to AP...
+                  </div>
+                  <Progress value={66} className="h-1" />
+                </div>
+              )}
+
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowUploadInvoice(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  disabled={!uploadFile || uploadInvoiceMutation.isPending}
+                  onClick={async () => {
+                    if (!uploadFile) return;
+                    const buffer = await uploadFile.arrayBuffer();
+                    const fileData = arrayBufferToBase64(buffer);
+                    uploadInvoiceMutation.mutate({
+                      fileName: uploadFile.name,
+                      fileData,
+                      mimeType: uploadFile.type,
+                      notes: uploadNotes || undefined,
+                    });
+                  }}
+                >
+                  {uploadInvoiceMutation.isPending ? (
+                    <>
+                      <Clock className="h-4 w-4 mr-1 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="h-4 w-4 mr-1" />
+                      Submit Invoice
+                    </>
+                  )}
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

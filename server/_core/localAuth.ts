@@ -257,6 +257,33 @@ export function registerLocalAuthRoutes(app: Express) {
 
       await logAuthEvent("create", "auth_signup", newUser?.id, clientIp, email.toLowerCase());
 
+      // Check for invite token — if present, assign the invited role and mark accepted
+      let inviteAccepted = false;
+      if (req.body.invite && newUser) {
+        try {
+          const invite = await db.getTeamInviteByToken(req.body.invite);
+          if (invite && invite.status === "pending" && new Date(invite.expiresAt) > new Date()) {
+            await db.updateUserRole(newUser.id, invite.role as any);
+            await db.updateTeamInvite(invite.id, { status: "accepted", acceptedAt: new Date() });
+            inviteAccepted = true;
+          }
+        } catch (inviteErr) {
+          console.warn("[Local Auth] Failed to process invite token:", inviteErr);
+        }
+      }
+
+      // Skip email verification for invited users — they were invited via email
+      if (inviteAccepted) {
+        const normalizedEmail = email.toLowerCase();
+        verifiedEmails.add(normalizedEmail);
+
+        return res.status(201).json({
+          success: true,
+          message: "Account created successfully. Welcome to the team!",
+          emailVerified: true,
+        });
+      }
+
       // Generate email verification token (24-hour expiry)
       const verificationToken = randomBytes(32).toString("hex");
       const normalizedEmail = email.toLowerCase();

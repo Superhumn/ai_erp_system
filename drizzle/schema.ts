@@ -5328,6 +5328,27 @@ export type InvestorUpdate = typeof investorUpdates.$inferSelect;
 export type InsertInvestorUpdate = typeof investorUpdates.$inferInsert;
 
 // ============================================
+// TEAM INVITATIONS (Email-based invite flow)
+// ============================================
+
+export const teamInvites = mysqlTable("team_invites", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  email: varchar("email", { length: 320 }).notNull(),
+  name: varchar("name", { length: 256 }),
+  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "copacker", "vendor", "contractor"]).default("user").notNull(),
+  invitedBy: int("invitedBy").notNull(),
+  token: varchar("token", { length: 128 }).notNull().unique(),
+  status: mysqlEnum("status", ["pending", "accepted", "expired", "cancelled"]).default("pending"),
+  expiresAt: timestamp("expiresAt").notNull(),
+  acceptedAt: timestamp("acceptedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type TeamInvite = typeof teamInvites.$inferSelect;
+export type InsertTeamInvite = typeof teamInvites.$inferInsert;
+
+// ============================================
 // TIME TRACKING
 // ============================================
 

@@ -154,6 +154,8 @@ import {
   // Time tracking
   timeEntries, InsertTimeEntry,
   timeInvoices, InsertTimeInvoice,
+  // Team invites (email-based)
+  teamInvites, InsertTeamInvite,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -11568,4 +11570,133 @@ export async function createInvestorUpdate(data: InsertInvestorUpdate) {
 export async function updateInvestorUpdate(id: number, data: Partial<InsertInvestorUpdate>) {
   const db = await getDb(); if (!db) throw new Error("Database not available");
   await db.update(investorUpdates).set(data).where(eq(investorUpdates.id, id));
+}
+
+// ============================================
+// TEAM INVITES (Email-based invite flow)
+// ============================================
+
+export async function getTeamInvites(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  if (companyId) {
+    return db.select().from(teamInvites).where(eq(teamInvites.companyId, companyId)).orderBy(desc(teamInvites.createdAt));
+  }
+  return db.select().from(teamInvites).orderBy(desc(teamInvites.createdAt));
+}
+
+export async function getTeamInviteByToken(token: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const result = await db.select().from(teamInvites)
+    .where(eq(teamInvites.token, token))
+    .limit(1);
+  return result[0];
+}
+
+export async function getTeamInviteById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const result = await db.select().from(teamInvites)
+    .where(eq(teamInvites.id, id))
+    .limit(1);
+  return result[0];
+}
+
+export async function createTeamInvite(data: InsertTeamInvite) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db.insert(teamInvites).values(data);
+  return { id: result[0].insertId, token: data.token };
+}
+
+export async function updateTeamInvite(id: number, data: Partial<InsertTeamInvite>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.update(teamInvites).set(data).where(eq(teamInvites.id, id));
+}
+
+// ============================================
+// TIME TRACKING
+// ============================================
+
+export async function getTimeEntries(filters?: { userId?: number; status?: string; startDate?: string; endDate?: string }) {
+  const db = await getDb(); if (!db) return [];
+  const conditions = [];
+  if (filters?.userId) conditions.push(eq(timeEntries.userId, filters.userId));
+  if (filters?.status) conditions.push(eq(timeEntries.status, filters.status as any));
+  if (filters?.startDate) conditions.push(gte(timeEntries.date, new Date(filters.startDate)));
+  if (filters?.endDate) conditions.push(lte(timeEntries.date, new Date(filters.endDate)));
+  if (conditions.length > 0) {
+    return db.select().from(timeEntries).where(and(...conditions)).orderBy(desc(timeEntries.date));
+  }
+  return db.select().from(timeEntries).orderBy(desc(timeEntries.date));
+}
+
+export async function getTimeEntryById(id: number) {
+  const db = await getDb(); if (!db) return undefined;
+  const result = await db.select().from(timeEntries).where(eq(timeEntries.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createTimeEntry(data: InsertTimeEntry) {
+  const db = await getDb(); if (!db) throw new Error("Database not available");
+  // Auto-calculate totalAmount
+  const hours = parseFloat(String(data.hours) || "0");
+  const rate = parseFloat(String(data.hourlyRate) || "0");
+  const totalAmount = (hours * rate).toFixed(2);
+  const result = await db.insert(timeEntries).values({ ...data, totalAmount });
+  return { id: result[0].insertId };
+}
+
+export async function updateTimeEntry(id: number, data: Partial<InsertTimeEntry>) {
+  const db = await getDb(); if (!db) throw new Error("Database not available");
+  // Recalculate totalAmount if hours or rate changed
+  if (data.hours || data.hourlyRate) {
+    const existing = await getTimeEntryById(id);
+    if (existing) {
+      const hours = parseFloat(String(data.hours ?? existing.hours) || "0");
+      const rate = parseFloat(String(data.hourlyRate ?? existing.hourlyRate) || "0");
+      (data as any).totalAmount = (hours * rate).toFixed(2);
+    }
+  }
+  await db.update(timeEntries).set({ ...data, updatedAt: new Date() }).where(eq(timeEntries.id, id));
+}
+
+export async function deleteTimeEntry(id: number) {
+  const db = await getDb(); if (!db) throw new Error("Database not available");
+  await db.delete(timeEntries).where(eq(timeEntries.id, id));
+}
+
+export async function getTimeInvoices(filters?: { userId?: number; status?: string }) {
+  const db = await getDb(); if (!db) return [];
+  const conditions = [];
+  if (filters?.userId) conditions.push(eq(timeInvoices.userId, filters.userId));
+  if (filters?.status) conditions.push(eq(timeInvoices.status, filters.status as any));
+  if (conditions.length > 0) {
+    return db.select().from(timeInvoices).where(and(...conditions)).orderBy(desc(timeInvoices.createdAt));
+  }
+  return db.select().from(timeInvoices).orderBy(desc(timeInvoices.createdAt));
+}
+
+export async function getTimeInvoiceById(id: number) {
+  const db = await getDb(); if (!db) return undefined;
+  const result = await db.select().from(timeInvoices).where(eq(timeInvoices.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createTimeInvoice(data: InsertTimeInvoice) {
+  const db = await getDb(); if (!db) throw new Error("Database not available");
+  const result = await db.insert(timeInvoices).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateTimeInvoice(id: number, data: Partial<InsertTimeInvoice>) {
+  const db = await getDb(); if (!db) throw new Error("Database not available");
+  await db.update(timeInvoices).set({ ...data, updatedAt: new Date() }).where(eq(timeInvoices.id, id));
 }
