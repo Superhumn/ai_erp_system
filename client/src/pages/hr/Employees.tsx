@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -30,294 +30,783 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { UserCircle, Plus, Search, Loader2 } from "lucide-react";
+import { UserCircle, Plus, Search, Loader2, Award, Layers } from "lucide-react";
 import { toast } from "sonner";
-import { format } from "date-fns";
+import { format, addMonths } from "date-fns";
 import { getStatusColor } from "@/lib/statusColors";
 
-export default function People() {
+// ── helpers ──────────────────────────────────────────────────────
+function fmt$(v: string | number | null | undefined): string {
+  if (v == null || v === "") return "-";
+  const n = typeof v === "string" ? parseFloat(v) : v;
+  if (isNaN(n)) return "-";
+  return n.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
+function fmtNum(v: string | number | null | undefined): string {
+  if (v == null || v === "") return "-";
+  const n = typeof v === "string" ? parseFloat(v) : v;
+  if (isNaN(n)) return "-";
+  return n.toLocaleString("en-US");
+}
+
+function fmtPct(v: number | null | undefined): string {
+  if (v == null) return "-";
+  if (v < 0.01) return "<0.01%";
+  return v.toFixed(2) + "%";
+}
+
+function fmtDate(v: string | Date | null | undefined): string {
+  if (!v) return "-";
+  try { return format(new Date(v), "MMM d, yyyy"); } catch { return "-"; }
+}
+
+function calcNextVestDate(
+  vestingStart: string | Date | null | undefined,
+  cliffMonths: number | null | undefined,
+  schedule: string | null | undefined,
+  sharesVested: string | null | undefined,
+  totalShares: string | null | undefined,
+): string {
+  if (!vestingStart || !schedule || schedule === "none") return "-";
+  const start = new Date(vestingStart);
+  const cliff = cliffMonths ?? 0;
+  const vested = parseFloat(sharesVested || "0");
+  const total = parseFloat(totalShares || "0");
+  if (total > 0 && vested >= total) return "Fully vested";
+
+  const now = new Date();
+  const cliffDate = addMonths(start, cliff);
+  if (now < cliffDate) return fmtDate(cliffDate);
+
+  const incrementMonths = schedule === "monthly" ? 1 : schedule === "quarterly" ? 3 : schedule === "annually" ? 12 : 1;
+  let next = cliffDate;
+  while (next <= now) {
+    next = addMonths(next, incrementMonths);
+  }
+  return fmtDate(next);
+}
+
+// ── type badge colors ────────────────────────────────────────────
+const typeColors: Record<string, string> = {
+  founder: "bg-purple-500/10 text-purple-600",
+  employee: "bg-blue-500/10 text-blue-600",
+  investor: "bg-emerald-500/10 text-emerald-600",
+  advisor: "bg-amber-500/10 text-amber-600",
+  board_member: "bg-indigo-500/10 text-indigo-600",
+  contractor: "bg-cyan-500/10 text-cyan-600",
+  full_time: "bg-blue-500/10 text-blue-600",
+  part_time: "bg-teal-500/10 text-teal-600",
+  intern: "bg-pink-500/10 text-pink-600",
+};
+
+// ── unified row type ─────────────────────────────────────────────
+interface UnifiedRow {
+  key: string;
+  name: string;
+  email: string;
+  type: string;
+  title: string;
+  department: string;
+  salary: string;
+  shareClass: string;
+  sharesGranted: string;
+  sharesVested: string;
+  unvested: string;
+  exercisePrice: string;
+  vestingStart: string;
+  cliffMonths: string;
+  nextVestDate: string;
+  grantValue: string;
+  ownershipPct: number | null;
+  status: string;
+}
+
+// ══════════════════════════════════════════════════════════════════
+export default function PeopleAndEquity() {
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [isOpen, setIsOpen] = useState(false);
-  const [formData, setFormData] = useState({
-    firstName: "",
-    lastName: "",
-    email: "",
-    phone: "",
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [isPersonOpen, setIsPersonOpen] = useState(false);
+  const [isGrantOpen, setIsGrantOpen] = useState(false);
+  const [isShareClassOpen, setIsShareClassOpen] = useState(false);
+  const [scForm, setScForm] = useState({ name: "", type: "common", authorizedShares: "", pricePerShare: "", parValue: "0.0001", liquidationPreference: "1", votingRights: true, isParticipating: false });
+
+  // ── form state: add person ──
+  const [personForm, setPersonForm] = useState({
+    firstName: "", lastName: "", email: "", phone: "",
+    type: "employee" as "founder" | "employee" | "investor" | "advisor" | "board_member" | "contractor",
     employmentType: "full_time" as "full_time" | "part_time" | "contractor" | "intern",
-    departmentId: 0,
-    jobTitle: "",
-    hireDate: "",
-    notes: "",
+    departmentId: 0, jobTitle: "", hireDate: "", salary: "", notes: "",
+  });
+
+  // ── form state: add grant ──
+  const [grantForm, setGrantForm] = useState({
+    stakeholderId: 0, shareClassId: 0,
+    grantType: "option_iso" as "purchase" | "option_iso" | "option_nso" | "rsu" | "restricted_stock" | "convertible_note" | "safe" | "warrant" | "secondary",
+    grantDate: "", shares: "", pricePerShare: "", exercisePrice: "",
+    vestingSchedule: "monthly" as "none" | "monthly" | "quarterly" | "annually" | "custom",
+    vestingStartDate: "", cliffMonths: 12, totalVestingMonths: 48, notes: "",
   });
 
   const utils = trpc.useUtils();
-  const { data: people, isLoading } = trpc.employees.list.useQuery();
-  const createPerson = trpc.employees.create.useMutation({
+
+  // ── data queries ──
+  const { data: employees, isLoading: loadingEmp } = trpc.employees.list.useQuery();
+  const { data: stakeholders, isLoading: loadingSH } = trpc.capTable.stakeholders.list.useQuery();
+  const { data: grants, isLoading: loadingGrants } = trpc.capTable.grants.list.useQuery();
+  const { data: shareClasses } = trpc.capTable.shareClasses.list.useQuery();
+
+  // ── mutations ──
+  const createEmployee = trpc.employees.create.useMutation({
+    onSuccess: () => { utils.employees.list.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const createStakeholder = trpc.capTable.stakeholders.create.useMutation({
+    onSuccess: () => { utils.capTable.stakeholders.list.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const createShareClass = trpc.capTable.shareClasses.create.useMutation({
+    onSuccess: () => { utils.capTable.shareClasses.list.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const createGrant = trpc.capTable.grants.create.useMutation({
     onSuccess: () => {
-      toast.success("Person added successfully");
-      setIsOpen(false);
-      setFormData({
-        firstName: "", lastName: "", email: "", phone: "",
-        employmentType: "full_time", departmentId: 0, jobTitle: "", hireDate: "", notes: "",
+      toast.success("Grant created");
+      setIsGrantOpen(false);
+      setGrantForm({ stakeholderId: 0, shareClassId: 0, grantType: "option_iso", grantDate: "", shares: "", pricePerShare: "", exercisePrice: "", vestingSchedule: "monthly", vestingStartDate: "", cliffMonths: 12, totalVestingMonths: 48, notes: "" });
+      utils.capTable.grants.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // ── compute total shares for ownership % ──
+  const totalOutstandingShares = useMemo(() => {
+    if (!grants) return 0;
+    return grants.reduce((sum, g) => sum + parseFloat((g as any).shares || "0"), 0);
+  }, [grants]);
+
+  // ── build share-class lookup ──
+  const scMap = useMemo(() => {
+    const m = new Map<number, string>();
+    shareClasses?.forEach((sc: any) => m.set(sc.id, sc.name));
+    return m;
+  }, [shareClasses]);
+
+  // ── build grant-by-stakeholder lookup ──
+  const grantsByStakeholder = useMemo(() => {
+    const m = new Map<number, any[]>();
+    grants?.forEach((g: any) => {
+      const arr = m.get(g.stakeholderId) || [];
+      arr.push(g);
+      m.set(g.stakeholderId, arr);
+    });
+    return m;
+  }, [grants]);
+
+  // ── merge employees + stakeholders into unified rows ──
+  const rows: UnifiedRow[] = useMemo(() => {
+    const result: UnifiedRow[] = [];
+    const seenEmails = new Set<string>();
+
+    // process stakeholders first (they have equity)
+    stakeholders?.forEach((sh: any) => {
+      const matchingEmp = employees?.find(
+        (e) => (sh.email && e.email && sh.email.toLowerCase() === e.email.toLowerCase()) || (sh.userId && (e as any).userId === sh.userId)
+      );
+      const sGrants = grantsByStakeholder.get(sh.id) || [];
+      const email = sh.email || matchingEmp?.email || "";
+      if (email) seenEmails.add(email.toLowerCase());
+
+      if (sGrants.length === 0) {
+        // stakeholder with no grants — single row
+        result.push({
+          key: `sh-${sh.id}`,
+          name: sh.name || (matchingEmp ? `${matchingEmp.firstName} ${matchingEmp.lastName}` : "-"),
+          email,
+          type: sh.type || (matchingEmp ? matchingEmp.employmentType : "-"),
+          title: sh.title || matchingEmp?.jobTitle || "-",
+          department: matchingEmp ? (matchingEmp.departmentId ? `Dept #${matchingEmp.departmentId}` : "-") : "-",
+          salary: matchingEmp?.salary ? fmt$(matchingEmp.salary) : "-",
+          shareClass: "-",
+          sharesGranted: "-",
+          sharesVested: "-",
+          unvested: "-",
+          exercisePrice: "-",
+          vestingStart: "-",
+          cliffMonths: "-",
+          nextVestDate: "-",
+          grantValue: "-",
+          ownershipPct: null,
+          status: matchingEmp?.status || "active",
+        });
+      } else {
+        // one row per grant
+        sGrants.forEach((g: any, idx: number) => {
+          const granted = parseFloat(g.shares || "0");
+          const vested = parseFloat(g.sharesVested || "0");
+          const pps = parseFloat(g.pricePerShare || "0");
+          result.push({
+            key: `sh-${sh.id}-g-${g.id}`,
+            name: idx === 0 ? (sh.name || (matchingEmp ? `${matchingEmp.firstName} ${matchingEmp.lastName}` : "-")) : "",
+            email: idx === 0 ? email : "",
+            type: idx === 0 ? (sh.type || (matchingEmp ? matchingEmp.employmentType : "-")) : "",
+            title: idx === 0 ? (sh.title || matchingEmp?.jobTitle || "-") : "",
+            department: idx === 0 ? (matchingEmp ? (matchingEmp.departmentId ? `Dept #${matchingEmp.departmentId}` : "-") : "-") : "",
+            salary: idx === 0 ? (matchingEmp?.salary ? fmt$(matchingEmp.salary) : "-") : "",
+            shareClass: scMap.get(g.shareClassId) || "-",
+            sharesGranted: fmtNum(granted),
+            sharesVested: fmtNum(vested),
+            unvested: fmtNum(Math.max(0, granted - vested)),
+            exercisePrice: g.exercisePrice ? fmt$(g.exercisePrice) : "-",
+            vestingStart: fmtDate(g.vestingStartDate),
+            cliffMonths: g.cliffMonths != null ? String(g.cliffMonths) : "-",
+            nextVestDate: calcNextVestDate(g.vestingStartDate, g.cliffMonths, g.vestingSchedule, g.sharesVested, g.shares),
+            grantValue: fmt$(g.totalValue || (granted * pps)),
+            ownershipPct: totalOutstandingShares > 0 ? (granted / totalOutstandingShares) * 100 : null,
+            status: idx === 0 ? (matchingEmp?.status || "active") : "",
+          });
+        });
+      }
+    });
+
+    // add employees that aren't already covered by a stakeholder
+    employees?.forEach((e) => {
+      if (e.email && seenEmails.has(e.email.toLowerCase())) return;
+      result.push({
+        key: `emp-${e.id}`,
+        name: `${e.firstName} ${e.lastName}`,
+        email: e.email || "-",
+        type: e.employmentType || "employee",
+        title: e.jobTitle || "-",
+        department: e.departmentId ? `Dept #${e.departmentId}` : "-",
+        salary: e.salary ? fmt$(e.salary) : "-",
+        shareClass: "-",
+        sharesGranted: "-",
+        sharesVested: "-",
+        unvested: "-",
+        exercisePrice: "-",
+        vestingStart: "-",
+        cliffMonths: "-",
+        nextVestDate: "-",
+        grantValue: "-",
+        ownershipPct: null,
+        status: e.status || "active",
       });
-      utils.employees.list.invalidate();
-    },
-    onError: (error) => {
-      toast.error(error.message);
-    },
-  });
+    });
 
-  const filteredPeople = people?.filter((person) => {
-    const fullName = `${person.firstName} ${person.lastName}`.toLowerCase();
-    const matchesSearch =
-      fullName.includes(search.toLowerCase()) ||
-      person.email?.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilter === "all" || person.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+    return result;
+  }, [employees, stakeholders, grants, grantsByStakeholder, scMap, totalOutstandingShares]);
 
-  const typeColors: Record<string, string> = {
-    full_time: "bg-blue-500/10 text-blue-600",
-    part_time: "bg-green-500/10 text-green-600",
-    contractor: "bg-purple-500/10 text-purple-600",
-    intern: "bg-amber-500/10 text-amber-600",
+  // ── filter ──
+  const filtered = useMemo(() => {
+    return rows.filter((r) => {
+      const matchSearch =
+        r.name.toLowerCase().includes(search.toLowerCase()) ||
+        r.email.toLowerCase().includes(search.toLowerCase());
+      const matchType = typeFilter === "all" || r.type === typeFilter;
+      return matchSearch && matchType;
+    });
+  }, [rows, search, typeFilter]);
+
+  const isLoading = loadingEmp || loadingSH || loadingGrants;
+
+  // ── submit: add person (creates both employee + stakeholder) ──
+  const handlePersonSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await createEmployee.mutateAsync({
+        firstName: personForm.firstName,
+        lastName: personForm.lastName,
+        email: personForm.email || undefined,
+        phone: personForm.phone || undefined,
+        employmentType: personForm.employmentType,
+        departmentId: personForm.departmentId || undefined,
+        jobTitle: personForm.jobTitle || undefined,
+        hireDate: personForm.hireDate ? new Date(personForm.hireDate) : undefined,
+        salary: personForm.salary || undefined,
+        notes: personForm.notes || undefined,
+      });
+      await createStakeholder.mutateAsync({
+        name: `${personForm.firstName} ${personForm.lastName}`,
+        email: personForm.email || undefined,
+        type: personForm.type,
+        title: personForm.jobTitle || undefined,
+      });
+      toast.success("Person added successfully");
+      setIsPersonOpen(false);
+      setPersonForm({
+        firstName: "", lastName: "", email: "", phone: "",
+        type: "employee", employmentType: "full_time",
+        departmentId: 0, jobTitle: "", hireDate: "", salary: "", notes: "",
+      });
+    } catch { /* errors surfaced by mutation onError */ }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // ── submit: add grant ──
+  const handleGrantSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    createPerson.mutate({
-      firstName: formData.firstName,
-      lastName: formData.lastName,
-      email: formData.email || undefined,
-      phone: formData.phone || undefined,
-      employmentType: formData.employmentType,
-      departmentId: formData.departmentId || undefined,
-      jobTitle: formData.jobTitle || undefined,
-      hireDate: formData.hireDate ? new Date(formData.hireDate) : undefined,
-      notes: formData.notes || undefined,
+    const totalValue = String(parseFloat(grantForm.shares || "0") * parseFloat(grantForm.pricePerShare || "0"));
+    createGrant.mutate({
+      stakeholderId: grantForm.stakeholderId,
+      shareClassId: grantForm.shareClassId,
+      grantType: grantForm.grantType,
+      grantDate: grantForm.grantDate,
+      shares: grantForm.shares,
+      pricePerShare: grantForm.pricePerShare,
+      exercisePrice: grantForm.exercisePrice || undefined,
+      vestingSchedule: grantForm.vestingSchedule,
+      vestingStartDate: grantForm.vestingStartDate || undefined,
+      cliffMonths: grantForm.cliffMonths,
+      totalVestingMonths: grantForm.totalVestingMonths,
+      totalValue,
+      notes: grantForm.notes || undefined,
     });
   };
 
+  // ══════════════════════════════════════════════════════════════════
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
             <UserCircle className="h-8 w-8" />
-            People
+            People &amp; Equity
           </h1>
           <p className="text-muted-foreground mt-1">
-            Manage employees, contractors, and consultants.
+            Team members, investors, advisors, and equity holdings
           </p>
         </div>
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Person
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-lg">
-            <form onSubmit={handleSubmit}>
+        <div className="flex items-center gap-2">
+          {/* Add Person dialog */}
+          <Dialog open={isPersonOpen} onOpenChange={setIsPersonOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="h-4 w-4 mr-2" />
+                Add Person
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-lg">
+              <form onSubmit={handlePersonSubmit}>
+                <DialogHeader>
+                  <DialogTitle>Add Person</DialogTitle>
+                  <DialogDescription>
+                    Creates both an employee record and a stakeholder record.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4 max-h-[60vh] overflow-y-auto">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="pFirstName">First Name *</Label>
+                      <Input id="pFirstName" value={personForm.firstName} onChange={(e) => setPersonForm({ ...personForm, firstName: e.target.value })} required />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="pLastName">Last Name *</Label>
+                      <Input id="pLastName" value={personForm.lastName} onChange={(e) => setPersonForm({ ...personForm, lastName: e.target.value })} required />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="pEmail">Email</Label>
+                      <Input id="pEmail" type="email" value={personForm.email} onChange={(e) => setPersonForm({ ...personForm, email: e.target.value })} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="pPhone">Phone</Label>
+                      <Input id="pPhone" value={personForm.phone} onChange={(e) => setPersonForm({ ...personForm, phone: e.target.value })} />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Stakeholder Type</Label>
+                      <Select value={personForm.type} onValueChange={(v: any) => setPersonForm({ ...personForm, type: v })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="founder">Founder</SelectItem>
+                          <SelectItem value="employee">Employee</SelectItem>
+                          <SelectItem value="investor">Investor</SelectItem>
+                          <SelectItem value="advisor">Advisor</SelectItem>
+                          <SelectItem value="board_member">Board Member</SelectItem>
+                          <SelectItem value="contractor">Contractor</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Employment Type</Label>
+                      <Select value={personForm.employmentType} onValueChange={(v: any) => setPersonForm({ ...personForm, employmentType: v })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="full_time">Full Time</SelectItem>
+                          <SelectItem value="part_time">Part Time</SelectItem>
+                          <SelectItem value="contractor">Contractor</SelectItem>
+                          <SelectItem value="intern">Intern</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="pTitle">Job Title</Label>
+                      <Input id="pTitle" value={personForm.jobTitle} onChange={(e) => setPersonForm({ ...personForm, jobTitle: e.target.value })} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="pDept">Department ID</Label>
+                      <Input id="pDept" type="number" value={personForm.departmentId || ""} onChange={(e) => setPersonForm({ ...personForm, departmentId: parseInt(e.target.value) || 0 })} />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="pHire">Start Date</Label>
+                      <Input id="pHire" type="date" value={personForm.hireDate} onChange={(e) => setPersonForm({ ...personForm, hireDate: e.target.value })} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="pSalary">Salary</Label>
+                      <Input id="pSalary" value={personForm.salary} onChange={(e) => setPersonForm({ ...personForm, salary: e.target.value })} placeholder="e.g. 120000" />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="pNotes">Notes</Label>
+                    <Textarea id="pNotes" value={personForm.notes} onChange={(e) => setPersonForm({ ...personForm, notes: e.target.value })} rows={2} />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setIsPersonOpen(false)}>Cancel</Button>
+                  <Button type="submit" disabled={createEmployee.isPending || createStakeholder.isPending}>
+                    {(createEmployee.isPending || createStakeholder.isPending) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                    Add Person
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+
+          {/* Manage Share Classes dialog */}
+          <Dialog open={isShareClassOpen} onOpenChange={setIsShareClassOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Layers className="h-4 w-4 mr-2" />
+                Share Classes
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>Add Person</DialogTitle>
-                <DialogDescription>
-                  Add a new employee, contractor, or consultant.
-                </DialogDescription>
+                <DialogTitle>Share Classes</DialogTitle>
+                <DialogDescription>Manage equity share classes</DialogDescription>
               </DialogHeader>
-              <div className="grid gap-4 py-4 max-h-[60vh] overflow-y-auto">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="firstName">First Name *</Label>
-                    <Input
-                      id="firstName"
-                      value={formData.firstName}
-                      onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
-                      placeholder="First name"
-                      required
-                    />
+              <div className="space-y-4">
+                {/* Existing share classes */}
+                {shareClasses && (shareClasses as any[]).length > 0 && (
+                  <div className="border rounded-lg overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Name</TableHead>
+                          <TableHead>Type</TableHead>
+                          <TableHead className="text-right">Authorized</TableHead>
+                          <TableHead className="text-right">Price/Share</TableHead>
+                          <TableHead className="text-right">Par Value</TableHead>
+                          <TableHead>Voting</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(shareClasses as any[]).map((sc: any) => (
+                          <TableRow key={sc.id}>
+                            <TableCell className="font-medium">{sc.name}</TableCell>
+                            <TableCell><Badge variant="outline">{sc.type}</Badge></TableCell>
+                            <TableCell className="text-right font-mono">{Number(sc.authorizedShares || 0).toLocaleString()}</TableCell>
+                            <TableCell className="text-right font-mono">${Number(sc.pricePerShare || 0).toFixed(4)}</TableCell>
+                            <TableCell className="text-right font-mono">${Number(sc.parValue || 0).toFixed(4)}</TableCell>
+                            <TableCell>{sc.votingRights ? "Yes" : "No"}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="lastName">Last Name *</Label>
-                    <Input
-                      id="lastName"
-                      value={formData.lastName}
-                      onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
-                      placeholder="Last name"
-                      required
-                    />
+                )}
+                {/* Create new share class form */}
+                <div className="border-t pt-4">
+                  <h4 className="text-sm font-semibold mb-3">Create New Share Class</h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Name</Label>
+                      <Input placeholder="Series A Preferred" value={scForm.name} onChange={(e) => setScForm({ ...scForm, name: e.target.value })} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Type</Label>
+                      <Select value={scForm.type} onValueChange={(v) => setScForm({ ...scForm, type: v })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="common">Common</SelectItem>
+                          <SelectItem value="preferred">Preferred</SelectItem>
+                          <SelectItem value="convertible_note">Convertible Note</SelectItem>
+                          <SelectItem value="safe">SAFE</SelectItem>
+                          <SelectItem value="warrant">Warrant</SelectItem>
+                          <SelectItem value="option_pool">Option Pool</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Authorized Shares</Label>
+                      <Input type="number" placeholder="10000000" value={scForm.authorizedShares} onChange={(e) => setScForm({ ...scForm, authorizedShares: e.target.value })} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Price per Share</Label>
+                      <Input type="number" step="0.0001" placeholder="1.00" value={scForm.pricePerShare} onChange={(e) => setScForm({ ...scForm, pricePerShare: e.target.value })} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Par Value</Label>
+                      <Input type="number" step="0.0001" placeholder="0.0001" value={scForm.parValue} onChange={(e) => setScForm({ ...scForm, parValue: e.target.value })} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Liquidation Preference</Label>
+                      <Input type="number" step="0.01" placeholder="1.0" value={scForm.liquidationPreference} onChange={(e) => setScForm({ ...scForm, liquidationPreference: e.target.value })} />
+                    </div>
                   </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="email">Email</Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      value={formData.email}
-                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      placeholder="email@company.com"
-                    />
+                  <div className="flex items-center gap-4 mt-3">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={scForm.votingRights} onChange={(e) => setScForm({ ...scForm, votingRights: e.target.checked })} />
+                      Voting Rights
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={scForm.isParticipating} onChange={(e) => setScForm({ ...scForm, isParticipating: e.target.checked })} />
+                      Participating
+                    </label>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="phone">Phone</Label>
-                    <Input
-                      id="phone"
-                      value={formData.phone}
-                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                      placeholder="+1 (555) 000-0000"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="employmentType">Employment Type</Label>
-                    <Select
-                      value={formData.employmentType}
-                      onValueChange={(value: any) => setFormData({ ...formData, employmentType: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="full_time">Full Time</SelectItem>
-                        <SelectItem value="part_time">Part Time</SelectItem>
-                        <SelectItem value="contractor">Contractor</SelectItem>
-                        <SelectItem value="intern">Intern</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="startDate">Start Date</Label>
-                    <Input
-                      id="startDate"
-                      type="date"
-                      value={formData.hireDate}
-                      onChange={(e) => setFormData({ ...formData, hireDate: e.target.value })}
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="jobTitle">Job Title</Label>
-                    <Input
-                      id="jobTitle"
-                      value={formData.jobTitle}
-                      onChange={(e) => setFormData({ ...formData, jobTitle: e.target.value })}
-                      placeholder="Software Engineer, etc."
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="departmentId">Department ID</Label>
-                    <Input
-                      id="departmentId"
-                      type="number"
-                      value={formData.departmentId || ""}
-                      onChange={(e) => setFormData({ ...formData, departmentId: parseInt(e.target.value) || 0 })}
-                      placeholder="Department ID"
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="notes">Notes</Label>
-                  <Textarea
-                    id="notes"
-                    value={formData.notes}
-                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                    placeholder="Additional notes..."
-                    rows={3}
-                  />
+                  <Button className="mt-3" onClick={async () => {
+                    try {
+                      await createShareClass.mutateAsync({
+                        name: scForm.name,
+                        type: scForm.type as any,
+                        authorizedShares: scForm.authorizedShares || undefined,
+                        pricePerShare: scForm.pricePerShare || undefined,
+                        parValue: scForm.parValue || "0.0001",
+                        liquidationPreference: scForm.liquidationPreference || "1",
+                        votingRights: scForm.votingRights,
+                        isParticipating: scForm.isParticipating,
+                      });
+                      toast.success("Share class created");
+                      setScForm({ name: "", type: "common", authorizedShares: "", pricePerShare: "", parValue: "0.0001", liquidationPreference: "1", votingRights: true, isParticipating: false });
+                    } catch (err: any) {
+                      toast.error(err.message || "Failed to create share class");
+                    }
+                  }}>
+                    Create Share Class
+                  </Button>
                 </div>
               </div>
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setIsOpen(false)}>
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={createPerson.isPending}>
-                  {createPerson.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                  Add Person
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+            </DialogContent>
+          </Dialog>
+
+          {/* Add Grant dialog */}
+          <Dialog open={isGrantOpen} onOpenChange={setIsGrantOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline">
+                <Award className="h-4 w-4 mr-2" />
+                Add Grant
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-lg">
+              <form onSubmit={handleGrantSubmit}>
+                <DialogHeader>
+                  <DialogTitle>Add Equity Grant</DialogTitle>
+                  <DialogDescription>Grant equity to a stakeholder.</DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4 max-h-[60vh] overflow-y-auto">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Stakeholder *</Label>
+                      <Select value={grantForm.stakeholderId ? String(grantForm.stakeholderId) : ""} onValueChange={(v) => setGrantForm({ ...grantForm, stakeholderId: parseInt(v) })}>
+                        <SelectTrigger><SelectValue placeholder="Select person" /></SelectTrigger>
+                        <SelectContent>
+                          {stakeholders?.map((sh: any) => (
+                            <SelectItem key={sh.id} value={String(sh.id)}>{sh.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Share Class *</Label>
+                      <Select value={grantForm.shareClassId ? String(grantForm.shareClassId) : ""} onValueChange={(v) => setGrantForm({ ...grantForm, shareClassId: parseInt(v) })}>
+                        <SelectTrigger><SelectValue placeholder="Select class" /></SelectTrigger>
+                        <SelectContent>
+                          {shareClasses?.map((sc: any) => (
+                            <SelectItem key={sc.id} value={String(sc.id)}>{sc.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Grant Type</Label>
+                      <Select value={grantForm.grantType} onValueChange={(v: any) => setGrantForm({ ...grantForm, grantType: v })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="purchase">Purchase</SelectItem>
+                          <SelectItem value="option_iso">ISO Option</SelectItem>
+                          <SelectItem value="option_nso">NSO Option</SelectItem>
+                          <SelectItem value="rsu">RSU</SelectItem>
+                          <SelectItem value="restricted_stock">Restricted Stock</SelectItem>
+                          <SelectItem value="safe">SAFE</SelectItem>
+                          <SelectItem value="warrant">Warrant</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="gDate">Grant Date *</Label>
+                      <Input id="gDate" type="date" value={grantForm.grantDate} onChange={(e) => setGrantForm({ ...grantForm, grantDate: e.target.value })} required />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="gShares">Shares *</Label>
+                      <Input id="gShares" value={grantForm.shares} onChange={(e) => setGrantForm({ ...grantForm, shares: e.target.value })} required />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="gPPS">Price/Share *</Label>
+                      <Input id="gPPS" value={grantForm.pricePerShare} onChange={(e) => setGrantForm({ ...grantForm, pricePerShare: e.target.value })} required />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="gExPrice">Exercise Price</Label>
+                      <Input id="gExPrice" value={grantForm.exercisePrice} onChange={(e) => setGrantForm({ ...grantForm, exercisePrice: e.target.value })} />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label>Vesting Schedule</Label>
+                      <Select value={grantForm.vestingSchedule} onValueChange={(v: any) => setGrantForm({ ...grantForm, vestingSchedule: v })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">None</SelectItem>
+                          <SelectItem value="monthly">Monthly</SelectItem>
+                          <SelectItem value="quarterly">Quarterly</SelectItem>
+                          <SelectItem value="annually">Annually</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="gCliff">Cliff (months)</Label>
+                      <Input id="gCliff" type="number" value={grantForm.cliffMonths} onChange={(e) => setGrantForm({ ...grantForm, cliffMonths: parseInt(e.target.value) || 0 })} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="gVestStart">Vesting Start</Label>
+                      <Input id="gVestStart" type="date" value={grantForm.vestingStartDate} onChange={(e) => setGrantForm({ ...grantForm, vestingStartDate: e.target.value })} />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="gNotes">Notes</Label>
+                    <Textarea id="gNotes" value={grantForm.notes} onChange={(e) => setGrantForm({ ...grantForm, notes: e.target.value })} rows={2} />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setIsGrantOpen(false)}>Cancel</Button>
+                  <Button type="submit" disabled={createGrant.isPending}>
+                    {createGrant.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                    Add Grant
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
+      {/* Table card */}
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center gap-4 flex-wrap">
             <div className="relative flex-1 min-w-[200px] max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search people..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-              />
+              <Input placeholder="Search people..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
             </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[150px]">
-                <SelectValue placeholder="Status" />
+            <Select value={typeFilter} onValueChange={setTypeFilter}>
+              <SelectTrigger className="w-[160px]">
+                <SelectValue placeholder="Type" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="inactive">Inactive</SelectItem>
-                <SelectItem value="on_leave">On Leave</SelectItem>
-                <SelectItem value="terminated">Terminated</SelectItem>
+                <SelectItem value="all">All Types</SelectItem>
+                <SelectItem value="founder">Founder</SelectItem>
+                <SelectItem value="employee">Employee</SelectItem>
+                <SelectItem value="investor">Investor</SelectItem>
+                <SelectItem value="advisor">Advisor</SelectItem>
+                <SelectItem value="board_member">Board Member</SelectItem>
+                <SelectItem value="contractor">Contractor</SelectItem>
+                <SelectItem value="full_time">Full Time</SelectItem>
+                <SelectItem value="part_time">Part Time</SelectItem>
+                <SelectItem value="intern">Intern</SelectItem>
               </SelectContent>
             </Select>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0">
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
-          ) : !filteredPeople || filteredPeople.length === 0 ? (
+          ) : filtered.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               <UserCircle className="h-12 w-12 mx-auto mb-4 opacity-20" />
               <p>No people found</p>
               <p className="text-sm">Add your first team member to get started.</p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Department</TableHead>
-                  <TableHead>Title</TableHead>
-                  <TableHead>Start Date</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredPeople.map((person) => (
-                  <TableRow key={person.id}>
-                    <TableCell className="font-medium">
-                      {person.firstName} {person.lastName}
-                    </TableCell>
-                    <TableCell>{person.email || "-"}</TableCell>
-                    <TableCell>
-                      <Badge className={typeColors[person.employmentType]}>{person.employmentType.replace("_", " ")}</Badge>
-                    </TableCell>
-                    <TableCell>Dept #{person.departmentId || "-"}</TableCell>
-                    <TableCell>{person.jobTitle || "-"}</TableCell>
-                    <TableCell>
-                      {person.hireDate
-                        ? format(new Date(person.hireDate), "MMM d, yyyy")
-                        : "-"}
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={getStatusColor(person.status)}>{person.status.replace("_", " ")}</Badge>
-                    </TableCell>
+            <div className="overflow-x-auto">
+              <Table className="text-sm">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="sticky left-0 bg-background z-10 min-w-[160px]">Name</TableHead>
+                    <TableHead className="min-w-[180px]">Email</TableHead>
+                    <TableHead className="min-w-[100px]">Type</TableHead>
+                    <TableHead className="min-w-[120px]">Title</TableHead>
+                    <TableHead className="min-w-[100px]">Department</TableHead>
+                    <TableHead className="min-w-[100px] text-right">Salary</TableHead>
+                    <TableHead className="min-w-[110px]">Share Class</TableHead>
+                    <TableHead className="min-w-[110px] text-right">Shares Granted</TableHead>
+                    <TableHead className="min-w-[100px] text-right">Shares Vested</TableHead>
+                    <TableHead className="min-w-[90px] text-right">Unvested</TableHead>
+                    <TableHead className="min-w-[100px] text-right">Exercise Price</TableHead>
+                    <TableHead className="min-w-[110px]">Vesting Start</TableHead>
+                    <TableHead className="min-w-[60px] text-right">Cliff</TableHead>
+                    <TableHead className="min-w-[110px]">Next Vest Date</TableHead>
+                    <TableHead className="min-w-[110px] text-right">Grant Value</TableHead>
+                    <TableHead className="min-w-[90px] text-right">Ownership %</TableHead>
+                    <TableHead className="min-w-[90px]">Status</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map((r) => (
+                    <TableRow key={r.key} className="h-9">
+                      <TableCell className="sticky left-0 bg-background z-10 font-medium py-1.5 px-3">{r.name}</TableCell>
+                      <TableCell className="py-1.5 px-3">{r.email || "-"}</TableCell>
+                      <TableCell className="py-1.5 px-3">
+                        {r.type && r.type !== "-" ? (
+                          <Badge className={typeColors[r.type] || "bg-gray-500/10 text-gray-600"}>
+                            {r.type.replace(/_/g, " ")}
+                          </Badge>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="py-1.5 px-3">{r.title}</TableCell>
+                      <TableCell className="py-1.5 px-3">{r.department}</TableCell>
+                      <TableCell className="py-1.5 px-3 text-right tabular-nums">{r.salary}</TableCell>
+                      <TableCell className="py-1.5 px-3">{r.shareClass}</TableCell>
+                      <TableCell className="py-1.5 px-3 text-right tabular-nums">{r.sharesGranted}</TableCell>
+                      <TableCell className="py-1.5 px-3 text-right tabular-nums">{r.sharesVested}</TableCell>
+                      <TableCell className="py-1.5 px-3 text-right tabular-nums">{r.unvested}</TableCell>
+                      <TableCell className="py-1.5 px-3 text-right tabular-nums">{r.exercisePrice}</TableCell>
+                      <TableCell className="py-1.5 px-3">{r.vestingStart}</TableCell>
+                      <TableCell className="py-1.5 px-3 text-right tabular-nums">{r.cliffMonths}</TableCell>
+                      <TableCell className="py-1.5 px-3">{r.nextVestDate}</TableCell>
+                      <TableCell className="py-1.5 px-3 text-right tabular-nums">{r.grantValue}</TableCell>
+                      <TableCell className="py-1.5 px-3 text-right tabular-nums">{fmtPct(r.ownershipPct)}</TableCell>
+                      <TableCell className="py-1.5 px-3">
+                        {r.status && r.status !== "-" ? (
+                          <Badge className={getStatusColor(r.status)}>{r.status.replace(/_/g, " ")}</Badge>
+                        ) : null}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>

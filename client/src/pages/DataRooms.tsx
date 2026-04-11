@@ -30,6 +30,10 @@ export default function DataRooms() {
     requiresNda: false,
     allowDownload: true,
     allowPrint: true,
+    requiresEmail: false,
+    enableWatermark: false,
+    brandingCompanyName: "",
+    brandingColor: "",
   });
 
   const utils = trpc.useUtils();
@@ -54,6 +58,10 @@ export default function DataRooms() {
         requiresNda: false,
         allowDownload: true,
         allowPrint: true,
+        requiresEmail: false,
+        enableWatermark: false,
+        brandingCompanyName: "",
+        brandingColor: "",
       });
       utils.dataRoom.list.invalidate();
       // Navigate to the new data room
@@ -82,6 +90,8 @@ export default function DataRooms() {
     createMutation.mutate({
       ...newRoom,
       password: newRoom.password || undefined,
+      brandingCompanyName: newRoom.brandingCompanyName || undefined,
+      brandingColor: newRoom.brandingColor || undefined,
     });
   };
 
@@ -190,6 +200,43 @@ export default function DataRooms() {
                   <Switch
                     checked={newRoom.allowDownload}
                     onCheckedChange={(checked) => setNewRoom({ ...newRoom, allowDownload: checked })}
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>Require Email</Label>
+                    <p className="text-sm text-muted-foreground">Visitors must enter email to view</p>
+                  </div>
+                  <Switch
+                    checked={newRoom.requiresEmail}
+                    onCheckedChange={(checked) => setNewRoom({ ...newRoom, requiresEmail: checked })}
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>Enable Watermark</Label>
+                    <p className="text-sm text-muted-foreground">Overlay visitor email on documents</p>
+                  </div>
+                  <Switch
+                    checked={newRoom.enableWatermark}
+                    onCheckedChange={(checked) => setNewRoom({ ...newRoom, enableWatermark: checked })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Company Name (optional)</Label>
+                  <Input
+                    placeholder="Your Company"
+                    value={newRoom.brandingCompanyName}
+                    onChange={(e) => setNewRoom({ ...newRoom, brandingCompanyName: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Brand Color (optional)</Label>
+                  <Input
+                    type="color"
+                    className="w-20 h-8"
+                    value={newRoom.brandingColor || "#000000"}
+                    onChange={(e) => setNewRoom({ ...newRoom, brandingColor: e.target.value })}
                   />
                 </div>
               </div>

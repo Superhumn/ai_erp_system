@@ -59,6 +59,9 @@ import {
   Landmark,
   Network,
   Upload,
+  LineChart,
+  Megaphone,
+  FileBarChart,
 } from "lucide-react";
 import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -82,6 +85,7 @@ const menuGroups = [
       { icon: ClipboardCheck, label: "Approvals", path: "/ai/approvals" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: Bell, label: "Notifications", path: "/notifications" },
+      { icon: Megaphone, label: "Investor Updates", path: "/investor-updates" },
     ],
   },
   {
@@ -122,7 +126,9 @@ const menuGroups = [
   {
     label: "People & Legal",
     items: [
-      { icon: Users, label: "Team", path: "/hr/employees" },
+      { icon: Users, label: "People & Equity", path: "/hr/employees" },
+      { icon: LineChart, label: "Equity Portal", path: "/hr/equity-portal" },
+      { icon: FileBarChart, label: "Equity Reports", path: "/hr/equity-reports" },
       { icon: Scale, label: "Contracts", path: "/legal/contracts" },
     ],
   },

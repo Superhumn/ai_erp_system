@@ -272,18 +272,23 @@ export default function DataRoomPublic() {
         </div>
       )}
       {/* Header */}
-      <header className="border-b bg-card">
+      <header className="border-b bg-card" style={content?.room.brandingColor ? { borderBottomColor: content.room.brandingColor } : undefined}>
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              {content?.room.logoUrl && (
+              {(content?.room.brandingLogo || content?.room.logoUrl) && (
                 <img
-                  src={content.room.logoUrl}
+                  src={content.room.brandingLogo || content.room.logoUrl!}
                   alt="Logo"
                   className="h-8 w-auto"
                 />
               )}
               <div>
+                {content?.room.brandingCompanyName && (
+                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground" style={content?.room.brandingColor ? { color: content.room.brandingColor } : undefined}>
+                    {content.room.brandingCompanyName}
+                  </p>
+                )}
                 <h1 className="text-lg font-semibold tracking-[-0.015em]">{content?.room.name}</h1>
                 {content?.room.description && (
                   <p className="text-sm text-muted-foreground">{content.room.description}</p>

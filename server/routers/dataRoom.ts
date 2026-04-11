@@ -43,6 +43,11 @@ export const dataRoomRouter = router({
         allowDownload: z.boolean().default(true),
         allowPrint: z.boolean().default(true),
         googleDriveFolderId: z.string().optional(),
+        requiresEmail: z.boolean().default(false),
+        enableWatermark: z.boolean().default(false),
+        brandingLogo: z.string().optional(),
+        brandingColor: z.string().optional(),
+        brandingCompanyName: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         // Check if slug is unique
@@ -58,10 +63,12 @@ export const dataRoomRouter = router({
           hashedPassword = crypto.createHash('sha256').update(input.password).digest('hex');
         }
 
+        const { enableWatermark, ...rest } = input;
         const { id } = await db.createDataRoom({
-          ...input,
+          ...rest,
           password: hashedPassword,
           ownerId: ctx.user.id,
+          watermarkEnabled: enableWatermark ?? false,
         });
 
         return { id, slug: input.slug };
@@ -82,6 +89,11 @@ export const dataRoomRouter = router({
         welcomeMessage: z.string().optional(),
         status: z.enum(['active', 'archived', 'draft']).optional(),
         googleDriveFolderId: z.string().nullable().optional(),
+        requiresEmail: z.boolean().optional(),
+        enableWatermark: z.boolean().optional(),
+        brandingLogo: z.string().nullable().optional(),
+        brandingColor: z.string().nullable().optional(),
+        brandingCompanyName: z.string().nullable().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const room = await db.getDataRoomById(input.id);
@@ -90,7 +102,7 @@ export const dataRoomRouter = router({
           throw new TRPCError({ code: 'FORBIDDEN' });
         }
 
-        const { id, password, ...updateData } = input;
+        const { id, password, enableWatermark, ...updateData } = input;
         let hashedPassword = undefined;
         if (password !== undefined) {
           if (password === null) {
@@ -104,6 +116,7 @@ export const dataRoomRouter = router({
         await db.updateDataRoom(id, {
           ...updateData,
           ...(hashedPassword !== undefined && { password: hashedPassword }),
+          ...(enableWatermark !== undefined && { watermarkEnabled: enableWatermark }),
         });
 
         return { success: true };
@@ -699,6 +712,12 @@ export const dataRoomRouter = router({
             throw new TRPCError({ code: 'FORBIDDEN', message: 'Link view limit reached' });
           }
 
+          // Check data room level email gate
+          const dataRoom = await db.getDataRoomById(link.dataRoomId);
+          if (dataRoom?.requiresEmail && !input.visitorInfo?.email) {
+            return { requiresInfo: true, requiredFields: ['email'], dataRoomId: null, visitorId: null };
+          }
+
           // Check password
           if (link.password) {
             if (!input.password) {
@@ -864,6 +883,10 @@ export const dataRoomRouter = router({
               invitationOnly: room.invitationOnly,
               watermarkEnabled: room.watermarkEnabled,
               watermarkText: room.watermarkText,
+              requiresEmail: room.requiresEmail,
+              brandingLogo: room.brandingLogo,
+              brandingColor: room.brandingColor,
+              brandingCompanyName: room.brandingCompanyName,
             },
             folders: folders.filter(f => !f.googleDriveFolderId || true),
             documents: documents.filter(d => !d.isHidden),
@@ -896,6 +919,51 @@ export const dataRoomRouter = router({
             downloaded: input.downloaded,
             deviceType: ctx.req.headers['user-agent']?.includes('Mobile') ? 'mobile' : 'desktop',
           });
+
+          // Update engagement scoring for the visitor
+          try {
+            const visitor = await db.getDataRoomVisitorById(input.visitorId);
+            if (visitor) {
+              const durationMinutes = Math.floor((input.duration || 0) / 60);
+              const newPagesViewed = (input.pagesViewed?.length || 0);
+              // +1 per document viewed, +1 per minute spent
+              const scoreIncrement = 1 + durationMinutes;
+              await db.updateDataRoomVisitor(visitor.id, {
+                engagementScore: (visitor.engagementScore || 0) + scoreIncrement,
+                pagesViewed: (visitor.pagesViewed || 0) + newPagesViewed,
+                totalTimeSpent: (visitor.totalTimeSpent || 0) + (input.duration || 0),
+                lastViewedAt: new Date(),
+              });
+            }
+          } catch (err) {
+            console.warn("[DataRoom] Failed to update engagement score:", err);
+          }
+
+          // Send real-time view notification to data room owner
+          try {
+            const document = await db.getDataRoomDocumentById(input.documentId);
+            if (document) {
+              const dataRoom = await db.getDataRoomById(document.dataRoomId);
+              if (dataRoom) {
+                const visitor = await db.getDataRoomVisitorById(input.visitorId);
+                const visitorName = visitor?.name || visitor?.email || 'Anonymous visitor';
+                const link = input.linkId ? await db.getDataRoomLinkByCode('') : null; // We have linkId not code
+                await db.createNotification({
+                  userId: dataRoom.ownerId,
+                  type: 'data_room_view',
+                  title: `${visitorName} is viewing "${dataRoom.name}"`,
+                  message: `Viewing document: ${document.name}`,
+                  entityType: 'data_room',
+                  entityId: dataRoom.id,
+                  severity: 'info',
+                  link: `/data-rooms/${dataRoom.id}`,
+                });
+              }
+            }
+          } catch (err) {
+            console.warn("[DataRoom] Failed to send view notification:", err);
+          }
+
           return { id };
         }),
     }),

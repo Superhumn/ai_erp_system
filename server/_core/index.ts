@@ -471,7 +471,7 @@ async function startServer() {
           setInterval(async () => {
             for (const inbox of inboxes) {
               try {
-                await scanInbox({ host: inbox.host!, user: inbox.user!, password: inbox.password!, port: inbox.port, tls: true }, { unseenOnly: true, limit: 50 });
+                await scanInbox({ host: inbox.host!, port: inbox.port, secure: true, auth: { user: inbox.user!, pass: inbox.password! } }, { unseenOnly: true, limit: 50 });
               } catch (e) {
                 console.warn(`[Email Polling] Scan failed for ${inbox.user}:`, e);
               }
@@ -481,7 +481,7 @@ async function startServer() {
           setTimeout(async () => {
             for (const inbox of inboxes) {
               try {
-                await scanInbox({ host: inbox.host!, user: inbox.user!, password: inbox.password!, port: inbox.port, tls: true }, { unseenOnly: true, limit: 50 });
+                await scanInbox({ host: inbox.host!, port: inbox.port, secure: true, auth: { user: inbox.user!, pass: inbox.password! } }, { unseenOnly: true, limit: 50 });
               } catch (e) {
                 console.warn(`[Email Polling] Initial scan failed for ${inbox.user}:`, e);
               }

@@ -237,11 +237,12 @@ export async function clearSyncHistory() {
 // NOTIFICATION FUNCTIONS
 // ============================================
 
-export type NotificationType = 
+export type NotificationType =
   | "shipping_update" | "inventory_low" | "inventory_received" | "inventory_adjustment"
   | "po_approved" | "po_shipped" | "po_received" | "po_fulfilled"
   | "work_order_started" | "work_order_completed" | "work_order_shortage"
   | "sales_order_new" | "sales_order_shipped" | "sales_order_delivered"
+  | "data_room_view"
   | "alert" | "system" | "info" | "warning" | "error" | "success" | "reminder";
 
 export interface CreateNotificationInput {

@@ -89,6 +89,8 @@ const CustomsDetail = lazy(() => import("./pages/freight/CustomsDetail"));
 // HR
 const Employees = lazy(() => import("./pages/hr/Employees"));
 const Payroll = lazy(() => import("./pages/hr/Payroll"));
+const EquityPortal = lazy(() => import("./pages/hr/EquityPortal"));
+const EquityReports = lazy(() => import("./pages/hr/EquityReports"));
 
 // Legal
 const Contracts = lazy(() => import("./pages/legal/Contracts"));
@@ -120,6 +122,9 @@ const VendorPortal = lazy(() => import("./pages/portal/VendorPortal"));
 
 // SOPs
 const SOPs = lazy(() => import("./pages/SOPs"));
+
+// Investor Updates
+const InvestorUpdates = lazy(() => import("./pages/InvestorUpdates"));
 
 // Data Room
 const DataRooms = lazy(() => import("./pages/DataRooms"));
@@ -253,6 +258,8 @@ function Router() {
           <Route path="/hr/employees" component={Employees} />
           <Route path="/hr/payroll" component={Payroll} />
           <Route path="/hr/ai" component={HRAIInsights} />
+          <Route path="/hr/equity-portal" component={EquityPortal} />
+          <Route path="/hr/equity-reports" component={EquityReports} />
 
           {/* Legal */}
           <Route path="/legal/contracts" component={Contracts} />
@@ -264,6 +271,9 @@ function Router() {
           <Route path="/projects" component={Projects} />
           <Route path="/projects/ai" component={ProjectsAI} />
           <Route path="/projects/investment-grants" component={InvestmentGrantChecklist} />
+
+          {/* Investor Updates */}
+          <Route path="/investor-updates" component={InvestorUpdates} />
 
           {/* SOPs */}
           <Route path="/sops" component={SOPs} />

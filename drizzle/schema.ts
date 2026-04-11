@@ -854,6 +854,7 @@ export const notificationTypeEnum = mysqlEnum("notification_type", [
   "sales_order_new",
   "sales_order_shipped",
   "sales_order_delivered",
+  "data_room_view",
   "alert",
   "system",
   "info",
@@ -2474,10 +2475,18 @@ export const dataRooms = mysqlTable("data_rooms", {
   requiresNda: boolean("requiresNda").default(false).notNull(),
   ndaText: text("ndaText"),
   
+  // Email capture gate
+  requiresEmail: boolean("requiresEmail").default(false),
+
   // Customization
   logoUrl: varchar("logoUrl", { length: 512 }),
   brandColor: varchar("brandColor", { length: 7 }), // Hex color
   welcomeMessage: text("welcomeMessage"),
+
+  // Custom branding
+  brandingLogo: text("brandingLogo"),
+  brandingColor: varchar("brandingColor", { length: 7 }), // hex color
+  brandingCompanyName: varchar("brandingCompanyName", { length: 256 }),
   
   // Settings
   allowDownload: boolean("allowDownload").default(true).notNull(),
@@ -2627,6 +2636,10 @@ export const dataRoomVisitors = mysqlTable("data_room_visitors", {
   totalViews: int("totalViews").default(0).notNull(),
   totalTimeSpent: int("totalTimeSpent").default(0).notNull(), // seconds
   lastViewedAt: timestamp("lastViewedAt"),
+
+  // Engagement scoring
+  engagementScore: int("engagementScore").default(0),
+  pagesViewed: int("pagesViewed").default(0),
   
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -5042,3 +5055,274 @@ export const grantBidWebFormMappings = mysqlTable("grant_bid_web_form_mappings",
 
 export type GrantBidWebFormMapping = typeof grantBidWebFormMappings.$inferSelect;
 export type InsertGrantBidWebFormMapping = typeof grantBidWebFormMappings.$inferInsert;
+
+// ============================================
+// CAP TABLE & EQUITY MANAGEMENT
+// ============================================
+
+export const shareClasses = mysqlTable("share_classes", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 128 }).notNull(), // "Common", "Series A Preferred", etc.
+  type: mysqlEnum("type", ["common", "preferred", "convertible_note", "safe", "warrant", "option_pool"]).notNull(),
+  authorizedShares: decimal("authorizedShares", { precision: 18, scale: 4 }),
+  parValue: decimal("parValue", { precision: 18, scale: 6 }).default("0.0001"),
+  pricePerShare: decimal("pricePerShare", { precision: 18, scale: 4 }),
+  liquidationPreference: decimal("liquidationPreference", { precision: 10, scale: 4 }).default("1"),
+  liquidationMultiple: decimal("liquidationMultiple", { precision: 10, scale: 4 }).default("1"),
+  isParticipating: boolean("isParticipating").default(false),
+  participationCap: decimal("participationCap", { precision: 10, scale: 4 }),
+  conversionRatio: decimal("conversionRatio", { precision: 10, scale: 4 }).default("1"),
+  votingRights: boolean("votingRights").default(true),
+  dividendRate: decimal("dividendRate", { precision: 10, scale: 4 }),
+  antidilutionProtection: mysqlEnum("antidilutionProtection", ["none", "broad_weighted_average", "narrow_weighted_average", "full_ratchet"]).default("none"),
+  boardSeats: int("boardSeats").default(0),
+  seniorityRank: int("seniorityRank").default(0), // Higher = more senior in liquidation
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export type ShareClass = typeof shareClasses.$inferSelect;
+export type InsertShareClass = typeof shareClasses.$inferInsert;
+
+export const stakeholders = mysqlTable("stakeholders", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  name: varchar("name", { length: 256 }).notNull(),
+  email: varchar("email", { length: 320 }),
+  type: mysqlEnum("type", ["founder", "employee", "investor", "advisor", "board_member", "contractor"]).notNull(),
+  title: varchar("title", { length: 128 }),
+  relationship: varchar("relationship", { length: 128 }), // "Lead Investor", "Angel", etc.
+  address: text("address"),
+  taxId: varchar("taxId", { length: 64 }),
+  accreditedInvestor: boolean("accreditedInvestor").default(false),
+  notes: text("notes"),
+  userId: int("userId"), // Link to ERP user if they have an account
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export type Stakeholder = typeof stakeholders.$inferSelect;
+export type InsertStakeholder = typeof stakeholders.$inferInsert;
+
+export const equityGrants = mysqlTable("equity_grants", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  stakeholderId: int("stakeholderId").notNull(),
+  shareClassId: int("shareClassId").notNull(),
+  grantType: mysqlEnum("grantType", ["purchase", "option_iso", "option_nso", "rsu", "restricted_stock", "convertible_note", "safe", "warrant", "secondary"]).notNull(),
+  grantDate: timestamp("grantDate").notNull(),
+  shares: decimal("shares", { precision: 18, scale: 4 }).notNull(),
+  pricePerShare: decimal("pricePerShare", { precision: 18, scale: 4 }).notNull(),
+  totalValue: decimal("totalValue", { precision: 18, scale: 2 }),
+  status: mysqlEnum("status", ["active", "partially_vested", "fully_vested", "exercised", "cancelled", "expired", "converted"]).default("active"),
+  // Vesting
+  vestingStartDate: timestamp("vestingStartDate"),
+  vestingEndDate: timestamp("vestingEndDate"),
+  vestingSchedule: mysqlEnum("vestingSchedule", ["none", "monthly", "quarterly", "annually", "custom"]).default("none"),
+  cliffMonths: int("cliffMonths").default(0),
+  totalVestingMonths: int("totalVestingMonths").default(0),
+  accelerationOnChange: boolean("accelerationOnChange").default(false), // Single trigger
+  doubleAcceleration: boolean("doubleAcceleration").default(false), // Double trigger
+  sharesVested: decimal("sharesVested", { precision: 18, scale: 4 }).default("0"),
+  sharesExercised: decimal("sharesExercised", { precision: 18, scale: 4 }).default("0"),
+  // For options
+  exercisePrice: decimal("exercisePrice", { precision: 18, scale: 4 }),
+  expirationDate: timestamp("expirationDate"),
+  earlyExercise: boolean("earlyExercise").default(false),
+  // For convertible notes / SAFEs
+  principalAmount: decimal("principalAmount", { precision: 18, scale: 2 }),
+  interestRate: decimal("interestRate", { precision: 10, scale: 4 }),
+  valuationCap: decimal("valuationCap", { precision: 18, scale: 2 }),
+  discountRate: decimal("discountRate", { precision: 10, scale: 4 }),
+  maturityDate: timestamp("maturityDate"),
+  convertedToShareClassId: int("convertedToShareClassId"),
+  conversionDate: timestamp("conversionDate"),
+  // Certificate
+  certificateNumber: varchar("certificateNumber", { length: 64 }),
+  boardApprovalDate: timestamp("boardApprovalDate"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export type EquityGrant = typeof equityGrants.$inferSelect;
+export type InsertEquityGrant = typeof equityGrants.$inferInsert;
+
+export const valuations409a = mysqlTable("valuations_409a", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  valuationDate: timestamp("valuationDate").notNull(),
+  fairMarketValue: decimal("fairMarketValue", { precision: 18, scale: 4 }).notNull(), // Per share FMV
+  totalValuation: decimal("totalValuation", { precision: 18, scale: 2 }),
+  provider: varchar("provider", { length: 256 }), // "Carta 409A", "Eqvista", etc.
+  methodology: varchar("methodology", { length: 128 }),
+  status: mysqlEnum("status", ["draft", "pending", "approved", "expired"]).default("draft"),
+  expirationDate: timestamp("expirationDate"),
+  reportUrl: text("reportUrl"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export type Valuation409a = typeof valuations409a.$inferSelect;
+export type InsertValuation409a = typeof valuations409a.$inferInsert;
+
+export const equityTransactions = mysqlTable("equity_transactions", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  grantId: int("grantId").notNull(),
+  stakeholderId: int("stakeholderId").notNull(),
+  type: mysqlEnum("type", ["grant", "vest", "exercise", "cancel", "expire", "convert", "transfer", "repurchase", "forfeit"]).notNull(),
+  shares: decimal("shares", { precision: 18, scale: 4 }).notNull(),
+  pricePerShare: decimal("pricePerShare", { precision: 18, scale: 4 }),
+  totalValue: decimal("totalValue", { precision: 18, scale: 2 }),
+  transactionDate: timestamp("transactionDate").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type EquityTransaction = typeof equityTransactions.$inferSelect;
+export type InsertEquityTransaction = typeof equityTransactions.$inferInsert;
+
+// ============================================
+// OFFER LETTERS
+// ============================================
+
+export const offerLetters = mysqlTable("offer_letters", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  stakeholderId: int("stakeholderId"),
+  employeeId: int("employeeId"),
+  candidateName: varchar("candidateName", { length: 256 }).notNull(),
+  candidateEmail: varchar("candidateEmail", { length: 320 }),
+  position: varchar("position", { length: 256 }).notNull(),
+  department: varchar("department", { length: 128 }),
+  startDate: timestamp("startDate"),
+  salary: decimal("salary", { precision: 12, scale: 2 }),
+  salaryPeriod: mysqlEnum("salaryPeriod", ["annual", "monthly", "hourly"]).default("annual"),
+  bonus: decimal("bonus", { precision: 12, scale: 2 }),
+  equityShares: decimal("equityShares", { precision: 18, scale: 4 }),
+  equityType: varchar("equityType", { length: 64 }), // "ISO", "RSU", etc.
+  vestingMonths: int("vestingMonths"),
+  cliffMonths: int("cliffMonths"),
+  benefits: text("benefits"), // JSON or markdown
+  reportingTo: varchar("reportingTo", { length: 256 }),
+  location: varchar("location", { length: 256 }),
+  employmentType: mysqlEnum("employmentType", ["full_time", "part_time", "contract", "intern"]).default("full_time"),
+  letterContent: text("letterContent"), // The generated letter HTML/markdown
+  status: mysqlEnum("status", ["draft", "sent", "viewed", "accepted", "declined", "expired"]).default("draft"),
+  sentAt: timestamp("sentAt"),
+  viewedAt: timestamp("viewedAt"),
+  respondedAt: timestamp("respondedAt"),
+  expiresAt: timestamp("expiresAt"),
+  signatureUrl: text("signatureUrl"),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export type OfferLetter = typeof offerLetters.$inferSelect;
+export type InsertOfferLetter = typeof offerLetters.$inferInsert;
+
+// ============================================
+// EXERCISE REQUESTS
+// ============================================
+
+export const exerciseRequests = mysqlTable("exercise_requests", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  stakeholderId: int("stakeholderId").notNull(),
+  grantId: int("grantId").notNull(),
+  sharesToExercise: decimal("sharesToExercise", { precision: 18, scale: 4 }).notNull(),
+  exercisePrice: decimal("exercisePrice", { precision: 18, scale: 4 }).notNull(),
+  totalCost: decimal("totalCost", { precision: 18, scale: 2 }).notNull(),
+  exerciseType: mysqlEnum("exerciseType", ["cash", "cashless", "net_exercise"]).default("cash"),
+  status: mysqlEnum("status", ["pending", "approved", "completed", "denied", "cancelled"]).default("pending"),
+  requestedAt: timestamp("requestedAt").defaultNow().notNull(),
+  approvedBy: int("approvedBy"),
+  approvedAt: timestamp("approvedAt"),
+  completedAt: timestamp("completedAt"),
+  denialReason: text("denialReason"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export type ExerciseRequest = typeof exerciseRequests.$inferSelect;
+export type InsertExerciseRequest = typeof exerciseRequests.$inferInsert;
+
+// ============================================
+// BOARD APPROVALS & SIGNATURES
+// ============================================
+
+export const boardResolutions = mysqlTable("board_resolutions", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  title: varchar("title", { length: 256 }).notNull(),
+  type: mysqlEnum("type", ["equity_grant", "officer_appointment", "fundraising", "budget_approval", "contract", "policy_change", "compensation", "option_pool", "share_class", "other"]).notNull(),
+  description: text("description"),
+  documentUrl: text("documentUrl"),
+  status: mysqlEnum("status", ["draft", "submitted", "under_review", "approved", "rejected", "signed", "archived"]).default("draft"),
+  requiredSignatures: int("requiredSignatures").default(1),
+  completedSignatures: int("completedSignatures").default(0),
+  submittedAt: timestamp("submittedAt"),
+  approvedAt: timestamp("approvedAt"),
+  dueDate: timestamp("dueDate"),
+  relatedEntityType: varchar("relatedEntityType", { length: 64 }),
+  relatedEntityId: int("relatedEntityId"),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export const boardSignatures = mysqlTable("board_signatures", {
+  id: int("id").autoincrement().primaryKey(),
+  resolutionId: int("resolutionId").notNull(),
+  signerId: int("signerId").notNull(),
+  signerName: varchar("signerName", { length: 256 }).notNull(),
+  signerEmail: varchar("signerEmail", { length: 320 }),
+  signerRole: varchar("signerRole", { length: 128 }),
+  status: mysqlEnum("status", ["pending", "signed", "declined"]).default("pending"),
+  signedAt: timestamp("signedAt"),
+  declinedAt: timestamp("declinedAt"),
+  declineReason: text("declineReason"),
+  signatureData: text("signatureData"),
+  ipAddress: varchar("ipAddress", { length: 45 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type BoardResolution = typeof boardResolutions.$inferSelect;
+export type InsertBoardResolution = typeof boardResolutions.$inferInsert;
+export type BoardSignature = typeof boardSignatures.$inferSelect;
+export type InsertBoardSignature = typeof boardSignatures.$inferInsert;
+
+// ============================================
+// INVESTOR COMMUNICATIONS HUB
+// ============================================
+
+export const investorUpdates = mysqlTable("investor_updates", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  title: varchar("title", { length: 256 }).notNull(),
+  period: varchar("period", { length: 64 }),
+  type: mysqlEnum("type", ["quarterly", "monthly", "annual", "ad_hoc"]).default("quarterly"),
+  content: text("content"),
+  highlights: text("highlights"),
+  asks: text("asks"),
+  callsToAction: text("callsToAction"),
+  status: mysqlEnum("status", ["draft", "review", "sent"]).default("draft"),
+  sentAt: timestamp("sentAt"),
+  sentTo: text("sentTo"),
+  openCount: int("openCount").default(0),
+  clickCount: int("clickCount").default(0),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export type InvestorUpdate = typeof investorUpdates.$inferSelect;
+export type InsertInvestorUpdate = typeof investorUpdates.$inferInsert;

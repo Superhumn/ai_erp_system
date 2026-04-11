@@ -36,6 +36,7 @@ export default function DataRoomDetail() {
   const [newLink, setNewLink] = useState({
     name: "",
     password: "",
+    expiresAt: "",
     requireEmail: true,
     requireName: false,
     requireCompany: false,
@@ -563,6 +564,14 @@ export default function DataRoomDetail() {
                             placeholder="Leave empty for no password"
                           />
                         </div>
+                        <div className="space-y-2">
+                          <Label>Link Expiration (optional)</Label>
+                          <Input
+                            type="datetime-local"
+                            value={newLink.expiresAt}
+                            onChange={(e) => setNewLink({ ...newLink, expiresAt: e.target.value })}
+                          />
+                        </div>
                         <div className="flex items-center justify-between">
                           <Label>Require Email</Label>
                           <Switch
@@ -599,6 +608,7 @@ export default function DataRoomDetail() {
                               dataRoomId: roomId,
                               name: newLink.name || undefined,
                               password: newLink.password || undefined,
+                              expiresAt: newLink.expiresAt ? new Date(newLink.expiresAt) : undefined,
                               requireEmail: newLink.requireEmail,
                               requireName: newLink.requireName,
                               requireCompany: newLink.requireCompany,

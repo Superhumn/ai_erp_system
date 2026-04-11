@@ -136,6 +136,21 @@ import {
   // CRM investors & fundraising
   investors, InsertInvestor, fundraisingCampaigns, InsertFundraisingCampaign,
   investorInvestments, InsertInvestorInvestment, fundraisingReminders, InsertFundraisingReminder,
+  // Cap table & equity management
+  shareClasses, InsertShareClass,
+  stakeholders, InsertStakeholder,
+  equityGrants, InsertEquityGrant,
+  valuations409a, InsertValuation409a,
+  equityTransactions, InsertEquityTransaction,
+  // Offer letters
+  offerLetters, InsertOfferLetter,
+  // Exercise requests
+  exerciseRequests, InsertExerciseRequest,
+  // Board approvals & signatures
+  boardResolutions, InsertBoardResolution,
+  boardSignatures, InsertBoardSignature,
+  // Investor updates
+  investorUpdates, InsertInvestorUpdate,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -4875,6 +4890,7 @@ export type NotificationType =
   | "po_approved" | "po_shipped" | "po_received" | "po_fulfilled"
   | "work_order_started" | "work_order_completed" | "work_order_shortage"
   | "sales_order_new" | "sales_order_shipped" | "sales_order_delivered"
+  | "data_room_view"
   | "alert" | "system" | "info" | "warning" | "error" | "success" | "reminder";
 
 export interface CreateNotificationInput {
@@ -11142,4 +11158,411 @@ export async function getFundraisingReminders(filters?: { status?: string; inves
   if (filters?.investorId) conditions.push(eq(fundraisingReminders.investorId, filters.investorId));
   if (conditions.length > 0) return db.select().from(fundraisingReminders).where(and(...conditions));
   return db.select().from(fundraisingReminders);
+}
+
+// ============================================
+// CAP TABLE & EQUITY MANAGEMENT
+// ============================================
+
+// --- Share Classes ---
+
+export async function getShareClasses(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) return db.select().from(shareClasses).where(eq(shareClasses.companyId, companyId)).orderBy(asc(shareClasses.seniorityRank));
+  return db.select().from(shareClasses).orderBy(asc(shareClasses.seniorityRank));
+}
+
+export async function createShareClass(data: InsertShareClass) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(shareClasses).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateShareClass(id: number, data: Partial<InsertShareClass>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(shareClasses).set(data as any).where(eq(shareClasses.id, id));
+}
+
+export async function deleteShareClass(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(shareClasses).where(eq(shareClasses.id, id));
+}
+
+// --- Stakeholders ---
+
+export async function getStakeholders(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) return db.select().from(stakeholders).where(eq(stakeholders.companyId, companyId)).orderBy(desc(stakeholders.createdAt));
+  return db.select().from(stakeholders).orderBy(desc(stakeholders.createdAt));
+}
+
+export async function getStakeholderById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(stakeholders).where(eq(stakeholders.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function createStakeholder(data: InsertStakeholder) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(stakeholders).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateStakeholder(id: number, data: Partial<InsertStakeholder>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(stakeholders).set(data as any).where(eq(stakeholders.id, id));
+}
+
+// --- Equity Grants ---
+
+export async function getEquityGrants(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) return db.select().from(equityGrants).where(eq(equityGrants.companyId, companyId)).orderBy(desc(equityGrants.grantDate));
+  return db.select().from(equityGrants).orderBy(desc(equityGrants.grantDate));
+}
+
+export async function getEquityGrantsByStakeholder(stakeholderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(equityGrants).where(eq(equityGrants.stakeholderId, stakeholderId)).orderBy(desc(equityGrants.grantDate));
+}
+
+export async function createEquityGrant(data: InsertEquityGrant) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(equityGrants).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEquityGrant(id: number, data: Partial<InsertEquityGrant>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(equityGrants).set(data as any).where(eq(equityGrants.id, id));
+}
+
+// --- 409A Valuations ---
+
+export async function getValuations409a(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (companyId) return db.select().from(valuations409a).where(eq(valuations409a.companyId, companyId)).orderBy(desc(valuations409a.valuationDate));
+  return db.select().from(valuations409a).orderBy(desc(valuations409a.valuationDate));
+}
+
+export async function createValuation409a(data: InsertValuation409a) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(valuations409a).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateValuation409a(id: number, data: Partial<InsertValuation409a>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(valuations409a).set(data as any).where(eq(valuations409a.id, id));
+}
+
+// --- Equity Transactions ---
+
+export async function getEquityTransactions(filters?: { companyId?: number; grantId?: number; stakeholderId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.companyId) conditions.push(eq(equityTransactions.companyId, filters.companyId));
+  if (filters?.grantId) conditions.push(eq(equityTransactions.grantId, filters.grantId));
+  if (filters?.stakeholderId) conditions.push(eq(equityTransactions.stakeholderId, filters.stakeholderId));
+  if (conditions.length > 0) return db.select().from(equityTransactions).where(and(...conditions)).orderBy(desc(equityTransactions.transactionDate));
+  return db.select().from(equityTransactions).orderBy(desc(equityTransactions.transactionDate));
+}
+
+export async function createEquityTransaction(data: InsertEquityTransaction) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(equityTransactions).values(data);
+  return { id: result[0].insertId };
+}
+
+// --- Cap Table Summary ---
+
+export async function getCapTableSummary(companyId?: number) {
+  const db = await getDb();
+  if (!db) return { shareClassSummaries: [], totalShares: "0", stakeholderSummaries: [] };
+
+  // Get all share classes
+  const classes = companyId
+    ? await db.select().from(shareClasses).where(eq(shareClasses.companyId, companyId)).orderBy(asc(shareClasses.seniorityRank))
+    : await db.select().from(shareClasses).orderBy(asc(shareClasses.seniorityRank));
+
+  // Get all active grants
+  const grantsConditions: any[] = [];
+  if (companyId) grantsConditions.push(eq(equityGrants.companyId, companyId));
+  const grants = grantsConditions.length > 0
+    ? await db.select().from(equityGrants).where(and(...grantsConditions))
+    : await db.select().from(equityGrants);
+
+  // Get all stakeholders
+  const allStakeholders = companyId
+    ? await db.select().from(stakeholders).where(eq(stakeholders.companyId, companyId))
+    : await db.select().from(stakeholders);
+
+  // Aggregate by share class
+  const totalSharesNum = grants.reduce((acc, g) => acc + parseFloat(g.shares || "0"), 0);
+
+  const shareClassSummaries = classes.map(sc => {
+    const classGrants = grants.filter(g => g.shareClassId === sc.id);
+    const issuedShares = classGrants.reduce((acc, g) => acc + parseFloat(g.shares || "0"), 0);
+    const vestedShares = classGrants.reduce((acc, g) => acc + parseFloat(g.sharesVested || "0"), 0);
+    return {
+      shareClass: sc,
+      issuedShares: issuedShares.toFixed(4),
+      vestedShares: vestedShares.toFixed(4),
+      authorizedShares: sc.authorizedShares || "0",
+      ownershipPercent: totalSharesNum > 0 ? ((issuedShares / totalSharesNum) * 100).toFixed(2) : "0",
+      grantCount: classGrants.length,
+    };
+  });
+
+  // Aggregate by stakeholder
+  const stakeholderSummaries = allStakeholders.map(sh => {
+    const shGrants = grants.filter(g => g.stakeholderId === sh.id);
+    const totalShares = shGrants.reduce((acc, g) => acc + parseFloat(g.shares || "0"), 0);
+    const totalVested = shGrants.reduce((acc, g) => acc + parseFloat(g.sharesVested || "0"), 0);
+    return {
+      stakeholder: sh,
+      totalShares: totalShares.toFixed(4),
+      totalVested: totalVested.toFixed(4),
+      ownershipPercent: totalSharesNum > 0 ? ((totalShares / totalSharesNum) * 100).toFixed(2) : "0",
+      grants: shGrants,
+    };
+  }).filter(s => parseFloat(s.totalShares) > 0);
+
+  return {
+    shareClassSummaries,
+    stakeholderSummaries,
+    totalShares: totalSharesNum.toFixed(4),
+  };
+}
+
+// ============================================
+// OFFER LETTERS
+// ============================================
+
+export async function getOfferLetters(filters?: { companyId?: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.companyId) conditions.push(eq(offerLetters.companyId, filters.companyId));
+  if (filters?.status) conditions.push(eq(offerLetters.status, filters.status as any));
+  return conditions.length > 0
+    ? db.select().from(offerLetters).where(and(...conditions)).orderBy(desc(offerLetters.createdAt))
+    : db.select().from(offerLetters).orderBy(desc(offerLetters.createdAt));
+}
+
+export async function getOfferLetterById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [result] = await db.select().from(offerLetters).where(eq(offerLetters.id, id));
+  return result;
+}
+
+export async function createOfferLetter(data: InsertOfferLetter) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(offerLetters).values(data).$returningId();
+  return { id: result.id, ...data };
+}
+
+export async function updateOfferLetter(id: number, data: Partial<InsertOfferLetter>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(offerLetters).set({ ...data, updatedAt: new Date() }).where(eq(offerLetters.id, id));
+  return { id, ...data };
+}
+
+export async function deleteOfferLetter(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(offerLetters).where(eq(offerLetters.id, id));
+  return { success: true };
+}
+
+// ============================================
+// EXERCISE REQUESTS
+// ============================================
+
+export async function getExerciseRequests(filters?: { companyId?: number; stakeholderId?: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.companyId) conditions.push(eq(exerciseRequests.companyId, filters.companyId));
+  if (filters?.stakeholderId) conditions.push(eq(exerciseRequests.stakeholderId, filters.stakeholderId));
+  if (filters?.status) conditions.push(eq(exerciseRequests.status, filters.status as any));
+  return conditions.length > 0
+    ? db.select().from(exerciseRequests).where(and(...conditions)).orderBy(desc(exerciseRequests.requestedAt))
+    : db.select().from(exerciseRequests).orderBy(desc(exerciseRequests.requestedAt));
+}
+
+export async function getExerciseRequestById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [result] = await db.select().from(exerciseRequests).where(eq(exerciseRequests.id, id));
+  return result;
+}
+
+export async function createExerciseRequest(data: InsertExerciseRequest) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(exerciseRequests).values(data).$returningId();
+  return { id: result.id, ...data };
+}
+
+export async function updateExerciseRequest(id: number, data: Partial<InsertExerciseRequest>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(exerciseRequests).set({ ...data, updatedAt: new Date() }).where(eq(exerciseRequests.id, id));
+  return { id, ...data };
+}
+
+export async function approveExerciseRequest(id: number, approvedBy: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Get the exercise request
+  const [request] = await db.select().from(exerciseRequests).where(eq(exerciseRequests.id, id));
+  if (!request) throw new Error("Exercise request not found");
+  if (request.status !== "pending") throw new Error("Exercise request is not pending");
+
+  const now = new Date();
+
+  // Update the exercise request status
+  await db.update(exerciseRequests).set({
+    status: "completed",
+    approvedBy,
+    approvedAt: now,
+    completedAt: now,
+    updatedAt: now,
+  }).where(eq(exerciseRequests.id, id));
+
+  // Create an equity transaction for the exercise
+  await db.insert(equityTransactions).values({
+    companyId: request.companyId,
+    grantId: request.grantId,
+    stakeholderId: request.stakeholderId,
+    type: "exercise",
+    shares: request.sharesToExercise,
+    pricePerShare: request.exercisePrice,
+    totalValue: request.totalCost,
+    transactionDate: now,
+    notes: `Exercise request #${id} approved. Type: ${request.exerciseType}`,
+  });
+
+  // Update the grant's sharesExercised
+  const [grant] = await db.select().from(equityGrants).where(eq(equityGrants.id, request.grantId));
+  if (grant) {
+    const currentExercised = parseFloat(grant.sharesExercised || "0");
+    const newExercised = currentExercised + parseFloat(request.sharesToExercise);
+    await db.update(equityGrants).set({
+      sharesExercised: newExercised.toFixed(4),
+      updatedAt: now,
+    }).where(eq(equityGrants.id, request.grantId));
+  }
+
+  return { success: true };
+}
+
+// ============================================
+// BOARD RESOLUTIONS & SIGNATURES
+// ============================================
+
+export async function getBoardResolutions(filters?: { companyId?: number; status?: string; type?: string }) {
+  const db = await getDb(); if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(boardResolutions.companyId, filters.companyId));
+  if (filters?.status) conditions.push(eq(boardResolutions.status, filters.status as any));
+  if (filters?.type) conditions.push(eq(boardResolutions.type, filters.type as any));
+  if (conditions.length > 0) {
+    return db.select().from(boardResolutions).where(and(...conditions)).orderBy(desc(boardResolutions.createdAt));
+  }
+  return db.select().from(boardResolutions).orderBy(desc(boardResolutions.createdAt));
+}
+
+export async function getBoardResolutionById(id: number) {
+  const db = await getDb(); if (!db) return undefined;
+  const result = await db.select().from(boardResolutions).where(eq(boardResolutions.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createBoardResolution(data: InsertBoardResolution) {
+  const db = await getDb(); if (!db) throw new Error("Database not available");
+  const result = await db.insert(boardResolutions).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateBoardResolution(id: number, data: Partial<InsertBoardResolution>) {
+  const db = await getDb(); if (!db) throw new Error("Database not available");
+  await db.update(boardResolutions).set(data).where(eq(boardResolutions.id, id));
+}
+
+export async function getBoardSignatures(resolutionId: number) {
+  const db = await getDb(); if (!db) return [];
+  return db.select().from(boardSignatures).where(eq(boardSignatures.resolutionId, resolutionId)).orderBy(desc(boardSignatures.createdAt));
+}
+
+export async function getBoardSignatureById(id: number) {
+  const db = await getDb(); if (!db) return undefined;
+  const result = await db.select().from(boardSignatures).where(eq(boardSignatures.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createBoardSignature(data: InsertBoardSignature) {
+  const db = await getDb(); if (!db) throw new Error("Database not available");
+  const result = await db.insert(boardSignatures).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateBoardSignature(id: number, data: Partial<InsertBoardSignature>) {
+  const db = await getDb(); if (!db) throw new Error("Database not available");
+  await db.update(boardSignatures).set(data).where(eq(boardSignatures.id, id));
+}
+
+// ============================================
+// INVESTOR UPDATES
+// ============================================
+
+export async function getInvestorUpdates(filters?: { companyId?: number; status?: string; type?: string }) {
+  const db = await getDb(); if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(investorUpdates.companyId, filters.companyId));
+  if (filters?.status) conditions.push(eq(investorUpdates.status, filters.status as any));
+  if (filters?.type) conditions.push(eq(investorUpdates.type, filters.type as any));
+  if (conditions.length > 0) {
+    return db.select().from(investorUpdates).where(and(...conditions)).orderBy(desc(investorUpdates.createdAt));
+  }
+  return db.select().from(investorUpdates).orderBy(desc(investorUpdates.createdAt));
+}
+
+export async function getInvestorUpdateById(id: number) {
+  const db = await getDb(); if (!db) return undefined;
+  const result = await db.select().from(investorUpdates).where(eq(investorUpdates.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createInvestorUpdate(data: InsertInvestorUpdate) {
+  const db = await getDb(); if (!db) throw new Error("Database not available");
+  const result = await db.insert(investorUpdates).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateInvestorUpdate(id: number, data: Partial<InsertInvestorUpdate>) {
+  const db = await getDb(); if (!db) throw new Error("Database not available");
+  await db.update(investorUpdates).set(data).where(eq(investorUpdates.id, id));
 }
