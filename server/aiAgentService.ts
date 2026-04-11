@@ -85,6 +85,29 @@ const AI_TOOLS: Tool[] = [
       },
     },
   },
+  // Google Drive Search
+  {
+    type: "function",
+    function: {
+      name: "search_google_drive",
+      description: "Search files and documents in the company's Google Drive. Use this to find vendors, products, specs, invoices, contracts, or any business document.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Search query — file name, content, or keyword to search for",
+          },
+          fileType: {
+            type: "string",
+            enum: ["all", "spreadsheet", "document", "pdf", "presentation", "folder"],
+            description: "Filter by file type",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
   // Email Tools
   {
     type: "function",
@@ -430,6 +453,60 @@ const AI_TOOLS: Tool[] = [
 // ============================================
 // TOOL EXECUTION FUNCTIONS
 // ============================================
+
+async function executeSearchGoogleDrive(params: any, ctx: AIAgentContext): Promise<any> {
+  try {
+    const dbModule = await import("./db");
+    const token = await dbModule.getGoogleOAuthTokenByUserId(ctx.userId);
+    if (!token?.accessToken) {
+      return { error: "Google Drive not connected. Go to Settings → Integrations to connect." };
+    }
+
+    let query = `fullText contains '${params.query.replace(/'/g, "\\'")}'`;
+    if (params.fileType && params.fileType !== "all") {
+      const mimeMap: Record<string, string> = {
+        spreadsheet: "application/vnd.google-apps.spreadsheet",
+        document: "application/vnd.google-apps.document",
+        pdf: "application/pdf",
+        presentation: "application/vnd.google-apps.presentation",
+        folder: "application/vnd.google-apps.folder",
+      };
+      if (mimeMap[params.fileType]) {
+        query += ` and mimeType='${mimeMap[params.fileType]}'`;
+      }
+    }
+    query += " and trashed=false";
+
+    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,modifiedTime,webViewLink,size)&pageSize=20&supportsAllDrives=true&includeItemsFromAllDrives=true`;
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token.accessToken}` },
+    });
+
+    if (!response.ok) {
+      return { error: `Google Drive search failed: ${response.status}` };
+    }
+
+    const data = await response.json();
+    const files = (data.files || []).map((f: any) => ({
+      name: f.name,
+      type: f.mimeType?.includes("spreadsheet") ? "Sheet" : f.mimeType?.includes("document") ? "Doc" : f.mimeType?.includes("pdf") ? "PDF" : f.mimeType?.includes("presentation") ? "Slides" : "File",
+      modified: f.modifiedTime,
+      link: f.webViewLink,
+      size: f.size ? `${(parseInt(f.size) / 1024).toFixed(0)} KB` : "—",
+    }));
+
+    return {
+      results: files,
+      count: files.length,
+      query: params.query,
+      message: files.length > 0
+        ? `Found ${files.length} files matching "${params.query}" in Google Drive`
+        : `No files found matching "${params.query}" in Google Drive`,
+    };
+  } catch (e: any) {
+    return { error: `Google Drive search failed: ${e.message}` };
+  }
+}
 
 async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any> {
   const db = await getDb();
@@ -1243,6 +1320,8 @@ async function executeCreateTask(params: any, ctx: AIAgentContext): Promise<any>
 
 async function executeTool(toolName: string, params: any, ctx: AIAgentContext): Promise<any> {
   switch (toolName) {
+    case "search_google_drive":
+      return executeSearchGoogleDrive(params, ctx);
     case "analyze_data":
       return executeAnalyzeData(params, ctx);
     case "send_email":
