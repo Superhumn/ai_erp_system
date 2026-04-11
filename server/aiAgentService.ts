@@ -421,6 +421,26 @@ const AI_TOOLS: Tool[] = [
       },
     },
   },
+  // Google Calendar Tools
+  {
+    type: "function",
+    function: {
+      name: "manage_calendar",
+      description: "View upcoming calendar events or create new ones. Use to check availability, schedule meetings, or add reminders.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["list_events", "create_event"], description: "Action to perform" },
+          summary: { type: "string", description: "Event title (for create)" },
+          startDateTime: { type: "string", description: "Start time ISO format (for create)" },
+          endDateTime: { type: "string", description: "End time ISO format (for create)" },
+          attendees: { type: "array", items: { type: "string" }, description: "Attendee emails (for create)" },
+          description: { type: "string", description: "Event description (for create)" },
+        },
+        required: ["action"],
+      },
+    },
+  },
   // AI-Powered Analytics Tools
   {
     type: "function",
@@ -1315,6 +1335,46 @@ async function executeCreateTask(params: any, ctx: AIAgentContext): Promise<any>
 }
 
 // ============================================
+// CALENDAR TOOL EXECUTION
+// ============================================
+
+async function executeManageCalendar(params: any, ctx: AIAgentContext): Promise<any> {
+  const dbModule = await import("./db");
+  const token = await dbModule.getGoogleOAuthTokenByUserId(ctx.userId);
+  if (!token?.accessToken) return { error: "Google Calendar not connected" };
+
+  const { getCalendarEvents, createCalendarEvent } = await import("./calendarService");
+
+  if (params.action === "list_events") {
+    const events = await getCalendarEvents(token.accessToken);
+    return {
+      events: events.items
+        ?.map((e: any) => ({
+          title: e.summary,
+          start: e.start?.dateTime || e.start?.date,
+          end: e.end?.dateTime || e.end?.date,
+          attendees: e.attendees?.map((a: any) => a.email),
+          location: e.location,
+        }))
+        .slice(0, 10),
+    };
+  }
+
+  if (params.action === "create_event") {
+    const event = await createCalendarEvent(token.accessToken, {
+      summary: params.summary,
+      description: params.description,
+      start: { dateTime: params.startDateTime },
+      end: { dateTime: params.endDateTime },
+      attendees: params.attendees?.map((e: string) => ({ email: e })),
+    });
+    return { created: true, eventId: event.id, link: event.htmlLink };
+  }
+
+  return { error: "Unknown calendar action" };
+}
+
+// ============================================
 // TOOL EXECUTION DISPATCHER
 // ============================================
 
@@ -1350,6 +1410,8 @@ async function executeTool(toolName: string, params: any, ctx: AIAgentContext): 
       return executeCreateTask(params, ctx);
     case "run_ai_analytics":
       return executeRunAiAnalytics(params, ctx);
+    case "manage_calendar":
+      return executeManageCalendar(params, ctx);
     default:
       throw new Error(`Unknown tool: ${toolName}`);
   }

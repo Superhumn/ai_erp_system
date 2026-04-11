@@ -1420,6 +1420,12 @@ export async function getProjectTasks(projectId: number) {
   return db.select().from(projectTasks).where(eq(projectTasks.projectId, projectId)).orderBy(desc(projectTasks.createdAt));
 }
 
+export async function getAllProjectTasks() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(projectTasks).orderBy(desc(projectTasks.createdAt));
+}
+
 // ============================================
 // INVESTMENT GRANT CHECKLISTS
 // ============================================

@@ -71,7 +71,9 @@ export function getGoogleFullAccessAuthUrl(userId: number): string {
   const clientId = ENV.googleClientId;
   const redirectUri = ENV.googleRedirectUri || `${ENV.appUrl}/api/oauth/google/callback`;
   
-  // Request all necessary scopes for Drive, Gmail, Docs, and Sheets
+  // Request all necessary scopes for Drive, Gmail, Docs, Sheets, and Calendar
+  // NOTE: You must enable the Google Calendar API in your Google Cloud Console:
+  // https://console.cloud.google.com/apis/library/calendar-json.googleapis.com
   const scope = encodeURIComponent(
     "https://www.googleapis.com/auth/drive " +
     "https://www.googleapis.com/auth/drive.file " +
@@ -79,7 +81,9 @@ export function getGoogleFullAccessAuthUrl(userId: number): string {
     "https://www.googleapis.com/auth/documents " +
     "https://www.googleapis.com/auth/gmail.send " +
     "https://www.googleapis.com/auth/gmail.compose " +
-    "https://www.googleapis.com/auth/gmail.readonly"
+    "https://www.googleapis.com/auth/gmail.readonly " +
+    "https://www.googleapis.com/auth/calendar " +
+    "https://www.googleapis.com/auth/calendar.events"
   );
   
   const state = createSignedOAuthState({ userId, provider: 'google' });
