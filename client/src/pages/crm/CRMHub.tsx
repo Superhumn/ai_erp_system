@@ -51,6 +51,8 @@ type PipelineStage = "new" | "contacted" | "qualified" | "proposal" | "negotiati
 
 export default function CRMHub() {
   const [search, setSearch] = useState("");
+  const [isDealDialogOpen, setIsDealDialogOpen] = useState(false);
+  const [dealForm, setDealForm] = useState({ name: "", contactId: 0, stage: "discovery", amount: "", source: "", notes: "" });
   const [isContactDialogOpen, setIsContactDialogOpen] = useState(false);
   const [isCaptureDialogOpen, setIsCaptureDialogOpen] = useState(false);
   const [captureMethod, setCaptureMethod] = useState<string>("manual");
@@ -102,6 +104,16 @@ export default function CRMHub() {
       refetchContacts();
     },
     onError: (error) => toast.error(error.message),
+  });
+
+  const createDeal = (trpc.crm as any).deals.create.useMutation({
+    onSuccess: () => {
+      toast.success("Deal created");
+      setIsDealDialogOpen(false);
+      setDealForm({ name: "", contactId: 0, stage: "discovery", amount: "", source: "", notes: "" });
+      refetchDeals();
+    },
+    onError: (e: any) => toast.error(e.message),
   });
 
   const deleteContact = trpc.crm.contacts.delete.useMutation({
@@ -665,7 +677,7 @@ export default function CRMHub() {
                   className="pl-8 w-[250px]"
                 />
               </div>
-              <Button>
+              <Button onClick={() => setIsDealDialogOpen(true)}>
                 <Plus className="h-4 w-4 mr-2" />
                 New Deal
               </Button>
@@ -754,6 +766,77 @@ export default function CRMHub() {
           )}
         </CardContent>
       </Card>
+
+      {/* New Deal Dialog */}
+      <Dialog open={isDealDialogOpen} onOpenChange={setIsDealDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>New Deal</DialogTitle>
+            <DialogDescription>Create a new deal in your pipeline</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Deal Name *</Label>
+              <Input placeholder="e.g., Series A - Acme Ventures" value={dealForm.name} onChange={(e) => setDealForm({ ...dealForm, name: e.target.value })} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Contact *</Label>
+              <Select value={dealForm.contactId?.toString() || "0"} onValueChange={(v) => setDealForm({ ...dealForm, contactId: parseInt(v) })}>
+                <SelectTrigger><SelectValue placeholder="Select contact" /></SelectTrigger>
+                <SelectContent>
+                  {(contacts as any[])?.map((c: any) => (
+                    <SelectItem key={c.id} value={c.id.toString()}>{c.fullName || c.firstName || c.email}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Stage</Label>
+                <Select value={dealForm.stage} onValueChange={(v) => setDealForm({ ...dealForm, stage: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="discovery">Discovery</SelectItem>
+                    <SelectItem value="qualified">Qualified</SelectItem>
+                    <SelectItem value="proposal">Proposal</SelectItem>
+                    <SelectItem value="negotiation">Negotiation</SelectItem>
+                    <SelectItem value="closed_won">Closed Won</SelectItem>
+                    <SelectItem value="closed_lost">Closed Lost</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Amount</Label>
+                <Input type="number" placeholder="50000" value={dealForm.amount} onChange={(e) => setDealForm({ ...dealForm, amount: e.target.value })} />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Source</Label>
+              <Input placeholder="e.g., Referral, Inbound, Conference" value={dealForm.source} onChange={(e) => setDealForm({ ...dealForm, source: e.target.value })} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Notes</Label>
+              <Input placeholder="Any additional context..." value={dealForm.notes} onChange={(e) => setDealForm({ ...dealForm, notes: e.target.value })} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsDealDialogOpen(false)}>Cancel</Button>
+            <Button disabled={!dealForm.name || !dealForm.contactId || createDeal.isPending} onClick={() => {
+              createDeal.mutate({
+                pipelineId: 1,
+                contactId: dealForm.contactId,
+                name: dealForm.name,
+                stage: dealForm.stage,
+                amount: dealForm.amount || undefined,
+                source: dealForm.source || undefined,
+                notes: dealForm.notes || undefined,
+              });
+            }}>
+              {createDeal.isPending ? "Creating..." : "Create Deal"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Contact Detail Dialog */}
       <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>

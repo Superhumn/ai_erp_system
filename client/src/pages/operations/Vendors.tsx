@@ -84,6 +84,7 @@ export default function Vendors() {
   const { data: vendors, isLoading: vendorsLoading } = trpc.vendors.list.useQuery();
   const { data: purchaseOrders } = trpc.purchaseOrders.list.useQuery();
   const { data: negotiations } = trpc.vendorNegotiations.list.useQuery({});
+  const { data: locations } = trpc.warehouses.list.useQuery();
 
   const createVendor = trpc.vendors.create.useMutation({
     onSuccess: () => {
