@@ -3821,6 +3821,96 @@ export const appRouter = router({
                     imported++;
                     break;
                   }
+                  case 'crm_contacts': {
+                    const name = record.name || record.contact || record['contact name'] || record['full name'] || record.company || `Contact ${imported + 1}`;
+                    const firstName = name.split(' ')[0] || name;
+                    const lastName = name.split(' ').slice(1).join(' ') || '';
+                    await db.createCrmContact({
+                      firstName,
+                      lastName,
+                      fullName: name,
+                      email: record.email || record['email address'] || undefined,
+                      phone: record.phone || record.mobile || undefined,
+                      organization: record.company || record.organization || record.firm || undefined,
+                      jobTitle: record.title || record.position || record.role || undefined,
+                      source: 'import',
+                      notes: record.notes || record.comments || undefined,
+                      status: (record.status === 'active' || record.status === 'inactive') ? record.status as any : 'active',
+                    });
+                    imported++;
+                    break;
+                  }
+                  case 'crm_deals': {
+                    // Find or create default pipeline
+                    let pipelineId = 1;
+                    try {
+                      const pipelines = await db.getCrmPipelines();
+                      if (!pipelines || pipelines.length === 0) {
+                        pipelineId = await db.createCrmPipeline({ name: 'Sales Pipeline', stages: JSON.stringify(['discovery','qualified','proposal','negotiation','closed_won','closed_lost']) });
+                      } else {
+                        pipelineId = pipelines[0].id;
+                      }
+                    } catch {}
+
+                    // Create a placeholder contact for the deal
+                    const dealName = record.name || record.deal || record.opportunity || `Deal ${imported + 1}`;
+                    let contactId: number;
+                    try {
+                      contactId = await db.createCrmContact({
+                        firstName: dealName,
+                        lastName: '',
+                        fullName: dealName,
+                        source: 'import',
+                        contactType: 'lead',
+                      });
+                    } catch {
+                      contactId = 1;
+                    }
+
+                    await db.createCrmDeal({
+                      pipelineId,
+                      contactId,
+                      name: dealName,
+                      stage: record.stage || record.status || 'discovery',
+                      amount: record.amount || record.value || record['deal size'] || undefined,
+                      source: 'google_sheets',
+                      notes: record.notes || undefined,
+                    });
+                    imported++;
+                    break;
+                  }
+                  case 'fundraising': {
+                    // Create investor stakeholder
+                    const investorName = record.name || record.investor || record['investor name'] || record.fund || `Investor ${imported + 1}`;
+                    await db.createStakeholder({
+                      name: investorName,
+                      email: record.email || undefined,
+                      type: 'investor',
+                      relationship: record.fund || record.firm || record.company || undefined,
+                      notes: record.notes || record.status || undefined,
+                      accreditedInvestor: true,
+                    });
+
+                    // If there's an amount, also create an investment commitment
+                    const rawAmount = record.amount || record.commitment || record['investment amount'] || record.invested;
+                    if (rawAmount) {
+                      try {
+                        const cleanAmount = String(rawAmount).replace(/[$,]/g, '');
+                        const instrumentRaw = (record.instrument || record.type || record['security type'] || 'safe').toLowerCase();
+                        await db.createInvestmentCommitment({
+                          investorName,
+                          investorEmail: record.email || '',
+                          investorCompany: record.fund || record.firm || record.company || undefined,
+                          investmentAmount: cleanAmount,
+                          instrumentType: instrumentRaw.includes('safe') ? 'safe' : 'equity',
+                          status: (record.status || '').toLowerCase().includes('close') || (record.status || '').toLowerCase().includes('fund') ? 'funded' : 'interested',
+                          notes: record.notes || undefined,
+                        });
+                      } catch {}
+                    }
+                    imported++;
+                    break;
+                  }
                   default:
                     break;
                 }

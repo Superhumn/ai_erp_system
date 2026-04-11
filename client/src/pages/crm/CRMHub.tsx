@@ -34,7 +34,7 @@ import {
   Users, Plus, Search, Loader2, Phone, Mail, MessageSquare,
   Linkedin, Building2, DollarSign, TrendingUp, UserPlus,
   Smartphone, QrCode, CreditCard, Filter, MoreHorizontal,
-  Calendar, Clock, MessageCircle, Target, Handshake
+  Calendar, Clock, MessageCircle, Target, Handshake, HardDrive
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -150,6 +150,21 @@ export default function CRMHub() {
       setIsCaptureDialogOpen(false);
       resetCaptureForm();
       refetchContacts();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const syncFromSheets = trpc.sheetsImport.syncGoogleDrive.useMutation({
+    onSuccess: (data) => {
+      const crmResults = data.results.filter((r: any) => r.type === 'crm_contacts' || r.type === 'crm_deals' || r.type === 'fundraising');
+      const totalImported = crmResults.reduce((sum: number, r: any) => sum + r.imported, 0);
+      if (totalImported > 0) {
+        toast.success(`Imported ${totalImported} CRM records from ${crmResults.length} sheet(s)`);
+        refetchContacts();
+        refetchDeals();
+      } else {
+        toast.info("No CRM-related sheets found in Google Drive");
+      }
     },
     onError: (error) => toast.error(error.message),
   });
@@ -298,6 +313,19 @@ export default function CRMHub() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => syncFromSheets.mutate()}
+            disabled={syncFromSheets.isPending}
+          >
+            {syncFromSheets.isPending ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <HardDrive className="h-4 w-4 mr-2" />
+            )}
+            {syncFromSheets.isPending ? "Syncing..." : "Sync from Sheets"}
+          </Button>
           <Dialog open={isCaptureDialogOpen} onOpenChange={setIsCaptureDialogOpen}>
             <DialogTrigger asChild>
               <Button variant="outline">
