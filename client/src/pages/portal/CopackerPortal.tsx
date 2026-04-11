@@ -17,7 +17,7 @@ import { toast } from "sonner";
 import {
   Package, Truck, Upload, Warehouse, Edit2, Save, X, FileText,
   Plus, Send, Clock, AlertTriangle, CheckCircle, DollarSign,
-  Calendar, Eye, Trash2, ClipboardList, Search,
+  Calendar, Eye, Trash2, ClipboardList, Search, Wrench,
 } from "lucide-react";
 
 // ---- Helper types ----
@@ -125,6 +125,9 @@ export default function CopackerPortal() {
     { enabled: !!viewInvoiceId }
   );
 
+  // ---- Work Orders query ----
+  const { data: workOrdersList, refetch: refetchWorkOrders } = trpc.workOrders.list.useQuery();
+
   // ---- Mutations ----
   const updateInventory = trpc.copackerPortal.updateInventory.useMutation({
     onSuccess: () => {
@@ -172,6 +175,15 @@ export default function CopackerPortal() {
       refetchShipDocs();
     },
     onError: (error: any) => toast.error("Failed to upload document", { description: error.message }),
+  });
+
+  const completeProduction = trpc.workOrders.completeProduction.useMutation({
+    onSuccess: () => {
+      toast.success("Work order completed");
+      refetchWorkOrders();
+      refetchInventory();
+    },
+    onError: (error) => toast.error("Failed to complete work order", { description: error.message }),
   });
 
   // ---- Inline inventory edit handlers ----
@@ -350,6 +362,21 @@ export default function CopackerPortal() {
     return { totalProducts, pendingUpdates, totalInvoices, pendingInvoices, totalDocs };
   }, [inventory, inventoryUpdates, invoices, shippingDocs]);
 
+  // ---- Build work order lookup by productId (active WOs only) ----
+  const woByProduct = useMemo(() => {
+    const map: Record<number, any> = {};
+    if (workOrdersList?.length) {
+      for (const wo of workOrdersList) {
+        // Only show active (non-completed, non-cancelled) work orders
+        if (wo.status === "completed" || wo.status === "cancelled") continue;
+        if (wo.productId && !map[wo.productId]) {
+          map[wo.productId] = wo;
+        }
+      }
+    }
+    return map;
+  }, [workOrdersList]);
+
   // ---- Build enriched inventory rows with invoice/shipment status ----
   const enrichedInventory = useMemo(() => {
     if (!inventory) return [];
@@ -383,6 +410,9 @@ export default function CopackerPortal() {
         inv.items?.some?.((ii: any) => ii.productId === productId)
       );
 
+      // Find active work order for this product
+      const wo = woByProduct[productId] || null;
+
       return {
         id: item.inventory.id,
         _sku: item.product?.sku || "--",
@@ -399,11 +429,20 @@ export default function CopackerPortal() {
         _invoiceStatus: productInvoice?.status?.replace(/_/g, " ") || "-",
         _shipmentStatus: productShipment?.status || "-",
         _notes: latestUpdate?.notes || "",
+        // Work order fields
+        _woId: wo?.id || null,
+        _woNumber: wo?.workOrderNumber || null,
+        _woStatus: wo?.status || null,
+        _woQty: wo?.quantity || null,
+        _woDue: wo?.scheduledEndDate
+          ? new Date(wo.scheduledEndDate).toLocaleDateString()
+          : null,
+        _woWarehouseId: wo?.warehouseId || null,
         // keep original for editing
         _original: item,
       };
     });
-  }, [inventory, inventoryUpdates, invoices, shipments, shippingDocs, currentPeriod]);
+  }, [inventory, inventoryUpdates, invoices, shipments, shippingDocs, currentPeriod, woByProduct]);
 
   // Filter by search
   const filteredInventory = useMemo(() => {
@@ -587,8 +626,12 @@ export default function CopackerPortal() {
                     <TableHead className="min-w-[140px]">Period</TableHead>
                     <TableHead className="min-w-[100px]">Invoice</TableHead>
                     <TableHead className="min-w-[100px]">Shipment</TableHead>
+                    <TableHead className="min-w-[90px]">WO#</TableHead>
+                    <TableHead className="min-w-[90px]">WO Status</TableHead>
+                    <TableHead className="min-w-[70px] text-right">WO Qty</TableHead>
+                    <TableHead className="min-w-[90px]">WO Due</TableHead>
                     <TableHead className="min-w-[120px]">Notes</TableHead>
-                    <TableHead className="text-right min-w-[80px]">Actions</TableHead>
+                    <TableHead className="text-right min-w-[120px]">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
