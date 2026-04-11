@@ -36,9 +36,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { QuickCreateDialog } from "@/components/QuickCreateDialog";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 
 export default function InventoryHub() {
+  const [, navigate] = useLocation();
   const [searchTerm, setSearchTerm] = useState("");
   const [isSyncing, setIsSyncing] = useState(false);
   const [showShipmentDialog, setShowShipmentDialog] = useState(false);
@@ -714,11 +715,29 @@ export default function InventoryHub() {
                       <TableCell className="px-2 py-1 text-right font-mono text-xs">
                         {row.onOrderQty > 0 ? <span className="text-violet-600">{row.onOrderQty.toLocaleString()}</span> : "—"}
                       </TableCell>
-                      <TableCell className="px-2 py-1 text-xs font-mono truncate max-w-[100px]">{row.openPONumbers || "—"}</TableCell>
+                      <TableCell className="px-2 py-1 text-xs font-mono truncate max-w-[100px]">
+                        {row.openPONumbers ? (
+                          <a href="/operations/purchase-orders" onClick={(e) => { e.preventDefault(); navigate("/operations/purchase-orders"); }} className="text-primary hover:underline cursor-pointer">
+                            {row.openPONumbers}
+                          </a>
+                        ) : "—"}
+                      </TableCell>
                       <TableCell className="px-2 py-1">{getPOStatusBadge(row.poStatus)}</TableCell>
                       <TableCell className="px-2 py-1 text-xs text-muted-foreground">{fmtDate(row.lastPODate)}</TableCell>
-                      <TableCell className="px-2 py-1 text-xs truncate max-w-[110px]">{row.vendorName || "—"}</TableCell>
-                      <TableCell className="px-2 py-1 text-xs font-mono truncate max-w-[100px]">{row.lastShipment || "—"}</TableCell>
+                      <TableCell className="px-2 py-1 text-xs truncate max-w-[110px]">
+                        {row.vendorName ? (
+                          <a href="/operations/vendors" onClick={(e) => { e.preventDefault(); navigate("/operations/vendors"); }} className="text-primary hover:underline cursor-pointer">
+                            {row.vendorName}
+                          </a>
+                        ) : "—"}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-xs font-mono truncate max-w-[100px]">
+                        {row.lastShipment ? (
+                          <a href="/operations/shipments" onClick={(e) => { e.preventDefault(); navigate("/operations/shipments"); }} className="text-primary hover:underline cursor-pointer">
+                            {row.lastShipment}
+                          </a>
+                        ) : "—"}
+                      </TableCell>
                       <TableCell className="px-2 py-1">{getShipStatusBadge(row.shipStatus)}</TableCell>
                       <TableCell className="px-2 py-1 text-right font-mono text-xs">{fmtCurrency(row.unitCost)}</TableCell>
                       <TableCell className="px-2 py-1 text-right font-mono text-xs font-medium">{fmtCurrency(row.totalValue)}</TableCell>

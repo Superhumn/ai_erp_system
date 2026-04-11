@@ -33,6 +33,7 @@ import {
 import { Building2, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { getStatusColor } from "@/lib/statusColors";
+import { useLocation } from "wouter";
 
 function formatCurrency(value: number): string {
   return "$" + value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -55,6 +56,7 @@ const ACTIVE_NEGOTIATION_STATUSES = new Set([
 const OPEN_PO_STATUSES = new Set(["draft", "sent", "confirmed"]);
 
 export default function Vendors() {
+  const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
@@ -450,7 +452,9 @@ export default function Vendors() {
 
                     return (
                       <TableRow key={vendor.id}>
-                        <TableCell className="text-sm font-medium whitespace-nowrap">{vendor.name}</TableCell>
+                        <TableCell className="text-sm font-medium whitespace-nowrap">
+                          <span className="text-primary font-semibold">{vendor.name}</span>
+                        </TableCell>
                         <TableCell className="text-sm whitespace-nowrap">{vendor.contactName || "-"}</TableCell>
                         <TableCell className="text-sm whitespace-nowrap">{vendor.email || "-"}</TableCell>
                         <TableCell className="text-sm whitespace-nowrap">{vendor.phone || "-"}</TableCell>
@@ -466,7 +470,11 @@ export default function Vendors() {
                           {agg?.poCount ?? 0}
                         </TableCell>
                         <TableCell className="text-sm whitespace-nowrap text-right font-mono">
-                          {agg?.openPOs ?? 0}
+                          {(agg?.openPOs ?? 0) > 0 ? (
+                            <a href="/operations/purchase-orders" onClick={(e) => { e.preventDefault(); navigate("/operations/purchase-orders"); }} className="text-primary hover:underline cursor-pointer">
+                              {agg!.openPOs}
+                            </a>
+                          ) : 0}
                         </TableCell>
                         <TableCell className="text-sm whitespace-nowrap text-right font-mono">
                           {agg?.avgLeadTimeDays != null ? `${agg.avgLeadTimeDays}d` : "-"}

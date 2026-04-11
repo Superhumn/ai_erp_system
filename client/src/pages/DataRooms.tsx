@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,6 +34,13 @@ export default function DataRooms() {
 
   const utils = trpc.useUtils();
   const { data: dataRooms, isLoading } = trpc.dataRoom.list.useQuery();
+
+  // Auto-redirect to the data room if there's only one
+  React.useEffect(() => {
+    if (!isLoading && dataRooms?.length === 1) {
+      setLocation(`/dataroom/${dataRooms[0].id}`);
+    }
+  }, [isLoading, dataRooms, setLocation]);
   const createMutation = trpc.dataRoom.create.useMutation({
     onSuccess: (data) => {
       toast.success("Data room created successfully");

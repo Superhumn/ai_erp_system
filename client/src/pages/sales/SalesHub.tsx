@@ -18,7 +18,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 
 // ── Status badge config ──
 
@@ -78,6 +78,7 @@ type SortDir = "asc" | "desc";
 type SortKey = string;
 
 export default function SalesHub() {
+  const [, navigate] = useLocation();
   const [isSyncing, setIsSyncing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("orderDate");
@@ -354,6 +355,28 @@ export default function SalesHub() {
         return val === "\u2014" ? <span className="text-muted-foreground">&mdash;</span> : <StatusBadge value={val} colorMap={shipStatusColors} />;
       case "channel":
         return <Badge variant="secondary" className={`${channelColors[val] ?? channelColors.Manual} text-[11px] font-medium`}>{val}</Badge>;
+      case "orderNumber":
+        return val && val !== "\u2014" ? (
+          <span className="text-primary font-semibold">{val}</span>
+        ) : "\u2014";
+      case "customerName":
+        return val && val !== "\u2014" ? (
+          <a href="/crm/hub" onClick={(e) => { e.preventDefault(); navigate("/crm/hub"); }} className="text-primary hover:underline cursor-pointer">
+            {val}
+          </a>
+        ) : "\u2014";
+      case "invoiceNumber":
+        return val && val !== "\u2014" ? (
+          <a href="/finance/invoices" onClick={(e) => { e.preventDefault(); navigate("/finance/invoices"); }} className="text-primary hover:underline cursor-pointer">
+            {val}
+          </a>
+        ) : "\u2014";
+      case "trackingNumber":
+        return val && val !== "\u2014" ? (
+          <a href="/operations/shipments" onClick={(e) => { e.preventDefault(); navigate("/operations/shipments"); }} className="text-primary hover:underline cursor-pointer">
+            {val}
+          </a>
+        ) : "\u2014";
       case "itemCount":
         return val;
       default:
