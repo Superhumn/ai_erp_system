@@ -1450,6 +1450,167 @@ Answer the user's question based on this data. If specific data isn't available,
   };
 }
 
+async function executeQuerySystem(params: any, ctx: AIAgentContext): Promise<any> {
+  const dbModule = await import("./db");
+  const module = params.module || "general";
+
+  // Gather data based on module
+  let contextData = "";
+
+  try {
+    switch (module) {
+      case "inventory": {
+        const inventory = await dbModule.getInventory();
+        const warehouses = await dbModule.getWarehouses();
+        contextData = `Inventory (${inventory.length} items):\n${inventory.slice(0, 50).map((i: any) => `- ${i.product?.name || i.sku || 'Item'}: Qty=${i.quantity}, Reserved=${i.reservedQuantity || 0}, Location=${i.warehouse?.name || 'N/A'}`).join('\n')}\n\nWarehouses: ${warehouses.map((w: any) => w.name).join(', ')}`;
+        break;
+      }
+      case "work_orders":
+      case "manufacturing": {
+        const workOrders = await dbModule.getWorkOrders();
+        contextData = `Work Orders (${workOrders.length}):\n${workOrders.slice(0, 30).map((wo: any) => `- ${wo.workOrderNumber}: ${wo.product?.name || 'Product'} | Status=${wo.status} | Qty=${wo.quantity} | Due=${wo.scheduledEndDate || 'N/A'}`).join('\n')}`;
+        break;
+      }
+      case "purchase_orders": {
+        const pos = await dbModule.getPurchaseOrders();
+        contextData = `Purchase Orders (${pos.length}):\n${pos.slice(0, 30).map((po: any) => `- ${po.poNumber}: Vendor=${po.vendor?.name || 'N/A'} | Total=$${po.totalAmount} | Status=${po.status} | Date=${po.orderDate}`).join('\n')}`;
+        break;
+      }
+      case "vendors": {
+        const vendors = await dbModule.getVendors();
+        contextData = `Vendors (${vendors.length}):\n${vendors.slice(0, 30).map((v: any) => `- ${v.name}: Email=${v.email || 'N/A'} | Type=${v.type || 'supplier'} | Terms=${v.paymentTerms || 'N/A'} days`).join('\n')}`;
+        break;
+      }
+      case "customers": {
+        const customers = await dbModule.getCustomers();
+        contextData = `Customers (${customers.length}):\n${customers.slice(0, 30).map((c: any) => `- ${c.name}: Email=${c.email || 'N/A'} | Phone=${c.phone || 'N/A'}`).join('\n')}`;
+        break;
+      }
+      case "orders": {
+        const orders = await dbModule.getOrders();
+        contextData = `Orders (${orders.length}):\n${orders.slice(0, 30).map((o: any) => `- ${o.orderNumber}: Customer=${o.customer?.name || 'N/A'} | Total=$${o.totalAmount} | Status=${o.status}`).join('\n')}`;
+        break;
+      }
+      case "invoices": {
+        const invoices = await dbModule.getInvoices();
+        contextData = `Invoices (${invoices.length}):\n${invoices.slice(0, 30).map((i: any) => `- ${i.invoiceNumber}: $${i.totalAmount} | Status=${i.status} | Due=${i.dueDate || 'N/A'}`).join('\n')}`;
+        break;
+      }
+      case "payments": {
+        const payments = await dbModule.getPayments();
+        contextData = `Payments (${payments.length}):\n${payments.slice(0, 30).map((p: any) => `- $${p.amount} | Method=${p.paymentMethod || 'N/A'} | Date=${p.paymentDate || 'N/A'}`).join('\n')}`;
+        break;
+      }
+      case "shipments": {
+        const shipments = await dbModule.getShipments();
+        contextData = `Shipments (${shipments.length}):\n${shipments.slice(0, 30).map((s: any) => `- ${s.trackingNumber || 'No tracking'}: Status=${s.status} | Carrier=${s.carrier || 'N/A'}`).join('\n')}`;
+        break;
+      }
+      case "cap_table":
+      case "equity": {
+        const stakeholders = await (dbModule as any).getStakeholders?.() || [];
+        const grants = await (dbModule as any).getEquityGrants?.() || [];
+        const shareClasses = await (dbModule as any).getShareClasses?.() || [];
+        contextData = `Share Classes: ${shareClasses.map((sc: any) => `${sc.name} (${sc.type})`).join(', ')}\n\nStakeholders (${stakeholders.length}):\n${stakeholders.slice(0, 30).map((s: any) => `- ${s.name}: Type=${s.type} | Email=${s.email || 'N/A'}`).join('\n')}\n\nGrants (${grants.length}):\n${grants.slice(0, 30).map((g: any) => `- Stakeholder=${g.stakeholderId} | Shares=${g.shares} | Type=${g.grantType} | Status=${g.status} | Vested=${g.sharesVested || 0}`).join('\n')}`;
+        break;
+      }
+      case "data_room": {
+        const rooms = await dbModule.getDataRooms();
+        contextData = `Data Rooms (${rooms.length}):\n${rooms.map((r: any) => `- ${r.name}: Status=${r.status} | Visitors=${r.visitorCount || 0}`).join('\n')}`;
+        // Also get visitors
+        try {
+          for (const room of rooms.slice(0, 3)) {
+            const visitors = await dbModule.getDataRoomVisitors(room.id);
+            if (visitors.length > 0) {
+              contextData += `\n\nVisitors for "${room.name}": ${visitors.slice(0, 10).map((v: any) => `${v.name || v.email} (${v.lastViewedAt || v.createdAt})`).join(', ')}`;
+            }
+          }
+        } catch {}
+        break;
+      }
+      case "projects":
+      case "tasks": {
+        const projects = await dbModule.getProjects();
+        contextData = `Projects (${projects.length}):\n${projects.slice(0, 20).map((p: any) => `- ${p.name}: Status=${p.status} | Priority=${p.priority || 'N/A'}`).join('\n')}`;
+        // Get tasks
+        try {
+          const tasks = await dbModule.getAllProjectTasks?.();
+          if (tasks) {
+            contextData += `\n\nTasks (${tasks.length}):\n${tasks.slice(0, 30).map((t: any) => `- ${t.name}: Status=${t.status} | Priority=${t.priority || 'N/A'} | Due=${t.dueDate || 'N/A'} | Project=${t.projectId}`).join('\n')}`;
+          }
+        } catch {}
+        break;
+      }
+      case "banking": {
+        const transactions = await (dbModule as any).getBankTransactions?.() || [];
+        contextData = `Bank Transactions (${transactions.length}):\n${transactions.slice(0, 30).map((t: any) => `- ${t.date}: ${t.type} $${t.amount} | ${t.counterpartyName || t.description} | Category=${t.category || 'uncategorized'}`).join('\n')}`;
+        break;
+      }
+      case "copacker": {
+        try {
+          const invoices = await (dbModule as any).getCopackerInvoices?.() || [];
+          const updates = await (dbModule as any).getCopackerInventoryUpdates?.() || [];
+          contextData = `Copacker Invoices: ${invoices.length}\nInventory Updates: ${updates.length}`;
+          if (invoices.length) {
+            contextData += `\n${invoices.slice(0, 10).map((i: any) => `- Invoice ${i.invoiceNumber}: $${i.totalAmount} | Status=${i.status}`).join('\n')}`;
+          }
+        } catch { contextData = "Copacker data not available"; }
+        break;
+      }
+      case "employees": {
+        const employees = await dbModule.getEmployees();
+        contextData = `Employees (${employees.length}):\n${employees.slice(0, 30).map((e: any) => `- ${e.firstName} ${e.lastName}: ${e.jobTitle || 'N/A'} | Dept=${e.departmentId || 'N/A'} | Status=${e.status || 'active'}`).join('\n')}`;
+        break;
+      }
+      case "contracts": {
+        const contracts = await dbModule.getContracts();
+        contextData = `Contracts (${contracts.length}):\n${contracts.slice(0, 20).map((c: any) => `- ${c.title}: Type=${c.type} | Status=${c.status} | Value=$${c.value || 'N/A'}`).join('\n')}`;
+        break;
+      }
+      case "reports":
+      default: {
+        // General query - gather summary data from multiple modules
+        const [orders, invoices, customers, vendors, employees, inventory, pos] = await Promise.all([
+          dbModule.getOrders(), dbModule.getInvoices(), dbModule.getCustomers(),
+          dbModule.getVendors(), dbModule.getEmployees(), dbModule.getInventory(),
+          dbModule.getPurchaseOrders(),
+        ]);
+        contextData = `System Summary:
+- Orders: ${orders.length}
+- Invoices: ${invoices.length} (Paid: ${invoices.filter((i: any) => i.status === 'paid').length}, Overdue: ${invoices.filter((i: any) => i.status === 'overdue').length})
+- Customers: ${customers.length}
+- Vendors: ${vendors.length}
+- Employees: ${employees.length}
+- Inventory items: ${inventory.length}
+- Purchase Orders: ${pos.length} (Open: ${pos.filter((p: any) => ['draft','sent','confirmed'].includes(p.status)).length})
+- Total Revenue: $${invoices.filter((i: any) => i.status === 'paid').reduce((s: number, i: any) => s + parseFloat(i.totalAmount || '0'), 0).toLocaleString()}`;
+        break;
+      }
+    }
+  } catch (e: any) {
+    contextData = `Error gathering ${module} data: ${e.message}`;
+  }
+
+  // Use AI to answer the question
+  const { invokeLLM: invokeLLMForQuery } = await import("./_core/llm");
+  const response = await invokeLLMForQuery({
+    messages: [
+      {
+        role: "system",
+        content: `You are an ERP assistant for Superhumn Inc. Answer the user's question based on this data. Be concise, specific, and use numbers when available. If data is limited, say so.\n\n${contextData}`
+      },
+      { role: "user", content: params.question },
+    ],
+  });
+
+  const answer = response.choices?.[0]?.message?.content;
+  return {
+    answer: typeof answer === 'string' ? answer : 'Unable to query system data',
+    module,
+    dataPoints: contextData.split('\n').length,
+  };
+}
+
 // ============================================
 // TOOL EXECUTION DISPATCHER
 // ============================================
@@ -1490,6 +1651,8 @@ async function executeTool(toolName: string, params: any, ctx: AIAgentContext): 
       return executeManageCalendar(params, ctx);
     case "query_crm":
       return executeQueryCrm(params, ctx);
+    case "query_system":
+      return executeQuerySystem(params, ctx);
     default:
       throw new Error(`Unknown tool: ${toolName}`);
   }
@@ -1652,7 +1815,20 @@ Guidelines:
 - When analyzing data, provide insights and recommendations.
 - Format currency values with $ symbol and 2 decimal places.
 - When listing items, limit to 10-20 unless more are requested.
-- Be proactive in suggesting relevant actions based on the data.`;
+- Be proactive in suggesting relevant actions based on the data.
+
+You can query ANY module in the system using the query_system tool. When a user asks about data in any module (inventory, work orders, POs, cap table, data room, projects, banking, etc.), use the query_system tool to fetch the data and answer their question.
+
+Examples:
+- "What work orders are in progress?" → query_system(question, module="work_orders")
+- "Show me overdue POs" → query_system(question, module="purchase_orders")
+- "What's my cap table breakdown?" → query_system(question, module="cap_table")
+- "Who viewed my data room this week?" → query_system(question, module="data_room")
+- "What tasks are overdue?" → query_system(question, module="tasks")
+- "How many employees do we have?" → query_system(question, module="employees")
+- "Show me all contracts" → query_system(question, module="contracts")
+- "What's our banking activity?" → query_system(question, module="banking")
+- "Give me an overview of the business" → query_system(question, module="general")`;
 
   const messages: Message[] = [
     { role: "system", content: systemPrompt },
