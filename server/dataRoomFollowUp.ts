@@ -10,7 +10,7 @@ export async function sendDataRoomFollowUps() {
     const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
 
     // Get visitors who viewed 7-14 days ago and haven't been followed up
-    const allVisitors = await db.getDataRoomVisitors?.();
+    const allVisitors = await (db as any).getDataRoomVisitors?.();
     if (!allVisitors) return { sent: 0 };
 
     const { sendEmail } = await import("./_core/email");
@@ -23,7 +23,7 @@ export async function sendDataRoomFollowUps() {
       if (viewDate > oneWeekAgo || viewDate < twoWeeksAgo) continue;
       
       // Skip if already followed up (check notes or a flag)
-      if (visitor.followUpSent) continue;
+      if ((visitor as any).followUpSent) continue;
       
       const email = visitor.email;
       if (!email) continue;

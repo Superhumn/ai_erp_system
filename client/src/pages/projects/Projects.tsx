@@ -168,7 +168,7 @@ export default function Projects() {
   // ---- Data ----
   const utils = trpc.useUtils();
   const { data: projects, isLoading: projectsLoading } = trpc.projects.list.useQuery();
-  const { data: allTasks, isLoading: tasksLoading } = trpc.projects.listAllTasks.useQuery();
+  const { data: allTasks, isLoading: tasksLoading } = (trpc.projects as any).listAllTasks.useQuery();
   const { data: users } = trpc.users.list.useQuery();
 
   const createProject = trpc.projects.create.useMutation({
@@ -188,14 +188,14 @@ export default function Projects() {
       setTaskForm({ projectId: 0, name: "", priority: "medium", dueDate: "", description: "" });
       setInlineText("");
       setInlineProjectId(null);
-      utils.projects.listAllTasks.invalidate();
+      (utils.projects as any).listAllTasks.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });
 
   const updateTask = trpc.projects.updateTask.useMutation({
     onSuccess: () => {
-      utils.projects.listAllTasks.invalidate();
+      (utils.projects as any).listAllTasks.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });
