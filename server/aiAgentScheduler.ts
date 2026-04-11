@@ -67,6 +67,13 @@ export async function evaluateRules(): Promise<{
 
     for (const rule of activeRules) {
       try {
+        // Check per-rule frequency — skip if not enough time has passed
+        const freqMinutes = (rule as any).checkFrequencyMinutes || 15;
+        if (rule.lastTriggeredAt) {
+          const minutesSinceLastTrigger = (Date.now() - new Date(rule.lastTriggeredAt).getTime()) / (1000 * 60);
+          if (minutesSinceLastTrigger < freqMinutes) continue; // Skip — too soon
+        }
+
         const shouldTrigger = await evaluateRuleCondition(rule);
         
         if (shouldTrigger) {
