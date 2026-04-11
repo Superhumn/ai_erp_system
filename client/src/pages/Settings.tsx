@@ -1,10 +1,13 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Settings as SettingsIcon, User, Shield, Bell, Database, Link } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Settings as SettingsIcon, User, Shield, Bell, Database, Link, ExternalLink } from "lucide-react";
+import { useLocation } from "wouter";
 
 export default function Settings() {
   const { user } = useAuth();
+  const [, navigate] = useLocation();
 
   const roleColors: Record<string, string> = {
     admin: "bg-red-500/10 text-red-500",
@@ -113,13 +116,14 @@ export default function Settings() {
         </Card>
 
         {/* Integrations Card */}
-        <Card>
+        <Card className="cursor-pointer hover:border-primary/50 transition-colors" onClick={() => navigate("/settings/integrations")}>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Link className="h-5 w-5" />
               Integrations
+              <ExternalLink className="h-4 w-4 ml-auto text-muted-foreground" />
             </CardTitle>
-            <CardDescription>Connected services</CardDescription>
+            <CardDescription>Click to connect services</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
@@ -136,6 +140,9 @@ export default function Settings() {
                 <Badge variant="secondary">Not Connected</Badge>
               </div>
             </div>
+            <Button variant="outline" className="w-full mt-4" onClick={(e) => { e.stopPropagation(); navigate("/settings/integrations"); }}>
+              Manage Integrations
+            </Button>
           </CardContent>
         </Card>
 

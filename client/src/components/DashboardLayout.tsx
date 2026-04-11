@@ -58,6 +58,7 @@ import {
   Receipt,
   Landmark,
   Network,
+  Upload,
 } from "lucide-react";
 import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -77,6 +78,7 @@ const menuGroups = [
     label: "Command Center",
     items: [
       { icon: LayoutDashboard, label: "Dashboard", path: "/" },
+      { icon: Target, label: "Projects & Tasks", path: "/projects" },
       { icon: ClipboardCheck, label: "Approvals", path: "/ai/approvals" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: Bell, label: "Notifications", path: "/notifications" },
@@ -127,9 +129,9 @@ const menuGroups = [
   {
     label: "Tools",
     items: [
+      { icon: Upload, label: "Import Data", path: "/import" },
       { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
       { icon: Network, label: "EDI", path: "/edi" },
-      { icon: Target, label: "Projects & Grants", path: "/projects" },
       { icon: Settings, label: "Settings", path: "/settings" },
     ],
   },
