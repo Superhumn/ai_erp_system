@@ -245,8 +245,26 @@ export async function scanInbox(
                     const parsed = JSON.parse(text.replace(/```json\n?|\n?```/g, "").trim());
                     if (parsed.hasTasks && parsed.actionItems?.length > 0) {
                       const db = await import("../db");
+                      // Find or create "Email Tasks" project
+                      let projectId: number | null = null;
+                      try {
+                        const projects = await db.getProjects();
+                        let project = projects.find((p: any) => p.name === "Email Tasks");
+                        if (!project) {
+                          const r = await db.createProject({ name: "Email Tasks", projectNumber: `PRJ-EMAIL`, description: "Tasks extracted from emails", status: "active", createdBy: 1 });
+                          projectId = r.id;
+                        } else {
+                          projectId = project.id;
+                        }
+                      } catch { /* skip */ }
+
                       for (const item of parsed.actionItems) {
                         try {
+                          // Create project task
+                          if (projectId) {
+                            await db.createProjectTask?.({ projectId, name: item.task, description: `From: ${scannedEmail.from.name || scannedEmail.from.address} — ${scannedEmail.subject}`, priority: item.priority === "high" ? "high" : "medium", status: "not_started" } as any);
+                          }
+                          // Also create notification
                           await db.createNotification({ userId: 1, type: "reminder" as const, title: `📧 ${item.task}`, message: `From: ${scannedEmail.from.name || scannedEmail.from.address}` });
                         } catch { /* skip */ }
                       }

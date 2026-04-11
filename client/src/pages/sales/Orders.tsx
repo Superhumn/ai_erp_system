@@ -46,16 +46,20 @@ export default function Orders() {
     tax: "",
     total: "",
   });
+  const [newCustomerName, setNewCustomerName] = useState("");
 
   const utils = trpc.useUtils();
   const { data: orders, isLoading } = trpc.orders.list.useQuery();
   const { data: customers } = trpc.customers.list.useQuery();
+  const createCustomer = trpc.customers.create.useMutation();
   const createOrder = trpc.orders.create.useMutation({
     onSuccess: () => {
       toast.success("Order created successfully");
       setIsOpen(false);
       setFormData({ customerId: 0, subtotal: "", tax: "", total: "" });
+      setNewCustomerName("");
       utils.orders.list.invalidate();
+      utils.customers.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -68,10 +72,20 @@ export default function Orders() {
     return matchesSearch && matchesStatus;
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    let customerId = formData.customerId;
+    if (!customerId && newCustomerName.trim()) {
+      try {
+        const newCust = await createCustomer.mutateAsync({ name: newCustomerName.trim() });
+        customerId = newCust.id;
+      } catch (err: any) {
+        toast.error("Failed to create customer: " + err.message);
+        return;
+      }
+    }
     createOrder.mutate({
-      customerId: formData.customerId,
+      customerId: customerId || undefined,
       orderDate: new Date(),
       subtotal: formData.subtotal,
       taxAmount: formData.tax || "0",
@@ -109,21 +123,32 @@ export default function Orders() {
               <div className="grid gap-4 py-4">
                 <div className="space-y-2">
                   <Label htmlFor="customer">Customer</Label>
-                  <Select
-                    value={formData.customerId.toString()}
-                    onValueChange={(value) => setFormData({ ...formData, customerId: parseInt(value) })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select customer" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {customers?.map((customer) => (
-                        <SelectItem key={customer.id} value={customer.id.toString()}>
-                          {customer.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {customers && customers.length > 0 ? (
+                    <Select
+                      value={formData.customerId.toString()}
+                      onValueChange={(value) => setFormData({ ...formData, customerId: parseInt(value) })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select customer" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {customers.map((customer) => (
+                          <SelectItem key={customer.id} value={customer.id.toString()}>
+                            {customer.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="space-y-2">
+                      <Input
+                        placeholder="Enter customer name to create"
+                        value={newCustomerName}
+                        onChange={(e) => setNewCustomerName(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">No customers yet — type a name and it will be created with the order</p>
+                    </div>
+                  )}
                 </div>
                 <div className="grid grid-cols-3 gap-4">
                   <div className="space-y-2">

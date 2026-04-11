@@ -53,7 +53,7 @@ type PipelineStage = "new" | "contacted" | "qualified" | "proposal" | "negotiati
 export default function CRMHub() {
   const [search, setSearch] = useState("");
   const [isDealDialogOpen, setIsDealDialogOpen] = useState(false);
-  const [dealForm, setDealForm] = useState({ name: "", contactId: 0, stage: "discovery", amount: "", source: "", notes: "" });
+  const [dealForm, setDealForm] = useState({ name: "", contactId: 0, contactName: "", contactEmail: "", stage: "discovery", amount: "", source: "", notes: "" });
   const [isContactDialogOpen, setIsContactDialogOpen] = useState(false);
   const [isCaptureDialogOpen, setIsCaptureDialogOpen] = useState(false);
   const [captureMethod, setCaptureMethod] = useState<string>("manual");
@@ -118,7 +118,7 @@ export default function CRMHub() {
     onSuccess: () => {
       toast.success("Deal created");
       setIsDealDialogOpen(false);
-      setDealForm({ name: "", contactId: 0, stage: "discovery", amount: "", source: "", notes: "" });
+      setDealForm({ name: "", contactId: 0, contactName: "", contactEmail: "", stage: "discovery", amount: "", source: "", notes: "" });
       refetchDeals();
     },
     onError: (e: any) => toast.error(e.message),
@@ -869,14 +869,22 @@ export default function CRMHub() {
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Contact *</Label>
-              <Select value={dealForm.contactId?.toString() || "0"} onValueChange={(v) => setDealForm({ ...dealForm, contactId: parseInt(v) })}>
-                <SelectTrigger><SelectValue placeholder="Select contact" /></SelectTrigger>
-                <SelectContent>
-                  {(contacts as any[])?.map((c: any) => (
-                    <SelectItem key={c.id} value={c.id.toString()}>{c.fullName || c.firstName || c.email}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {contacts && (contacts as any[]).length > 0 ? (
+                <Select value={dealForm.contactId?.toString() || "0"} onValueChange={(v) => setDealForm({ ...dealForm, contactId: parseInt(v) })}>
+                  <SelectTrigger><SelectValue placeholder="Select contact" /></SelectTrigger>
+                  <SelectContent>
+                    {(contacts as any[]).map((c: any) => (
+                      <SelectItem key={c.id} value={c.id.toString()}>{c.fullName || c.firstName || c.email}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <div className="space-y-2">
+                  <Input placeholder="Contact name" value={dealForm.contactName || ""} onChange={(e) => setDealForm({ ...dealForm, contactName: e.target.value })} />
+                  <Input placeholder="Contact email" value={dealForm.contactEmail || ""} onChange={(e) => setDealForm({ ...dealForm, contactEmail: e.target.value })} />
+                  <p className="text-xs text-muted-foreground">No contacts yet — enter name and email to create one with the deal</p>
+                </div>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
@@ -909,10 +917,34 @@ export default function CRMHub() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsDealDialogOpen(false)}>Cancel</Button>
-            <Button disabled={!dealForm.name || !dealForm.contactId || createDeal.isPending} onClick={() => {
+            <Button disabled={!dealForm.name || (!dealForm.contactId && !dealForm.contactName) || createDeal.isPending} onClick={async () => {
+              let contactId = dealForm.contactId;
+              if (!contactId && dealForm.contactName) {
+                try {
+                  const nameParts = dealForm.contactName.trim().split(" ");
+                  const firstName = nameParts[0];
+                  const lastName = nameParts.slice(1).join(" ") || "";
+                  const newContact = await createContact.mutateAsync({
+                    firstName,
+                    lastName,
+                    email: dealForm.contactEmail || "",
+                    phone: "",
+                    contactType: "lead" as ContactType,
+                    source: "manual" as ContactSource,
+                    organization: "",
+                    jobTitle: "",
+                    notes: "",
+                  });
+                  contactId = (newContact as any).id;
+                  refetchContacts();
+                } catch (err: any) {
+                  toast.error("Failed to create contact: " + err.message);
+                  return;
+                }
+              }
               createDeal.mutate({
                 pipelineId: 1,
-                contactId: dealForm.contactId,
+                contactId: contactId,
                 name: dealForm.name,
                 stage: dealForm.stage,
                 amount: dealForm.amount || undefined,
