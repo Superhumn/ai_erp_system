@@ -1229,8 +1229,8 @@ ONLY return the JSON array, no other text.`;
   // ============================================
   orderItems: router({
     list: protectedProcedure
-      .input(z.object({ orderId: z.number().optional() }).optional())
-      .query(() => [] as any[]),
+      .input(z.object({ orderId: z.number() }))
+      .query(({ input }) => db.getOrderItems(input.orderId)),
     get: protectedProcedure
       .input(z.object({ id: z.number() }))
       .query(() => null as any),
@@ -17543,9 +17543,9 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       }))
       .mutation(async ({ input, ctx }) => {
         // Validate the API key
-        const isValid = await validateFirefliesApiKey(input.apiKey);
-        if (!isValid) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid Fireflies API key' });
+        const validation = await validateFirefliesApiKey(input.apiKey);
+        if (!validation.valid) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: validation.error || 'Invalid Fireflies API key' });
         }
         return db.upsertFirefliesConfig(ctx.user.id, input);
       }),
