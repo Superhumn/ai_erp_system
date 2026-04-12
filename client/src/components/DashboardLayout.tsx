@@ -130,14 +130,15 @@ function getMenuGroups(role: string = "user") {
   {
     label: "_people",
     items: [
-      // Everyone gets their own employee pages
-      { icon: Clock, label: "Time Tracking", path: "/hr/time-tracking" },
-      { icon: LineChart, label: "Equity Portal", path: "/hr/equity-portal" },
-      // Admin/exec get management views
       ...(isAdmin ? [
+        // Admin: management views
         { icon: Users, label: "People", path: "/hr/employees" },
         { icon: FileBarChart, label: "Cap Table", path: "/hr/equity-reports" },
-      ] : []),
+      ] : [
+        // Employee self-service
+        { icon: Clock, label: "Time Tracking", path: "/hr/time-tracking" },
+        { icon: LineChart, label: "Equity Portal", path: "/hr/equity-portal" },
+      ]),
       // Legal access — single hub with tabs
       ...(hasLegal || isAdmin ? [
         { icon: Scale, label: "Legal", path: "/legal" },
