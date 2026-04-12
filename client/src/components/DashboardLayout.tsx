@@ -185,6 +185,7 @@ export default function DashboardLayout({
 
   return (
     <SidebarProvider
+      defaultOpen={false}
       style={
         {
           "--sidebar-width": `${sidebarWidth}px`,
@@ -464,7 +465,7 @@ function DashboardLayoutContent({
             <NotificationCenter />
           </div>
         </header>
-        <main className="flex-1 overflow-auto p-4 pb-20 md:p-6 md:pb-6 lg:p-8 lg:pb-8">{children}</main>
+        <main className="flex-1 overflow-auto p-3 pb-4 md:p-6 md:pb-6 lg:p-8 lg:pb-8">{children}</main>
       </SidebarInset>
 
       {/* Floating AI removed — using toolbar only */}

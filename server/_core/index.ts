@@ -139,7 +139,10 @@ async function cleanupPlaceholders() {
     const contacts = await database.select().from(schema.crmContacts);
     const placeholderContacts = contacts.filter((c: any) => {
       const name = (c.fullName || c.firstName || "").trim();
-      return /^(Contact|Test|Placeholder|Sample)\s*\d*$/i.test(name);
+      const source = (c.source || "").toLowerCase();
+      return /^(Contact|Test|Placeholder|Sample)\s*\d*$/i.test(name) ||
+        name === "" || name === "-" ||
+        source === "contact_form";
     });
     for (const p of placeholderContacts) {
       await database.delete(schema.crmContacts).where(eq(schema.crmContacts.id, p.id));

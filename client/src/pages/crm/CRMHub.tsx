@@ -1034,10 +1034,6 @@ export default function CRMHub() {
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1">
-              <Label className="text-xs">Deal Name *</Label>
-              <Input placeholder="e.g., Series A - Acme Ventures" value={dealForm.name} onChange={(e) => setDealForm({ ...dealForm, name: e.target.value })} />
-            </div>
-            <div className="space-y-1">
               <Label className="text-xs">Contact *</Label>
               {contacts && (contacts as any[]).length > 0 ? (
                 <Select value={dealForm.contactId?.toString() || "0"} onValueChange={(v) => setDealForm({ ...dealForm, contactId: parseInt(v) })}>
@@ -1087,7 +1083,7 @@ export default function CRMHub() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsDealDialogOpen(false)}>Cancel</Button>
-            <Button disabled={!dealForm.name || (!dealForm.contactId && !dealForm.contactName) || createDeal.isPending} onClick={async () => {
+            <Button disabled={(!dealForm.contactId && !dealForm.contactName) || createDeal.isPending} onClick={async () => {
               let contactId = dealForm.contactId;
               if (!contactId && dealForm.contactName) {
                 try {
@@ -1112,10 +1108,13 @@ export default function CRMHub() {
                   return;
                 }
               }
+              // Auto-name deal from contact's company or name
+              const selectedC = (contacts as any[])?.find((c: any) => c.id === contactId);
+              const autoName = selectedC?.organization || selectedC?.fullName || dealForm.contactName || "New Deal";
               createDeal.mutate({
                 pipelineId: 1,
                 contactId: contactId,
-                name: dealForm.name,
+                name: autoName,
                 stage: dealForm.stage,
                 amount: dealForm.amount || undefined,
                 source: dealForm.source || undefined,
