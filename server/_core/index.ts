@@ -987,11 +987,11 @@ async function startServer() {
       }
     })();
 
-    // ── Shopify auto-sync (every 30 minutes) ──
+    // ── Shopify auto-sync (every 12 hours) ──
     (async () => {
       try {
-        const SHOPIFY_SYNC_INTERVAL = 30 * 60 * 1000; // 30 minutes
-        console.log("[Shopify Sync] Starting auto-sync with 30m interval");
+        const SHOPIFY_SYNC_INTERVAL = 12 * 60 * 60 * 1000; // 12 hours
+        console.log("[Shopify Sync] Starting auto-sync with 12h interval");
         setInterval(async () => {
           try {
             const { runAllShopifySyncs } = await import("./shopify");

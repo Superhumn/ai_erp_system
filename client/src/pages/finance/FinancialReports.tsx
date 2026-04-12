@@ -1,5 +1,10 @@
 import { useState, useMemo } from "react";
 import { trpc } from "../../lib/trpc";
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, Legend, LineChart, Line, ComposedChart, Cell,
+  TooltipProps,
+} from "recharts";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
@@ -145,6 +150,51 @@ function fmtCompact(value: string | number | null | undefined): string {
   if (Math.abs(num) >= 1_000_000) return `$${(num / 1_000_000).toFixed(1)}M`;
   if (Math.abs(num) >= 1_000) return `$${(num / 1_000).toFixed(0)}K`;
   return `$${num.toFixed(0)}`;
+}
+
+// ── Chart helpers ────────────────────────────────────────────
+const CHART_COLORS = {
+  revenue: "#3b82f6",    // blue-500
+  cogs: "#f97316",       // orange-500
+  grossProfit: "#22c55e",// green-500
+  ebitda: "#8b5cf6",     // violet-500
+  cash: "#06b6d4",       // cyan-500
+  negative: "#ef4444",   // red-500
+  muted: "#94a3b8",      // slate-400
+};
+
+function fmtChartAxis(value: number): string {
+  if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(value) >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
+  return `$${value.toFixed(0)}`;
+}
+
+function fmtChartTooltip(value: number): string {
+  if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
+  if (Math.abs(value) >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
+  return `$${value.toFixed(0)}`;
+}
+
+function ChartTooltipContent({ active, payload, label }: TooltipProps<number, string>) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-lg border bg-background p-2 shadow-sm text-xs">
+      <p className="font-medium mb-1">{label}</p>
+      {payload.map((entry, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: entry.color }} />
+          <span className="text-muted-foreground">{entry.name}:</span>
+          <span className="font-medium">
+            {typeof entry.value === "number"
+              ? entry.name?.includes("%") || entry.name?.includes("Margin")
+                ? `${entry.value.toFixed(1)}%`
+                : fmtChartTooltip(entry.value)
+              : entry.value}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function varianceColor(variancePct: number | null): string {
@@ -372,6 +422,53 @@ export default function FinancialReports() {
   });
   const modelCategories = trpc.financialModel.categories.useQuery();
   const modelData = financialModelQuery.data ?? [];
+
+  // All-years query for charts (unfiltered by year)
+  const allModelQuery = trpc.financialModel.list.useQuery({});
+  const allModelData = allModelQuery.data ?? [];
+
+  // ── Prepare chart data from financial model ──────────────────
+  const revenueCogsChartData = useMemo(() => {
+    const byYear: Record<number, { revenue: number; cogs: number; grossProfit: number; ebitda: number; cash: number }> = {};
+    for (const row of allModelData) {
+      const y = row.year;
+      if (!y) continue;
+      if (!byYear[y]) byYear[y] = { revenue: 0, cogs: 0, grossProfit: 0, ebitda: 0, cash: 0 };
+      const val = parseFloat(row.projectedValue ?? "0");
+      const name = (row.metricName || "").toLowerCase();
+      if (name === "revenue") byYear[y].revenue += val;
+      else if (name === "cogs") byYear[y].cogs += val;
+      else if (name === "gross profit") byYear[y].grossProfit += val;
+      else if (name === "ebitda") byYear[y].ebitda += val;
+      else if (name === "ending cash" || name === "cash") byYear[y].cash += val;
+    }
+    return Object.entries(byYear)
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .map(([yr, d]) => ({
+        year: `Year ${yr}`,
+        Revenue: d.revenue,
+        COGS: d.cogs,
+        "Gross Profit": d.grossProfit,
+        EBITDA: d.ebitda,
+        "Ending Cash": d.cash,
+        "Gross Margin %": d.revenue > 0 ? ((d.grossProfit / d.revenue) * 100) : 0,
+        "EBITDA Margin %": d.revenue > 0 ? ((d.ebitda / d.revenue) * 100) : 0,
+      }));
+  }, [allModelData]);
+
+  // ── Waterfall chart data (Year 1 breakdown) ──────────────────
+  const waterfallData = useMemo(() => {
+    const y1 = revenueCogsChartData.find((d) => d.year === "Year 1");
+    if (!y1) return [];
+    const opex = y1.Revenue - y1.COGS - y1.EBITDA;
+    return [
+      { name: "Revenue", value: y1.Revenue, fill: CHART_COLORS.revenue, isPositive: true },
+      { name: "COGS", value: -y1.COGS, fill: CHART_COLORS.negative, isPositive: false },
+      { name: "Gross Profit", value: y1["Gross Profit"], fill: CHART_COLORS.grossProfit, isPositive: true },
+      { name: "OpEx", value: -opex, fill: CHART_COLORS.negative, isPositive: false },
+      { name: "EBITDA", value: y1.EBITDA, fill: y1.EBITDA >= 0 ? CHART_COLORS.ebitda : CHART_COLORS.negative, isPositive: y1.EBITDA >= 0 },
+    ];
+  }, [revenueCogsChartData]);
 
   // Group model data by category
   const groupedModelData = useMemo(() => {
@@ -745,6 +842,97 @@ export default function FinancialReports() {
         </CardContent>
       </Card>
 
+      {/* ── Financial Charts ─────────────────────────────────── */}
+      {revenueCogsChartData.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* Revenue vs COGS Area Chart */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Revenue vs COGS</CardTitle>
+              <CardDescription className="text-xs">5-year projected trajectory</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={240}>
+                <AreaChart data={revenueCogsChartData}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis dataKey="year" tick={{ fontSize: 11 }} />
+                  <YAxis tickFormatter={fmtChartAxis} tick={{ fontSize: 11 }} width={60} />
+                  <Tooltip content={<ChartTooltipContent />} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Area type="monotone" dataKey="Revenue" stackId="1" stroke={CHART_COLORS.revenue} fill={CHART_COLORS.revenue} fillOpacity={0.3} />
+                  <Area type="monotone" dataKey="COGS" stackId="2" stroke={CHART_COLORS.cogs} fill={CHART_COLORS.cogs} fillOpacity={0.3} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          {/* Gross Margin & EBITDA Margin Line Chart */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Margin Trends</CardTitle>
+              <CardDescription className="text-xs">Gross margin and EBITDA margin %</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={240}>
+                <LineChart data={revenueCogsChartData}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis dataKey="year" tick={{ fontSize: 11 }} />
+                  <YAxis tickFormatter={(v: number) => `${v.toFixed(0)}%`} tick={{ fontSize: 11 }} width={45} />
+                  <Tooltip content={<ChartTooltipContent />} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Line type="monotone" dataKey="Gross Margin %" stroke={CHART_COLORS.grossProfit} strokeWidth={2} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="EBITDA Margin %" stroke={CHART_COLORS.ebitda} strokeWidth={2} dot={{ r: 3 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          {/* Cash Position Bar Chart */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Cash Position</CardTitle>
+              <CardDescription className="text-xs">Ending cash balance by year</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={revenueCogsChartData}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis dataKey="year" tick={{ fontSize: 11 }} />
+                  <YAxis tickFormatter={fmtChartAxis} tick={{ fontSize: 11 }} width={60} />
+                  <Tooltip content={<ChartTooltipContent />} />
+                  <Bar dataKey="Ending Cash" fill={CHART_COLORS.cash} radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          {/* Waterfall Chart — Year 1 */}
+          {waterfallData.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Year 1 Waterfall</CardTitle>
+                <CardDescription className="text-xs">Revenue to EBITDA breakdown</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={240}>
+                  <BarChart data={waterfallData}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                    <YAxis tickFormatter={fmtChartAxis} tick={{ fontSize: 11 }} width={60} />
+                    <Tooltip content={<ChartTooltipContent />} />
+                    <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                      {waterfallData.map((entry, idx) => (
+                        <Cell key={idx} fill={entry.fill} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+
       {/* ── Model vs Actual Comparison ────────────────────────── */}
       <Card>
         <CardHeader className="pb-3">
@@ -962,11 +1150,26 @@ export default function FinancialReports() {
                               style={{ width: `${Math.min(pct, 100)}%` }}
                             />
                           </div>
-                          {kpi.month && (
-                            <p className="text-xs text-muted-foreground">
-                              Month {kpi.month}
-                            </p>
-                          )}
+                          {/* Sparkline — 12-month target trajectory */}
+                          <div className="flex items-center justify-between">
+                            <div style={{ width: 80, height: 30 }}>
+                              <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={Array.from({ length: 12 }, (_, i) => ({
+                                  m: i + 1,
+                                  v: target > 0 ? (target / 12) * (i + 1) : 0,
+                                  a: i < (kpi.month || 1) ? (actual / (kpi.month || 1)) * (i + 1) : undefined,
+                                }))}>
+                                  <Line type="monotone" dataKey="v" stroke={CHART_COLORS.muted} strokeWidth={1} dot={false} strokeDasharray="2 2" />
+                                  <Line type="monotone" dataKey="a" stroke={isOverTarget ? CHART_COLORS.grossProfit : CHART_COLORS.revenue} strokeWidth={1.5} dot={false} connectNulls />
+                                </LineChart>
+                              </ResponsiveContainer>
+                            </div>
+                            {kpi.month && (
+                              <span className="text-[10px] text-muted-foreground">
+                                Mo {kpi.month}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       );
                     })}
