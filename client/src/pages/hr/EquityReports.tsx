@@ -589,9 +589,27 @@ export default function EquityReports() {
                           {doc.createdAt ? new Date(doc.createdAt).toLocaleDateString() : ""}
                         </span>
                         {doc.fileUrl && (
-                          <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer">
+                          <button
+                            onClick={() => {
+                              const url = doc.fileUrl!;
+                              if (url.startsWith("data:")) {
+                                const [header, base64] = url.split(",");
+                                const mime = header.match(/data:(.*?);/)?.[1] || "application/octet-stream";
+                                const binary = atob(base64);
+                                const bytes = new Uint8Array(binary.length);
+                                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                                const blob = new Blob([bytes], { type: mime });
+                                const blobUrl = URL.createObjectURL(blob);
+                                window.open(blobUrl, "_blank");
+                                setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+                              } else {
+                                window.open(url, "_blank");
+                              }
+                            }}
+                            className="hover:text-primary"
+                          >
                             <ExternalLink className="h-3 w-3 text-blue-600" />
-                          </a>
+                          </button>
                         )}
                       </div>
                     </div>
