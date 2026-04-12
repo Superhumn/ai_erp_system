@@ -160,7 +160,7 @@ export default function FirefliesPage() {
             Sync meeting transcripts and auto-generate tasks, projects, and CRM contacts
           </p>
         </div>
-        {config?.enabled && (
+        {config?.configured && (
           <div className="flex gap-2">
             <Button
               variant="outline"
@@ -196,7 +196,7 @@ export default function FirefliesPage() {
       </div>
 
       {/* Stats Cards */}
-      {config?.enabled && stats && (
+      {config?.configured && stats && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <Card>
             <CardContent className="pt-4 pb-4">
@@ -231,10 +231,10 @@ export default function FirefliesPage() {
         </div>
       )}
 
-      <Tabs defaultValue={config?.enabled ? "meetings" : "setup"}>
+      <Tabs defaultValue={config?.configured ? "meetings" : "setup"}>
         <TabsList>
           <TabsTrigger value="setup"><Settings className="h-4 w-4 mr-1" /> Setup</TabsTrigger>
-          {config?.enabled && (
+          {config?.configured && (
             <TabsTrigger value="meetings"><Mic className="h-4 w-4 mr-1" /> Meetings</TabsTrigger>
           )}
         </TabsList>
@@ -244,7 +244,7 @@ export default function FirefliesPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                {config?.enabled ? (
+                {config?.configured ? (
                   <CheckCircle2 className="h-5 w-5 text-green-500" />
                 ) : (
                   <XCircle className="h-5 w-5 text-gray-400" />
@@ -260,7 +260,7 @@ export default function FirefliesPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              {config?.enabled && (
+              {config?.configured && (
                 <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
                   <div className="flex items-center gap-2 text-green-700 font-medium">
                     <CheckCircle2 className="h-4 w-4" />
@@ -283,7 +283,7 @@ export default function FirefliesPage() {
 
               <div className="space-y-4">
                 <div>
-                  <Label htmlFor="apiKey">{config?.enabled ? "Update" : ""} Fireflies API Key</Label>
+                  <Label htmlFor="apiKey">{config?.configured ? "Update" : ""} Fireflies API Key</Label>
                   <div className="flex gap-2 mt-1">
                     <Input
                       id="apiKey"
@@ -296,7 +296,7 @@ export default function FirefliesPage() {
                       {configureMutation.isPending ? (
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                       ) : null}
-                      {config?.enabled ? "Update" : "Connect"}
+                      {config?.configured ? "Update" : "Connect"}
                     </Button>
                   </div>
                 </div>
@@ -326,7 +326,7 @@ export default function FirefliesPage() {
                   </div>
                 </div>
 
-                {config?.enabled && (
+                {config?.configured && (
                   <div className="pt-4 border-t">
                     <Button variant="destructive" size="sm" onClick={() => disconnectMutation.mutate()} disabled={disconnectMutation.isPending}>
                       Disconnect Fireflies
@@ -339,7 +339,7 @@ export default function FirefliesPage() {
         </TabsContent>
 
         {/* Meetings Tab */}
-        {config?.enabled && (
+        {config?.configured && (
           <TabsContent value="meetings">
             <Card>
               <CardHeader>
