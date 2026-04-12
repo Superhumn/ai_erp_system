@@ -99,7 +99,6 @@ function getMenuGroups(role: string = "user") {
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: Mic, label: "Meetings", path: "/meetings" },
       { icon: MessageSquare, label: "Messaging", path: "/messaging" },
-      { icon: Bell, label: "Notifications", path: "/notifications" },
     ],
   },
   {
