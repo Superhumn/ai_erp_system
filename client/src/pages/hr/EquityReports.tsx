@@ -142,6 +142,7 @@ export default function EquityReports() {
     onSuccess: () => {
       toast.success("Valuation report uploaded successfully");
       valuationDocsQuery.refetch();
+      valuationsQuery.refetch();
     },
     onError: (err: any) => {
       toast.error("Upload failed: " + err.message);
