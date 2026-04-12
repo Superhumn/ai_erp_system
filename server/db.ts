@@ -9777,7 +9777,7 @@ export async function createChecklistFromTemplate(
         categoryName: category.name,
         itemName: item.name,
         itemDescription: item.description,
-        matchKeywords: item.keywords ? JSON.stringify(item.keywords) : undefined,
+        matchKeywords: item.matchKeywords || undefined,
         sortOrder: sortOrder++,
         status: 'missing',
       } as any);
