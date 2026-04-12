@@ -62,6 +62,63 @@ const oauthCallbackLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+async function ensureTables() {
+  try {
+    const db = await import("../db");
+    const database = await db.getDb();
+    if (!database) return;
+    const tables = [
+      `CREATE TABLE IF NOT EXISTS fireflies_configs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        userId INT NOT NULL,
+        apiKey VARCHAR(512) NOT NULL,
+        autoCreateContacts BOOLEAN DEFAULT FALSE,
+        autoCreateTasks BOOLEAN DEFAULT FALSE,
+        autoCreateProjects BOOLEAN DEFAULT FALSE,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS fireflies_meetings (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        companyId INT,
+        firefliesId VARCHAR(128) NOT NULL,
+        title VARCHAR(500),
+        date TIMESTAMP NULL,
+        duration INT,
+        participants TEXT,
+        transcript TEXT,
+        summary TEXT,
+        aiSummary TEXT,
+        actionItemsRaw TEXT,
+        videoUrl TEXT,
+        audioUrl TEXT,
+        status ENUM('pending','contacts_created','tasks_created','fully_processed') DEFAULT 'pending',
+        crmContactId INT,
+        linkedEntityType VARCHAR(64),
+        linkedEntityId INT,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS fireflies_action_items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        meetingId INT NOT NULL,
+        text TEXT,
+        assignee VARCHAR(255),
+        dueDate TIMESTAMP NULL,
+        status ENUM('pending','completed','cancelled') DEFAULT 'pending',
+        linkedTaskId INT,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+      )`,
+    ];
+    for (const sql of tables) {
+      try { await database.execute(require('drizzle-orm/sql').sql.raw(sql)); } catch { /* already exists */ }
+    }
+    console.log("[Startup] Ensured critical tables exist");
+  } catch (e) {
+    console.warn("[Startup] Table check skipped:", e instanceof Error ? e.message : e);
+  }
+}
+
 async function cleanupPlaceholders() {
   try {
     const db = await import("../db");
@@ -89,6 +146,12 @@ async function cleanupPlaceholders() {
     }
     if (placeholderContacts.length > 0) console.log(`[Cleanup] Deleted ${placeholderContacts.length} placeholder contacts`);
 
+    // Delete all WhatsApp messages (placeholder/test data)
+    try {
+      await database.delete(schema.whatsappMessages);
+      console.log("[Cleanup] Deleted all WhatsApp messages");
+    } catch { /* table may not exist */ }
+
     // Delete data room ID 1
     try {
       await database.delete(schema.dataRoomChecklistItems).where(eq(schema.dataRoomChecklistItems.dataRoomId, 1));
@@ -111,8 +174,8 @@ async function startServer() {
 
   validateCriticalConfig();
 
-  // Run one-time cleanup on startup
-  cleanupPlaceholders();
+  // Ensure critical tables exist + cleanup placeholders
+  ensureTables().then(() => cleanupPlaceholders()).catch(console.warn);
 
   const emailConfigValidation = validateEmailConfig();
   if (!emailConfigValidation.valid) {
