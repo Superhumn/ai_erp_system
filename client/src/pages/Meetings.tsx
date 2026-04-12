@@ -25,7 +25,6 @@ import {
   Zap,
   FolderPlus,
   Video,
-  Headphones,
   Tag,
   ArrowRight,
   CheckCircle2,
@@ -123,7 +122,7 @@ export default function Meetings() {
   const handleProcessMeeting = () => {
     if (!selectedMeetingId) return;
     processMeetingMutation.mutate({
-      meetingId: selectedMeetingId.toString(),
+      meetingId: selectedMeetingId,
       createContacts: true,
       createTasks: true,
       createProject: processCreateProject,
@@ -384,14 +383,6 @@ export default function Meetings() {
                         <Button variant="outline" size="sm" asChild>
                           <a href={meeting.recordingUrl} target="_blank" rel="noopener noreferrer">
                             <Video className="h-3 w-3 mr-1" /> Recording
-                            <ExternalLink className="h-3 w-3 ml-1" />
-                          </a>
-                        </Button>
-                      )}
-                      {meeting.audioUrl && (
-                        <Button variant="outline" size="sm" asChild>
-                          <a href={meeting.audioUrl} target="_blank" rel="noopener noreferrer">
-                            <Headphones className="h-3 w-3 mr-1" /> Audio
                             <ExternalLink className="h-3 w-3 ml-1" />
                           </a>
                         </Button>
