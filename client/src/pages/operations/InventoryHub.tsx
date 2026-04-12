@@ -71,6 +71,12 @@ export default function InventoryHub() {
 
   const utils = trpc.useUtils();
 
+  // Update product (for vendor linking)
+  const updateProductMutation = trpc.products.update.useMutation({
+    onSuccess: () => { toast.success("Vendor linked"); utils.products.list.invalidate(); },
+    onError: (err) => toast.error(err.message),
+  });
+
   // Integration status
   const { data: integrationStatus } = trpc.integrations.getStatus.useQuery(undefined, { staleTime: 120_000 });
 
@@ -759,12 +765,22 @@ export default function InventoryHub() {
                       </TableCell>
                       <TableCell className="px-2 py-1">{getPOStatusBadge(row.poStatus)}</TableCell>
                       <TableCell className="px-2 py-1 text-xs text-muted-foreground">{fmtDate(row.lastPODate)}</TableCell>
-                      <TableCell className="px-2 py-1 text-xs truncate max-w-[110px]">
-                        {row.vendorName ? (
-                          <a href="/operations/vendors" onClick={(e) => { e.preventDefault(); navigate("/operations/vendors"); }} className="text-primary hover:underline cursor-pointer">
-                            {row.vendorName}
-                          </a>
-                        ) : "—"}
+                      <TableCell className="px-2 py-1 text-xs truncate max-w-[130px]">
+                        <select
+                          value={row.productId ? (products?.find((p: any) => p.id === row.productId)?.preferredVendorId || "") : ""}
+                          onChange={(e) => {
+                            const vendorId = e.target.value ? parseInt(e.target.value) : null;
+                            if (row.productId) {
+                              updateProductMutation.mutate({ id: row.productId, preferredVendorId: vendorId });
+                            }
+                          }}
+                          className="bg-transparent border-none text-xs cursor-pointer focus:outline-none w-full"
+                        >
+                          <option value="">—</option>
+                          {vendors?.map((v: any) => (
+                            <option key={v.id} value={v.id}>{v.name}</option>
+                          ))}
+                        </select>
                       </TableCell>
                       <TableCell className="px-2 py-1 text-xs font-mono truncate max-w-[100px]">
                         {row.lastShipment ? (

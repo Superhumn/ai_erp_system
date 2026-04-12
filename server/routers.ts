@@ -605,6 +605,7 @@ ONLY return the JSON array, no other text.`;
         status: z.enum(['active', 'inactive', 'discontinued']).optional(),
         taxable: z.boolean().optional(),
         taxRate: z.string().optional(),
+        preferredVendorId: z.number().nullable().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
