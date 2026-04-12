@@ -2617,6 +2617,7 @@ ONLY return the JSON array, no other text.`;
         name: z.string().optional(),
         description: z.string().optional(),
         assigneeId: z.number().optional(),
+        projectId: z.number().optional(),
         status: z.enum(['todo', 'in_progress', 'review', 'completed', 'cancelled']).optional(),
         priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
         dueDate: z.date().optional(),

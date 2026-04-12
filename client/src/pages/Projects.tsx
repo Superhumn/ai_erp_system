@@ -136,6 +136,8 @@ function KanbanColumn({
   onTaskClick,
   onStatusChange,
   color,
+  projects,
+  onProjectChange,
 }: {
   title: string;
   status: string;
@@ -143,6 +145,8 @@ function KanbanColumn({
   onTaskClick: (task: any) => void;
   onStatusChange: (taskId: number, newStatus: string) => void;
   color: string;
+  projects?: any[];
+  onProjectChange?: (taskId: number, projectId: number) => void;
 }) {
   return (
     <div className="flex-1 min-w-[220px] max-w-[280px]">
@@ -153,6 +157,8 @@ function KanbanColumn({
             task={task}
             onClick={() => onTaskClick(task)}
             onStatusChange={onStatusChange}
+            projects={projects}
+            onProjectChange={onProjectChange}
           />
         ))}
         {tasks.length === 0 && (
@@ -314,10 +320,14 @@ function KanbanCard({
   task,
   onClick,
   onStatusChange,
+  projects,
+  onProjectChange,
 }: {
   task: any;
   onClick: () => void;
   onStatusChange: (taskId: number, newStatus: string) => void;
+  projects?: any[];
+  onProjectChange?: (taskId: number, projectId: number) => void;
 }) {
   const priority = priorityOptions.find((p) => p.value === task.priority);
   const dlStatus = getDeadlineStatus(task.dueDate, task.status);
@@ -351,9 +361,27 @@ function KanbanCard({
                     onStatusChange(task.id, s.value);
                   }}
                 >
-                  Move to {s.label}
+                  {s.label}
                 </DropdownMenuItem>
               ))}
+              {projects && projects.length > 0 && onProjectChange && (
+                <>
+                  <div className="border-t my-1" />
+                  <div className="px-2 py-1 text-[10px] text-muted-foreground font-medium">Move to project</div>
+                  {projects.filter((p: any) => p.id !== task.projectId).map((p: any) => (
+                    <DropdownMenuItem
+                      key={p.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onProjectChange(task.id, p.id);
+                      }}
+                    >
+                      <FolderKanban className="h-3 w-3 mr-1.5" />
+                      {p.name}
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -412,10 +440,12 @@ function KanbanCard({
 }
 
 // Task Detail Panel (for spreadsheet view)
-function TaskDetailPanel({ task, onClose, onStatusChange }: { 
-  task: any; 
+function TaskDetailPanel({ task, onClose, onStatusChange, projects, onProjectChange }: {
+  task: any;
   onClose: () => void;
   onStatusChange: (taskId: number, status: string) => void;
+  projects?: any[];
+  onProjectChange?: (taskId: number, projectId: number) => void;
 }) {
   const statusOption = taskStatusOptions.find(s => s.value === task.status);
   const priority = priorityOptions.find(p => p.value === task.priority);
@@ -435,13 +465,27 @@ function TaskDetailPanel({ task, onClose, onStatusChange }: {
               </Badge>
             )}
           </h3>
-          <p className="text-sm text-muted-foreground">
-            {task.project?.name || "No project"}
-          </p>
+          {/* Project selector */}
+          {projects && projects.length > 0 && onProjectChange && (
+            <Select
+              value={String(task.projectId || "")}
+              onValueChange={(v) => onProjectChange(task.id, Number(v))}
+            >
+              <SelectTrigger className="w-[180px] h-7 text-xs">
+                <FolderKanban className="h-3 w-3 mr-1 shrink-0" />
+                <SelectValue placeholder="Move to project..." />
+              </SelectTrigger>
+              <SelectContent>
+                {projects.map((p: any) => (
+                  <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
         <div className="flex items-center gap-2">
-          <Select 
-            value={task.status} 
+          <Select
+            value={task.status}
             onValueChange={(v) => onStatusChange(task.id, v)}
           >
             <SelectTrigger className="w-[140px] h-8">
@@ -618,6 +662,10 @@ export default function Projects() {
 
   const handleStatusChange = (taskId: number, newStatus: string) => {
     updateTaskStatus.mutate({ id: taskId, status: newStatus as any });
+  };
+
+  const handleProjectChange = (taskId: number, projectId: number) => {
+    updateTaskStatus.mutate({ id: taskId, projectId } as any);
   };
 
   return (
@@ -846,9 +894,14 @@ export default function Projects() {
         <Dialog open={!!selectedTask} onOpenChange={() => setSelectedTask(null)}>
           <DialogContent className="max-w-2xl">
             {selectedTask && (
-              <TaskDetailPanel 
-                task={selectedTask} 
+              <TaskDetailPanel
+                task={selectedTask}
                 onClose={() => setSelectedTask(null)}
+                projects={projects}
+                onProjectChange={(id, projectId) => {
+                  handleProjectChange(id, projectId);
+                  setSelectedTask(null);
+                }}
                 onStatusChange={(id, status) => {
                   handleStatusChange(id, status);
                   setSelectedTask(null);
