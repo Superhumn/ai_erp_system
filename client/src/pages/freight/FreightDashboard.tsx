@@ -1,27 +1,30 @@
+import { useState } from "react";
 import { trpc } from "@/lib/trpc";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  Ship,
-  Plane,
-  Truck,
-  FileText,
-  Package,
-  ClipboardList,
-  Building2,
-  AlertCircle,
-  Plus,
-  ArrowRight,
-  Loader2,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
+import {
+  Truck, FileText, Package, ClipboardList, Building2,
+  AlertCircle, Plus, Loader2, Search, Ship, Plane,
 } from "lucide-react";
 import { Link } from "wouter";
+import { format } from "date-fns";
+import { formatCurrency } from "@/lib/format";
 
 export default function FreightDashboard() {
+  const [tab, setTab] = useState("rfqs");
+  const [search, setSearch] = useState("");
+
   const { data: stats, isLoading } = trpc.freight.dashboardStats.useQuery();
-  const { data: recentRfqs } = trpc.freight.rfqs.list.useQuery({ status: undefined });
-  const { data: recentBookings } = trpc.freight.bookings.list.useQuery({});
-  const { data: pendingClearances } = trpc.customs.clearances.list.useQuery({ status: 'pending_documents' });
+  const { data: rfqs } = trpc.freight.rfqs.list.useQuery({ status: undefined });
+  const { data: bookings } = trpc.freight.bookings.list.useQuery({});
+  const { data: clearances } = trpc.customs.clearances.list.useQuery({});
+  const { data: carriers } = trpc.freight.carriers.list.useQuery();
 
   if (isLoading) {
     return (
@@ -31,231 +34,251 @@ export default function FreightDashboard() {
     );
   }
 
+  const q = search.toLowerCase();
+
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-4 animate-fade-in">
+      {/* Header + KPIs inline */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold tracking-[-0.02em]">Freight & Logistics</h1>
-          <p className="text-muted-foreground">Manage shipments, quotes, and customs clearance</p>
+          <h1 className="text-[1.875rem] font-bold tracking-[-0.03em]">Freight & Logistics</h1>
+          <p className="text-muted-foreground text-sm">Shipments, quotes, carriers, and customs</p>
         </div>
-        <div className="flex gap-2">
-          <Link href="/freight/rfqs/new">
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              New Quote Request
-            </Button>
-          </Link>
+        <Link href="/freight/rfqs/new">
+          <Button>
+            <Plus className="h-4 w-4 mr-2" />
+            New Quote Request
+          </Button>
+        </Link>
+      </div>
+
+      {/* Compact KPI bar */}
+      <div className="flex items-center gap-5 flex-wrap text-sm border rounded-xl px-4 py-3 bg-card">
+        <div>
+          <span className="text-xs text-muted-foreground">Active RFQs</span>
+          <div className="font-bold text-base">{stats?.activeRfqs || 0}</div>
+        </div>
+        <div className="h-8 w-px bg-border" />
+        <div>
+          <span className="text-xs text-muted-foreground">Pending Quotes</span>
+          <div className="font-bold text-base">{stats?.pendingQuotes || 0}</div>
+        </div>
+        <div className="h-8 w-px bg-border" />
+        <div>
+          <span className="text-xs text-muted-foreground">In Transit</span>
+          <div className="font-bold text-base">{stats?.activeBookings || 0}</div>
+        </div>
+        <div className="h-8 w-px bg-border" />
+        <div>
+          <span className="text-xs text-muted-foreground">Clearances</span>
+          <div className="font-bold text-base">{stats?.pendingClearances || 0}</div>
+        </div>
+        <div className="h-8 w-px bg-border" />
+        <div>
+          <span className="text-xs text-muted-foreground">Carriers</span>
+          <div className="font-bold text-base">{stats?.totalCarriers || 0}</div>
         </div>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <ClipboardList className="h-4 w-4" />
-              Active RFQs
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.activeRfqs || 0}</div>
-            <p className="text-xs text-muted-foreground">Awaiting quotes</p>
-          </CardContent>
-        </Card>
+      {/* Single tabbed view */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between gap-4">
+            <Tabs value={tab} onValueChange={setTab}>
+              <TabsList>
+                <TabsTrigger value="rfqs" className="flex items-center gap-1.5">
+                  <ClipboardList className="h-3.5 w-3.5" />
+                  RFQs
+                </TabsTrigger>
+                <TabsTrigger value="bookings" className="flex items-center gap-1.5">
+                  <Package className="h-3.5 w-3.5" />
+                  Bookings
+                </TabsTrigger>
+                <TabsTrigger value="clearances" className="flex items-center gap-1.5">
+                  <FileText className="h-3.5 w-3.5" />
+                  Customs
+                </TabsTrigger>
+                <TabsTrigger value="carriers" className="flex items-center gap-1.5">
+                  <Truck className="h-3.5 w-3.5" />
+                  Carriers
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <div className="relative w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          {/* RFQs Tab */}
+          {tab === "rfqs" && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>RFQ #</TableHead>
+                  <TableHead>Title</TableHead>
+                  <TableHead>Origin</TableHead>
+                  <TableHead>Destination</TableHead>
+                  <TableHead>Mode</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rfqs && rfqs.length > 0 ? (
+                  rfqs
+                    .filter((r: any) => !q || r.rfqNumber?.toLowerCase().includes(q) || r.title?.toLowerCase().includes(q))
+                    .map((rfq: any) => (
+                      <TableRow key={rfq.id} className="cursor-pointer hover:bg-muted/50" onClick={() => window.location.href = `/freight/rfqs/${rfq.id}`}>
+                        <TableCell className="font-mono text-primary">{rfq.rfqNumber}</TableCell>
+                        <TableCell className="font-medium">{rfq.title || "-"}</TableCell>
+                        <TableCell>{rfq.originPort || rfq.origin || "-"}</TableCell>
+                        <TableCell>{rfq.destinationPort || rfq.destination || "-"}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">
+                            {rfq.mode === "ocean" ? <Ship className="h-3 w-3 mr-1 inline" /> :
+                             rfq.mode === "air" ? <Plane className="h-3 w-3 mr-1 inline" /> :
+                             <Truck className="h-3 w-3 mr-1 inline" />}
+                            {rfq.mode || "—"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell><Badge>{(rfq.status || "draft").replace(/_/g, " ")}</Badge></TableCell>
+                      </TableRow>
+                    ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
+                      No quote requests yet. <Link href="/freight/rfqs/new"><span className="text-primary hover:underline">Create one</span></Link>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          )}
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              Pending Quotes
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.pendingQuotes || 0}</div>
-            <p className="text-xs text-muted-foreground">To review</p>
-          </CardContent>
-        </Card>
+          {/* Bookings Tab */}
+          {tab === "bookings" && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Booking #</TableHead>
+                  <TableHead>Tracking</TableHead>
+                  <TableHead>Carrier</TableHead>
+                  <TableHead>ETD</TableHead>
+                  <TableHead>ETA</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {bookings && bookings.length > 0 ? (
+                  bookings
+                    .filter((b: any) => !q || b.bookingNumber?.toLowerCase().includes(q) || b.trackingNumber?.toLowerCase().includes(q))
+                    .map((b: any) => (
+                      <TableRow key={b.id} className="cursor-pointer hover:bg-muted/50">
+                        <TableCell className="font-mono text-primary">{b.bookingNumber}</TableCell>
+                        <TableCell>{b.trackingNumber || "-"}</TableCell>
+                        <TableCell>{b.carrierName || "-"}</TableCell>
+                        <TableCell>{b.etd ? format(new Date(b.etd), "MMM d") : "-"}</TableCell>
+                        <TableCell>{b.eta ? format(new Date(b.eta), "MMM d") : "-"}</TableCell>
+                        <TableCell>
+                          <Badge variant={b.status === "in_transit" ? "default" : b.status === "delivered" ? "secondary" : "outline"}>
+                            {(b.status || "pending").replace(/_/g, " ")}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
+                      No bookings yet
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          )}
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Package className="h-4 w-4" />
-              Active Bookings
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.activeBookings || 0}</div>
-            <p className="text-xs text-muted-foreground">In transit</p>
-          </CardContent>
-        </Card>
+          {/* Customs Tab */}
+          {tab === "clearances" && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Reference</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Port</TableHead>
+                  <TableHead>Broker</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {clearances && clearances.length > 0 ? (
+                  clearances
+                    .filter((c: any) => !q || c.referenceNumber?.toLowerCase().includes(q))
+                    .map((c: any) => (
+                      <TableRow key={c.id} className="cursor-pointer hover:bg-muted/50" onClick={() => window.location.href = `/freight/customs/${c.id}`}>
+                        <TableCell className="font-mono text-primary">{c.referenceNumber || c.id}</TableCell>
+                        <TableCell>{c.clearanceType || "-"}</TableCell>
+                        <TableCell>{c.portOfEntry || "-"}</TableCell>
+                        <TableCell>{c.customsBroker || "-"}</TableCell>
+                        <TableCell>
+                          <Badge variant={c.status === "cleared" ? "secondary" : c.status === "pending_documents" ? "destructive" : "outline"}>
+                            {(c.status || "pending").replace(/_/g, " ")}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center py-12 text-muted-foreground">
+                      No customs clearances
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          )}
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <AlertCircle className="h-4 w-4" />
-              Pending Clearances
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.pendingClearances || 0}</div>
-            <p className="text-xs text-muted-foreground">Need attention</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Building2 className="h-4 w-4" />
-              Active Carriers
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.totalCarriers || 0}</div>
-            <p className="text-xs text-muted-foreground">In network</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="hover:border-border/80 transition-shadow cursor-pointer">
-          <Link href="/freight/rfqs">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ClipboardList className="h-5 w-5 text-blue-600" />
-                Quote Requests
-              </CardTitle>
-              <CardDescription>Create and manage freight RFQs</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">View all RFQs</span>
-                <ArrowRight className="h-4 w-4" />
-              </div>
-            </CardContent>
-          </Link>
-        </Card>
-
-        <Card className="hover:border-border/80 transition-shadow cursor-pointer">
-          <Link href="/freight/carriers">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <div className="flex -space-x-1">
-                  <Ship className="h-4 w-4 text-blue-600" />
-                  <Plane className="h-4 w-4 text-blue-600" />
-                  <Truck className="h-4 w-4 text-blue-600" />
-                </div>
-                Carriers & Forwarders
-              </CardTitle>
-              <CardDescription>Manage your carrier network</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">View all carriers</span>
-                <ArrowRight className="h-4 w-4" />
-              </div>
-            </CardContent>
-          </Link>
-        </Card>
-
-        <Card className="hover:border-border/80 transition-shadow cursor-pointer">
-          <Link href="/freight/customs">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5 text-orange-600" />
-                Customs Clearance
-              </CardTitle>
-              <CardDescription>Track import/export clearances</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">View clearances</span>
-                <ArrowRight className="h-4 w-4" />
-              </div>
-            </CardContent>
-          </Link>
-        </Card>
-      </div>
-
-      {/* Recent Activity */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recent RFQs */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Recent Quote Requests</CardTitle>
-            <CardDescription>Latest freight RFQs</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {recentRfqs && recentRfqs.length > 0 ? (
-              <div className="space-y-3">
-                {recentRfqs.slice(0, 5).map((rfq) => (
-                  <Link key={rfq.id} href={`/freight/rfqs/${rfq.id}`}>
-                    <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted transition-colors cursor-pointer">
-                      <div>
-                        <p className="font-medium">{rfq.rfqNumber}</p>
-                        <p className="text-sm text-muted-foreground">{rfq.title}</p>
-                      </div>
-                      <Badge variant={
-                        rfq.status === 'quotes_received' ? 'default' :
-                        rfq.status === 'awarded' ? 'secondary' :
-                        rfq.status === 'sent' ? 'outline' : 'secondary'
-                      }>
-                        {rfq.status.replace(/_/g, ' ')}
-                      </Badge>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-8 text-muted-foreground">
-                <ClipboardList className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                <p>No quote requests yet</p>
-                <Link href="/freight/rfqs/new">
-                  <Button variant="link" className="mt-2">Create your first RFQ</Button>
-                </Link>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Active Bookings */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Active Bookings</CardTitle>
-            <CardDescription>Shipments in progress</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {recentBookings && recentBookings.length > 0 ? (
-              <div className="space-y-3">
-                {recentBookings.slice(0, 5).map((booking) => (
-                  <Link key={booking.id} href={`/freight/bookings/${booking.id}`}>
-                    <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted transition-colors cursor-pointer">
-                      <div>
-                        <p className="font-medium">{booking.bookingNumber}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {booking.trackingNumber || 'No tracking yet'}
-                        </p>
-                      </div>
-                      <Badge variant={
-                        booking.status === 'in_transit' ? 'default' :
-                        booking.status === 'delivered' ? 'secondary' :
-                        booking.status === 'confirmed' ? 'outline' : 'secondary'
-                      }>
-                        {booking.status.replace(/_/g, ' ')}
-                      </Badge>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-8 text-muted-foreground">
-                <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                <p>No active bookings</p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+          {/* Carriers Tab */}
+          {tab === "carriers" && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Contact</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {carriers && carriers.length > 0 ? (
+                  carriers
+                    .filter((c: any) => !q || c.name?.toLowerCase().includes(q))
+                    .map((c: any) => (
+                      <TableRow key={c.id} className="hover:bg-muted/50">
+                        <TableCell className="font-medium">{c.name}</TableCell>
+                        <TableCell><Badge variant="outline">{c.carrierType || c.mode || "-"}</Badge></TableCell>
+                        <TableCell>{c.contactName || "-"}</TableCell>
+                        <TableCell>{c.email || "-"}</TableCell>
+                        <TableCell>
+                          <Badge variant={c.status === "active" ? "default" : "secondary"}>
+                            {c.status || "active"}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center py-12 text-muted-foreground">
+                      No carriers in network
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
