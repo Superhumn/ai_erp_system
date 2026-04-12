@@ -27,7 +27,7 @@ export default function GlobalSearch() {
   return (
     <div className="space-y-6 animate-fade-in">
       <div>
-        <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+        <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
           <Search className="h-8 w-8" />
           Global Search
         </h1>

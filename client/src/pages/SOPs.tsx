@@ -970,7 +970,7 @@ export default function SOPs() {
             <BookOpen className="h-5 w-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">
+            <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em]">
               Standard Operating Procedures
             </h1>
             <p className="text-muted-foreground mt-1">

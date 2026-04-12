@@ -165,8 +165,8 @@
   input[type="radio"]:not(:disabled) {
     @apply cursor-pointer;
   }
-  /* Typography scale — larger, bolder for dashboard aesthetic */
-  h1 { @apply text-2xl font-bold tracking-[-0.025em] leading-tight; }
+  /* Typography scale */
+  h1 { @apply text-[1.875rem] font-bold tracking-[-0.03em] leading-tight; }
   h2 { @apply text-xl font-semibold tracking-[-0.02em] leading-tight; }
   h3 { @apply text-lg font-semibold tracking-[-0.01em] leading-snug; }
   h4 { @apply text-base font-medium tracking-[-0.006em] leading-snug; }
@@ -305,7 +305,7 @@
 }
 
 .module-title {
-  @apply text-2xl font-bold tracking-[-0.025em];
+  @apply text-[1.875rem] font-bold tracking-[-0.03em];
 }
 
 .module-description {
@@ -531,7 +531,7 @@
 }
 
 .lf-page-title {
-  @apply text-2xl font-bold tracking-[-0.025em] leading-none;
+  @apply text-[1.875rem] font-bold tracking-[-0.03em] leading-none;
 }
 
 .lf-page-subtitle {

@@ -82,7 +82,7 @@ export default function FundraisingCampaigns() {
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Fundraising Campaigns</h1>
+          <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em]">Fundraising Campaigns</h1>
           <p className="text-muted-foreground">Manage your fundraising rounds and track progress</p>
         </div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>

@@ -93,7 +93,7 @@ export default function ShopifySettings() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+          <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
             <ShoppingBag className="h-8 w-8" />
             Shopify Settings
           </h1>

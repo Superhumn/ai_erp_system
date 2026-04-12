@@ -24,7 +24,7 @@ export default function LegalHub() {
   return (
     <div className="space-y-4 animate-fade-in">
       <div>
-        <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+        <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
           <Scale className="h-8 w-8" />
           Legal
         </h1>

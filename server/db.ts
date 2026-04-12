@@ -1755,14 +1755,16 @@ export async function upsertGoogleOAuthToken(data: InsertGoogleOAuthToken) {
   if (!db) throw new Error("Database not available");
 
   // Use INSERT ... ON DUPLICATE KEY UPDATE to avoid select-then-upsert
+  // COALESCE on refreshToken, scope, and googleEmail so that partial updates
+  // (e.g. token refresh flows) don't overwrite existing values with NULL.
   const result = await db.insert(googleOAuthTokens).values(data)
     .onDuplicateKeyUpdate({
       set: {
         accessToken: data.accessToken,
         refreshToken: sql`COALESCE(${data.refreshToken}, ${googleOAuthTokens.refreshToken})`,
         expiresAt: data.expiresAt,
-        scope: data.scope,
-        googleEmail: data.googleEmail,
+        scope: sql`COALESCE(${data.scope}, ${googleOAuthTokens.scope})`,
+        googleEmail: sql`COALESCE(${data.googleEmail}, ${googleOAuthTokens.googleEmail})`,
       },
     });
   return { id: result[0].insertId };

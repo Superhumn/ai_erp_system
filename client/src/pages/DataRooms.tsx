@@ -129,7 +129,7 @@ export default function DataRooms() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Data Rooms</h1>
+            <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em]">Data Rooms</h1>
             <p className="text-muted-foreground mt-1">
               Securely share documents with granular permissions and analytics
             </p>

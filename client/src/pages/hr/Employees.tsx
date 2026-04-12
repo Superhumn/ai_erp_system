@@ -508,7 +508,7 @@ export default function PeopleAndEquity() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+          <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
             <UserCircle className="h-8 w-8" />
             People
           </h1>

@@ -322,7 +322,7 @@ export default function CRMHub() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">
+          <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em]">
             CRM Hub
           </h1>
           <p className="text-sm text-muted-foreground mt-1">

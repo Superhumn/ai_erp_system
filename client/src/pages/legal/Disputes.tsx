@@ -133,7 +133,7 @@ export default function Disputes() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+          <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
             <Gavel className="h-7 w-7" />
             Legal Case Tracker
           </h1>

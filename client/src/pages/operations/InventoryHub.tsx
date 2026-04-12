@@ -280,12 +280,16 @@ export default function InventoryHub() {
 
   // Build flat inventory rows - unified view
   const inventoryRows = useMemo(() => {
-    if (!inventory && !rawMaterials) return [];
+    if (!inventory && !rawMaterials && !products) return [];
 
     const rows: any[] = [];
 
+    // Track which product IDs already have inventory_items rows
+    const productIdsWithInventory = new Set<number>();
+
     // Add finished goods inventory
     inventory?.forEach((inv: any) => {
+      productIdsWithInventory.add(inv.productId);
       const qty = parseFloat(inv.quantity) || 0;
       const reserved = parseFloat(inv.reservedQuantity) || 0;
       const reorderPoint = parseFloat(inv.reorderPoint) || parseFloat(inv.reorderLevel) || 0;
@@ -355,6 +359,53 @@ export default function InventoryHub() {
         lastUpdated: inv.updatedAt || inv.createdAt,
         status,
         productId: inv.productId,
+        productType: "finished",
+      });
+    });
+
+    // Add products that have no inventory_items rows (e.g. Shopify-synced products
+    // where the inventory_items table is empty). Shows them with 0 on-hand qty.
+    products?.forEach((prod: any) => {
+      if (productIdsWithInventory.has(prod.id)) return; // already shown from inventory
+
+      const poInfo = poByProduct.get(prod.id);
+      const shipInfo = shipmentByProduct.get(prod.id);
+      const vendorId = prod.preferredVendorId || poInfo?.vendorId;
+      const vendor = vendorId ? vendorMap.get(vendorId) : null;
+      const unitCost = parseFloat(prod.costPrice) || parseFloat(prod.price) || 0;
+
+      // On-order from POs
+      let onOrderQty = 0;
+      pendingFromPOs?.forEach((pending: any) => {
+        if (pending.productId === prod.id) {
+          onOrderQty += parseFloat(pending.pendingQuantity) || 0;
+        }
+      });
+
+      rows.push({
+        id: `prod-${prod.id}`,
+        sku: prod.sku || "",
+        productName: prod.name || prod.title || `Product #${prod.id}`,
+        category: prod.category || prod.productType || "",
+        location: "",
+        locationId: null,
+        qtyOnHand: 0,
+        reserved: 0,
+        available: 0,
+        reorderPoint: parseFloat(prod.reorderPoint) || 0,
+        inTransit: 0,
+        onOrderQty: onOrderQty || (poInfo?.openQty || 0),
+        openPONumbers: poInfo?.poNumbers?.join(", ") || "",
+        poStatus: poInfo?.latestStatus || "",
+        lastPODate: poInfo?.latestDate || null,
+        vendorName: vendor?.name || "",
+        lastShipment: shipInfo?.tracking || "",
+        shipStatus: shipInfo?.status || "",
+        unitCost,
+        totalValue: 0,
+        lastUpdated: prod.updatedAt || prod.createdAt,
+        status: "out_of_stock",
+        productId: prod.id,
         productType: "finished",
       });
     });
@@ -490,7 +541,7 @@ export default function InventoryHub() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Products & Inventory</h1>
+          <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em]">Products & Inventory</h1>
           <div className="flex items-center gap-2 mt-1">
             <p className="text-muted-foreground">Unified view — inventory, POs, shipments, costing, vendors</p>
             <a href="/operations/work-orders" className="text-xs text-primary hover:underline font-medium">Work Orders →</a>

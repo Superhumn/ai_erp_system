@@ -339,7 +339,7 @@ export default function Projects() {
     <div className="space-y-4 animate-fade-in">
       {/* ---- Header ---- */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Projects &amp; Tasks</h1>
+        <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em]">Projects &amp; Tasks</h1>
 
         <div className="flex items-center gap-2 flex-wrap">
           {/* View toggle */}
