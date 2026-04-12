@@ -135,15 +135,12 @@ function getMenuGroups(role: string = "user") {
       { icon: LineChart, label: "Equity Portal", path: "/hr/equity-portal" },
       // Admin/exec get management views
       ...(isAdmin ? [
-        { icon: Users, label: "People & Equity", path: "/hr/employees" },
-        { icon: Banknote, label: "Payroll", path: "/hr/payroll" },
+        { icon: Users, label: "People", path: "/hr/employees" },
         { icon: FileBarChart, label: "Cap Table", path: "/hr/equity-reports" },
       ] : []),
-      // Legal access
+      // Legal access — single hub with tabs
       ...(hasLegal || isAdmin ? [
-        { icon: Scale, label: "Contracts", path: "/legal/contracts" },
-        { icon: Scale, label: "Legal Cases", path: "/legal/disputes" },
-        { icon: FileText, label: "Legal Documents", path: "/legal/documents" },
+        { icon: Scale, label: "Legal", path: "/legal" },
       ] : []),
     ],
   },

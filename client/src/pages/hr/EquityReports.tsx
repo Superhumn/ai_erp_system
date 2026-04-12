@@ -442,7 +442,7 @@ export default function EquityReports() {
             <CardTitle className="text-base">409A Valuation</CardTitle>
           </div>
           <CardDescription className="text-sm">
-            409A fair market value for equity pricing (separate from investor valuation)
+            409A FMV per share for equity pricing. The total valuation shown is the investor post-money valuation — not the 409A FMV.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -458,14 +458,14 @@ export default function EquityReports() {
                 <>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">409A FMV Valuation</p>
+                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Investor Valuation</p>
                       <p className="text-2xl font-bold text-primary">
                         {formatValuationCurrency(currentValuation.totalValuation)}
                       </p>
-                      <p className="text-[10px] text-muted-foreground">Not investor valuation</p>
+                      <p className="text-[10px] text-muted-foreground">Post-money (not 409A FMV)</p>
                     </div>
                     <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">FMV Per Share</p>
+                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">409A FMV Per Share</p>
                       <p className="text-2xl font-bold">
                         {formatFMV(currentValuation.fairMarketValue)}
                       </p>

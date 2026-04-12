@@ -501,13 +501,16 @@ export default function PeopleAndEquity() {
         <div>
           <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
             <UserCircle className="h-8 w-8" />
-            People &amp; Equity
+            People
           </h1>
           <p className="text-muted-foreground mt-1">
             Team members, investors, advisors, and equity holdings
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => window.location.href = "/hr/payroll"}>
+            <Layers className="h-4 w-4 mr-1" /> Payroll
+          </Button>
           <Button variant="outline" onClick={() => window.location.href = "/import"}>
             <Upload className="h-4 w-4 mr-1" /> Import
           </Button>

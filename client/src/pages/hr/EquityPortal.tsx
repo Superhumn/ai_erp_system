@@ -100,6 +100,7 @@ export default function EquityPortal() {
   const { data: capTable, isLoading: capTableLoading } = trpc.capTable.summary.useQuery({});
   const { data: valuations } = trpc.capTable.valuations.list.useQuery({});
   const { data: grants, isLoading: grantsLoading } = trpc.capTable.grants.list.useQuery({});
+  const { data: stakeholders } = trpc.capTable.stakeholders.list.useQuery();
   const { data: exerciseRequests } = trpc.exerciseRequests.list.useQuery({});
 
   const utils = trpc.useUtils();
@@ -483,15 +484,16 @@ export default function EquityPortal() {
         </Card>
       )}
 
-      {/* Section 4: My Grants Table */}
+      {/* Section 4: Grants Table */}
       <Card>
         <CardHeader>
-          <div className="font-semibold text-lg">My Grants</div>
+          <div className="font-semibold text-lg">Equity Grants</div>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead>Stakeholder</TableHead>
                 <TableHead>Grant Date</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead className="text-right">Shares</TableHead>
@@ -507,8 +509,10 @@ export default function EquityPortal() {
                   const shares = parseFloat(grant.shares || "0");
                   const vested = parseFloat(grant.sharesVested || "0");
                   const unvested = shares - vested;
+                  const stakeholder = stakeholders?.find((s: any) => s.id === grant.stakeholderId);
                   return (
                     <TableRow key={grant.id}>
+                      <TableCell className="font-medium">{stakeholder?.name || `#${grant.stakeholderId}`}</TableCell>
                       <TableCell>{fmtDate(grant.grantDate)}</TableCell>
                       <TableCell>
                         <Badge variant="outline">{grant.grantType?.replace(/_/g, " ").toUpperCase()}</Badge>
@@ -527,7 +531,7 @@ export default function EquityPortal() {
                 })
               ) : (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
                     No equity grants found
                   </TableCell>
                 </TableRow>
