@@ -643,7 +643,7 @@ export default function EmailInbox() {
                   <div key={email.id}>
                     {/* Compact row */}
                     <div
-                      className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-accent/40 transition-colors ${
+                      className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-accent/40 transition-colors text-xs ${
                         isUnread ? 'bg-accent/20' : ''
                       } ${isExpanded ? 'bg-accent/30' : ''}`}
                       onClick={() => toggleExpand(email.id)}
@@ -663,15 +663,15 @@ export default function EmailInbox() {
                         }`}
                         onClick={(e) => toggleStar(e, email.id)}
                       />
-                      <span className={`w-[140px] truncate text-sm shrink-0 ${isUnread ? 'font-semibold' : ''}`}>
+                      <span className={`w-[120px] truncate shrink-0 ${isUnread ? 'font-semibold' : ''}`}>
                         {email.fromName || email.fromEmail}
                       </span>
-                      <div className="flex-1 flex items-center gap-1 min-w-0">
-                        <span className={`text-sm truncate ${isUnread ? 'font-semibold' : ''}`}>
+                      <div className="flex-1 min-w-0">
+                        <span className={`${isUnread ? 'font-semibold' : ''}`}>
                           {email.subject || "(No subject)"}
                         </span>
-                        <span className="text-sm text-muted-foreground truncate">
-                          {email.bodyText ? ` \u2014 ${email.bodyText.substring(0, 80)}` : ""}
+                        <span className="text-muted-foreground">
+                          {email.bodyText ? ` — ${email.bodyText.substring(0, 60)}` : ""}
                         </span>
                       </div>
                       <div className="flex items-center gap-1 shrink-0" title={catConfig.label}>
