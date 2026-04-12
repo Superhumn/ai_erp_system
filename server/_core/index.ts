@@ -113,6 +113,17 @@ async function ensureTables() {
     for (const sql of tables) {
       try { await database.execute(require('drizzle-orm/sql').sql.raw(sql)); } catch { /* already exists */ }
     }
+    // Add missing columns to existing tables
+    const alterStatements = [
+      "ALTER TABLE fireflies_meetings ADD COLUMN videoUrl TEXT",
+      "ALTER TABLE fireflies_meetings ADD COLUMN audioUrl TEXT",
+      "ALTER TABLE fireflies_meetings ADD COLUMN crmContactId INT",
+      "ALTER TABLE fireflies_meetings ADD COLUMN linkedEntityType VARCHAR(64)",
+      "ALTER TABLE fireflies_meetings ADD COLUMN linkedEntityId INT",
+    ];
+    for (const sql of alterStatements) {
+      try { await database.execute(require('drizzle-orm/sql').sql.raw(sql)); } catch { /* column already exists */ }
+    }
     console.log("[Startup] Ensured critical tables exist");
   } catch (e) {
     console.warn("[Startup] Table check skipped:", e instanceof Error ? e.message : e);
