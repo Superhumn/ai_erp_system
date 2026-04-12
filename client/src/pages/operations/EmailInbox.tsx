@@ -726,9 +726,9 @@ export default function EmailInbox() {
                                 // the list-level bodyHtml, then bodyText from either source.
                                 const raw =
                                   detail?.bodyHtml ||
-                                  (email as any).bodyHtml ||
+                                  email.bodyHtml ||
                                   detail?.bodyText ||
-                                  (email as any).bodyText ||
+                                  email.bodyText ||
                                   "(No content)";
                                 // Strip HTML if it contains tags
                                 if (raw.includes("<") && raw.includes(">")) {
