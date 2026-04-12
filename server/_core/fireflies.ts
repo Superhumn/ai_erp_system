@@ -36,7 +36,7 @@ export interface FirefliesTranscript {
   duration: number; // seconds
   organizer_email: string;
   participants: string[];
-  participant_emails: string[];
+  participant_emails?: string[]; // deprecated in Fireflies API
   summary?: {
     overview?: string;
     shorthand_bullet?: string[];
@@ -120,7 +120,7 @@ export async function listTranscripts(apiKey: string, limit: number = 50): Promi
         duration
         organizer_email
         participants
-        participant_emails
+
         summary {
           overview
           shorthand_bullet
@@ -156,7 +156,7 @@ export async function getTranscript(apiKey: string, transcriptId: string): Promi
         duration
         organizer_email
         participants
-        participant_emails
+
         summary {
           overview
           shorthand_bullet
@@ -250,15 +250,14 @@ export function extractParticipants(transcript: FirefliesTranscript): Array<{ na
     }
   }
 
-  // From participant_emails + participants arrays (fallback)
-  if (transcript.participant_emails && transcript.participants) {
-    for (let i = 0; i < transcript.participant_emails.length; i++) {
-      const email = transcript.participant_emails[i]?.toLowerCase();
-      if (email && !participantMap.has(email)) {
-        participantMap.set(email, {
-          name: transcript.participants[i] || email.split("@")[0],
-          email,
-        });
+  // From participants array (fallback — names or emails)
+  if (transcript.participants) {
+    for (const p of transcript.participants) {
+      if (p && p.includes("@")) {
+        const email = p.toLowerCase();
+        if (!participantMap.has(email)) {
+          participantMap.set(email, { name: email.split("@")[0], email });
+        }
       }
     }
   }
