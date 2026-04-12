@@ -1,19 +1,19 @@
 import { invokeLLM } from "./_core/llm";
 import { getDb } from "./db";
-// [Workflow] Supply chain workflow tables were removed from drizzle/schema.
-// These stubs allow the engine to compile; queries will return empty results at runtime.
-const supplyChainWorkflows: any = {} as any;
-const workflowRuns: any = {} as any;
-const workflowSteps: any = {} as any;
-const workflowApprovalQueue: any = {} as any;
-const autonomousDecisions: any = {} as any;
-const supplyChainEvents: any = {} as any;
-const workflowMetrics: any = {} as any;
-const approvalThresholds: any = {} as any;
-const exceptionRules: any = {} as any;
-const exceptionLog: any = {} as any;
-const supplierPerformance: any = {} as any;
-const workflowNotifications: any = {} as any;
+import {
+  supplyChainWorkflows,
+  workflowRuns,
+  workflowSteps,
+  workflowApprovalQueue,
+  autonomousDecisions,
+  supplyChainEvents,
+  workflowMetrics,
+  approvalThresholds,
+  exceptionRules,
+  exceptionLog,
+  supplierPerformance,
+  workflowNotifications,
+} from "../drizzle/schema";
 import { eq, and, lt, lte, gte, desc, asc, sql, isNull, or, inArray } from "drizzle-orm";
 import { sendEmail } from "./_core/email";
 

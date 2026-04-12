@@ -1,7 +1,6 @@
 import { getWorkflowEngine } from "../../../autonomousWorkflowEngine";
 import { getDb } from "../../../db";
-// [Workflow] supplyChainWorkflows table removed from drizzle/schema - using stub
-const supplyChainWorkflows: any = {} as any;
+import { supplyChainWorkflows } from "../../../../drizzle/schema";
 import { eq } from "drizzle-orm";
 import type { ToolAdapterInput, ToolAdapterResult } from "../../types";
 

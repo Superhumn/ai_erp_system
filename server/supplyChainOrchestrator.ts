@@ -2,15 +2,14 @@ import { getDb } from "./db";
 import { getWorkflowEngine } from "./autonomousWorkflowEngine";
 import {
   users,
+  supplyChainWorkflows,
+  workflowRuns,
+  workflowApprovalQueue,
+  supplyChainEvents,
+  approvalThresholds,
+  workflowNotifications,
+  exceptionLog,
 } from "../drizzle/schema";
-// [Workflow] Supply chain workflow tables were removed from drizzle/schema.
-// These stubs allow the orchestrator to compile; queries will return empty results at runtime.
-const supplyChainWorkflows: any = {} as any;
-const workflowRuns: any = {} as any;
-const workflowApprovalQueue: any = {} as any;
-const supplyChainEvents: any = {} as any;
-const approvalThresholds: any = {} as any;
-const workflowNotifications: any = {} as any;
 import { eq, and, lt, lte, gte, desc, asc, sql, isNull, or, inArray } from "drizzle-orm";
 import { sendEmail } from "./_core/email";
 
@@ -49,8 +48,10 @@ class SupplyChainOrchestrator {
     this.config = { ...defaultConfig, ...config };
   }
 
-  private parseJsonCached(raw: string | null | undefined): any {
+  private parseJsonCached(raw: unknown): any {
     if (!raw) return null;
+    // Drizzle JSON columns may return already-parsed objects
+    if (typeof raw !== "string") return raw;
     const cached = this.parsedConfigCache.get(raw);
     if (cached && cached.raw === raw) return cached.value;
     const parsed = JSON.parse(raw);
@@ -256,7 +257,7 @@ class SupplyChainOrchestrator {
 
         if (triggerEvents.includes(event.eventType)) {
           // Trigger the workflow
-          const eventData = event.eventData ? JSON.parse(event.eventData) : {};
+          const eventData = event.eventData ? (typeof event.eventData === "string" ? JSON.parse(event.eventData) : event.eventData) : {};
           this.executeWorkflowAsync(workflow, "event", {
             eventId: event.id,
             eventType: event.eventType,
@@ -329,8 +330,6 @@ class SupplyChainOrchestrator {
         return (pendingCount?.count || 0) >= (config.threshold || 10);
 
       case "exception_count":
-        // [Workflow] exceptionLog table removed - stub returns 0
-        const exceptionLog: any = {} as any;
         const [exceptionCount] = await db
           .select({ count: sql<number>`COUNT(*)` })
           .from(exceptionLog)
@@ -834,12 +833,10 @@ Please review and approve/reject at your earliest convenience.`,
         )
       );
 
-    // [Workflow] exceptionLog table removed - stub returns 0
-    const exceptionLog2: any = {} as any;
     const [exceptionCount] = await db
       .select({ count: sql<number>`COUNT(*)` })
-      .from(exceptionLog2)
-      .where(eq(exceptionLog2.status, "open"));
+      .from(exceptionLog)
+      .where(eq(exceptionLog.status, "open"));
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);

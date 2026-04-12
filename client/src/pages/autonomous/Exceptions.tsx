@@ -288,9 +288,9 @@ export default function ExceptionsPage() {
                       {formatDistanceToNow(new Date(exception.detectedAt), { addSuffix: true })}
                     </TableCell>
                     <TableCell>
-                      {exception.financialImpact && (
+                      {(exception.exceptionData as any)?.financialImpact && (
                         <span className="text-red-600 font-mono">
-                          ${parseFloat(exception.financialImpact).toLocaleString()}
+                          ${parseFloat((exception.exceptionData as any).financialImpact).toLocaleString()}
                         </span>
                       )}
                     </TableCell>
