@@ -16817,9 +16817,10 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         status: z.enum(["planning", "active", "paused", "closed", "cancelled"]).default("planning"),
         notes: z.string().optional(),
       }))
-      .mutation(({ input }) => {
+      .mutation(({ input, ctx }) => {
         // Convert empty strings to undefined for optional fields
         const cleaned: Record<string, any> = {
+          companyId: (ctx.user as any).companyId,
           name: input.name,
           roundType: input.roundType,
           status: input.status,
