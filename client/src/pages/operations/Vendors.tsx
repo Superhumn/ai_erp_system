@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -64,6 +64,10 @@ export default function Vendors() {
   const [isAlibabaOpen, setIsAlibabaOpen] = useState(false);
   const [alibabaForm, setAlibabaForm] = useState({ query: "", category: "", country: "" });
   const [alibabaResults, setAlibabaResults] = useState<any[]>([]);
+  const [expandedVendorId, setExpandedVendorId] = useState<number | null>(null);
+  const [newMaterialName, setNewMaterialName] = useState("");
+  const [newMaterialUnit, setNewMaterialUnit] = useState("kg");
+  const [newMaterialCost, setNewMaterialCost] = useState("");
 
   // Vendor form
   const [formData, setFormData] = useState({
@@ -89,6 +93,18 @@ export default function Vendors() {
   const { data: purchaseOrders } = trpc.purchaseOrders.list.useQuery();
   const { data: negotiations } = trpc.vendorNegotiations.list.useQuery({});
   const { data: locations } = trpc.warehouses.list.useQuery();
+  const { data: rawMaterials } = trpc.rawMaterials.list.useQuery();
+  const { data: products } = trpc.products.list.useQuery();
+
+  const createRawMaterial = trpc.rawMaterials.create.useMutation({
+    onSuccess: () => {
+      toast.success("Material added");
+      setNewMaterialName("");
+      setNewMaterialCost("");
+      utils.rawMaterials.list.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
 
   const createVendor = trpc.vendors.create.useMutation({
     onSuccess: () => {
@@ -598,9 +614,13 @@ export default function Vendors() {
                   {filteredVendors.map((vendor) => {
                     const agg = poAggregates.get(vendor.id);
                     const negStatus = negotiationStatusByVendor.get(vendor.id) || "none";
+                    const isExpanded = expandedVendorId === vendor.id;
+                    const vendorMaterials = rawMaterials?.filter((m: any) => m.preferredVendorId === vendor.id) || [];
+                    const vendorProducts = products?.filter((p: any) => p.preferredVendorId === vendor.id) || [];
 
                     return (
-                      <TableRow key={vendor.id}>
+                      <React.Fragment key={vendor.id}>
+                      <TableRow className="cursor-pointer hover:bg-muted/50" onClick={() => setExpandedVendorId(isExpanded ? null : vendor.id)}>
                         <TableCell className="text-sm font-medium whitespace-nowrap">
                           <span className="text-primary font-semibold">{vendor.name}</span>
                         </TableCell>
@@ -654,6 +674,92 @@ export default function Vendors() {
                           <DocumentsCell referenceType="vendor" referenceId={vendor.id} />
                         </TableCell>
                       </TableRow>
+                      {isExpanded && (
+                        <TableRow>
+                          <TableCell colSpan={16} className="bg-muted/20 p-4">
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
+                              <div><span className="text-xs text-muted-foreground block">Address</span>{vendor.address || "-"}, {vendor.city || ""} {vendor.state || ""} {vendor.country || ""}</div>
+                              <div><span className="text-xs text-muted-foreground block">Lead Time</span>{vendor.defaultLeadTimeDays || 14} days</div>
+                              <div><span className="text-xs text-muted-foreground block">Payment Terms</span>Net {vendor.paymentTerms || 30}</div>
+                              <div><span className="text-xs text-muted-foreground block">Tax ID</span>{vendor.taxId || "-"}</div>
+                            </div>
+                            {vendor.notes && <p className="text-sm text-muted-foreground mb-4 whitespace-pre-wrap">{vendor.notes}</p>}
+
+                            {/* Materials supplied by this vendor */}
+                            <div className="mb-3">
+                              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Raw Materials Supplied</h4>
+                              {vendorMaterials.length > 0 ? (
+                                <div className="flex flex-wrap gap-2 mb-2">
+                                  {vendorMaterials.map((m: any) => (
+                                    <Badge key={m.id} variant="outline">{m.name} ({m.unit}) — ${parseFloat(m.unitCost || "0").toFixed(2)}</Badge>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-muted-foreground mb-2">No materials linked yet</p>
+                              )}
+                              {/* Add material form */}
+                              <div className="flex items-center gap-2">
+                                <Input
+                                  placeholder="Material name"
+                                  value={newMaterialName}
+                                  onChange={(e) => setNewMaterialName(e.target.value)}
+                                  className="h-7 text-xs w-40"
+                                />
+                                <Select value={newMaterialUnit} onValueChange={setNewMaterialUnit}>
+                                  <SelectTrigger className="h-7 text-xs w-20"><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="kg">kg</SelectItem>
+                                    <SelectItem value="lb">lb</SelectItem>
+                                    <SelectItem value="L">L</SelectItem>
+                                    <SelectItem value="gal">gal</SelectItem>
+                                    <SelectItem value="ea">ea</SelectItem>
+                                    <SelectItem value="cs">case</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                <Input
+                                  placeholder="Cost"
+                                  type="number"
+                                  step="0.01"
+                                  value={newMaterialCost}
+                                  onChange={(e) => setNewMaterialCost(e.target.value)}
+                                  className="h-7 text-xs w-20"
+                                />
+                                <Button
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  disabled={!newMaterialName || createRawMaterial.isPending}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    createRawMaterial.mutate({
+                                      name: newMaterialName,
+                                      sku: `RM-${Date.now().toString(36)}`,
+                                      unit: newMaterialUnit,
+                                      unitCost: newMaterialCost || "0",
+                                      preferredVendorId: vendor.id,
+                                    } as any);
+                                  }}
+                                >
+                                  {createRawMaterial.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                                  Add
+                                </Button>
+                              </div>
+                            </div>
+
+                            {/* Products from this vendor */}
+                            {vendorProducts.length > 0 && (
+                              <div>
+                                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Products</h4>
+                                <div className="flex flex-wrap gap-2">
+                                  {vendorProducts.map((p: any) => (
+                                    <Badge key={p.id} variant="secondary">{p.name}</Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      )}
+                      </React.Fragment>
                     );
                   })}
                 </TableBody>
