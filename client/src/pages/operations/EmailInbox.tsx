@@ -716,8 +716,8 @@ export default function EmailInbox() {
                           <div className="p-3 bg-background rounded-md border text-sm whitespace-pre-wrap max-h-[70vh] overflow-y-auto leading-relaxed">
                             {(() => {
                               const raw = (emailDetail && emailDetail.id === email.id)
-                                ? (emailDetail.bodyText || "(No content)")
-                                : (email.bodyText || "(No content)");
+                                ? (emailDetail.bodyText || emailDetail.bodyHtml || "(No content)")
+                                : (email.bodyText || email.bodyHtml || "(No content)");
                               // Strip HTML if it contains tags
                               if (raw.includes("<") && raw.includes(">")) {
                                 return raw

@@ -168,7 +168,9 @@ Return JSON with this structure:
     }
 
     const content = typeof messageContent === 'string' ? messageContent : JSON.stringify(messageContent);
-    const parsed = JSON.parse(content);
+    // Strip markdown code fences that some LLMs add despite instructions
+    const cleaned = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
+    const parsed = JSON.parse(cleaned);
     
     return {
       category: validateCategory(parsed.category),
@@ -567,7 +569,9 @@ Only include fields that have actual values - omit null/empty fields.`;
     }
 
     const content = typeof messageContent === 'string' ? messageContent : JSON.stringify(messageContent);
-    const parsed = JSON.parse(content);
+    // Strip markdown code fences that some LLMs add despite instructions
+    const cleaned = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
+    const parsed = JSON.parse(cleaned);
     return {
       success: true,
       documents: parsed.documents || [],
@@ -692,7 +696,9 @@ Return a JSON object with this exact structure:
     }
 
     const content = typeof messageContent === 'string' ? messageContent : JSON.stringify(messageContent);
-    const parsed = JSON.parse(content);
+    // Strip markdown code fences that some LLMs add despite instructions
+    const cleaned = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
+    const parsed = JSON.parse(cleaned);
     return {
       success: true,
       documents: parsed.documents || []
