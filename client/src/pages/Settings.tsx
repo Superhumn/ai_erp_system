@@ -2,7 +2,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Settings as SettingsIcon, User, Shield, Bell, Database, Link, ExternalLink } from "lucide-react";
+import { Settings as SettingsIcon, User, Shield, Bell, Database, Link, ExternalLink, Globe, Users, Clock } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
@@ -186,6 +186,64 @@ export default function Settings() {
             <Button variant="outline" className="w-full mt-4" onClick={(e) => { e.stopPropagation(); navigate("/settings/integrations"); }}>
               Manage Integrations
             </Button>
+          </CardContent>
+        </Card>
+
+        {/* Portals Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Globe className="h-5 w-5" />
+              Portals
+            </CardTitle>
+            <CardDescription>Preview external-facing portals</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <button
+              className="w-full flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors text-left"
+              onClick={() => navigate("/portal/copacker")}
+            >
+              <div className="flex items-center gap-3">
+                <div className="h-8 w-8 rounded-full bg-blue-500/10 flex items-center justify-center">
+                  <Users className="h-4 w-4 text-blue-600" />
+                </div>
+                <div>
+                  <div className="text-sm font-medium">Copacker Portal</div>
+                  <div className="text-xs text-muted-foreground">View what copackers see when they log in</div>
+                </div>
+              </div>
+              <ExternalLink className="h-4 w-4 text-muted-foreground" />
+            </button>
+            <button
+              className="w-full flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors text-left"
+              onClick={() => navigate("/portal/vendor")}
+            >
+              <div className="flex items-center gap-3">
+                <div className="h-8 w-8 rounded-full bg-green-500/10 flex items-center justify-center">
+                  <Users className="h-4 w-4 text-green-600" />
+                </div>
+                <div>
+                  <div className="text-sm font-medium">Vendor Portal</div>
+                  <div className="text-xs text-muted-foreground">View what vendors see when they log in</div>
+                </div>
+              </div>
+              <ExternalLink className="h-4 w-4 text-muted-foreground" />
+            </button>
+            <button
+              className="w-full flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors text-left"
+              onClick={() => navigate("/hr/equity-portal")}
+            >
+              <div className="flex items-center gap-3">
+                <div className="h-8 w-8 rounded-full bg-purple-500/10 flex items-center justify-center">
+                  <User className="h-4 w-4 text-purple-600" />
+                </div>
+                <div>
+                  <div className="text-sm font-medium">Employee Self-Service</div>
+                  <div className="text-xs text-muted-foreground">Equity portal, time tracking — the employee view</div>
+                </div>
+              </div>
+              <ExternalLink className="h-4 w-4 text-muted-foreground" />
+            </button>
           </CardContent>
         </Card>
 
