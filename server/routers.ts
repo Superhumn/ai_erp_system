@@ -2989,6 +2989,15 @@ ONLY return the JSON array, no other text.`;
           realmId: quickbooksToken?.realmId,
         },
         syncHistory,
+        fireflies: await (async () => {
+          try {
+            const config = await db.getFirefliesConfig(ctx.user.id);
+            return {
+              configured: !!config,
+              status: config ? 'connected' : 'not_configured',
+            };
+          } catch { return { configured: false, status: 'not_configured' }; }
+        })(),
       };
     }),
 

@@ -330,7 +330,7 @@ export default function IntegrationsPage() {
                     bg: "bg-orange-500/10",
                     name: "Fireflies.ai",
                     desc: "Meeting transcription & actions",
-                    status: "not_configured" as string,
+                    status: (status as any)?.fireflies?.status || "not_configured" as string,
                     action: () => { window.location.href = '/settings/fireflies'; },
                     actionLabel: "Configure",
                   },

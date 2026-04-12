@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
+import InlineEdit from "@/components/InlineEdit";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -113,6 +114,10 @@ export default function CRMHub() {
       refetchContacts();
     },
     onError: (error) => toast.error(error.message),
+  });
+
+  const updateDeal = (trpc.crm as any).deals.update.useMutation({
+    onSuccess: () => refetchDeals(),
   });
 
   const createDeal = (trpc.crm as any).deals.create.useMutation({
@@ -714,18 +719,26 @@ export default function CRMHub() {
                       <TableCell className="font-medium py-1.5">
                         <div className="flex items-center gap-1">
                           {expandedDealId === deal.id ? <ChevronUp className="h-3 w-3 text-muted-foreground" /> : <ChevronDown className="h-3 w-3 text-muted-foreground" />}
-                          {deal.name}
+                          <span onClick={(e) => e.stopPropagation()}>
+                            <InlineEdit value={deal.name} onSave={(v) => updateDeal.mutate({ id: deal.id, name: v })} />
+                          </span>
                         </div>
                       </TableCell>
                       <TableCell>{deal._contactName}</TableCell>
                       <TableCell>{deal._company}</TableCell>
-                      <TableCell className="text-right font-semibold text-green-600">
-                        {parseFloat(deal._value) > 0 ? `$${Number(deal._value).toLocaleString()}` : "-"}
+                      <TableCell className="text-right font-semibold text-green-600" onClick={(e) => e.stopPropagation()}>
+                        <InlineEdit value={deal._value || "0"} type="number" onSave={(v) => updateDeal.mutate({ id: deal.id, amount: v })} />
                       </TableCell>
-                      <TableCell>
-                        <Badge className={stageColors[deal.stage] || "bg-gray-500/10 text-gray-600"}>
-                          {deal.stage}
-                        </Badge>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <select
+                          value={deal.stage}
+                          onChange={(e) => updateDeal.mutate({ id: deal.id, stage: e.target.value })}
+                          className="bg-transparent border-none text-xs cursor-pointer focus:outline-none"
+                        >
+                          {["discovery", "qualification", "proposal", "negotiation", "closed_won", "closed_lost"].map(s => (
+                            <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+                          ))}
+                        </select>
                       </TableCell>
                       <TableCell className="text-sm capitalize">{deal._source}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">
