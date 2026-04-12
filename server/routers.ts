@@ -10044,10 +10044,29 @@ Ask if they received the original request and if they can provide a quote.`;
           for (const store of activeStores) {
             if (!store) continue;
             try {
-              // Get inventory levels from Shopify
-              const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/inventory_levels.json?limit=100`, {
+              const token = safeDecryptToken(store.accessToken!);
+              const apiBase = `https://${store.storeDomain}/admin/api/2024-01`;
+
+              // Step 1: Fetch active locations (inventory_levels requires location_ids)
+              const locResp = await fetch(`${apiBase}/locations.json`, {
+                headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+              });
+              if (!locResp.ok) throw new Error(`Shopify locations API error: ${locResp.status}`);
+              const locData = await locResp.json();
+              const locationIds: number[] = (locData.locations || [])
+                .filter((l: any) => l.active)
+                .map((l: any) => l.id);
+
+              if (locationIds.length === 0) {
+                console.warn(`[Shopify Sync] No active locations for ${store.storeDomain}, skipping inventory sync`);
+                await db.updateShopifyStore(store.id, { lastSyncAt: new Date() });
+                continue;
+              }
+
+              // Step 2: Fetch inventory levels for those locations
+              const response = await fetch(`${apiBase}/inventory_levels.json?location_ids=${locationIds.join(',')}&limit=250`, {
                 headers: {
-                  'X-Shopify-Access-Token': safeDecryptToken(store.accessToken!),
+                  'X-Shopify-Access-Token': token,
                   'Content-Type': 'application/json',
                 },
               });

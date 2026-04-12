@@ -10,7 +10,7 @@
 
 import crypto from "crypto";
 import https from "https";
-import { safeDecryptToken } from "./crypto";
+import { encrypt, safeDecryptToken } from "./crypto";
 
 /**
  * Verify Shopify webhook signature
@@ -199,7 +199,7 @@ export async function refreshShopifyToken(storeId: number): Promise<string> {
   const expiresAt = new Date(Date.now() + expiresIn * 1000);
 
   await updateShopifyStore(storeId, {
-    accessToken: newToken,
+    accessToken: encrypt(newToken), // store encrypted, consistent with OAuth callback
     tokenExpiresAt: expiresAt,
   } as any);
 
