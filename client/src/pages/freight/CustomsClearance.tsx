@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -71,6 +71,62 @@ export default function CustomsClearance() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [scanning, setScanning] = useState(false);
+  const scanInputRef = useRef<HTMLInputElement>(null);
+
+  // AI document parser
+  const parseMutation = trpc.documentImport.parse.useMutation({
+    onSuccess: (result: any) => {
+      setScanning(false);
+      if (result.customsDocument) {
+        const cd = result.customsDocument;
+        setFormData((prev) => ({
+          ...prev,
+          hsCode: cd.lineItems?.[0]?.hsCode || prev.hsCode,
+          countryOfOrigin: cd.countryOfOrigin || prev.countryOfOrigin,
+          portOfEntry: cd.portOfEntry || prev.portOfEntry,
+          sellerName: cd.shipperName || prev.sellerName,
+          sellerAddress: cd.shipperCountry || prev.sellerAddress,
+          manufacturerName: cd.shipperName || prev.manufacturerName,
+          manufacturerAddress: cd.shipperCountry || prev.manufacturerAddress,
+          consigneeName: cd.consigneeName || prev.consigneeName,
+          estimatedValue: cd.totalDeclaredValue ? String(cd.totalDeclaredValue) : prev.estimatedValue,
+          estimatedDutyRate: cd.lineItems?.[0]?.dutyRate ? String(cd.lineItems[0].dutyRate * 100) : prev.estimatedDutyRate,
+          htsNumber: cd.lineItems?.[0]?.hsCode || prev.htsNumber,
+          notes: cd.notes ? (prev.notes ? prev.notes + "\n" + cd.notes : cd.notes) : prev.notes,
+        }));
+        toast.success(`Parsed ${result.documentType}: ${Object.keys(cd).filter((k: string) => cd[k]).length} fields extracted`);
+      } else if (result.freightInvoice) {
+        const fi = result.freightInvoice;
+        setFormData((prev) => ({
+          ...prev,
+          portOfEntry: fi.destination || prev.portOfEntry,
+          sellerName: fi.carrierName || prev.sellerName,
+        }));
+        toast.success("Parsed freight invoice — extracted carrier and destination");
+      } else {
+        toast.info("Document parsed but no customs data found. Try a B/L, commercial invoice, or packing list.");
+      }
+    },
+    onError: (err) => {
+      setScanning(false);
+      toast.error("Parse failed: " + err.message);
+    },
+  });
+
+  const handleScanDocument = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setScanning(true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(",")[1];
+      parseMutation.mutate({ fileData: base64, fileName: file.name, mimeType: file.type });
+    };
+    reader.onerror = () => { toast.error("Failed to read file"); setScanning(false); };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
   const [formData, setFormData] = useState({
     type: "import" as "import" | "export",
     customsOffice: "",
@@ -182,10 +238,26 @@ export default function CustomsClearance() {
           </DialogTrigger>
           <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Self-File Customs Entry</DialogTitle>
-              <DialogDescription>
-                File your own import/export customs entry without a broker. All ISF (Importer Security Filing) fields included.
-              </DialogDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <DialogTitle>Self-File Customs Entry</DialogTitle>
+                  <DialogDescription>
+                    Upload a B/L, commercial invoice, or packing list to auto-fill, or enter manually.
+                  </DialogDescription>
+                </div>
+                <div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => scanInputRef.current?.click()}
+                    disabled={scanning}
+                  >
+                    {scanning ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />}
+                    {scanning ? "Scanning..." : "Scan Document"}
+                  </Button>
+                  <input ref={scanInputRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx" className="hidden" onChange={handleScanDocument} />
+                </div>
+              </div>
             </DialogHeader>
             <form onSubmit={handleSubmit}>
               <div className="space-y-5 py-4">

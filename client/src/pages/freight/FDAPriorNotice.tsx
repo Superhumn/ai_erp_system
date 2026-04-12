@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -85,9 +85,67 @@ export default function FDAPriorNotice() {
   const [editing, setEditing] = useState<PriorNoticeEntry | null>(null);
   const [saving, setSaving] = useState(false);
 
+  const scanRef = useRef<HTMLInputElement>(null);
+  const [scanningDoc, setScanningDoc] = useState(false);
+
   // Pre-fill from vendors/products
   const { data: vendors } = trpc.vendors.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
+
+  // AI scan from supplier docs (commercial invoice, B/L, packing list)
+  const parseMutation = trpc.documentImport.parse.useMutation({
+    onSuccess: (result: any) => {
+      setScanningDoc(false);
+      if (!editing) return;
+      const cd = result.customsDocument;
+      const fi = result.freightInvoice;
+      if (cd) {
+        setEditing({
+          ...editing,
+          articleName: cd.lineItems?.[0]?.description || editing.articleName,
+          countryOfProduction: cd.countryOfOrigin || editing.countryOfProduction,
+          manufacturerName: cd.shipperName || editing.manufacturerName,
+          manufacturerCountry: cd.shipperCountry || editing.manufacturerCountry,
+          shipperName: cd.shipperName || editing.shipperName,
+          shipperCountry: cd.shipperCountry || editing.shipperCountry,
+          importerName: cd.consigneeName || editing.importerName,
+          portOfArrival: cd.portOfEntry || editing.portOfArrival,
+          vesselName: cd.vesselName || editing.vesselName,
+          voyageNumber: cd.voyageNumber || editing.voyageNumber,
+          containerNumber: cd.containerNumber || editing.containerNumber,
+          billOfLading: cd.documentNumber || editing.billOfLading,
+          quantity: cd.lineItems?.[0]?.quantity ? String(cd.lineItems[0].quantity) : editing.quantity,
+          fdaProductCode: cd.lineItems?.[0]?.hsCode || editing.fdaProductCode,
+        });
+        toast.success(`Scanned: ${Object.keys(cd).filter((k: string) => cd[k]).length} fields auto-filled`);
+      } else if (fi) {
+        setEditing({
+          ...editing,
+          carrierName: fi.carrierName || editing.carrierName,
+          portOfArrival: fi.destination || editing.portOfArrival,
+          billOfLading: fi.trackingNumber || editing.billOfLading,
+        });
+        toast.success("Scanned freight document — carrier and destination extracted");
+      } else {
+        toast.info("No customs/freight data found in document");
+      }
+    },
+    onError: (err) => { setScanningDoc(false); toast.error("Scan failed: " + err.message); },
+  });
+
+  const handleScanDoc = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setScanningDoc(true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(",")[1];
+      parseMutation.mutate({ fileData: base64, fileName: file.name, mimeType: file.type });
+    };
+    reader.onerror = () => { toast.error("Failed to read file"); setScanningDoc(false); };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
 
   const handleSave = () => {
     if (!editing) return;
@@ -170,6 +228,13 @@ export default function FDAPriorNotice() {
             <ArrowLeft className="h-4 w-4 mr-1" /> Back
           </Button>
           <h1 className="text-[1.875rem] font-bold tracking-[-0.03em]">FDA Prior Notice</h1>
+          <div className="ml-auto">
+            <Button variant="outline" size="sm" onClick={() => scanRef.current?.click()} disabled={scanningDoc}>
+              {scanningDoc ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <FileText className="h-4 w-4 mr-1" />}
+              {scanningDoc ? "Scanning..." : "Scan Supplier Doc"}
+            </Button>
+            <input ref={scanRef} type="file" accept=".pdf,.png,.jpg,.jpeg" className="hidden" onChange={handleScanDoc} />
+          </div>
         </div>
 
         <Card>
