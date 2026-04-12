@@ -84,6 +84,7 @@ const RetailerOnboarding = lazy(() => import("./pages/edi/RetailerOnboarding"));
 // Freight
 const FreightDashboard = lazy(() => import("./pages/freight/FreightDashboard"));
 const FreightTracking = lazy(() => import("./pages/freight/FreightTracking"));
+const FDAPriorNotice = lazy(() => import("./pages/freight/FDAPriorNotice"));
 const Carriers = lazy(() => import("./pages/freight/Carriers"));
 const RFQs = lazy(() => import("./pages/freight/RFQs"));
 const RFQDetail = lazy(() => import("./pages/freight/RFQDetail"));
@@ -264,6 +265,7 @@ function Router() {
           {/* Freight */}
           <Route path="/freight" component={FreightDashboard} />
           <Route path="/freight/tracking" component={FreightTracking} />
+          <Route path="/freight/fda" component={FDAPriorNotice} />
           <Route path="/freight/carriers" component={Carriers} />
           <Route path="/freight/rfqs" component={RFQs} />
           <Route path="/freight/rfqs/:id" component={RFQDetail} />

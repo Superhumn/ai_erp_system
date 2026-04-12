@@ -48,13 +48,19 @@ export default function FreightDashboard() {
           <Link href="/freight/tracking">
             <Button variant="outline">
               <Package className="h-4 w-4 mr-2" />
-              Track Shipments
+              Track
+            </Button>
+          </Link>
+          <Link href="/freight/fda">
+            <Button variant="outline">
+              <FileText className="h-4 w-4 mr-2" />
+              FDA Notice
             </Button>
           </Link>
           <Link href="/freight/rfqs/new">
             <Button>
               <Plus className="h-4 w-4 mr-2" />
-              New Quote Request
+              New RFQ
             </Button>
           </Link>
         </div>

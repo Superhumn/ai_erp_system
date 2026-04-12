@@ -13,7 +13,7 @@ import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
 import { detectMaterialShortages, detectAnomalies, runShortageCheckAndNotify, runAnomalyCheckAndNotify } from "./materialShortageService";
 import { linkParsedEmailToEntities } from "./emailDocumentLinker";
-import { trackShipment, getFreightRates, getShippingLines } from "./searatesService";
+import { trackShipment, getFreightRates, getShippingLines, getVesselSchedules } from "./searatesService";
 import { generateVendorEmail, sendVendorEmail, sendBulkEmail, checkAndSendPoFollowups } from "./vendorEmailAutomation";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
@@ -5871,6 +5871,20 @@ Be concise. Don't explain what you can't do — just do it or ask for the one mi
     shippingLines: protectedProcedure.query(async () => {
       try { return await getShippingLines(); } catch { return { lines: [] }; }
     }),
+
+    // SeaRates: Vessel sailing schedules
+    vesselSchedules: protectedProcedure
+      .input(z.object({
+        origin: z.string().min(2),
+        destination: z.string().min(2),
+        fromDate: z.string().optional(),
+        weeks: z.number().min(1).max(6).optional(),
+        cargoType: z.enum(["GC", "REEF", "LCL", "RORO"]).optional(),
+        directOnly: z.boolean().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return getVesselSchedules(input);
+      }),
     
     // Carriers
     discoverCarriers: protectedProcedure

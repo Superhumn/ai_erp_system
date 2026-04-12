@@ -6,7 +6,7 @@
  */
 
 const SEARATES_BASE = "https://tracking.searates.com";
-const SEARATES_LOGISTICS_BASE = "https://www.searates.com/services";
+const SEARATES_SCHEDULES_BASE = "https://schedules.searates.com/api/v2";
 
 function getApiKey(): string {
   const key = process.env.SEARATES_API_KEY;
@@ -161,6 +161,39 @@ export async function getFreightRates(params: RateQuoteParams): Promise<RateQuot
       details: r,
     })),
     cheapest: sorted[0] ? { price: sorted[0].price || 0, carrier: sorted[0].carrier || "", transitTime: sorted[0].transit_time || "" } : undefined,
-    fastest: undefined, // sorted by transit time separately if needed
+    fastest: undefined,
   };
+}
+
+// ── Vessel Schedules ─────────────────────────────────────────
+export interface ScheduleParams {
+  origin: string;      // UN/LOCODE e.g. "THBKK"
+  destination: string; // UN/LOCODE e.g. "USLAX"
+  fromDate?: string;   // yyyy-mm-dd, defaults to today
+  weeks?: number;      // 1-6, defaults to 4
+  cargoType?: "GC" | "REEF" | "LCL" | "RORO";
+  directOnly?: boolean;
+}
+
+export async function getVesselSchedules(params: ScheduleParams): Promise<any> {
+  const apiKey = getApiKey();
+  const fromDate = params.fromDate || new Date().toISOString().split("T")[0];
+  const queryParams = new URLSearchParams({
+    origin: params.origin,
+    destination: params.destination,
+    from_date: fromDate,
+    weeks: String(params.weeks || 4),
+    cargo_type: params.cargoType || "GC",
+    sort: "DEP",
+    ...(params.directOnly ? { direct_only: "true" } : {}),
+  });
+
+  const res = await fetch(`${SEARATES_SCHEDULES_BASE}/schedules/by-points?${queryParams}`, {
+    headers: { "X-API-KEY": apiKey },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`SeaRates schedules error (${res.status}): ${text}`);
+  }
+  return res.json();
 }
