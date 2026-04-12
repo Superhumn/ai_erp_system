@@ -17632,9 +17632,11 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       .mutation(async ({ ctx }) => {
       const config = await db.getFirefliesConfig(ctx.user.id);
       if (!config) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fireflies not configured' });
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fireflies not configured. Go to Settings → Fireflies to enter your API key.' });
       }
+      console.log(`[Fireflies Sync] Fetching transcripts for user ${ctx.user.id} with key ${config.apiKey.substring(0, 8)}...`);
       const transcripts = await listTranscripts(config.apiKey);
+      console.log(`[Fireflies Sync] Got ${transcripts.length} transcripts from API`);
       let synced = 0;
       let skipped = 0;
       let dealsCreated = 0;
