@@ -16799,7 +16799,19 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         status: z.enum(["planning", "active", "paused", "closed", "cancelled"]).default("planning"),
         notes: z.string().optional(),
       }))
-      .mutation(({ input }) => db.createFundraisingCampaign(input as any)),
+      .mutation(({ input }) => {
+        // Convert empty strings to undefined for optional fields
+        const cleaned = {
+          ...input,
+          description: input.description || undefined,
+          targetAmount: input.targetAmount || undefined,
+          minimumInvestment: input.minimumInvestment || undefined,
+          valuation: input.valuation || undefined,
+          equityOffered: input.equityOffered || undefined,
+          notes: input.notes || undefined,
+        };
+        return db.createFundraisingCampaign(cleaned as any);
+      }),
     listInvestments: protectedProcedure
       .input(z.object({ investorId: z.number().optional() }).optional())
       .query(({ input }) => db.getInvestorInvestments(input?.investorId)),
