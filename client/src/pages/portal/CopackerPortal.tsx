@@ -137,6 +137,7 @@ export default function CopackerPortal() {
 
   // ---- Work Orders query ----
   const { data: workOrdersList, refetch: refetchWorkOrders } = trpc.workOrders.list.useQuery();
+  const { data: productsList } = trpc.products.list.useQuery();
 
   // ---- Mutations ----
   const updateInventory = trpc.copackerPortal.updateInventory.useMutation({
@@ -973,7 +974,7 @@ export default function CopackerPortal() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-[40%]">Description</TableHead>
+                    <TableHead className="w-[45%]">Product</TableHead>
                     <TableHead>Quantity</TableHead>
                     <TableHead>Unit Price</TableHead>
                     <TableHead>Total</TableHead>
@@ -984,11 +985,36 @@ export default function CopackerPortal() {
                   {invoiceItems.map((item, idx) => (
                     <TableRow key={idx}>
                       <TableCell>
-                        <Input
+                        <Select
                           value={item.description}
-                          onChange={(e) => handleInvoiceItemChange(idx, "description", e.target.value)}
-                          placeholder="Service description..."
-                        />
+                          onValueChange={(val) => {
+                            const product = productsList?.find((p: any) => p.name === val);
+                            handleInvoiceItemChange(idx, "description", val);
+                            if (product) {
+                              handleInvoiceItemChange(idx, "unitPrice", String(product.costPrice || product.unitPrice || "0"));
+                            }
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select product..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {productsList?.map((p: any) => (
+                              <SelectItem key={p.id} value={p.name}>
+                                {p.name} {p.sku ? `(${p.sku})` : ""} — ${parseFloat(p.costPrice || p.unitPrice || "0").toFixed(2)}
+                              </SelectItem>
+                            ))}
+                            <SelectItem value="__custom__">Other (custom)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {item.description === "__custom__" && (
+                          <Input
+                            className="mt-1"
+                            value=""
+                            onChange={(e) => handleInvoiceItemChange(idx, "description", e.target.value)}
+                            placeholder="Custom description..."
+                          />
+                        )}
                       </TableCell>
                       <TableCell>
                         <Input
