@@ -105,7 +105,7 @@ export default function EmailInbox() {
     Object.keys(emailQueryParams).length > 0 ? emailQueryParams : undefined
   );
 
-  const { data: emailDetail } = trpc.emailScanning.getById.useQuery(
+  const { data: emailDetail, isLoading: emailDetailLoading } = trpc.emailScanning.getById.useQuery(
     { id: expandedEmail! },
     { enabled: !!expandedEmail }
   );
@@ -712,33 +712,46 @@ export default function EmailInbox() {
                             </Badge>
                           </div>
 
-                          {/* Body — strip HTML tags for clean display */}
+                          {/* Body — prefer HTML content (strip tags), fall back to plain text */}
                           <div className="p-3 bg-background rounded-md border text-sm whitespace-pre-wrap max-h-[70vh] overflow-y-auto leading-relaxed">
-                            {(() => {
-                              const raw = (emailDetail && emailDetail.id === email.id)
-                                ? (emailDetail.bodyText || "(No content)")
-                                : (email.bodyText || "(No content)");
-                              // Strip HTML if it contains tags
-                              if (raw.includes("<") && raw.includes(">")) {
-                                return raw
-                                  .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-                                  .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-                                  .replace(/<br\s*\/?>/gi, "\n")
-                                  .replace(/<\/p>/gi, "\n\n")
-                                  .replace(/<\/div>/gi, "\n")
-                                  .replace(/<\/tr>/gi, "\n")
-                                  .replace(/<\/li>/gi, "\n")
-                                  .replace(/<[^>]+>/g, "")
-                                  .replace(/&nbsp;/g, " ")
-                                  .replace(/&amp;/g, "&")
-                                  .replace(/&lt;/g, "<")
-                                  .replace(/&gt;/g, ">")
-                                  .replace(/&quot;/g, '"')
-                                  .replace(/\n{3,}/g, "\n\n")
-                                  .trim();
-                              }
-                              return raw;
-                            })()}
+                            {emailDetailLoading && expandedEmail === email.id ? (
+                              <span className="flex items-center gap-2 text-muted-foreground">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                Loading…
+                              </span>
+                            ) : (
+                              (() => {
+                                const detail = emailDetail && emailDetail.id === email.id ? emailDetail : null;
+                                // Prefer the richer HTML body from the detail query; fall back to
+                                // the list-level bodyHtml, then bodyText from either source.
+                                const raw =
+                                  detail?.bodyHtml ||
+                                  email.bodyHtml ||
+                                  detail?.bodyText ||
+                                  email.bodyText ||
+                                  "(No content)";
+                                // Strip HTML if it contains tags
+                                if (raw.includes("<") && raw.includes(">")) {
+                                  return raw
+                                    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+                                    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+                                    .replace(/<br\s*\/?>/gi, "\n")
+                                    .replace(/<\/p>/gi, "\n\n")
+                                    .replace(/<\/div>/gi, "\n")
+                                    .replace(/<\/tr>/gi, "\n")
+                                    .replace(/<\/li>/gi, "\n")
+                                    .replace(/<[^>]+>/g, "")
+                                    .replace(/&nbsp;/g, " ")
+                                    .replace(/&amp;/g, "&")
+                                    .replace(/&lt;/g, "<")
+                                    .replace(/&gt;/g, ">")
+                                    .replace(/&quot;/g, '"')
+                                    .replace(/\n{3,}/g, "\n\n")
+                                    .trim();
+                                }
+                                return raw;
+                              })()
+                            )}
                           </div>
 
                           {/* Parsed documents (if any from detail) */}
