@@ -17650,7 +17650,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         const participants = fullTranscript ? extractParticipants(fullTranscript) : [];
         await db.createFirefliesMeeting({
           firefliesId: t.id,
-          title: t.title || t.id,
+          title: t.title || 'Untitled Meeting',
           date: t.date ? new Date(t.date) : new Date(),
           duration: t.duration,
           participants: JSON.stringify(participants),
@@ -17803,13 +17803,14 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           }
         }
 
-        const status = contactsCreated > 0 && tasksCreated > 0 ? 'fully_processed'
+        const status: 'fully_processed' | 'contacts_created' | 'tasks_created' | 'pending' =
+          contactsCreated > 0 && tasksCreated > 0 ? 'fully_processed'
           : contactsCreated > 0 ? 'contacts_created'
           : tasksCreated > 0 ? 'tasks_created'
           : 'pending';
 
         await db.updateFirefliesMeeting(input.meetingId, {
-          processingStatus: status as any,
+          processingStatus: status,
           processedAt: new Date(),
           processedBy: ctx.user.id,
           processingNotes: JSON.stringify({ contactsCreated, tasksCreated, projectId }),
