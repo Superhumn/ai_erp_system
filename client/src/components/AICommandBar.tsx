@@ -9,7 +9,7 @@ import { Streamdown } from "streamdown";
 import {
   Search, Loader2, Sparkles, ArrowRight, Command,
   FileText, Package, Users, DollarSign, Truck, ClipboardList,
-  Send, X, CheckCircle, Clock, Building, AlertCircle, Box, Mail
+  Send, X, CheckCircle, Clock, Building, AlertCircle, Box, Mail, Mic, MicOff
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { QuickCreateDialog } from "@/components/QuickCreateDialog";
@@ -682,6 +682,55 @@ export function AICommandBar({ context }: AICommandBarProps) {
   const [, setLocation] = useLocation();
   const utils = trpc.useUtils();
 
+  // Voice input
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
+  const startVoiceInput = useCallback(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      toast.error("Voice input not supported in this browser");
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognition.onstart = () => setIsListening(true);
+    recognition.onresult = (event: any) => {
+      const transcript = Array.from(event.results)
+        .map((r: any) => r[0].transcript)
+        .join("");
+      setQuery(transcript);
+    };
+    recognition.onend = () => {
+      setIsListening(false);
+      // Auto-submit if we got a final result
+      if (recognitionRef.current?._autoSubmit) {
+        setTimeout(() => {
+          const currentQuery = (inputRef.current as any)?.value || "";
+          if (currentQuery.trim()) handleSubmit(currentQuery);
+        }, 300);
+      }
+    };
+    recognition.onerror = (e: any) => {
+      setIsListening(false);
+      if (e.error !== "aborted") toast.error(`Voice error: ${e.error}`);
+    };
+    recognitionRef.current = recognition;
+    recognitionRef.current._autoSubmit = true;
+    recognition.start();
+    setIsExpanded(true);
+  }, []);
+
+  const stopVoiceInput = useCallback(() => {
+    if (recognitionRef.current) {
+      recognitionRef.current._autoSubmit = false;
+      recognitionRef.current.stop();
+    }
+    setIsListening(false);
+  }, []);
+
   // AI Query mutation for general questions
   const aiQuery = trpc.ai.query.useMutation({
     onSuccess: (data) => {
@@ -1084,6 +1133,22 @@ export function AICommandBar({ context }: AICommandBarProps) {
           placeholder="Ask AI anything... (⌘K)"
           className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60"
         />
+        {/* Voice input button */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            if (isListening) stopVoiceInput();
+            else startVoiceInput();
+          }}
+          className={`shrink-0 p-0.5 rounded transition-colors ${
+            isListening
+              ? "text-red-500 animate-pulse"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+          title={isListening ? "Stop listening" : "Voice input"}
+        >
+          {isListening ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+        </button>
         {query && (
           <button onClick={(e) => { e.stopPropagation(); setQuery(""); setIsExpanded(false); }} className="text-muted-foreground hover:text-foreground">
             <X className="h-3.5 w-3.5" />
