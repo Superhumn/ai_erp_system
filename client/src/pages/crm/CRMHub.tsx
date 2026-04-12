@@ -822,7 +822,6 @@ export default function CRMHub() {
             <CardTitle className="text-sm flex items-center gap-2">
               Contacts <span className="text-muted-foreground font-normal">({contacts?.length || 0})</span>
             </CardTitle>
-            </div>
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
