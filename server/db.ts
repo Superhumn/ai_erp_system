@@ -277,6 +277,31 @@ export async function updateUserRole(userId: number, role: InsertUser['role']) {
   await db.update(users).set({ role }).where(eq(users.id, userId));
 }
 
+export async function updateUser(userId: number, updates: Record<string, string>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users).set(updates as any).where(eq(users.id, userId));
+}
+
+export async function changeUserPassword(userId: number, currentPassword: string, newPassword: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  // Get user's local auth credentials
+  const [user] = await db.select().from(users).where(eq(users.id, userId));
+  if (!user) throw new Error("User not found");
+  // Find local auth record
+  const [localAuth] = await db.select().from(localAuthCredentials).where(eq(localAuthCredentials.openId, user.openId));
+  if (!localAuth) throw new Error("No password set for this account. Use your SSO provider to change your password.");
+  // Verify current password
+  const crypto = await import("crypto");
+  const currentHash = crypto.pbkdf2Sync(currentPassword, localAuth.salt, 100000, 64, "sha512").toString("hex");
+  if (currentHash !== localAuth.passwordHash) throw new Error("Current password is incorrect");
+  // Set new password
+  const newSalt = crypto.randomBytes(32).toString("hex");
+  const newHash = crypto.pbkdf2Sync(newPassword, newSalt, 100000, 64, "sha512").toString("hex");
+  await db.update(localAuthCredentials).set({ passwordHash: newHash, salt: newSalt }).where(eq(localAuthCredentials.openId, user.openId));
+}
+
 // ============================================
 // COMPANY MANAGEMENT
 // ============================================
