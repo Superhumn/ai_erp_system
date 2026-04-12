@@ -68,6 +68,11 @@ import {
   Moon,
   Mic,
   MessageSquare,
+  BookOpen,
+  Award,
+  DollarSign,
+  Banknote,
+  TrendingUp,
 } from "lucide-react";
 import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -106,6 +111,7 @@ function getMenuGroups(role: string = "user") {
     items: [
       { icon: Warehouse, label: "Inventory", path: "/operations/inventory-hub" },
       { icon: Users, label: "Vendors & Locations", path: "/operations/vendors" },
+      { icon: Truck, label: "Freight & Logistics", path: "/freight" },
     ],
   },
   {
@@ -113,6 +119,7 @@ function getMenuGroups(role: string = "user") {
     items: [
       { icon: ShoppingCart, label: "Orders", path: "/sales/orders" },
       { icon: UserCircle, label: "Customers & CRM", path: "/crm/hub" },
+      { icon: TrendingUp, label: "Fundraising", path: "/crm/campaigns" },
       { icon: BarChart3, label: "Financials", path: "/finance/reports" },
     ],
   },
@@ -121,9 +128,11 @@ function getMenuGroups(role: string = "user") {
     items: [
       ...(isAdmin ? [
         { icon: Users, label: "People & Equity", path: "/hr/employees" },
+        { icon: Banknote, label: "Payroll", path: "/hr/payroll" },
         { icon: FileBarChart, label: "Cap Table", path: "/hr/equity-reports" },
         { icon: Scale, label: "Contracts", path: "/legal/contracts" },
         { icon: Scale, label: "Legal Cases", path: "/legal/disputes" },
+        { icon: FileText, label: "Legal Documents", path: "/legal/documents" },
       ] : [
         { icon: Clock, label: "Time Tracking", path: "/hr/time-tracking" },
         { icon: LineChart, label: "Equity Portal", path: "/hr/equity-portal" },
@@ -137,6 +146,8 @@ function getMenuGroups(role: string = "user") {
         { icon: Upload, label: "Import Data", path: "/import" },
         { icon: FolderLock, label: "Data Room", path: "/dataroom/1" },
         { icon: Megaphone, label: "Investor Updates", path: "/investor-updates" },
+        { icon: BookOpen, label: "SOPs", path: "/sops" },
+        { icon: Award, label: "Grants", path: "/grants/submitter" },
         { icon: Network, label: "EDI", path: "/edi" },
       ] : []),
       { icon: Settings, label: "Settings", path: "/settings" },
