@@ -24,6 +24,32 @@ import {
 import { useLocation, useParams } from "wouter";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
+// Helper: open or download a file URL, handling data: URLs properly
+function openFileUrl(url: string, filename?: string) {
+  if (url.startsWith('data:')) {
+    // Convert data URL to blob for proper download/viewing
+    const [header, base64] = url.split(',');
+    const mime = header.match(/data:(.*?);/)?.[1] || 'application/octet-stream';
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes], { type: mime });
+    const blobUrl = URL.createObjectURL(blob);
+    if (filename) {
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    } else {
+      window.open(blobUrl, '_blank');
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    }
+  } else {
+    window.open(url, '_blank');
+  }
+}
+
 export default function DataRoomDetail() {
   const params = useParams<{ id: string }>();
   const roomId = parseInt(params.id || "0");
@@ -562,7 +588,7 @@ export default function DataRoomDetail() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => window.open(doc.googleDriveWebViewLink || doc.storageUrl!, '_blank')}
+                            onClick={() => openFileUrl(doc.googleDriveWebViewLink || doc.storageUrl!, doc.name)}
                           >
                             <Eye className="h-4 w-4" />
                           </Button>
@@ -575,7 +601,7 @@ export default function DataRoomDetail() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent>
                             {doc.storageUrl && (
-                              <DropdownMenuItem onClick={() => window.open(doc.storageUrl!, '_blank')}>
+                              <DropdownMenuItem onClick={() => openFileUrl(doc.storageUrl!, doc.name)}>
                                 <Download className="h-4 w-4 mr-2" />
                                 Download
                               </DropdownMenuItem>

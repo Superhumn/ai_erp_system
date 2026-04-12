@@ -12063,7 +12063,7 @@ Ask if they received the original request and if they can provide a quote.`;
             ? parseInt(driveFile.size)
             : undefined;
 
-          // Try to upload small files to storage; if storage not configured, keep Google Drive link
+          // Download small files and store them (as S3 or base64 fallback)
           if (fileSize && fileSize < 2 * 1024 * 1024) {
             try {
               const downloaded = await downloadDriveFile(accessToken, driveFile.id, driveFile.mimeType);
@@ -12075,7 +12075,9 @@ Ask if they received the original request and if they can provide a quote.`;
                   storageKey = result.key;
                   storageType = 's3';
                 } catch {
-                  // Storage not configured — keep Google Drive link (don't store base64)
+                  // Storage not configured — store as base64 data URL
+                  storageUrl = `data:${downloaded.exportedMimeType};base64,${downloaded.buffer.toString('base64')}`;
+                  storageType = 's3';
                 }
               }
             } catch { /* download failed, keep Google link */ }
@@ -12283,8 +12285,11 @@ Ask if they received the original request and if they can provide a quote.`;
                 storageKey = result.key;
                 storageType = 's3';
               } catch {
-                // Storage not configured — keep Google Drive link instead of base64
-                storageUrl = driveFile.webViewLink || undefined;
+                // Storage not configured — store as base64 data URL
+                if (downloaded.buffer.length < 5 * 1024 * 1024) {
+                  storageUrl = `data:${downloaded.exportedMimeType};base64,${downloaded.buffer.toString('base64')}`;
+                  storageType = 's3';
+                }
               }
             } else {
               console.warn(`[GoogleDrive Sync] Failed to download ${driveFile.name}: ${downloaded.error}`);
