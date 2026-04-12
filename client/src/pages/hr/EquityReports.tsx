@@ -159,24 +159,34 @@ export default function EquityReports() {
       return;
     }
     setIsUploading(true);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = (reader.result as string).split(",")[1];
-      uploadDoc.mutate({
-        name: file.name,
-        type: "report",
-        referenceType: "valuation",
-        referenceId: currentValuation?.id,
-        fileData: base64,
-        mimeType: file.type || "application/pdf",
-        description: `409A Valuation Report - ${file.name}`,
-      });
-    };
-    reader.onerror = () => {
-      toast.error("Failed to read file");
+    try {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = (reader.result as string).split(",")[1];
+        if (!base64) {
+          toast.error("Failed to read file data");
+          setIsUploading(false);
+          return;
+        }
+        uploadDoc.mutate({
+          name: file.name,
+          type: "report" as const,
+          referenceType: "valuation",
+          ...(currentValuation?.id ? { referenceId: currentValuation.id } : {}),
+          fileData: base64,
+          mimeType: file.type || "application/pdf",
+          description: `409A Valuation Report - ${file.name}`,
+        });
+      };
+      reader.onerror = () => {
+        toast.error("Failed to read file");
+        setIsUploading(false);
+      };
+      reader.readAsDataURL(file);
+    } catch (err: any) {
+      toast.error("Upload error: " + (err.message || "Unknown error"));
       setIsUploading(false);
-    };
-    reader.readAsDataURL(file);
+    }
     // Reset input
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
