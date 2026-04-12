@@ -10089,7 +10089,7 @@ export async function getFirefliesMeetings(filters?: { status?: string }) {
   if (!db) return [];
   let query = db.select().from(firefliesMeetings);
   if (filters?.status) {
-    query = query.where(eq(firefliesMeetings.status, filters.status as any)) as any;
+    query = query.where(eq(firefliesMeetings.processingStatus, filters.status as any)) as any;
   }
   return query.orderBy(desc(firefliesMeetings.date));
 }
@@ -10125,8 +10125,8 @@ export async function getFirefliesMeetingStats() {
   const db = await getDb();
   if (!db) return { total: 0, pending: 0, processed: 0 };
   const all = await db.select({ count: count() }).from(firefliesMeetings);
-  const pending = await db.select({ count: count() }).from(firefliesMeetings).where(eq(firefliesMeetings.status, 'pending'));
-  const processed = await db.select({ count: count() }).from(firefliesMeetings).where(eq(firefliesMeetings.status, 'fully_processed'));
+  const pending = await db.select({ count: count() }).from(firefliesMeetings).where(eq(firefliesMeetings.processingStatus, 'pending'));
+  const processed = await db.select({ count: count() }).from(firefliesMeetings).where(eq(firefliesMeetings.processingStatus, 'fully_processed'));
   return {
     total: all[0]?.count || 0,
     pending: pending[0]?.count || 0,
