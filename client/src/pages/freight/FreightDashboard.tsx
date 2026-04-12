@@ -152,10 +152,10 @@ export default function FreightDashboard() {
                           <TableCell>{rfq.destinationCity || rfq.destinationPort || "-"}</TableCell>
                           <TableCell>
                             <Badge variant="outline">
-                              {rfq.mode === "ocean" ? <Ship className="h-3 w-3 mr-1 inline" /> :
-                               rfq.mode === "air" ? <Plane className="h-3 w-3 mr-1 inline" /> :
+                              {rfq.preferredMode?.startsWith("ocean") ? <Ship className="h-3 w-3 mr-1 inline" /> :
+                               rfq.preferredMode === "air" ? <Plane className="h-3 w-3 mr-1 inline" /> :
                                <Truck className="h-3 w-3 mr-1 inline" />}
-                              {rfq.mode || "—"}
+                              {rfq.preferredMode || "—"}
                             </Badge>
                           </TableCell>
                           <TableCell><Badge>{(rfq.status || "draft").replace(/_/g, " ")}</Badge></TableCell>
@@ -337,7 +337,7 @@ export default function FreightDashboard() {
                       <React.Fragment key={c.id}>
                         <TableRow className="hover:bg-muted/50 cursor-pointer" onClick={() => setExpandedId(expandedId === c.id ? null : c.id)}>
                           <TableCell className="font-medium">{c.name}</TableCell>
-                          <TableCell><Badge variant="outline">{c.carrierType || c.mode || "-"}</Badge></TableCell>
+                          <TableCell><Badge variant="outline">{c.type || "-"}</Badge></TableCell>
                           <TableCell>{c.contactName || "-"}</TableCell>
                           <TableCell>{c.email || "-"}</TableCell>
                           <TableCell>

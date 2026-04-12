@@ -108,7 +108,7 @@ export default function FreightTracking() {
         destCity: rfq?.destinationCity || "",
         destCountry: rfq?.destinationCountry || "",
         cargoDescription: rfq?.cargoDescription || "",
-        mode: (rfq as any)?.mode || "ocean",
+        mode: rfq?.preferredMode || "any",
         carrierName: carrier?.name || `Carrier #${b.carrierId}`,
       };
     });
@@ -206,7 +206,8 @@ export default function FreightTracking() {
           // Show in-transit position
           if (selected.status === "in_transit") {
             const step = statusStep[selected.status] || 2;
-            const progress = 0.5; // midpoint for in_transit
+            const maxStep = 4;
+            const progress = step / maxStep;
             const midLat = origin[0] + (dest[0] - origin[0]) * progress;
             const midLng = origin[1] + (dest[1] - origin[1]) * progress;
             const shipIcon = L.default.divIcon({
