@@ -98,7 +98,7 @@ function getMenuGroups(role: string = "user") {
   const hasFinance = ["admin", "exec", "finance"].includes(role);
   const hasOps = ["admin", "exec", "ops"].includes(role);
   const hasLegal = ["admin", "exec", "legal"].includes(role);
-  const hasSales = ["admin", "exec", "ops", "finance"].includes(role);
+  const hasSales = ["admin", "exec", "ops", "finance", "sales"].includes(role);
   return [
   {
     label: "_main",
@@ -121,7 +121,7 @@ function getMenuGroups(role: string = "user") {
   ...(hasSales || isAdmin ? [{
     label: "_sell",
     items: [
-      { icon: ShoppingCart, label: "Orders", path: "/sales/orders" },
+      ...(hasOps || isAdmin ? [{ icon: ShoppingCart, label: "Orders", path: "/sales/orders" }] : []),
       { icon: UserCircle, label: "Customers & CRM", path: "/crm/hub" },
       ...(isAdmin ? [{ icon: TrendingUp, label: "Fundraising", path: "/crm/campaigns" }] : []),
       ...(hasFinance || isAdmin ? [{ icon: BarChart3, label: "Financials", path: "/finance/reports" }] : []),

@@ -17,6 +17,7 @@ export default function Settings() {
     finance: "bg-green-500/10 text-green-500",
     ops: "bg-blue-500/10 text-blue-500",
     legal: "bg-purple-500/10 text-purple-500",
+    sales: "bg-orange-500/10 text-orange-500",
     exec: "bg-amber-500/10 text-amber-500",
     user: "bg-gray-500/10 text-gray-500",
   };

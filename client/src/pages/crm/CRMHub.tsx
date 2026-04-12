@@ -318,7 +318,7 @@ export default function CRMHub() {
   }, [enrichedDeals, search]);
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-4 animate-fade-in">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -643,69 +643,46 @@ export default function CRMHub() {
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Contacts</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{contactStats?.total || 0}</div>
-            <p className="text-xs text-muted-foreground">
-              {contactStats?.leads || 0} leads, {contactStats?.prospects || 0} prospects
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Customers</CardTitle>
-            <Handshake className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{contactStats?.customers || 0}</div>
-            <p className="text-xs text-muted-foreground">
-              Active customers in CRM
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Investors/Donors</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{(contactStats?.investors || 0) + (contactStats?.donors || 0)}</div>
-            <p className="text-xs text-muted-foreground">
-              {contactStats?.investors || 0} investors, {contactStats?.donors || 0} donors
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Open Deals</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{dealStats?.open || 0}</div>
-            <p className="text-xs text-muted-foreground">
-              ${Number(dealStats?.openValue || 0).toLocaleString()} pipeline value
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Won Deals</CardTitle>
-            <DollarSign className="h-4 w-4 text-green-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{dealStats?.won || 0}</div>
-            <p className="text-xs text-muted-foreground">
-              ${Number(dealStats?.wonValue || 0).toLocaleString()} total won
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Sales KPIs — compact bar */}
+      {(() => {
+        const openVal = Number(dealStats?.openValue || 0);
+        const wonVal = Number(dealStats?.wonValue || 0);
+        const totalDeals = (dealStats?.open || 0) + (dealStats?.won || 0) + (dealStats?.lost || 0);
+        const conversionRate = totalDeals > 0 ? Math.round(((dealStats?.won || 0) / totalDeals) * 100) : 0;
+        return (
+          <div className="flex items-center gap-5 flex-wrap text-sm border rounded-xl px-4 py-3 bg-card">
+            <div>
+              <span className="text-xs text-muted-foreground">Pipeline</span>
+              <div className="font-bold text-base">${openVal.toLocaleString()}</div>
+            </div>
+            <div className="h-8 w-px bg-border" />
+            <div>
+              <span className="text-xs text-muted-foreground">Won Revenue</span>
+              <div className="font-bold text-base text-green-600">${wonVal.toLocaleString()}</div>
+            </div>
+            <div className="h-8 w-px bg-border" />
+            <div>
+              <span className="text-xs text-muted-foreground">Open Deals</span>
+              <div className="font-bold text-base">{dealStats?.open || 0}</div>
+            </div>
+            <div className="h-8 w-px bg-border" />
+            <div>
+              <span className="text-xs text-muted-foreground">Win Rate</span>
+              <div className="font-bold text-base">{conversionRate}%</div>
+            </div>
+            <div className="h-8 w-px bg-border" />
+            <div>
+              <span className="text-xs text-muted-foreground">Contacts</span>
+              <div className="font-bold text-base">{contactStats?.total || 0}</div>
+            </div>
+            <div className="h-8 w-px bg-border" />
+            <div>
+              <span className="text-xs text-muted-foreground">Customers</span>
+              <div className="font-bold text-base">{contactStats?.customers || 0}</div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Deals Table — shown first */}
       <Card>
