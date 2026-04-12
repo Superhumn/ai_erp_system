@@ -17762,8 +17762,11 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         let projectId: number | undefined;
 
         // Create contacts from participants
-        if (input.createContacts && Array.isArray(meeting.participants)) {
-          for (const p of meeting.participants as Array<{ name: string; email: string }>) {
+        const parsedParticipants: Array<{ name: string; email: string }> =
+          typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
+          Array.isArray(meeting.participants) ? meeting.participants : [];
+        if (input.createContacts && parsedParticipants.length > 0) {
+          for (const p of parsedParticipants) {
             if (p.email) {
               try {
                 await db.createCrmContact({
@@ -17835,19 +17838,20 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       let projectsCreated = 0;
       for (const meeting of meetings) {
         // Auto-create contacts from participants
-        if (Array.isArray(meeting.participants)) {
-          for (const p of meeting.participants as Array<{ name: string; email: string }>) {
-            if (p.email) {
-              try {
-                await db.createCrmContact({
-                  firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
-                  fullName: p.name || p.email.split('@')[0],
-                  email: p.email,
-                  source: 'manual' as const,
-                } as any);
-                contactsCreated++;
-              } catch { /* duplicate */ }
-            }
+        const parsedParticipants: Array<{ name: string; email: string }> =
+          typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
+          Array.isArray(meeting.participants) ? meeting.participants : [];
+        for (const p of parsedParticipants) {
+          if (p.email) {
+            try {
+              await db.createCrmContact({
+                firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
+                fullName: p.name || p.email.split('@')[0],
+                email: p.email,
+                source: 'manual' as const,
+              } as any);
+              contactsCreated++;
+            } catch { /* duplicate */ }
           }
         }
         await db.updateFirefliesMeeting(meeting.id, { processingStatus: 'fully_processed' });
