@@ -1011,7 +1011,7 @@ export default function PeopleAndEquity() {
                       <TableCell className="py-1.5 px-3 text-right tabular-nums">{r.totalGrantValue > 0 ? fmt$(r.totalGrantValue) : "-"}</TableCell>
                       <TableCell className="py-1.5 px-3" onClick={(e) => e.stopPropagation()}>
                         {r.stakeholderId ? (
-                          <DocumentsCell referenceType="stakeholder" referenceId={r.stakeholderId} />
+                          <DocumentsCell referenceType="stakeholder" referenceId={r.stakeholderId} docTypeSet="hr" />
                         ) : "-"}
                       </TableCell>
                     </TableRow>
