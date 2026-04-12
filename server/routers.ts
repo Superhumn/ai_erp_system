@@ -10444,26 +10444,17 @@ Ask if they received the original request and if they can provide a quote.`;
                   category: email.categorization?.category || "other",
                 } as any);
 
-                // Parse attachments
+                // Parse attachments and AUTO-IMPORT into correct DB tables
                 if ((email as any).attachmentContents?.length > 0) {
-                  for (const att of (email as any).attachmentContents) {
-                    try {
-                      const base64 = att.data.toString("base64");
-                      const dataUrl = `data:${att.contentType};base64,${base64}`;
-                      const parsed = await parseUploadedDocument(dataUrl, att.filename, undefined, att.contentType);
-                      if (parsed.success) {
-                        await db.createDocument?.({
-                          name: att.filename,
-                          type: parsed.documentType === "customs_document" ? "customs" : parsed.documentType === "vendor_invoice" ? "invoice" : "other",
-                          referenceType: "email",
-                          fileData: base64,
-                          mimeType: att.contentType,
-                          description: `Auto-parsed from email: ${email.subject}`,
-                        } as any);
-                        totalAttachmentsParsed++;
-                      }
-                    } catch { /* skip */ }
-                  }
+                  const { bulkImportDocuments } = await import("./documentImportService");
+                  const docs = (email as any).attachmentContents.map((att: any) => ({
+                    content: `data:${att.contentType};base64,${att.data.toString("base64")}`,
+                    filename: att.filename,
+                  }));
+                  try {
+                    const importResult = await bulkImportDocuments(docs, 1, true);
+                    totalAttachmentsParsed += importResult.successful;
+                  } catch { /* skip */ }
                 }
                 totalProcessed++;
               } catch { /* skip */ }

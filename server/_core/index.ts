@@ -642,29 +642,46 @@ async function startServer() {
                     category: email.categorization?.category || "other",
                   } as any);
 
-                  // Parse attachments with AI document parser
+                  // Parse attachments and AUTO-IMPORT into correct database tables
                   if ((email as any).attachmentContents?.length > 0) {
-                    for (const att of (email as any).attachmentContents) {
-                      try {
-                        const base64 = att.data.toString("base64");
-                        const dataUrl = `data:${att.contentType};base64,${base64}`;
-                        const parsed = await parseUploadedDocument(dataUrl, att.filename, undefined, att.contentType);
-                        if (parsed.success) {
-                          console.log(`[Email Polling] Parsed attachment ${att.filename}: ${parsed.documentType} (confidence: ${(parsed as any).confidence || "?"})`);
-                          // Save parsed document
-                          await db.createDocument?.({
-                            name: att.filename,
-                            type: parsed.documentType === "customs_document" ? "customs" : parsed.documentType === "vendor_invoice" ? "invoice" : "other",
-                            referenceType: "email",
-                            referenceId: savedEmail?.id,
-                            fileData: base64,
-                            mimeType: att.contentType,
-                            description: `Auto-parsed from email: ${email.subject}`,
-                          } as any);
+                    const { bulkImportDocuments } = await import("../documentImportService");
+                    const docs = (email as any).attachmentContents.map((att: any) => ({
+                      content: `data:${att.contentType};base64,${att.data.toString("base64")}`,
+                      filename: att.filename,
+                    }));
+                    try {
+                      const importResult = await bulkImportDocuments(docs, 1, true);
+                      for (const r of importResult.results) {
+                        if (r.success) {
+                          console.log(`[Email Import] ✓ ${r.documentType}: created ${r.createdRecords.length} records, updated ${r.updatedRecords.length}`);
+                          // Also save the raw file as a document for reference
+                          const att = (email as any).attachmentContents[importResult.results.indexOf(r)];
+                          if (att) {
+                            await db.createDocument?.({
+                              name: att.filename,
+                              type: r.documentType === "customs_document" ? "customs" : r.documentType === "vendor_invoice" ? "invoice" : r.documentType === "purchase_order" ? "po" : "other",
+                              referenceType: "email",
+                              referenceId: savedEmail?.id,
+                              fileData: att.data.toString("base64"),
+                              mimeType: att.contentType,
+                              description: `Auto-imported ${r.documentType}: ${r.createdRecords.map((cr: any) => cr.id || cr.number || "").join(", ")}`,
+                            } as any);
+                          }
+                        } else {
+                          console.warn(`[Email Import] ✗ ${r.documentType}: ${r.error}`);
                         }
-                      } catch (e) {
-                        console.warn(`[Email Polling] Failed to parse attachment ${att.filename}:`, e);
                       }
+                      if (importResult.successful > 0) {
+                        // Create notification for imported documents
+                        await db.createNotification({
+                          userId: 1,
+                          type: "reminder" as const,
+                          title: `📧 Auto-imported ${importResult.successful} document(s)`,
+                          message: `From: ${email.from.name || email.from.address} — ${importResult.results.filter((r: any) => r.success).map((r: any) => r.documentType.replace(/_/g, " ")).join(", ")}`,
+                        });
+                      }
+                    } catch (e) {
+                      console.warn(`[Email Import] Bulk import failed:`, e);
                     }
                   }
                 } catch (e) {
