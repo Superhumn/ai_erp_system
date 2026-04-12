@@ -13,6 +13,7 @@ import * as sendgridProvider from "./_core/sendgridProvider";
 import { parseUploadedDocument, importPurchaseOrder, importFreightInvoice, importVendorInvoice, importCustomsDocument, matchLineItemsToMaterials } from "./documentImportService";
 import { detectMaterialShortages, detectAnomalies, runShortageCheckAndNotify, runAnomalyCheckAndNotify } from "./materialShortageService";
 import { linkParsedEmailToEntities } from "./emailDocumentLinker";
+import { trackShipment, getFreightRates, getShippingLines } from "./searatesService";
 import { generateVendorEmail, sendVendorEmail, sendBulkEmail, checkAndSendPoFollowups } from "./vendorEmailAutomation";
 import { processAIAgentRequest, getQuickAnalysis, getSystemOverview, getPendingActions, type AIAgentContext } from "./aiAgentService";
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "./inventoryCostingService";
@@ -5838,6 +5839,38 @@ Be concise. Don't explain what you can't do — just do it or ask for the one mi
   freight: router({
     // Dashboard stats
     dashboardStats: protectedProcedure.query(() => db.getFreightDashboardStats()),
+
+    // SeaRates: Live container/BL tracking
+    trackShipment: protectedProcedure
+      .input(z.object({
+        number: z.string().min(1),
+        type: z.enum(["CT", "BL", "BK"]).optional(),
+        sealine: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return trackShipment(input.number, { type: input.type, sealine: input.sealine, route: true });
+      }),
+
+    // SeaRates: Get freight rate quotes
+    getQuotes: protectedProcedure
+      .input(z.object({
+        fromCity: z.string(),
+        toCity: z.string(),
+        fromCountry: z.string(),
+        toCountry: z.string(),
+        weight: z.number().optional(),
+        volume: z.number().optional(),
+        containerType: z.enum(["20ST", "40ST", "40HQ", "20RF", "40RF"]).optional(),
+        mode: z.enum(["fcl", "lcl", "air"]).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return getFreightRates(input);
+      }),
+
+    // SeaRates: List supported shipping lines
+    shippingLines: protectedProcedure.query(async () => {
+      try { return await getShippingLines(); } catch { return { lines: [] }; }
+    }),
     
     // Carriers
     discoverCarriers: protectedProcedure

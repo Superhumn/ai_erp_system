@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
+import { toast } from "sonner";
 
 // Simple city→coords lookup for demo (real app would use geocoding API)
 const CITY_COORDS: Record<string, [number, number]> = {
@@ -72,6 +73,8 @@ const statusStep: Record<string, number> = {
 export default function FreightTracking() {
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [liveData, setLiveData] = useState<any>(null);
+  const [trackingSearch, setTrackingSearch] = useState("");
   const mapRef = useRef<HTMLDivElement>(null);
   const leafletMap = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
@@ -79,6 +82,17 @@ export default function FreightTracking() {
 
   const { data: bookings, isLoading } = trpc.freight.bookings.list.useQuery({});
   const { data: rfqs } = trpc.freight.rfqs.list.useQuery({ status: undefined });
+
+  // SeaRates live tracking
+  const trackMutation = trpc.freight.trackShipment.useMutation({
+    onSuccess: (data) => setLiveData(data),
+    onError: (err) => toast.error("Tracking failed: " + err.message),
+  });
+
+  const handleLiveTrack = (number: string, type?: "CT" | "BL" | "BK") => {
+    if (!number) return;
+    trackMutation.mutate({ number, type });
+  };
   const { data: carriers } = trpc.freight.carriers.list.useQuery();
 
   // Merge booking with RFQ data for origin/destination
@@ -251,6 +265,24 @@ export default function FreightTracking() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input placeholder="Search shipments..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 h-8" />
           </div>
+          {/* Direct container/BL tracking */}
+          <div className="flex gap-1">
+            <Input
+              placeholder="Container or B/L #"
+              value={trackingSearch}
+              onChange={(e) => setTrackingSearch(e.target.value)}
+              className="h-7 text-xs"
+              onKeyDown={(e) => e.key === "Enter" && handleLiveTrack(trackingSearch)}
+            />
+            <Button
+              size="sm"
+              className="h-7 text-xs px-2 shrink-0"
+              onClick={() => handleLiveTrack(trackingSearch)}
+              disabled={trackMutation.isPending || !trackingSearch}
+            >
+              {trackMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Navigation className="h-3 w-3" />}
+            </Button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto">
@@ -317,9 +349,25 @@ export default function FreightTracking() {
                   {selected.containerNumber && <span>Container: {selected.containerNumber}</span>}
                 </div>
               </div>
-              <Badge className={`${statusColors[selected.status]} text-sm px-3 py-1`}>
-                {(selected.status || "pending").replace(/_/g, " ")}
-              </Badge>
+              <div className="flex items-center gap-2">
+                {(selected.trackingNumber || selected.containerNumber) && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleLiveTrack(
+                      selected.containerNumber || selected.trackingNumber,
+                      selected.containerNumber ? "CT" : "BL"
+                    )}
+                    disabled={trackMutation.isPending}
+                  >
+                    {trackMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Navigation className="h-3 w-3 mr-1" />}
+                    Track Live
+                  </Button>
+                )}
+                <Badge className={`${statusColors[selected.status]} text-sm px-3 py-1`}>
+                  {(selected.status || "pending").replace(/_/g, " ")}
+                </Badge>
+              </div>
             </div>
 
             {/* Progress steps */}
@@ -344,6 +392,34 @@ export default function FreightTracking() {
               {selected.deliveryDate && <span>Delivered: {format(new Date(selected.deliveryDate), "MMM d, yyyy")}</span>}
               {selected.agreedCost && <span className="ml-auto font-medium text-foreground">Cost: {formatCurrency(parseFloat(selected.agreedCost))}</span>}
             </div>
+          </div>
+        )}
+
+        {/* Live SeaRates tracking result */}
+        {liveData?.data && (
+          <div className="border-t bg-card p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Navigation className="h-4 w-4 text-primary" />
+              <span className="text-sm font-semibold">Live Tracking — {liveData.data.metadata?.number}</span>
+              <Badge variant="outline" className="text-xs">{liveData.data.metadata?.status?.replace(/_/g, " ")}</Badge>
+              <Badge variant="outline" className="text-xs">{liveData.data.metadata?.sealine_name || liveData.data.metadata?.sealine}</Badge>
+              <Button size="sm" variant="ghost" className="ml-auto h-6 text-xs" onClick={() => setLiveData(null)}>Close</Button>
+            </div>
+            {liveData.data.locations?.length > 0 && (
+              <div className="flex gap-1 overflow-x-auto pb-1">
+                {liveData.data.locations.map((loc: any, i: number) => (
+                  <div key={i} className={`shrink-0 text-[10px] px-2 py-1 rounded ${loc.actual ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
+                    <div className="font-medium">{loc.name}</div>
+                    <div>{loc.date ? format(new Date(loc.date), "MMM d") : ""} {loc.status && `· ${loc.status}`}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {liveData.data.vessels?.length > 0 && (
+              <div className="text-xs text-muted-foreground mt-1">
+                Vessel: {liveData.data.vessels.map((v: any) => v.name).join(", ")}
+              </div>
+            )}
           </div>
         )}
       </div>
