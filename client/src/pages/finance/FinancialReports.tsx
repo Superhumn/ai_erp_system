@@ -1181,7 +1181,77 @@ export default function FinancialReports() {
         </CardContent>
       </Card>
 
-      {/* (CFO Strategy moved to top of page) */}
+      {/* ── Banking & Accounts ─────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <DollarSign className="h-5 w-5 text-blue-600" />
+              <div>
+                <CardTitle className="text-base">Banking</CardTitle>
+                <CardDescription className="text-sm">
+                  Connected bank accounts and balances
+                </CardDescription>
+              </div>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {bankBalances?.accounts && bankBalances.accounts.length > 0 ? (
+              bankBalances.accounts.map((acct: any) => (
+                <div key={acct.id} className="border rounded-lg p-4">
+                  <div className="text-sm text-muted-foreground font-medium">
+                    {acct.name || acct.nickname || "Account"}
+                  </div>
+                  <div className="text-2xl font-bold mt-1">
+                    {fmtCompact(acct.currentBalance ?? acct.availableBalance ?? 0)}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {acct.kind || acct.type || "Checking"} &middot; ****{acct.accountNumber?.slice(-4) || acct.id?.slice(-4)}
+                  </p>
+                </div>
+              ))
+            ) : (
+              <div className="col-span-full text-sm text-muted-foreground py-4 text-center">
+                No bank accounts connected. Connect Mercury or Amex below.
+              </div>
+            )}
+          </div>
+
+          {/* Connect accounts section */}
+          <div className="mt-4 border-t pt-4">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Connect Accounts</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <a
+                href="/settings"
+                className="flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors"
+              >
+                <div className="h-8 w-8 rounded-full bg-gradient-to-r from-gray-800 to-gray-600 flex items-center justify-center text-white text-xs font-bold">M</div>
+                <div>
+                  <div className="text-sm font-medium">Mercury</div>
+                  <div className="text-xs text-muted-foreground">Business checking &middot; API key in Settings</div>
+                </div>
+              </a>
+              <a
+                href="https://www.americanexpress.com/en-us/business/trends-and-insights/articles/how-to-connect-your-amex-account-to-accounting-software/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors"
+              >
+                <div className="h-8 w-8 rounded-full bg-gradient-to-r from-blue-700 to-blue-500 flex items-center justify-center text-white text-xs font-bold">AX</div>
+                <div>
+                  <div className="text-sm font-medium">American Express</div>
+                  <div className="text-xs text-muted-foreground">Connect via Plaid or CSV import &middot; Use QuickBooks sync</div>
+                </div>
+              </a>
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-2">
+              To connect Amex: Go to Settings &gt; QuickBooks and sync your accounts. Amex integrates via QuickBooks Online or you can export transactions as CSV from americanexpress.com and import via the Import Data page.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

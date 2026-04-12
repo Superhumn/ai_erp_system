@@ -87,6 +87,7 @@ export default function AutonomousSettings() {
 
   const getWorkflowTypeLabel = (type: string) => {
     const labels: Record<string, string> = {
+      // Supply Chain & Operations
       demand_forecasting: "Demand Forecasting",
       production_planning: "Production Planning",
       material_requirements: "Material Requirements",
@@ -104,6 +105,38 @@ export default function AutonomousSettings() {
       invoice_matching: "Invoice Matching",
       payment_processing: "Payment Processing",
       exception_handling: "Exception Handling",
+      // Finance & Accounting
+      revenue_recognition: "Revenue Recognition",
+      expense_categorization: "Expense Categorization",
+      bank_reconciliation: "Bank Reconciliation",
+      financial_close: "Monthly Financial Close",
+      ar_collections: "AR Collections Follow-Up",
+      ap_processing: "AP Processing",
+      tax_preparation: "Tax Preparation",
+      // Sales & CRM
+      lead_scoring: "Lead Scoring",
+      deal_follow_up: "Deal Follow-Up",
+      customer_onboarding: "Customer Onboarding",
+      order_processing: "Sales Order Processing",
+      quote_generation: "Quote Generation",
+      churn_prevention: "Churn Prevention",
+      // HR & People
+      payroll_processing: "Payroll Processing",
+      equity_vesting: "Equity Vesting Updates",
+      onboarding_tasks: "Employee Onboarding",
+      offboarding_tasks: "Employee Offboarding",
+      performance_reviews: "Performance Review Reminders",
+      time_tracking: "Time Tracking Enforcement",
+      // Legal & Compliance
+      contract_renewal: "Contract Renewal Tracking",
+      compliance_monitoring: "Compliance Monitoring",
+      nda_tracking: "NDA Expiration Tracking",
+      dispute_escalation: "Dispute Auto-Escalation",
+      // Communication & Reporting
+      investor_update: "Investor Update Generation",
+      kpi_reporting: "KPI Report Generation",
+      email_triage: "Email Triage & Routing",
+      meeting_prep: "Meeting Prep & Follow-Up",
       custom: "Custom",
     };
     return labels[type] || type;

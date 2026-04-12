@@ -170,12 +170,13 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
     const refreshed = await refreshGoogleToken(token.refreshToken);
     
     if (refreshed.accessToken && refreshed.expiresAt) {
-      // Update database with new token
+      // Update database with new token (preserve existing googleEmail via COALESCE)
       await db.upsertGoogleOAuthToken({
         userId,
         accessToken: refreshed.accessToken,
         refreshToken: token.refreshToken,
         expiresAt: refreshed.expiresAt,
+        googleEmail: token.googleEmail,
       });
       return { accessToken: refreshed.accessToken };
     }
@@ -2863,9 +2864,38 @@ ONLY return the JSON array, no other text.`;
       const activeShopifyStores = shopifyStores.filter(s => s.isEnabled);
       const syncHistory = await db.getSyncHistory(10);
       
-      // Check Google OAuth connection
+      // Check Google OAuth connection — attempt auto-refresh if expired
       const googleToken = await db.getGoogleOAuthToken(ctx.user.id);
-      const googleConnected = googleToken && (!googleToken.expiresAt || new Date(googleToken.expiresAt) > new Date());
+      let googleConnected = googleToken && (!googleToken.expiresAt || new Date(googleToken.expiresAt) > new Date());
+      if (googleToken && !googleConnected && googleToken.refreshToken) {
+        const refreshed = await refreshGoogleToken(googleToken.refreshToken);
+        if (refreshed.accessToken && refreshed.expiresAt) {
+          await db.upsertGoogleOAuthToken({
+            userId: ctx.user.id,
+            accessToken: refreshed.accessToken,
+            refreshToken: googleToken.refreshToken,
+            expiresAt: refreshed.expiresAt,
+            googleEmail: googleToken.googleEmail,
+          });
+          googleConnected = true;
+        }
+      }
+      // If connected but missing email, try to fetch it from Google
+      if (googleConnected && googleToken && !googleToken.googleEmail) {
+        try {
+          const { accessToken: validToken } = await getValidGoogleToken(ctx.user.id);
+          if (validToken) {
+            const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', { headers: { Authorization: `Bearer ${validToken}` } });
+            if (userInfoRes.ok) {
+              const userInfo = await userInfoRes.json();
+              if (userInfo.email) {
+                await db.upsertGoogleOAuthToken({ userId: ctx.user.id, accessToken: validToken, googleEmail: userInfo.email });
+                googleToken.googleEmail = userInfo.email;
+              }
+            }
+          }
+        } catch { /* best-effort email fetch */ }
+      }
       
       // Check QuickBooks OAuth connection
       const quickbooksToken = await db.getQuickBooksOAuthToken(ctx.user.id);
@@ -3324,7 +3354,8 @@ ONLY return the JSON array, no other text.`;
         return { connected: false, email: null };
       }
       // Check if token is expired and attempt refresh if so
-      const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+      let isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+      let currentAccessToken = token.accessToken;
       if (isExpired && token.refreshToken) {
         // Attempt to refresh the token automatically
         const refreshed = await refreshGoogleToken(token.refreshToken);
@@ -3336,14 +3367,30 @@ ONLY return the JSON array, no other text.`;
             expiresAt: refreshed.expiresAt,
             googleEmail: token.googleEmail,
           });
-          return { connected: true, email: token.googleEmail, needsRefresh: false };
+          currentAccessToken = refreshed.accessToken;
+          isExpired = false;
+        } else {
+          // Refresh failed — token is truly expired
+          return { connected: false, email: token.googleEmail, needsRefresh: true };
         }
-        // Refresh failed — token is truly expired
-        return { connected: false, email: token.googleEmail, needsRefresh: true };
+      }
+      // Backfill googleEmail if missing (for tokens created before email fetch was added)
+      let email = token.googleEmail;
+      if (!isExpired && !email && currentAccessToken) {
+        try {
+          const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', { headers: { Authorization: `Bearer ${currentAccessToken}` } });
+          if (userInfoRes.ok) {
+            const userInfo = await userInfoRes.json();
+            if (userInfo.email) {
+              email = userInfo.email;
+              await db.upsertGoogleOAuthToken({ userId: ctx.user.id, accessToken: currentAccessToken, googleEmail: email });
+            }
+          }
+        } catch { /* best-effort */ }
       }
       return {
         connected: !isExpired,
-        email: token.googleEmail,
+        email,
         needsRefresh: false
       };
     }),
@@ -3411,7 +3458,7 @@ ONLY return the JSON array, no other text.`;
           }
         }
         
-        const url = `https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.spreadsheet'&fields=files(id,name,modifiedTime,owners)&orderBy=modifiedTime desc&pageSize=50${input?.pageToken ? `&pageToken=${input.pageToken}` : ''}`;
+        const url = `https://www.googleapis.com/drive/v3/files?q=(mimeType='application/vnd.google-apps.spreadsheet' or mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType='text/csv')&fields=files(id,name,modifiedTime,owners,mimeType)&orderBy=modifiedTime desc&pageSize=100${input?.pageToken ? `&pageToken=${input.pageToken}` : ''}`;
         
         const response = await fetch(url, {
           headers: { Authorization: `Bearer ${accessToken}` },
@@ -3756,7 +3803,7 @@ ONLY return the JSON array, no other text.`;
 
         // 2. List all Google Sheets in Drive
         const sheetsResponse = await fetch(
-          'https://www.googleapis.com/drive/v3/files?q=mimeType%3D%27application%2Fvnd.google-apps.spreadsheet%27&fields=files(id,name,modifiedTime)&orderBy=modifiedTime%20desc&pageSize=50',
+          `https://www.googleapis.com/drive/v3/files?q=(mimeType='application/vnd.google-apps.spreadsheet' or mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType='text/csv')&fields=files(id,name,modifiedTime,mimeType)&orderBy=modifiedTime desc&pageSize=100`,
           { headers: { Authorization: `Bearer ${accessToken}` } },
         );
         if (!sheetsResponse.ok) {
@@ -18784,7 +18831,9 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         const transactions = await db.getEquityTransactions();
         const valuations = await db.getValuations409a();
 
-        const totalSharesNum = grants.reduce((acc, g) => acc + parseFloat(g.shares || "0"), 0);
+        // Exclude terminated/cancelled grants from share counts
+        const activeGrants = grants.filter(g => g.status !== "cancelled" && g.status !== "expired");
+        const totalSharesNum = activeGrants.reduce((acc, g) => acc + parseFloat(g.shares || "0"), 0);
         const generatedAt = new Date().toISOString();
         let headers: string[] = [];
         let rows: any[][] = [];
@@ -18808,7 +18857,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             if (input.reportType === "raw_captable") {
               headers = ["Share Class", "Type", "Seniority", "Authorized", "Issued", "Outstanding (Vested)", "Available", "% of Total", "Par Value", "Price/Share", "Liq. Pref.", "Voting"];
               rows = shareClasses.map(sc => {
-                const classGrants = grants.filter(g => g.shareClassId === sc.id);
+                const classGrants = activeGrants.filter(g => g.shareClassId === sc.id);
                 const issued = classGrants.reduce((a, g) => a + parseFloat(g.shares || "0"), 0);
                 const vested = classGrants.reduce((a, g) => a + parseFloat(g.sharesVested || "0"), 0);
                 const authorized = parseFloat(sc.authorizedShares || "0");
@@ -18821,25 +18870,47 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
                 ];
               });
             } else {
-              headers = ["Share Class", "Type", "Authorized", "Issued", "Outstanding (Vested)", "Available", "% of Total"];
-              rows = shareClasses.map(sc => {
-                const classGrants = grants.filter(g => g.shareClassId === sc.id);
-                const issued = classGrants.reduce((a, g) => a + parseFloat(g.shares || "0"), 0);
-                const vested = classGrants.reduce((a, g) => a + parseFloat(g.sharesVested || "0"), 0);
+              // Detailed cap table: share class summary + per-stakeholder breakdown
+              headers = ["Stakeholder / Class", "Type", "Grant Type", "Shares", "Vested", "Unvested", "Exercise Price", "Status", "% Ownership"];
+
+              for (const sc of shareClasses) {
+                const classGrants = activeGrants.filter(g => g.shareClassId === sc.id);
+                const classIssued = classGrants.reduce((a, g) => a + parseFloat(g.shares || "0"), 0);
+                const classVested = classGrants.reduce((a, g) => a + parseFloat(g.sharesVested || "0"), 0);
                 const authorized = parseFloat(sc.authorizedShares || "0");
-                const available = Math.max(0, authorized - issued);
-                const pct = totalSharesNum > 0 ? (issued / totalSharesNum) * 100 : 0;
-                return [sc.name, sc.type, fmtNum(authorized), fmtNum(issued), fmtNum(vested), fmtNum(available), fmtPct(pct)];
-              });
+                const classPct = totalSharesNum > 0 ? (classIssued / totalSharesNum) * 100 : 0;
+                // Section header for share class
+                rows.push([`── ${sc.name} ──`, sc.type, "", fmtNum(authorized) + " auth", fmtNum(classIssued) + " issued", fmtNum(classVested) + " vested", sc.pricePerShare || "-", "", fmtPct(classPct)]);
+
+                // Per-stakeholder rows within this class
+                for (const g of classGrants) {
+                  const sh = stakeholderMap.get(g.stakeholderId!);
+                  const shares = parseFloat(g.shares || "0");
+                  const vested = parseFloat(g.sharesVested || "0");
+                  const unvested = Math.max(0, shares - vested);
+                  const pct = totalSharesNum > 0 ? (shares / totalSharesNum) * 100 : 0;
+                  rows.push([
+                    sh?.name || `#${g.stakeholderId}`,
+                    sh?.type || "-",
+                    g.grantType || "-",
+                    fmtNum(shares),
+                    fmtNum(vested),
+                    fmtNum(unvested),
+                    g.exercisePrice || g.pricePerShare || "-",
+                    g.status || "-",
+                    fmtPct(pct),
+                  ]);
+                }
+              }
             }
             // Add totals row
             const totalAuthorized = shareClasses.reduce((a, sc) => a + parseFloat(sc.authorizedShares || "0"), 0);
             const totalIssued = totalSharesNum;
-            const totalVested = grants.reduce((a, g) => a + parseFloat(g.sharesVested || "0"), 0);
+            const totalVested = activeGrants.reduce((a, g) => a + parseFloat(g.sharesVested || "0"), 0);
             if (input.reportType === "raw_captable") {
               rows.push(["TOTAL", "", "", fmtNum(totalAuthorized), fmtNum(totalIssued), fmtNum(totalVested), fmtNum(Math.max(0, totalAuthorized - totalIssued)), "100.00%", "", "", "", ""]);
             } else {
-              rows.push(["TOTAL", "", fmtNum(totalAuthorized), fmtNum(totalIssued), fmtNum(totalVested), fmtNum(Math.max(0, totalAuthorized - totalIssued)), "100.00%"]);
+              rows.push(["TOTAL", "", "", fmtNum(totalIssued), fmtNum(totalVested), fmtNum(totalIssued - totalVested), "", "", "100.00%"]);
             }
             break;
           }
@@ -18848,7 +18919,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             title = "Stakeholders";
             headers = ["Name", "Email", "Type", "Title", "Relationship", "Accredited", "Total Shares", "% Ownership"];
             rows = allStakeholders.map(s => {
-              const sGrants = grants.filter(g => g.stakeholderId === s.id);
+              const sGrants = activeGrants.filter(g => g.stakeholderId === s.id);
               const totalShares = sGrants.reduce((a, g) => a + parseFloat(g.shares || "0"), 0);
               const pct = totalSharesNum > 0 ? (totalShares / totalSharesNum) * 100 : 0;
               return [s.name, s.email || "-", s.type, s.title || "-", s.relationship || "-", s.accreditedInvestor ? "Yes" : "No", fmtNum(totalShares), fmtPct(pct)];

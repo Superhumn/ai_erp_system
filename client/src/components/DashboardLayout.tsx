@@ -113,7 +113,6 @@ function getMenuGroups(role: string = "user") {
     items: [
       { icon: ShoppingCart, label: "Orders", path: "/sales/orders" },
       { icon: UserCircle, label: "Customers & CRM", path: "/crm/hub" },
-      { icon: CircleDollarSign, label: "Banking", path: "/finance/banking" },
       { icon: BarChart3, label: "Financials", path: "/finance/reports" },
     ],
   },
@@ -122,8 +121,9 @@ function getMenuGroups(role: string = "user") {
     items: [
       ...(isAdmin ? [
         { icon: Users, label: "People & Equity", path: "/hr/employees" },
-        { icon: FileBarChart, label: "Equity Reports", path: "/hr/equity-reports" },
+        { icon: FileBarChart, label: "Cap Table", path: "/hr/equity-reports" },
         { icon: Scale, label: "Contracts", path: "/legal/contracts" },
+        { icon: Scale, label: "Legal Cases", path: "/legal/disputes" },
       ] : [
         { icon: Clock, label: "Time Tracking", path: "/hr/time-tracking" },
         { icon: LineChart, label: "Equity Portal", path: "/hr/equity-portal" },

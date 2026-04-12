@@ -265,10 +265,14 @@ export default function Orders() {
               </TableHeader>
               <TableBody>
                 {filteredOrders.map((order) => (
-                  <TableRow key={order.id} className="cursor-pointer hover:bg-muted/50">
+                  <TableRow
+                    key={order.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => window.location.href = `/sales/orders/${order.id}`}
+                  >
                     <TableCell className="font-mono">
                       <Link href={`/sales/orders/${order.id}`}>
-                        <span className="hover:underline">{order.orderNumber}</span>
+                        <span className="text-primary hover:underline">{order.orderNumber}</span>
                       </Link>
                     </TableCell>
                     <TableCell className="font-medium">{customers?.find((c) => c.id === order.customerId)?.name || (order.customerId ? `Customer #${order.customerId}` : "-")}</TableCell>
