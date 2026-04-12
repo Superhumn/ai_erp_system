@@ -199,7 +199,7 @@ export async function refreshShopifyToken(storeId: number): Promise<string> {
   const expiresAt = new Date(Date.now() + expiresIn * 1000);
 
   await updateShopifyStore(storeId, {
-    accessToken: encrypt(newToken), // store encrypted, consistent with OAuth callback
+    accessToken: encrypt(newToken), // store encrypted, consistent with OAuth callback; returns plain text for immediate use by caller
     tokenExpiresAt: expiresAt,
   } as any);
 
