@@ -775,6 +775,20 @@ export async function getOrderById(id: number) {
   return result[0];
 }
 
+export async function getOrderByShopifyId(shopifyOrderId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(orders).where(eq(orders.shopifyOrderId, shopifyOrderId)).limit(1);
+  return result[0];
+}
+
+export async function getProductByShopifyId(shopifyProductId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(products).where(eq(products.shopifyProductId, shopifyProductId)).limit(1);
+  return result[0];
+}
+
 export async function getOrderWithItems(id: number) {
   const db = await getDb();
   if (!db) return undefined;

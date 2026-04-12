@@ -2236,7 +2236,10 @@ export const shopifyStores = mysqlTable("shopifyStores", {
   storeDomain: varchar("storeDomain", { length: 255 }).notNull().unique(), // mystore.myshopify.com
   storeName: varchar("storeName", { length: 255 }),
   accessToken: text("accessToken"), // Encrypted in production
-  apiVersion: varchar("apiVersion", { length: 16 }).default("2024-01"),
+  tokenExpiresAt: timestamp("tokenExpiresAt"), // When the access token expires
+  clientId: varchar("clientId", { length: 255 }), // OAuth client ID for token refresh
+  clientSecret: varchar("clientSecret", { length: 255 }), // OAuth client secret for token refresh
+  apiVersion: varchar("apiVersion", { length: 16 }).default("2025-01"),
   isEnabled: boolean("isEnabled").default(true),
   syncInventory: boolean("syncInventory").default(true),
   syncOrders: boolean("syncOrders").default(true),

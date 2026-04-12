@@ -986,6 +986,42 @@ async function startServer() {
         console.warn("[Fireflies Sync] Could not initialize:", e);
       }
     })();
+
+    // ── Shopify auto-sync (every 30 minutes) ──
+    (async () => {
+      try {
+        const SHOPIFY_SYNC_INTERVAL = 30 * 60 * 1000; // 30 minutes
+        console.log("[Shopify Sync] Starting auto-sync with 30m interval");
+        setInterval(async () => {
+          try {
+            const { runAllShopifySyncs } = await import("./shopify");
+            const result = await runAllShopifySyncs();
+            for (const r of result.results) {
+              if (r.result) {
+                console.log(`[Shopify Sync] ${r.domain}: products=${r.result.products.created}+${r.result.products.updated}, orders=${r.result.orders.created}+${r.result.orders.updated}, customers=${r.result.customers.created}+${r.result.customers.updated} (${(r.result.duration / 1000).toFixed(1)}s)`);
+              } else if (r.error) {
+                console.warn(`[Shopify Sync] ${r.domain} failed: ${r.error}`);
+              }
+            }
+          } catch (e) {
+            console.warn("[Shopify Sync] Auto-sync error:", e);
+          }
+        }, SHOPIFY_SYNC_INTERVAL);
+
+        // Run initial sync after 2 minutes to let the server warm up
+        setTimeout(async () => {
+          try {
+            const { runAllShopifySyncs } = await import("./shopify");
+            const result = await runAllShopifySyncs();
+            console.log(`[Shopify Sync] Initial sync complete for ${result.stores} store(s)`);
+          } catch (e) {
+            console.warn("[Shopify Sync] Initial sync failed:", e);
+          }
+        }, 2 * 60 * 1000);
+      } catch (e) {
+        console.warn("[Shopify Sync] Could not initialize:", e);
+      }
+    })();
   });
 
   function gracefulShutdown(signal: string) {
