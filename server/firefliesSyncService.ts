@@ -124,7 +124,7 @@ export async function syncFirefliesMeetingsForUser(
                     fullName:
                       participant.name || participant.email.split("@")[0],
                     email: participant.email,
-                    source: "meeting" as any,
+                    source: "fireflies" as any,
                   });
                   contact = await db.getCrmContactById(contactId);
                   result.contactsCreated++;
