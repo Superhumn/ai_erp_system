@@ -38,7 +38,7 @@ export default function IntegrationsPage() {
   const [shopifyConnecting, setShopifyConnecting] = useState(false);
   const [activeTab, setActiveTab] = useState("connections");
 
-  const { data: status, isLoading, refetch } = trpc.integrations.getStatus.useQuery();
+  const { data: status, isLoading, refetch } = trpc.integrations.getStatus.useQuery(undefined, { refetchOnWindowFocus: true, staleTime: 0 });
   const { data: syncHistory } = trpc.integrations.getSyncHistory.useQuery({ limit: 20 });
 
   // Get OAuth URLs for Gmail and Google Workspace

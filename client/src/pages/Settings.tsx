@@ -14,7 +14,7 @@ import { toast } from "sonner";
 export default function Settings() {
   const { user, refresh } = useAuth();
   const [, navigate] = useLocation();
-  const { data: integrationStatus } = trpc.integrations.getStatus.useQuery();
+  const { data: integrationStatus } = trpc.integrations.getStatus.useQuery(undefined, { refetchOnWindowFocus: true, staleTime: 0 });
 
   // Editable profile state
   const [editName, setEditName] = useState(user?.name || "");

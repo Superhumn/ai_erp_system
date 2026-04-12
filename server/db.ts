@@ -277,6 +277,16 @@ export async function updateUserRole(userId: number, role: InsertUser['role']) {
   await db.update(users).set({ role }).where(eq(users.id, userId));
 }
 
+export async function deleteUser(userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  // Delete local auth credentials first
+  await db.delete(localAuthCredentials).where(eq(localAuthCredentials.openId,
+    (await db.select({ openId: users.openId }).from(users).where(eq(users.id, userId)))[0]?.openId || ""
+  ));
+  await db.delete(users).where(eq(users.id, userId));
+}
+
 export async function updateUser(userId: number, updates: Record<string, string>) {
   const db = await getDb();
   if (!db) return;

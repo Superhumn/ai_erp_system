@@ -267,6 +267,14 @@ export const appRouter = router({
         await db.changeUserPassword(ctx.user.id, input.currentPassword, input.newPassword);
         return { success: true };
       }),
+    delete: adminProcedure
+      .input(z.object({ userId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        if (input.userId === ctx.user.id) throw new TRPCError({ code: "BAD_REQUEST", message: "Cannot delete yourself" });
+        await db.deleteUser(input.userId);
+        await createAuditLog(ctx.user.id, 'delete', 'user', input.userId);
+        return { success: true };
+      }),
   }),
 
   // ============================================
@@ -16811,15 +16819,18 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       }))
       .mutation(({ input }) => {
         // Convert empty strings to undefined for optional fields
-        const cleaned = {
-          ...input,
-          description: input.description || undefined,
-          targetAmount: input.targetAmount || undefined,
-          minimumInvestment: input.minimumInvestment || undefined,
-          valuation: input.valuation || undefined,
-          equityOffered: input.equityOffered || undefined,
-          notes: input.notes || undefined,
+        const cleaned: Record<string, any> = {
+          name: input.name,
+          roundType: input.roundType,
+          status: input.status,
+          raisedAmount: "0",
         };
+        if (input.description) cleaned.description = input.description;
+        if (input.targetAmount) cleaned.targetAmount = input.targetAmount;
+        if (input.minimumInvestment) cleaned.minimumInvestment = input.minimumInvestment;
+        if (input.valuation) cleaned.valuation = input.valuation;
+        if (input.equityOffered) cleaned.equityOffered = input.equityOffered;
+        if (input.notes) cleaned.notes = input.notes;
         return db.createFundraisingCampaign(cleaned as any);
       }),
     listInvestments: protectedProcedure

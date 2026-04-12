@@ -698,7 +698,7 @@ export default function CRMHub() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <Table>
+              <Table className="[&_td]:py-1 [&_th]:py-1.5">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="min-w-[160px]">Deal Name</TableHead>
