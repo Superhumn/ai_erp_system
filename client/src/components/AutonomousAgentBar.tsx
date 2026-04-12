@@ -67,8 +67,9 @@ export function AutonomousAgentBar() {
     }
   };
 
-  // Don't show if query failed (API not available yet)
-  if (statusQuery.error) {
+  // Don't show if query has never succeeded (API not available yet)
+  // Use statusQuery.data check instead of error to prevent flashing on transient errors
+  if (!statusQuery.data && statusQuery.isError) {
     return null;
   }
 

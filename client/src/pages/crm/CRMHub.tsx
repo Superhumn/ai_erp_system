@@ -35,7 +35,7 @@ import {
   Linkedin, Building2, DollarSign, TrendingUp, UserPlus,
   Smartphone, QrCode, CreditCard, Filter, MoreHorizontal,
   Calendar, Clock, MessageCircle, Target, Handshake, HardDrive,
-  Sparkles, ChevronDown, ChevronUp, ArrowRight
+  Sparkles, ChevronDown, ChevronUp, ArrowRight, Upload
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -59,6 +59,7 @@ export default function CRMHub() {
   const [captureMethod, setCaptureMethod] = useState<string>("manual");
   const [selectedContact, setSelectedContact] = useState<any>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [expandedDealId, setExpandedDealId] = useState<number | null>(null);
 
   const [contactForm, setContactForm] = useState({
@@ -127,6 +128,14 @@ export default function CRMHub() {
   const deleteContact = trpc.crm.contacts.delete.useMutation({
     onSuccess: () => {
       toast.success("Contact deleted");
+      refetchContacts();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const deleteAllContacts = trpc.crm.contacts.deleteAll.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Deleted ${(data as any)?.deleted || 0} contacts`);
       refetchContacts();
     },
     onError: (error) => toast.error(error.message),
@@ -482,6 +491,9 @@ export default function CRMHub() {
             </DialogContent>
           </Dialog>
 
+          <Button variant="outline" size="sm" onClick={() => window.location.href = "/import"}>
+            <Upload className="h-4 w-4 mr-1" /> Import
+          </Button>
           <Dialog open={isContactDialogOpen} onOpenChange={setIsContactDialogOpen}>
             <DialogTrigger asChild>
               <Button>
@@ -695,6 +707,152 @@ export default function CRMHub() {
         </Card>
       </div>
 
+      {/* Deals Table — shown first */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Deals</CardTitle>
+              <CardDescription>All open deals with contact details</CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search deals..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="pl-8 w-[250px]"
+                />
+              </div>
+              <Button onClick={() => setIsDealDialogOpen(true)}>
+                <Plus className="h-4 w-4 mr-2" />
+                New Deal
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {dealsLoading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : filteredDeals.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <TrendingUp className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p>No open deals yet. Create your first deal to start tracking opportunities.</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="min-w-[160px]">Deal Name</TableHead>
+                    <TableHead className="min-w-[120px]">Contact</TableHead>
+                    <TableHead className="min-w-[120px]">Company</TableHead>
+                    <TableHead className="min-w-[100px] text-right">Value</TableHead>
+                    <TableHead className="min-w-[100px]">Stage</TableHead>
+                    <TableHead className="min-w-[100px]">Source</TableHead>
+                    <TableHead className="min-w-[100px]">Last Contact</TableHead>
+                    <TableHead className="min-w-[140px]">Next Step</TableHead>
+                    <TableHead className="w-[40px]"></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredDeals.map((deal: any) => (
+                    <React.Fragment key={deal.id}>
+                    <TableRow className="hover:bg-muted/50 cursor-pointer" onClick={() => setExpandedDealId(expandedDealId === deal.id ? null : deal.id)}>
+                      <TableCell className="font-medium">
+                        <div className="flex items-center gap-1">
+                          {expandedDealId === deal.id ? <ChevronUp className="h-3 w-3 text-muted-foreground" /> : <ChevronDown className="h-3 w-3 text-muted-foreground" />}
+                          {deal.name}
+                        </div>
+                      </TableCell>
+                      <TableCell>{deal._contactName}</TableCell>
+                      <TableCell>{deal._company}</TableCell>
+                      <TableCell className="text-right font-semibold text-green-600">
+                        {parseFloat(deal._value) > 0 ? `$${Number(deal._value).toLocaleString()}` : "-"}
+                      </TableCell>
+                      <TableCell>
+                        <Badge className={stageColors[deal.stage] || "bg-gray-500/10 text-gray-600"}>
+                          {deal.stage}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm capitalize">{deal._source}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {deal._lastContact ? format(new Date(deal._lastContact), "MMM d, yyyy") : "-"}
+                      </TableCell>
+                      <TableCell className="text-sm max-w-[140px] truncate">{deal._nextStep}</TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm" onClick={(e) => e.stopPropagation()}>
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem>View Details</DropdownMenuItem>
+                            <DropdownMenuItem>Edit Deal</DropdownMenuItem>
+                            <DropdownMenuItem>Move Stage</DropdownMenuItem>
+                            <DropdownMenuItem className="text-red-600">Delete</DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                    {expandedDealId === deal.id && (
+                      <TableRow>
+                        <TableCell colSpan={9} className="bg-muted/30 p-0">
+                          <div className="px-6 py-4">
+                            <div className="flex items-center gap-2 mb-3">
+                              <Sparkles className="h-4 w-4 text-purple-500" />
+                              <h4 className="font-medium text-sm">AI-Recommended Next Steps</h4>
+                            </div>
+                            {nextStepsLoading ? (
+                              <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Analyzing deal and generating recommendations...
+                              </div>
+                            ) : nextStepsData?.steps?.length > 0 ? (
+                              <div className="space-y-2">
+                                {nextStepsData.steps.map((step: any, idx: number) => (
+                                  <div key={idx} className="flex items-start gap-3 p-3 bg-background rounded-lg border">
+                                    <div className="mt-0.5">
+                                      <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 mb-1">
+                                        <span className="font-medium text-sm">{step.action}</span>
+                                        <Badge variant={step.priority === "high" ? "destructive" : step.priority === "medium" ? "default" : "secondary"} className="text-xs">
+                                          {step.priority}
+                                        </Badge>
+                                        {step.suggestedDate && (
+                                          <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                            <Clock className="h-3 w-3" />
+                                            {step.suggestedDate}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="text-xs text-muted-foreground">{step.reasoning}</p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-sm text-muted-foreground">No recommendations available for this deal.</p>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    </React.Fragment>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Contacts Table */}
       <Card>
         <CardHeader>
@@ -729,9 +887,45 @@ export default function CRMHub() {
             </div>
           ) : (
             <div className="overflow-x-auto">
+              {/* Bulk action bar */}
+              {selectedIds.size > 0 && (
+                <div className="flex items-center gap-3 p-2 mb-2 bg-muted rounded-lg">
+                  <span className="text-sm font-medium">{selectedIds.size} selected</span>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => {
+                      if (confirm(`Delete ${selectedIds.size} selected contact(s)?`)) {
+                        Promise.all(Array.from(selectedIds).map(id => deleteContact.mutateAsync({ id })))
+                          .then(() => { setSelectedIds(new Set()); toast.success(`Deleted ${selectedIds.size} contacts`); refetchContacts(); })
+                          .catch(() => toast.error("Some deletions failed"));
+                      }
+                    }}
+                  >
+                    Delete Selected
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())}>
+                    Clear Selection
+                  </Button>
+                </div>
+              )}
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-[40px]">
+                      <input
+                        type="checkbox"
+                        className="rounded"
+                        checked={contacts && contacts.length > 0 && selectedIds.size === contacts.length}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedIds(new Set((contacts as any[]).map((c: any) => c.id)));
+                          } else {
+                            setSelectedIds(new Set());
+                          }
+                        }}
+                      />
+                    </TableHead>
                     <TableHead className="min-w-[160px]">Name</TableHead>
                     <TableHead className="min-w-[120px]">Organization</TableHead>
                     <TableHead className="min-w-[160px]">Email</TableHead>
@@ -746,12 +940,24 @@ export default function CRMHub() {
                   {(contacts as any[]).map((contact: any) => (
                     <TableRow
                       key={contact.id}
-                      className="hover:bg-muted/50 cursor-pointer"
+                      className={`hover:bg-muted/50 cursor-pointer ${selectedIds.has(contact.id) ? "bg-primary/5" : ""}`}
                       onClick={() => {
                         setSelectedContact(contact);
                         setIsDetailOpen(true);
                       }}
                     >
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          className="rounded"
+                          checked={selectedIds.has(contact.id)}
+                          onChange={() => {
+                            const next = new Set(selectedIds);
+                            if (next.has(contact.id)) next.delete(contact.id); else next.add(contact.id);
+                            setSelectedIds(next);
+                          }}
+                        />
+                      </TableCell>
                       <TableCell className="font-medium">
                         {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-'}
                       </TableCell>
@@ -817,165 +1023,7 @@ export default function CRMHub() {
         </CardContent>
       </Card>
 
-      {/* Single Deals Table */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Deals</CardTitle>
-              <CardDescription>All open deals with contact details</CardDescription>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search deals..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="pl-8 w-[250px]"
-                />
-              </div>
-              <Button onClick={() => setIsDealDialogOpen(true)}>
-                <Plus className="h-4 w-4 mr-2" />
-                New Deal
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {dealsLoading ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : filteredDeals.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <TrendingUp className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>No open deals yet. Create your first deal to start tracking opportunities.</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="min-w-[160px]">Deal Name</TableHead>
-                    <TableHead className="min-w-[120px]">Contact</TableHead>
-                    <TableHead className="min-w-[120px]">Company</TableHead>
-                    <TableHead className="min-w-[160px]">Email</TableHead>
-                    <TableHead className="min-w-[110px]">Phone</TableHead>
-                    <TableHead className="min-w-[100px] text-right">Value</TableHead>
-                    <TableHead className="min-w-[100px]">Stage</TableHead>
-                    <TableHead className="min-w-[80px]">Prob.</TableHead>
-                    <TableHead className="min-w-[100px]">Source</TableHead>
-                    <TableHead className="min-w-[100px]">Last Contact</TableHead>
-                    <TableHead className="min-w-[140px]">Next Step</TableHead>
-                    <TableHead className="min-w-[100px]">Created</TableHead>
-                    <TableHead className="w-[40px]"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredDeals.map((deal: any) => (
-                    <React.Fragment key={deal.id}>
-                    <TableRow className="hover:bg-muted/50 cursor-pointer" onClick={() => setExpandedDealId(expandedDealId === deal.id ? null : deal.id)}>
-                      <TableCell className="font-medium">
-                        <div className="flex items-center gap-1">
-                          {expandedDealId === deal.id ? <ChevronUp className="h-3 w-3 text-muted-foreground" /> : <ChevronDown className="h-3 w-3 text-muted-foreground" />}
-                          {deal.name}
-                        </div>
-                      </TableCell>
-                      <TableCell>{deal._contactName}</TableCell>
-                      <TableCell>{deal._company}</TableCell>
-                      <TableCell className="text-sm">
-                        {deal._email !== "-" ? (
-                          <a href={`mailto:${deal._email}`} className="text-blue-600 hover:underline">{deal._email}</a>
-                        ) : "-"}
-                      </TableCell>
-                      <TableCell className="text-sm">{deal._phone}</TableCell>
-                      <TableCell className="text-right font-semibold text-green-600">
-                        {parseFloat(deal._value) > 0 ? `$${Number(deal._value).toLocaleString()}` : "-"}
-                      </TableCell>
-                      <TableCell>
-                        <Badge className={stageColors[deal.stage] || "bg-gray-500/10 text-gray-600"}>
-                          {deal.stage}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm">{deal._probability}</TableCell>
-                      <TableCell className="text-sm capitalize">{deal._source}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {deal._lastContact ? format(new Date(deal._lastContact), "MMM d, yyyy") : "-"}
-                      </TableCell>
-                      <TableCell className="text-sm max-w-[140px] truncate">{deal._nextStep}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {deal._createdDate ? format(new Date(deal._createdDate), "MMM d, yyyy") : "-"}
-                      </TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="sm" onClick={(e) => e.stopPropagation()}>
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem>View Details</DropdownMenuItem>
-                            <DropdownMenuItem>Edit Deal</DropdownMenuItem>
-                            <DropdownMenuItem>Move Stage</DropdownMenuItem>
-                            <DropdownMenuItem className="text-red-600">Delete</DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                    {expandedDealId === deal.id && (
-                      <TableRow>
-                        <TableCell colSpan={13} className="bg-muted/30 p-0">
-                          <div className="px-6 py-4">
-                            <div className="flex items-center gap-2 mb-3">
-                              <Sparkles className="h-4 w-4 text-purple-500" />
-                              <h4 className="font-medium text-sm">AI-Recommended Next Steps</h4>
-                            </div>
-                            {nextStepsLoading ? (
-                              <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                                Analyzing deal and generating recommendations...
-                              </div>
-                            ) : nextStepsData?.steps?.length > 0 ? (
-                              <div className="space-y-2">
-                                {nextStepsData.steps.map((step: any, idx: number) => (
-                                  <div key={idx} className="flex items-start gap-3 p-3 bg-background rounded-lg border">
-                                    <div className="mt-0.5">
-                                      <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-2 mb-1">
-                                        <span className="font-medium text-sm">{step.action}</span>
-                                        <Badge variant={step.priority === "high" ? "destructive" : step.priority === "medium" ? "default" : "secondary"} className="text-xs">
-                                          {step.priority}
-                                        </Badge>
-                                        {step.suggestedDate && (
-                                          <span className="text-xs text-muted-foreground flex items-center gap-1">
-                                            <Clock className="h-3 w-3" />
-                                            {step.suggestedDate}
-                                          </span>
-                                        )}
-                                      </div>
-                                      <p className="text-xs text-muted-foreground">{step.reasoning}</p>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <p className="text-sm text-muted-foreground">No recommendations available for this deal.</p>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                    </React.Fragment>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* (Deals table moved above contacts) */}
 
       {/* New Deal Dialog */}
       <Dialog open={isDealDialogOpen} onOpenChange={setIsDealDialogOpen}>
@@ -1080,62 +1128,205 @@ export default function CRMHub() {
         </DialogContent>
       </Dialog>
 
-      {/* Contact Detail Dialog */}
-      <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
-        <DialogContent className="max-w-2xl">
+      {/* Contact Detail Dialog — Full Profile View */}
+      <Dialog open={isDetailOpen} onOpenChange={(open) => { setIsDetailOpen(open); if (!open) setSelectedContact(null); }}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{selectedContact?.fullName}</DialogTitle>
+            <DialogTitle className="text-xl">{selectedContact?.fullName}</DialogTitle>
             <DialogDescription>
               {selectedContact?.jobTitle && `${selectedContact.jobTitle} at `}
               {selectedContact?.organization || "No organization"}
+              {selectedContact?.contactType && (
+                <Badge className="ml-2">{selectedContact.contactType}</Badge>
+              )}
             </DialogDescription>
           </DialogHeader>
-          {selectedContact && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Email</Label>
-                  <div>{selectedContact.email || "-"}</div>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Phone</Label>
-                  <div>{selectedContact.phone || "-"}</div>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">WhatsApp</Label>
-                  <div>{selectedContact.whatsappNumber || "-"}</div>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">LinkedIn</Label>
-                  <div>
-                    {selectedContact.linkedinUrl ? (
-                      <a href={selectedContact.linkedinUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-                        View Profile
-                      </a>
-                    ) : "-"}
+          {selectedContact && (() => {
+            const ContactDetailView = () => {
+              const [activeTab, setActiveTab] = useState<"profile" | "notes" | "emails" | "documents">("profile");
+              const [form, setForm] = useState({
+                email: selectedContact.email || "",
+                phone: selectedContact.phone || "",
+                whatsappNumber: selectedContact.whatsappNumber || "",
+                linkedinUrl: selectedContact.linkedinUrl || "",
+                contactType: selectedContact.contactType || "lead",
+                notes: selectedContact.notes || "",
+                organization: selectedContact.organization || "",
+                jobTitle: selectedContact.jobTitle || "",
+              });
+              const [newNote, setNewNote] = useState("");
+
+              const updateContact = trpc.crm.contacts.update.useMutation({
+                onSuccess: () => { toast.success("Contact updated"); refetchContacts(); },
+                onError: (error: any) => toast.error(error.message),
+              });
+
+              // Fetch interactions (notes + activity)
+              const { data: interactions } = trpc.crm.interactions.list.useQuery({ contactId: selectedContact.id });
+              // Fetch messaging history
+              const { data: msgHistory } = trpc.crm.contacts.getMessagingHistory.useQuery({ contactId: selectedContact.id });
+
+              const addNote = trpc.crm.interactions.addNote.useMutation({
+                onSuccess: () => {
+                  toast.success("Note added");
+                  setNewNote("");
+                },
+                onError: (error: any) => toast.error(error.message),
+              });
+
+              const tabClass = (tab: string) => `px-3 py-1.5 text-sm font-medium rounded-md cursor-pointer transition-colors ${activeTab === tab ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`;
+
+              return (
+                <div className="space-y-4">
+                  {/* Tab Navigation */}
+                  <div className="flex gap-1 border-b pb-2">
+                    <button className={tabClass("profile")} onClick={() => setActiveTab("profile")}>Profile</button>
+                    <button className={tabClass("notes")} onClick={() => setActiveTab("notes")}>Notes & Activity</button>
+                    <button className={tabClass("emails")} onClick={() => setActiveTab("emails")}>Email History</button>
+                    <button className={tabClass("documents")} onClick={() => setActiveTab("documents")}>Documents</button>
                   </div>
+
+                  {/* Profile Tab */}
+                  {activeTab === "profile" && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <Label className="text-muted-foreground text-xs">Organization</Label>
+                          <Input value={form.organization} onChange={(e) => setForm({ ...form, organization: e.target.value })} placeholder="Company name" />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-muted-foreground text-xs">Job Title</Label>
+                          <Input value={form.jobTitle} onChange={(e) => setForm({ ...form, jobTitle: e.target.value })} placeholder="Job title" />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-muted-foreground text-xs">Email</Label>
+                          <Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="email@example.com" />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-muted-foreground text-xs">Phone</Label>
+                          <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+1 (555) 000-0000" />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-muted-foreground text-xs">WhatsApp</Label>
+                          <Input value={form.whatsappNumber} onChange={(e) => setForm({ ...form, whatsappNumber: e.target.value })} placeholder="+1 (555) 000-0000" />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-muted-foreground text-xs">LinkedIn</Label>
+                          <Input value={form.linkedinUrl} onChange={(e) => setForm({ ...form, linkedinUrl: e.target.value })} placeholder="https://linkedin.com/in/..." />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-muted-foreground text-xs">Type</Label>
+                          <Select value={form.contactType} onValueChange={(v) => setForm({ ...form, contactType: v })}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="lead">Lead</SelectItem>
+                              <SelectItem value="prospect">Prospect</SelectItem>
+                              <SelectItem value="customer">Customer</SelectItem>
+                              <SelectItem value="partner">Partner</SelectItem>
+                              <SelectItem value="investor">Investor</SelectItem>
+                              <SelectItem value="vendor">Vendor</SelectItem>
+                              <SelectItem value="other">Other</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-muted-foreground text-xs">Source</Label>
+                          <div className="capitalize text-sm pt-2">{selectedContact.source?.replace(/_/g, " ") || "—"}</div>
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-muted-foreground text-xs">Notes</Label>
+                        <Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Notes about this contact..." rows={3} />
+                      </div>
+                      <div className="flex justify-end gap-2 pt-2">
+                        <Button variant="outline" onClick={() => setIsDetailOpen(false)}>Cancel</Button>
+                        <Button onClick={() => updateContact.mutate({ id: selectedContact.id, ...form })} disabled={updateContact.isPending}>
+                          {updateContact.isPending ? "Saving..." : "Save Changes"}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Notes & Activity Tab */}
+                  {activeTab === "notes" && (
+                    <div className="space-y-4">
+                      {/* Add Note */}
+                      <div className="space-y-2">
+                        <Label className="text-xs font-medium">Add a private note</Label>
+                        <Textarea value={newNote} onChange={(e) => setNewNote(e.target.value)} placeholder="Write a note about this contact..." rows={2} />
+                        <Button
+                          size="sm"
+                          disabled={!newNote.trim() || addNote.isPending}
+                          onClick={() => addNote.mutate({ contactId: selectedContact.id, content: newNote } as any)}
+                        >
+                          {addNote.isPending ? "Adding..." : "Add Note"}
+                        </Button>
+                      </div>
+                      {/* Activity Timeline */}
+                      <div className="space-y-2">
+                        <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Activity Timeline</Label>
+                        {interactions && (interactions as any[]).length > 0 ? (
+                          <div className="space-y-2 max-h-64 overflow-y-auto">
+                            {(interactions as any[]).map((i: any) => (
+                              <div key={i.id} className="p-2.5 border rounded-lg text-sm">
+                                <div className="flex items-center justify-between mb-1">
+                                  <Badge variant="outline" className="text-xs">{i.channel || i.interactionType || "note"}</Badge>
+                                  <span className="text-xs text-muted-foreground">
+                                    {i.createdAt ? new Date(i.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}
+                                  </span>
+                                </div>
+                                <p className="text-sm">{i.content || i.summary || i.notes || "—"}</p>
+                                {i.sentiment && <Badge variant="secondary" className="text-xs mt-1">{i.sentiment}</Badge>}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground italic">No activity recorded yet.</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Email History Tab */}
+                  {activeTab === "emails" && (
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Email & Message History</Label>
+                      {msgHistory && (msgHistory as any[]).length > 0 ? (
+                        <div className="space-y-2 max-h-96 overflow-y-auto">
+                          {(msgHistory as any[]).map((msg: any, idx: number) => (
+                            <div key={idx} className={`p-3 border rounded-lg text-sm ${msg.direction === "outbound" ? "ml-8 bg-primary/5" : "mr-8"}`}>
+                              <div className="flex items-center justify-between mb-1">
+                                <div className="flex items-center gap-2">
+                                  <Badge variant="outline" className="text-xs">{msg.channel || "email"}</Badge>
+                                  <span className="text-xs font-medium">{msg.direction === "outbound" ? "Sent" : "Received"}</span>
+                                </div>
+                                <span className="text-xs text-muted-foreground">
+                                  {msg.timestamp ? new Date(msg.timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}
+                                </span>
+                              </div>
+                              {msg.subject && <p className="font-medium text-sm mb-1">{msg.subject}</p>}
+                              <p className="text-sm text-muted-foreground line-clamp-3">{msg.body || msg.content || msg.text || "—"}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground italic">No email history with this contact.</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Documents Tab */}
+                  {activeTab === "documents" && (
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Documents & Attachments</Label>
+                      <p className="text-sm text-muted-foreground italic">Documents associated with this contact will appear here. Upload attachments or link files from email conversations.</p>
+                    </div>
+                  )}
                 </div>
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Type</Label>
-                  <Badge>{selectedContact.contactType}</Badge>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Source</Label>
-                  <div className="capitalize">{selectedContact.source.replace(/_/g, " ")}</div>
-                </div>
-              </div>
-              {selectedContact.notes && (
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Notes</Label>
-                  <div className="text-sm">{selectedContact.notes}</div>
-                </div>
-              )}
-              <div className="flex justify-end gap-2 pt-4">
-                <Button variant="outline" onClick={() => setIsDetailOpen(false)}>Close</Button>
-                <Button>Edit Contact</Button>
-              </div>
-            </div>
-          )}
+              );
+            };
+            return <ContactDetailView />;
+          })()}
         </DialogContent>
       </Dialog>
     </div>

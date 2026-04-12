@@ -80,7 +80,7 @@ export default function IntegrationsPage() {
   const shopifyInitiateOAuthMutation = (trpc.integrations as any).shopify.initiateOAuth.useMutation({
     onSuccess: (data) => {
       // Redirect to Shopify OAuth page
-      window.location.href = data.url;
+      window.location.href = data.authUrl || data.url;
     },
     onError: (error) => {
       toast.error(error.message);
@@ -254,253 +254,105 @@ export default function IntegrationsPage() {
             <TabsTrigger value="history">Sync History</TabsTrigger>
           </TabsList>
 
-          {/* Connections Overview Tab */}
-          <TabsContent value="connections" className="space-y-4">
-            <div className="grid gap-4 md:grid-cols-2">
-              {/* SendGrid Card */}
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-blue-500/10 rounded-lg">
-                      <Mail className="w-5 h-5 text-blue-500" />
+          {/* Connections Overview Tab — compact rows, no scrolling */}
+          <TabsContent value="connections">
+            <Card>
+              <CardContent className="p-0 divide-y">
+                {[
+                  {
+                    icon: <Mail className="w-4 h-4 text-blue-500" />,
+                    bg: "bg-blue-500/10",
+                    name: "SendGrid",
+                    desc: status?.sendgrid?.configured ? "Configured and ready" : "Email delivery service",
+                    status: status?.sendgrid?.status || "not_configured",
+                    action: () => setActiveTab("email"),
+                    actionLabel: "Configure",
+                  },
+                  {
+                    icon: <ShoppingBag className="w-4 h-4 text-green-500" />,
+                    bg: "bg-green-500/10",
+                    name: "Shopify",
+                    desc: status?.shopify?.configured ? `${status.shopify.storeCount} store(s) connected` : "E-commerce platform",
+                    status: status?.shopify?.status || "not_configured",
+                    action: () => setActiveTab("shopify"),
+                    actionLabel: "Configure",
+                  },
+                  {
+                    icon: <FileSpreadsheet className="w-4 h-4 text-emerald-500" />,
+                    bg: "bg-emerald-500/10",
+                    name: "Google Sheets",
+                    desc: status?.google?.configured ? `Connected as ${status.google.email}` : "Data import/export",
+                    status: status?.google?.status || "not_configured",
+                    action: () => {
+                      if (status?.google?.configured) { window.location.href = '/import'; }
+                      else if (sheetsAuthUrl?.url) { window.location.href = sheetsAuthUrl.url; }
+                      else { toast.error(sheetsAuthUrl?.error || "Google OAuth not configured"); }
+                    },
+                    actionLabel: status?.google?.configured ? "Import" : "Connect",
+                  },
+                  {
+                    icon: <Mail className="w-4 h-4 text-red-500" />,
+                    bg: "bg-red-500/10",
+                    name: "Gmail",
+                    desc: status?.gmail?.configured ? `Connected as ${status.gmail.email}` : "Email integration",
+                    status: status?.gmail?.status || "not_configured",
+                    action: () => {
+                      if (status?.gmail?.configured) { setActiveTab("gmail"); }
+                      else if (gmailAuthUrl?.url) { window.location.href = gmailAuthUrl.url; }
+                      else { toast.error(gmailAuthUrl?.error || "Google OAuth not configured"); }
+                    },
+                    actionLabel: status?.gmail?.configured ? "Configure" : "Connect",
+                  },
+                  {
+                    icon: <FileSpreadsheet className="w-4 h-4 text-blue-600" />,
+                    bg: "bg-blue-600/10",
+                    name: "Google Workspace",
+                    desc: status?.googleWorkspace?.configured ? `Connected as ${status.googleWorkspace.email}` : "Docs & Sheets",
+                    status: status?.googleWorkspace?.status || "not_configured",
+                    action: () => {
+                      if (status?.googleWorkspace?.configured) { setActiveTab("workspace"); }
+                      else if (workspaceAuthUrl?.url) { window.location.href = workspaceAuthUrl.url; }
+                      else { toast.error(workspaceAuthUrl?.error || "Google OAuth not configured"); }
+                    },
+                    actionLabel: status?.googleWorkspace?.configured ? "Configure" : "Connect",
+                  },
+                  {
+                    icon: <Calculator className="w-4 h-4 text-purple-500" />,
+                    bg: "bg-purple-500/10",
+                    name: "QuickBooks",
+                    desc: status?.quickbooks?.configured ? `Company ${status.quickbooks.realmId}` : "Accounting software",
+                    status: status?.quickbooks?.status || "not_configured",
+                    action: () => setActiveTab("quickbooks"),
+                    actionLabel: "Configure",
+                  },
+                  {
+                    icon: <Settings className="w-4 h-4 text-orange-500" />,
+                    bg: "bg-orange-500/10",
+                    name: "Fireflies.ai",
+                    desc: "Meeting transcription & actions",
+                    status: "not_configured" as string,
+                    action: () => { window.location.href = '/settings/fireflies'; },
+                    actionLabel: "Configure",
+                  },
+                ].map((item) => (
+                  <div key={item.name} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/40 transition-colors">
+                    <div className={`p-1.5 rounded-md ${item.bg} shrink-0`}>
+                      {item.icon}
                     </div>
-                    <div>
-                      <CardTitle className="text-lg">SendGrid</CardTitle>
-                      <CardDescription>Email delivery service</CardDescription>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm font-medium">{item.name}</span>
+                      <span className="text-xs text-muted-foreground ml-2 hidden sm:inline">{item.desc}</span>
                     </div>
-                  </div>
-                  {getStatusBadge(status?.sendgrid?.status || "not_configured")}
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    {status?.sendgrid?.configured 
-                      ? "SendGrid is configured and ready to send emails."
-                      : "Add SENDGRID_API_KEY and SENDGRID_FROM_EMAIL in Settings → Secrets to enable email sending."}
-                  </p>
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    disabled={!status?.sendgrid?.configured}
-                    onClick={() => setActiveTab("email")}
-                  >
-                    <Settings className="w-4 h-4 mr-2" />
-                    Configure
-                  </Button>
-                </CardContent>
-              </Card>
-
-              {/* Shopify Card */}
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-green-500/10 rounded-lg">
-                      <ShoppingBag className="w-5 h-5 text-green-500" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-lg">Shopify</CardTitle>
-                      <CardDescription>E-commerce platform</CardDescription>
-                    </div>
-                  </div>
-                  {getStatusBadge(status?.shopify?.status || "not_configured")}
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    {status?.shopify?.configured 
-                      ? `${status.shopify.storeCount} store(s) connected for order and inventory sync.`
-                      : "Connect your Shopify store to sync orders and inventory."}
-                  </p>
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => setActiveTab("shopify")}
-                  >
-                    <Settings className="w-4 h-4 mr-2" />
-                    Configure
-                  </Button>
-                </CardContent>
-              </Card>
-
-              {/* Google Sheets Card */}
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-emerald-500/10 rounded-lg">
-                      <FileSpreadsheet className="w-5 h-5 text-emerald-500" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-lg">Google Sheets</CardTitle>
-                      <CardDescription>Data import/export</CardDescription>
-                    </div>
-                  </div>
-                  {getStatusBadge(status?.google?.status || "not_configured")}
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    {status?.google?.configured 
-                      ? `Connected as ${status.google.email}. Import and export data from Google Sheets.`
-                      : "Connect Google account to import data from Google Sheets."}
-                  </p>
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => {
-                      if (status?.google?.configured) {
-                        window.location.href = '/import';
-                      } else if (sheetsAuthUrl?.url) {
-                        window.location.href = sheetsAuthUrl.url;
-                      } else {
-                        toast.error(sheetsAuthUrl?.error || "Google OAuth not configured");
-                      }
-                    }}
-                  >
-                    <Settings className="w-4 h-4 mr-2" />
-                    {status?.google?.configured ? "Manage" : "Connect"}
-                  </Button>
-                </CardContent>
-              </Card>
-
-              {/* Gmail Card */}
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-red-500/10 rounded-lg">
-                      <Mail className="w-5 h-5 text-red-500" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-lg">Gmail</CardTitle>
-                      <CardDescription>Email integration</CardDescription>
+                    <div className="shrink-0 flex items-center gap-2">
+                      {getStatusBadge(item.status)}
+                      <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={item.action}>
+                        {item.actionLabel}
+                      </Button>
                     </div>
                   </div>
-                  {getStatusBadge(status?.gmail?.status || "not_configured")}
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    {status?.gmail?.configured 
-                      ? `Connected as ${status.gmail.email}. Send and manage emails via Gmail API.`
-                      : "Connect Gmail to send emails and manage your inbox."}
-                  </p>
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => {
-                      if (status?.gmail?.configured) {
-                        const tab = document.querySelector('[data-value="gmail"]');
-                        if (tab) (tab as HTMLElement).click();
-                      } else if (gmailAuthUrl?.url) {
-                        window.location.href = gmailAuthUrl.url;
-                      } else {
-                        toast.error(gmailAuthUrl?.error || "Google OAuth not configured");
-                      }
-                    }}
-                  >
-                    <Settings className="w-4 h-4 mr-2" />
-                    Configure
-                  </Button>
-                </CardContent>
-              </Card>
-
-              {/* Google Workspace Card */}
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-blue-600/10 rounded-lg">
-                      <FileSpreadsheet className="w-5 h-5 text-blue-600" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-lg">Google Workspace</CardTitle>
-                      <CardDescription>Docs, Sheets creation</CardDescription>
-                    </div>
-                  </div>
-                  {getStatusBadge(status?.googleWorkspace?.status || "not_configured")}
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    {status?.googleWorkspace?.configured 
-                      ? `Connected as ${status.googleWorkspace.email}. Create and edit Google Docs and Sheets.`
-                      : "Connect Google Workspace to create documents and spreadsheets."}
-                  </p>
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => {
-                      if (status?.googleWorkspace?.configured) {
-                        const tab = document.querySelector('[data-value="workspace"]');
-                        if (tab) (tab as HTMLElement).click();
-                      } else if (workspaceAuthUrl?.url) {
-                        window.location.href = workspaceAuthUrl.url;
-                      } else {
-                        toast.error(workspaceAuthUrl?.error || "Google OAuth not configured");
-                      }
-                    }}
-                  >
-                    <Settings className="w-4 h-4 mr-2" />
-                    Configure
-                  </Button>
-                </CardContent>
-              </Card>
-
-              {/* QuickBooks Card */}
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-purple-500/10 rounded-lg">
-                      <Calculator className="w-5 h-5 text-purple-500" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-lg">QuickBooks</CardTitle>
-                      <CardDescription>Accounting software</CardDescription>
-                    </div>
-                  </div>
-                  {getStatusBadge(status?.quickbooks?.status || "not_configured")}
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    {status?.quickbooks?.configured 
-                      ? `Connected to QuickBooks company ${status.quickbooks.realmId}. Sync financial data automatically.`
-                      : "Connect QuickBooks for automatic financial sync. Add QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET in Settings → Secrets."}
-                  </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      const tab = document.querySelector('[data-value="quickbooks"]');
-                      if (tab) (tab as HTMLElement).click();
-                    }}
-                  >
-                    <Settings className="w-4 h-4 mr-2" />
-                    Configure
-                  </Button>
-                </CardContent>
-              </Card>
-
-              {/* Fireflies Card */}
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-orange-500/10 rounded-lg">
-                      <Settings className="w-5 h-5 text-orange-500" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-lg">Fireflies.ai</CardTitle>
-                      <CardDescription>Meeting transcription & action items</CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    Sync meeting transcripts from Fireflies.ai and auto-generate CRM contacts, tasks, and projects from action items.
-                  </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => window.location.href = '/settings/fireflies'}
-                  >
-                    <Settings className="w-4 h-4 mr-2" />
-                    Configure
-                  </Button>
-                </CardContent>
-              </Card>
-            </div>
+                ))}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           {/* Shopify Tab */}

@@ -50,23 +50,29 @@ export default function InventoryHub() {
   const [qcHoldReason, setQcHoldReason] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
-  // Data fetching - all sources
-  const { data: warehouses, isLoading: warehousesLoading } = trpc.warehouses.list.useQuery();
-  const { data: inventory, isLoading: inventoryLoading } = trpc.inventory.list.useQuery();
-  const { data: products, isLoading: productsLoading } = trpc.products.list.useQuery();
-  const { data: purchaseOrders } = trpc.purchaseOrders.list.useQuery();
-  const { data: shipments } = trpc.shipments.list.useQuery();
-  const { data: vendors } = trpc.vendors.list.useQuery();
-  const { data: rawMaterials, isLoading: materialsLoading } = trpc.rawMaterials.list.useQuery();
-  const { data: workOrders } = trpc.workOrders.list.useQuery();
-  const { data: transfers } = trpc.transfers.list.useQuery();
-  const { data: pendingFromPOs, isLoading: pendingLoading } = trpc.inventory.getPendingFromPOs.useQuery();
-  const { data: inboundShipments, isLoading: inboundLoading } = trpc.inventory.getInboundShipments.useQuery();
+  // Data fetching - all sources (staleTime prevents refetch on every re-render)
+  const queryOpts = { staleTime: 30_000 } as const;  // 30s stale time for all queries
+  const deferredOpts = { staleTime: 60_000 } as const;  // 60s for secondary data
+
+  const { data: warehouses, isLoading: warehousesLoading } = trpc.warehouses.list.useQuery(undefined, queryOpts);
+  const { data: inventory, isLoading: inventoryLoading } = trpc.inventory.list.useQuery(undefined, queryOpts);
+  const { data: products, isLoading: productsLoading } = trpc.products.list.useQuery(undefined, queryOpts);
+  const { data: vendors } = trpc.vendors.list.useQuery(undefined, queryOpts);
+  const { data: rawMaterials, isLoading: materialsLoading } = trpc.rawMaterials.list.useQuery(undefined, queryOpts);
+  const { data: pendingFromPOs, isLoading: pendingLoading } = trpc.inventory.getPendingFromPOs.useQuery(undefined, queryOpts);
+  const { data: inboundShipments, isLoading: inboundLoading } = trpc.inventory.getInboundShipments.useQuery(undefined, deferredOpts);
+
+  // Secondary data - only needed for PO/shipment enrichment columns, loaded with longer stale time
+  const { data: purchaseOrders } = trpc.purchaseOrders.list.useQuery(undefined, deferredOpts);
+  const { data: shipments } = trpc.shipments.list.useQuery(undefined, deferredOpts);
+  const { data: transfers } = trpc.transfers.list.useQuery(undefined, deferredOpts);
+  // workOrders only needed when production dialog is open — lazy loaded
+  const { data: workOrders } = trpc.workOrders.list.useQuery(undefined, { ...deferredOpts, enabled: showProductionDialog });
 
   const utils = trpc.useUtils();
 
   // Integration status
-  const { data: integrationStatus } = trpc.integrations.getStatus.useQuery();
+  const { data: integrationStatus } = trpc.integrations.getStatus.useQuery(undefined, { staleTime: 120_000 });
 
   // Shopify sync mutations
   const syncShopifyInventory = trpc.shopify.sync.inventory.useMutation({
@@ -485,7 +491,10 @@ export default function InventoryHub() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Products & Inventory</h1>
-          <p className="text-muted-foreground">Unified view — inventory, POs, shipments, costing, vendors</p>
+          <div className="flex items-center gap-2 mt-1">
+            <p className="text-muted-foreground">Unified view — inventory, POs, shipments, costing, vendors</p>
+            <a href="/operations/work-orders" className="text-xs text-primary hover:underline font-medium">Work Orders →</a>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <div className="relative">

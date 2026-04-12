@@ -29,6 +29,266 @@ type SyncResult = {
 
 type SyncState = "idle" | "syncing" | "done";
 
+const DATA_SECTIONS = [
+  { value: "customers", label: "Customers" },
+  { value: "vendors", label: "Vendors" },
+  { value: "products", label: "Products" },
+  { value: "employees", label: "Employees" },
+  { value: "invoices", label: "Invoices" },
+  { value: "contracts", label: "Contracts" },
+  { value: "projects", label: "Projects" },
+] as const;
+
+function parseCsvText(text: string): { headers: string[]; rows: Record<string, string>[] } {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length === 0) return { headers: [], rows: [] };
+  const sep = lines[0].includes("\t") ? "\t" : ",";
+  const headers = lines[0].split(sep).map(h => h.replace(/^"|"$/g, "").trim());
+  const rows = lines.slice(1).map(line => {
+    const vals = line.split(sep).map(v => v.replace(/^"|"$/g, "").trim());
+    const obj: Record<string, string> = {};
+    headers.forEach((h, i) => { obj[h] = vals[i] || ""; });
+    return obj;
+  });
+  return { headers, rows };
+}
+
+function DriveFileBrowser({ onSyncAll }: { onSyncAll: () => void }) {
+  const [showBrowser, setShowBrowser] = useState(true);
+  const { data: spreadsheets, isLoading } = trpc.sheetsImport.listSpreadsheets.useQuery(undefined, { enabled: showBrowser });
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [syncing, setSyncing] = useState(false);
+
+  const syncSelectedMutation = trpc.sheetsImport.syncGoogleDrive.useMutation({
+    onSuccess: (data) => {
+      setSyncing(false);
+      const totalImported = data.results.reduce((sum: number, r: any) => sum + r.imported, 0);
+      toast.success(`Imported ${totalImported} records from ${selectedIds.size} files`);
+      setSelectedIds(new Set());
+    },
+    onError: (error) => {
+      setSyncing(false);
+      toast.error(error.message);
+    },
+  });
+
+  const toggleFile = (id: string) => {
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setSelectedIds(next);
+  };
+
+  const files = (spreadsheets as any)?.spreadsheets || [];
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h4 className="text-sm font-medium">Google Drive Files</h4>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => {
+            if (selectedIds.size === files.length) setSelectedIds(new Set());
+            else setSelectedIds(new Set(files.map((f: any) => f.id)));
+          }}>
+            {selectedIds.size === files.length ? "Deselect All" : "Select All"}
+          </Button>
+          <Button variant="outline" size="sm" onClick={onSyncAll}>
+            <RefreshCw className="h-3 w-3 mr-1" /> Sync All
+          </Button>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : files.length === 0 ? (
+        <div className="text-center py-6 text-sm text-muted-foreground">
+          No spreadsheets found in your Google Drive.
+        </div>
+      ) : (
+        <div className="border rounded-lg divide-y max-h-64 overflow-y-auto">
+          {files.map((file: any) => (
+            <label
+              key={file.id}
+              className="flex items-center gap-3 p-3 hover:bg-muted/50 cursor-pointer transition-colors"
+            >
+              <input
+                type="checkbox"
+                checked={selectedIds.has(file.id)}
+                onChange={() => toggleFile(file.id)}
+                className="rounded"
+              />
+              <FileSpreadsheet className="h-4 w-4 text-green-600 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium truncate">{file.name}</div>
+                <div className="text-xs text-muted-foreground">
+                  {file.modifiedTime ? new Date(file.modifiedTime).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : ""}
+                </div>
+              </div>
+            </label>
+          ))}
+        </div>
+      )}
+
+      {selectedIds.size > 0 && (
+        <Button
+          onClick={() => { setSyncing(true); syncSelectedMutation.mutate(); }}
+          disabled={syncing}
+          className="w-full"
+        >
+          {syncing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CloudDownload className="h-4 w-4 mr-2" />}
+          Sync {selectedIds.size} Selected File{selectedIds.size > 1 ? "s" : ""}
+        </Button>
+      )}
+
+      <p className="text-xs text-muted-foreground text-center">
+        Select specific files to sync, or click "Sync All" to import everything.
+      </p>
+    </div>
+  );
+}
+
+function CsvImportPanel({ file, onClear, parseXlsx }: {
+  file: File;
+  onClear: () => void;
+  parseXlsx: (f: File) => Promise<{ headers: string[]; rows: Record<string, unknown>[] } | null>;
+}) {
+  const [targetModule, setTargetModule] = useState<string>("");
+  const [parsed, setParsed] = useState<{ headers: string[]; rows: Record<string, any>[] } | null>(null);
+  const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
+  const [importing, setImporting] = useState(false);
+
+  const importMutation = trpc.sheetsImport.importData.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Imported ${data.imported} records (${data.failed} failed)`);
+      if (data.errors?.length > 0) {
+        toast.error(`${data.errors.length} errors: ${data.errors[0]}`);
+      }
+      setImporting(false);
+    },
+    onError: (error) => {
+      toast.error(error.message);
+      setImporting(false);
+    },
+  });
+
+  const handleParse = async () => {
+    const name = file.name.toLowerCase();
+    if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
+      const result = await parseXlsx(file);
+      if (result) {
+        setParsed({ headers: result.headers, rows: result.rows as any });
+        toast.success(`Parsed ${result.rows.length} rows`);
+        // Auto-map columns by matching header names
+        const mapping: Record<string, string> = {};
+        result.headers.forEach(h => { mapping[h] = h.toLowerCase().replace(/\s+/g, "_"); });
+        setColumnMapping(mapping);
+      }
+    } else {
+      const text = await file.text();
+      const result = parseCsvText(text);
+      setParsed(result);
+      toast.success(`Parsed ${result.rows.length} rows`);
+      const mapping: Record<string, string> = {};
+      result.headers.forEach(h => { mapping[h] = h.toLowerCase().replace(/\s+/g, "_"); });
+      setColumnMapping(mapping);
+    }
+  };
+
+  const handleImport = () => {
+    if (!parsed || !targetModule) {
+      toast.error("Please select a data section and parse the file first");
+      return;
+    }
+    setImporting(true);
+    const stringRows = parsed.rows.map(row => {
+      const obj: Record<string, string> = {};
+      for (const [k, v] of Object.entries(row)) { obj[k] = String(v ?? ""); }
+      return obj;
+    });
+    importMutation.mutate({
+      targetModule: targetModule as any,
+      data: stringRows,
+      columnMapping,
+    });
+  };
+
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+        <div className="flex items-center gap-2">
+          <FileSpreadsheet className="h-4 w-4" />
+          <span className="text-sm">{file.name}</span>
+          <span className="text-xs text-muted-foreground">({(file.size / 1024).toFixed(1)} KB)</span>
+        </div>
+        <Button variant="ghost" size="sm" onClick={onClear}>Remove</Button>
+      </div>
+
+      {/* Section Selector */}
+      <div className="p-4 border rounded-lg space-y-3">
+        <div>
+          <label className="text-sm font-medium">Which section does this data belong to?</label>
+          <div className="grid grid-cols-4 gap-2 mt-2">
+            {DATA_SECTIONS.map(s => (
+              <button
+                key={s.value}
+                onClick={() => setTargetModule(s.value)}
+                className={`px-3 py-2 text-sm rounded-md border transition-colors ${
+                  targetModule === s.value
+                    ? "border-primary bg-primary/10 text-primary font-medium"
+                    : "border-muted hover:border-muted-foreground/50"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {!parsed ? (
+          <Button onClick={handleParse} disabled={!targetModule}>
+            Parse File
+          </Button>
+        ) : (
+          <div className="space-y-3">
+            <div className="text-sm text-muted-foreground">
+              Found <strong>{parsed.rows.length}</strong> rows with columns: {parsed.headers.join(", ")}
+            </div>
+
+            {/* Column mapping preview */}
+            <div className="max-h-32 overflow-y-auto text-xs border rounded p-2 bg-background">
+              <table className="w-full">
+                <thead>
+                  <tr>
+                    {parsed.headers.slice(0, 6).map(h => (
+                      <th key={h} className="text-left p-1 font-medium">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {parsed.rows.slice(0, 3).map((row, i) => (
+                    <tr key={i}>
+                      {parsed.headers.slice(0, 6).map(h => (
+                        <td key={h} className="p-1 text-muted-foreground truncate max-w-[120px]">{String(row[h] || "")}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {parsed.rows.length > 3 && <div className="text-center text-muted-foreground mt-1">... and {parsed.rows.length - 3} more rows</div>}
+            </div>
+
+            <Button onClick={handleImport} disabled={importing || !targetModule}>
+              {importing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
+              Import {parsed.rows.length} rows into {targetModule || "..."}
+            </Button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Import() {
   const { user, isAuthenticated, loading: authLoading } = useAuth();
   const [, setLocation] = useLocation();
@@ -332,14 +592,7 @@ export default function Import() {
                 </Button>
               </div>
 
-              <Button onClick={handleSync} size="lg" className="w-full h-16 text-base">
-                <RefreshCw className="h-5 w-5 mr-3" />
-                Sync Everything from Google Drive
-              </Button>
-
-              <p className="text-xs text-muted-foreground text-center">
-                Scans all Google Sheets in your Drive, detects data types from column headers, and imports to the matching ERP tables.
-              </p>
+              <DriveFileBrowser onSyncAll={handleSync} />
 
               {/* Previously imported — persisted sync history */}
               {syncHistory && syncHistory.length > 0 && (
@@ -563,35 +816,7 @@ export default function Import() {
           )}
 
           {csvFile && !imagePreviewUrl && (
-            <div className="mt-4 flex items-center justify-between p-3 bg-muted rounded-lg">
-              <div className="flex items-center gap-2">
-                <FileSpreadsheet className="h-4 w-4" />
-                <span className="text-sm">{csvFile.name}</span>
-                <span className="text-xs text-muted-foreground">
-                  ({(csvFile.size / 1024).toFixed(1)} KB)
-                </span>
-              </div>
-              <div className="flex gap-2">
-                <Button variant="ghost" size="sm" onClick={() => setCsvFile(null)}>
-                  Remove
-                </Button>
-                <Button size="sm" onClick={async () => {
-                  if (!csvFile) return;
-                  const name = csvFile.name.toLowerCase();
-                  if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
-                    const result = await parseXlsxFile(csvFile);
-                    if (result) {
-                      toast.success(`Parsed ${result.rows.length} rows with columns: ${result.headers.join(", ")}`);
-                      // TODO: send parsed rows to the import API
-                    }
-                  } else {
-                    toast.info("CSV import coming soon. Use Google Drive sync for now.");
-                  }
-                }}>
-                  Import
-                </Button>
-              </div>
-            </div>
+            <CsvImportPanel file={csvFile} onClear={() => setCsvFile(null)} parseXlsx={parseXlsxFile} />
           )}
         </CardContent>
       </Card>

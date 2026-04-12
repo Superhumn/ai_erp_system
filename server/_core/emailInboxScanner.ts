@@ -228,8 +228,11 @@ export async function scanInbox(
             if (processedEmailIds.size > 5000) {
               Array.from(processedEmailIds).slice(0, 2500).forEach(e => processedEmailIds.delete(e));
             }
+            // Only extract action items from emails less than 7 days old
+            const emailAge = scannedEmail.date ? (Date.now() - new Date(scannedEmail.date).getTime()) : Infinity;
+            const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
             if (!((globalThis as any).__aiParseCount)) (globalThis as any).__aiParseCount = 0;
-            if ((globalThis as any).__aiParseCount < 2) {
+            if ((globalThis as any).__aiParseCount < 2 && emailAge < SEVEN_DAYS) {
               (globalThis as any).__aiParseCount++;
               try {
                 const { invokeLLM } = await import("./llm");

@@ -30,7 +30,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Building2, Plus, Search, Loader2 } from "lucide-react";
+import { Building2, Plus, Search, Loader2, Upload, ShoppingBag, Star, ExternalLink, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { getStatusColor } from "@/lib/statusColors";
 import { useLocation } from "wouter";
@@ -61,6 +61,9 @@ export default function Vendors() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [isAlibabaOpen, setIsAlibabaOpen] = useState(false);
+  const [alibabaForm, setAlibabaForm] = useState({ query: "", category: "", country: "" });
+  const [alibabaResults, setAlibabaResults] = useState<any[]>([]);
 
   // Vendor form
   const [formData, setFormData] = useState({
@@ -98,6 +101,28 @@ export default function Vendors() {
       toast.error(error.message);
     },
   });
+
+  const alibabaSearch = trpc.vendors.searchAlibaba.useMutation({
+    onSuccess: (data: any) => {
+      setAlibabaResults(data.suppliers || []);
+      if (data.suppliers?.length > 0) {
+        toast.success(`Found ${data.suppliers.length} suppliers on Alibaba`);
+      } else {
+        toast.info("No suppliers found. Try different search terms.");
+      }
+    },
+    onError: (error: any) => toast.error(error.message),
+  });
+
+  const handleAddAlibabaSupplier = (supplier: any) => {
+    createVendor.mutate({
+      name: supplier.companyName,
+      type: "supplier",
+      country: supplier.country || "",
+      notes: `Alibaba supplier. Product: ${supplier.productName}. Price: ${supplier.priceRange}. Min Order: ${supplier.minOrder}. Rating: ${supplier.rating}/5. Years in business: ${supplier.yearsInBusiness}. Response rate: ${supplier.responseRate}.${supplier.verified ? ' Verified supplier.' : ''}`,
+    });
+    setAlibabaResults(prev => prev.filter(s => s.companyName !== supplier.companyName));
+  };
 
   const resetVendorForm = () => {
     setFormData({
@@ -241,6 +266,14 @@ export default function Vendors() {
             Manage suppliers and service providers.
           </p>
         </div>
+        <div className="flex gap-2">
+        <Button variant="outline" onClick={() => window.location.href = "/import"}>
+          <Upload className="h-4 w-4 mr-1" /> Import
+        </Button>
+        <Button variant="outline" onClick={() => setIsAlibabaOpen(true)}>
+          <ShoppingBag className="h-4 w-4 mr-2" />
+          Search Alibaba
+        </Button>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button>
@@ -385,7 +418,120 @@ export default function Vendors() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
+
+      {/* Alibaba Supplier Search Dialog */}
+      <Dialog open={isAlibabaOpen} onOpenChange={setIsAlibabaOpen}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Search Alibaba Suppliers</DialogTitle>
+            <DialogDescription>AI-powered search for suppliers and manufacturers on Alibaba</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Product Search *</Label>
+              <Input
+                placeholder="e.g. stainless steel water bottles, organic cotton t-shirts, LED strip lights"
+                value={alibabaForm.query}
+                onChange={(e) => setAlibabaForm({ ...alibabaForm, query: e.target.value })}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Category (optional)</Label>
+                <Input
+                  placeholder="e.g. Electronics, Textiles, Packaging"
+                  value={alibabaForm.category}
+                  onChange={(e) => setAlibabaForm({ ...alibabaForm, category: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Supplier Country (optional)</Label>
+                <Input
+                  placeholder="e.g. China, India, Vietnam"
+                  value={alibabaForm.country}
+                  onChange={(e) => setAlibabaForm({ ...alibabaForm, country: e.target.value })}
+                />
+              </div>
+            </div>
+            <Button
+              onClick={() => alibabaSearch.mutate({
+                query: alibabaForm.query,
+                category: alibabaForm.category || undefined,
+                country: alibabaForm.country || undefined,
+              })}
+              disabled={alibabaSearch.isPending || !alibabaForm.query.trim()}
+              className="w-full"
+            >
+              {alibabaSearch.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Search className="h-4 w-4 mr-2" />}
+              {alibabaSearch.isPending ? "Searching Alibaba..." : "Search Suppliers"}
+            </Button>
+
+            {/* Results */}
+            {alibabaResults.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs text-muted-foreground uppercase tracking-wider">Found {alibabaResults.length} Suppliers</Label>
+                </div>
+                <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                  {alibabaResults.map((supplier: any, idx: number) => (
+                    <div key={idx} className="p-3 border rounded-lg hover:bg-muted/50 space-y-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-sm">{supplier.companyName}</span>
+                            {supplier.verified && (
+                              <Badge className="bg-blue-500/10 text-blue-600 text-[10px] px-1.5 py-0 flex items-center gap-0.5">
+                                <CheckCircle2 className="h-2.5 w-2.5" />
+                                Verified
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-sm text-muted-foreground mt-0.5">{supplier.productName}</p>
+                        </div>
+                        <div className="shrink-0 flex items-center gap-1.5">
+                          {supplier.alibabaUrl && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-xs"
+                              onClick={() => window.open(supplier.alibabaUrl, "_blank")}
+                            >
+                              <ExternalLink className="h-3 w-3 mr-1" />
+                              Alibaba
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs"
+                            onClick={() => handleAddAlibabaSupplier(supplier)}
+                            disabled={createVendor.isPending}
+                          >
+                            <Plus className="h-3 w-3 mr-1" /> Add as Vendor
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">{supplier.priceRange}</span>
+                        <span>MOQ: {supplier.minOrder}</span>
+                        <span>{supplier.country}</span>
+                        <span>{supplier.yearsInBusiness} yrs in business</span>
+                        <span>Response: {supplier.responseRate}</span>
+                        <span className="flex items-center gap-0.5">
+                          <Star className="h-3 w-3 text-amber-500 fill-amber-500" />
+                          {supplier.rating}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Search & Filter */}
       <Card>

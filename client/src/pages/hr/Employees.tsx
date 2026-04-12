@@ -30,7 +30,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { UserCircle, Plus, Search, Loader2, Award, Layers } from "lucide-react";
+import { UserCircle, Plus, Search, Loader2, Award, Layers, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { format, addMonths } from "date-fns";
 import { getStatusColor } from "@/lib/statusColors";
@@ -125,10 +125,103 @@ interface UnifiedRow {
   status: string;
 }
 
+// ── Manager View: Tasks, Time Tracking, Invoices for an employee ──
+function EmployeeTasksSection({ email, name }: { email: string; name: string }) {
+  const { data: allTasks } = trpc.projects.tasks.useQuery({ projectId: 0 });
+  const { data: users } = trpc.users.list.useQuery();
+
+  // Find user by email to get their assigned tasks
+  const user = users?.find((u: any) => u.email?.toLowerCase() === email?.toLowerCase());
+  const employeeTasks = useMemo(() => {
+    if (!allTasks || !user) return [];
+    return (allTasks as any[]).filter((t: any) => t.assigneeId === user.id);
+  }, [allTasks, user]);
+
+  const activeTasks = employeeTasks.filter((t: any) => t.status !== "completed" && t.status !== "cancelled");
+  const completedTasks = employeeTasks.filter((t: any) => t.status === "completed");
+  const overdueTasks = activeTasks.filter((t: any) => t.dueDate && new Date(t.dueDate) < new Date());
+
+  return (
+    <div className="space-y-4">
+      {/* Task Summary */}
+      <div>
+        <h4 className="text-sm font-semibold text-muted-foreground mb-2">Tasks & Workload</h4>
+        <div className="grid grid-cols-4 gap-3 mb-3">
+          <div className="p-2.5 bg-muted/50 rounded-lg text-center">
+            <div className="text-lg font-semibold">{activeTasks.length}</div>
+            <div className="text-[10px] text-muted-foreground uppercase">Active</div>
+          </div>
+          <div className="p-2.5 bg-muted/50 rounded-lg text-center">
+            <div className="text-lg font-semibold text-red-600">{overdueTasks.length}</div>
+            <div className="text-[10px] text-muted-foreground uppercase">Overdue</div>
+          </div>
+          <div className="p-2.5 bg-muted/50 rounded-lg text-center">
+            <div className="text-lg font-semibold text-green-600">{completedTasks.length}</div>
+            <div className="text-[10px] text-muted-foreground uppercase">Completed</div>
+          </div>
+          <div className="p-2.5 bg-muted/50 rounded-lg text-center">
+            <div className="text-lg font-semibold">
+              {employeeTasks.reduce((s: number, t: any) => s + parseFloat(t.actualHours || "0"), 0).toFixed(1)}h
+            </div>
+            <div className="text-[10px] text-muted-foreground uppercase">Hours Logged</div>
+          </div>
+        </div>
+        {activeTasks.length > 0 ? (
+          <div className="border rounded-lg overflow-hidden">
+            <Table className="text-sm">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Task</TableHead>
+                  <TableHead>Project</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Priority</TableHead>
+                  <TableHead>Due Date</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {activeTasks.slice(0, 10).map((t: any) => {
+                  const isOverdue = t.dueDate && new Date(t.dueDate) < new Date();
+                  const isUrgent = t.dueDate && new Date(t.dueDate) < new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+                  return (
+                    <TableRow key={t.id}>
+                      <TableCell className="font-medium">{t.name}</TableCell>
+                      <TableCell className="text-muted-foreground">{t.projectName || "-"}</TableCell>
+                      <TableCell>
+                        <Badge className={
+                          t.status === "in_progress" ? "bg-blue-500/10 text-blue-600" :
+                          t.status === "review" ? "bg-purple-500/10 text-purple-600" :
+                          "bg-gray-500/10 text-gray-600"
+                        }>{t.status?.replace(/_/g, " ")}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge className={
+                          t.priority === "urgent" || t.priority === "critical" ? "bg-red-500/10 text-red-600" :
+                          t.priority === "high" ? "bg-orange-500/10 text-orange-600" :
+                          "bg-gray-500/10 text-gray-600"
+                        }>{t.priority}</Badge>
+                      </TableCell>
+                      <TableCell className={isOverdue ? "text-red-600 font-medium" : isUrgent ? "text-yellow-600" : ""}>
+                        {t.dueDate ? fmtDate(t.dueDate) : "-"}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground italic">No active tasks assigned.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════
 export default function PeopleAndEquity() {
   const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [typeFilter, setTypeFilter] = useState<string>("team");
+  const [expandedEmployeeId, setExpandedEmployeeId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("active");
   const [isPersonOpen, setIsPersonOpen] = useState(false);
   const [isGrantOpen, setIsGrantOpen] = useState(false);
@@ -329,7 +422,12 @@ export default function PeopleAndEquity() {
       const matchSearch =
         r.name.toLowerCase().includes(search.toLowerCase()) ||
         r.email.toLowerCase().includes(search.toLowerCase());
-      const matchType = typeFilter === "all" || r.type === typeFilter;
+      const teamTypes = ["founder", "employee", "full_time", "part_time", "contractor", "intern"];
+      const matchType = typeFilter === "all"
+        ? true
+        : typeFilter === "team"
+          ? teamTypes.includes(r.type)
+          : r.type === typeFilter;
       const matchStatus =
         statusFilter === "all"
           ? r.status !== "terminated"
@@ -410,6 +508,9 @@ export default function PeopleAndEquity() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => window.location.href = "/import"}>
+            <Upload className="h-4 w-4 mr-1" /> Import
+          </Button>
           {/* Add Person dialog */}
           <Dialog open={isPersonOpen} onOpenChange={setIsPersonOpen}>
             <DialogTrigger asChild>
@@ -796,13 +897,14 @@ export default function PeopleAndEquity() {
                 <SelectValue placeholder="Type" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
+                <SelectItem value="team">Team Members</SelectItem>
+                <SelectItem value="all">All (incl. Investors)</SelectItem>
                 <SelectItem value="founder">Founder</SelectItem>
                 <SelectItem value="employee">Employee</SelectItem>
+                <SelectItem value="contractor">Contractor</SelectItem>
                 <SelectItem value="investor">Investor</SelectItem>
                 <SelectItem value="advisor">Advisor</SelectItem>
                 <SelectItem value="board_member">Board Member</SelectItem>
-                <SelectItem value="contractor">Contractor</SelectItem>
               </SelectContent>
             </Select>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -960,6 +1062,9 @@ export default function PeopleAndEquity() {
                       <p className="text-sm text-muted-foreground italic">No equity grants.</p>
                     )}
                   </div>
+
+                  {/* Assigned Tasks */}
+                  <EmployeeTasksSection email={selectedPerson.email} name={selectedPerson.name} />
 
                   {/* Documents */}
                   <div>

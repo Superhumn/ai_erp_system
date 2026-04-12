@@ -971,10 +971,29 @@ export default function DataRoomPublic() {
               /* Form */
               <div className="p-6">
                 <div className="mb-6">
-                  <h2 className="text-lg font-semibold text-white">Express Investment Interest</h2>
+                  <h2 className="text-lg font-semibold text-white">Request Allocation</h2>
                   <p className="text-sm text-gray-500 mt-1">
-                    Submit your details and our team will follow up with next steps.
+                    Submit your interest and our team will share next steps.
                   </p>
+                </div>
+
+                {/* Round Terms (set by company — not editable) */}
+                <div className="mb-5 p-4 rounded-xl bg-white/[0.03] border border-white/[0.08]">
+                  <p className="text-[10px] uppercase tracking-widest text-gray-500 mb-2">Round Terms</p>
+                  <div className="grid grid-cols-3 gap-3 text-center">
+                    <div>
+                      <p className="text-white font-semibold text-sm">$200M</p>
+                      <p className="text-[10px] text-gray-500">Valuation</p>
+                    </div>
+                    <div>
+                      <p className="text-white font-semibold text-sm">Equity</p>
+                      <p className="text-[10px] text-gray-500">Instrument</p>
+                    </div>
+                    <div>
+                      <p className="text-white font-semibold text-sm">$250K</p>
+                      <p className="text-[10px] text-gray-500">Minimum</p>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="space-y-4">
@@ -1023,70 +1042,29 @@ export default function DataRoomPublic() {
                     </div>
                   </div>
 
-                  {/* Investment Amount */}
+                  {/* Requested Allocation */}
                   <div>
-                    <Label className="text-xs text-gray-400 mb-1.5 block">Investment Amount (USD) *</Label>
+                    <Label className="text-xs text-gray-400 mb-1.5 block">Requested Allocation (USD) *</Label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
                       <Input
                         type="number"
                         className="bg-white/[0.04] border-white/[0.08] text-white placeholder:text-gray-600 rounded-xl h-10 pl-7"
-                        placeholder="100,000"
+                        placeholder="250,000"
+                        min="250000"
                         value={investForm.investmentAmount}
                         onChange={(e) => setInvestForm(f => ({ ...f, investmentAmount: e.target.value }))}
                       />
                     </div>
+                    <p className="text-[10px] text-gray-600 mt-1">Minimum allocation: $250,000</p>
                   </div>
-
-                  {/* Instrument Type */}
-                  <div>
-                    <Label className="text-xs text-gray-400 mb-1.5 block">Instrument Type</Label>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      {(["safe", "equity", "convertible_note", "warrant"] as const).map((type) => {
-                        const labels: Record<string, string> = { safe: "SAFE", equity: "Equity", convertible_note: "Conv. Note", warrant: "Warrant" };
-                        const isActive = investForm.instrumentType === type;
-                        return (
-                          <button
-                            key={type}
-                            type="button"
-                            onClick={() => setInvestForm(f => ({ ...f, instrumentType: type }))}
-                            className={`rounded-xl px-3 py-2 text-xs font-medium transition-all border ${
-                              isActive
-                                ? "text-white border-indigo-500/50 bg-indigo-500/10"
-                                : "text-gray-400 border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12]"
-                            }`}
-                            style={isActive ? { borderColor: (brandColor || "#6366f1") + "80", background: (brandColor || "#6366f1") + "1a" } : undefined}
-                          >
-                            {labels[type]}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Valuation Cap (for SAFE/Convertible Note) */}
-                  {(investForm.instrumentType === "safe" || investForm.instrumentType === "convertible_note") && (
-                    <div>
-                      <Label className="text-xs text-gray-400 mb-1.5 block">Valuation Cap (USD)</Label>
-                      <div className="relative">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
-                        <Input
-                          type="number"
-                          className="bg-white/[0.04] border-white/[0.08] text-white placeholder:text-gray-600 rounded-xl h-10 pl-7"
-                          placeholder="10,000,000"
-                          value={investForm.valuationCap}
-                          onChange={(e) => setInvestForm(f => ({ ...f, valuationCap: e.target.value }))}
-                        />
-                      </div>
-                    </div>
-                  )}
 
                   {/* Notes */}
                   <div>
-                    <Label className="text-xs text-gray-400 mb-1.5 block">Notes / Questions</Label>
+                    <Label className="text-xs text-gray-400 mb-1.5 block">Message (optional)</Label>
                     <textarea
                       className="w-full rounded-xl bg-white/[0.04] border border-white/[0.08] text-white placeholder:text-gray-600 text-sm p-3 min-h-[80px] resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/30"
-                      placeholder="Any additional information or questions..."
+                      placeholder="Any questions or context about your interest..."
                       value={investForm.notes}
                       onChange={(e) => setInvestForm(f => ({ ...f, notes: e.target.value }))}
                     />
@@ -1110,7 +1088,7 @@ export default function DataRoomPublic() {
                         Submitting...
                       </span>
                     ) : (
-                      "Submit Interest"
+                      "Request Allocation"
                     )}
                   </button>
 

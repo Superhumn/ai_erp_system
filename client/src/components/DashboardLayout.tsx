@@ -66,6 +66,8 @@ import {
   Clock,
   Sun,
   Moon,
+  Mic,
+  MessageSquare,
 } from "lucide-react";
 import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -80,6 +82,11 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Input } from "./ui/input";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "./ui/tooltip";
 
 function getMenuGroups(role: string = "user") {
   const isAdmin = ["admin", "exec"].includes(role);
@@ -90,15 +97,16 @@ function getMenuGroups(role: string = "user") {
       { icon: LayoutDashboard, label: "Dashboard", path: "/" },
       { icon: Target, label: "Projects & Tasks", path: "/projects" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
+      { icon: Mic, label: "Meetings", path: "/meetings" },
+      { icon: MessageSquare, label: "Messaging", path: "/messaging" },
       { icon: Bell, label: "Notifications", path: "/notifications" },
     ],
   },
   {
     label: "_ops",
     items: [
-      { icon: Warehouse, label: "Inventory", path: "/operations/inventory-hub" },
+      { icon: Warehouse, label: "Inventory & Work Orders", path: "/operations/inventory-hub" },
       { icon: Users, label: "Vendors & Locations", path: "/operations/vendors" },
-      { icon: Wrench, label: "Work Orders", path: "/operations/work-orders" },
     ],
   },
   {
@@ -107,7 +115,7 @@ function getMenuGroups(role: string = "user") {
       { icon: ShoppingCart, label: "Orders", path: "/sales/orders" },
       { icon: UserCircle, label: "Customers & CRM", path: "/crm/hub" },
       { icon: CircleDollarSign, label: "Banking", path: "/finance/banking" },
-      { icon: BarChart3, label: "Reports", path: "/finance/reports" },
+      { icon: BarChart3, label: "Financials", path: "/finance/reports" },
     ],
   },
   {
@@ -234,6 +242,7 @@ function DashboardLayoutContent({
             case 'a': setLocation('/finance/accounts'); break; // Accounts
             case 't': setLocation('/finance/transactions'); break; // Transactions
             case 's': setLocation('/settings'); break; // Settings
+          case 'm': setLocation('/meetings'); break; // Meetings
           }
         };
         document.addEventListener('keydown', handleNextKey, { once: true });
@@ -255,7 +264,8 @@ function DashboardLayoutContent({
           'g c - CRM\n' +
           'g a - Accounts\n' +
           'g t - Transactions\n' +
-          'g s - Settings',
+          'g s - Settings\n' +
+        'g m - Meetings',
           { duration: 5000 }
         );
         return;
@@ -348,7 +358,7 @@ function DashboardLayoutContent({
                   {gi > 0 && !isCollapsed && <div className="border-t border-border/30 my-1.5" />}
                   {group.items.map(item => {
                     const isActive = location === item.path;
-                    return (
+                    const btn = (
                       <button
                         key={item.path}
                         onClick={() => setLocation(item.path)}
@@ -357,12 +367,17 @@ function DashboardLayoutContent({
                             ? "bg-accent text-foreground font-medium"
                             : "text-sidebar-foreground hover:bg-accent/60 hover:text-foreground"
                         } ${isCollapsed ? "justify-center" : ""}`}
-                        title={isCollapsed ? item.label : undefined}
                       >
                         <item.icon className={`h-[14px] w-[14px] shrink-0 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
                         {!isCollapsed && <span className="truncate">{item.label}</span>}
                       </button>
                     );
+                    return isCollapsed ? (
+                      <Tooltip key={item.path}>
+                        <TooltipTrigger asChild>{btn}</TooltipTrigger>
+                        <TooltipContent side="right" className="text-xs">{item.label}</TooltipContent>
+                      </Tooltip>
+                    ) : <div key={item.path}>{btn}</div>;
                   })}
                 </div>
               ))}

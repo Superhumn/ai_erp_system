@@ -6,6 +6,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { AIAgentProvider } from "./contexts/AIAgentContext";
 import DashboardLayout from "./components/DashboardLayout";
+import { ModuleErrorBoundary } from "./components/ModuleErrorBoundary";
 
 // Eagerly loaded pages (high-traffic, first paint)
 import Home from "./pages/Home";
@@ -126,6 +127,12 @@ const VendorPortal = lazy(() => import("./pages/portal/VendorPortal"));
 // SOPs
 const SOPs = lazy(() => import("./pages/SOPs"));
 
+// Meetings
+const Meetings = lazy(() => import("./pages/Meetings"));
+
+// Messaging
+const Messaging = lazy(() => import("./pages/Messaging"));
+
 // Investor Updates
 const InvestorUpdates = lazy(() => import("./pages/InvestorUpdates"));
 
@@ -165,6 +172,7 @@ function PageLoader() {
 function Router() {
   return (
     <DashboardLayout>
+      <ModuleErrorBoundary>
       <Suspense fallback={<PageLoader />}>
         <Switch>
           {/* Overview */}
@@ -284,6 +292,12 @@ function Router() {
           {/* SOPs */}
           <Route path="/sops" component={SOPs} />
 
+          {/* Meetings */}
+          <Route path="/meetings" component={Meetings} />
+
+          {/* Messaging */}
+          <Route path="/messaging" component={Messaging} />
+
           {/* Grants & Bids */}
           <Route path="/grants/submitter" component={GrantBidSubmitter} />
 
@@ -309,6 +323,7 @@ function Router() {
           <Route component={NotFound} />
         </Switch>
       </Suspense>
+      </ModuleErrorBoundary>
     </DashboardLayout>
   );
 }

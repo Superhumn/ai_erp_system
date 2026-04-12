@@ -658,7 +658,7 @@ export default function EmailInbox() {
                           </div>
 
                           {/* Body */}
-                          <div className="p-3 bg-background rounded-md border text-sm whitespace-pre-wrap max-h-64 overflow-y-auto leading-relaxed">
+                          <div className="p-3 bg-background rounded-md border text-sm whitespace-pre-wrap max-h-[70vh] overflow-y-auto leading-relaxed">
                             {emailDetail && emailDetail.id === email.id
                               ? (emailDetail.bodyText || "(No content)")
                               : (email.bodyText || "(No content)")}

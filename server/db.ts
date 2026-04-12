@@ -810,19 +810,21 @@ export async function createOrderItem(data: typeof orderItems.$inferInsert) {
 // OPERATIONS - INVENTORY
 // ============================================
 
-export async function getInventory(filters?: { companyId?: number; warehouseId?: number; productId?: number }) {
+export async function getInventory(filters?: { companyId?: number; warehouseId?: number; productId?: number; limit?: number }) {
   const db = await getDb();
   if (!db) return [];
-  
+
   const conditions = [];
   if (filters?.companyId) conditions.push(eq(inventory.companyId, filters.companyId));
   if (filters?.warehouseId) conditions.push(eq(inventory.warehouseId, filters.warehouseId));
   if (filters?.productId) conditions.push(eq(inventory.productId, filters.productId));
-  
+
+  const rowLimit = filters?.limit ?? 500; // Default limit to prevent unbounded queries
+
   if (conditions.length > 0) {
-    return db.select().from(inventory).where(and(...conditions)).orderBy(desc(inventory.updatedAt));
+    return db.select().from(inventory).where(and(...conditions)).orderBy(desc(inventory.updatedAt)).limit(rowLimit);
   }
-  return db.select().from(inventory).orderBy(desc(inventory.updatedAt));
+  return db.select().from(inventory).orderBy(desc(inventory.updatedAt)).limit(rowLimit);
 }
 
 export async function createInventory(data: InsertInventory) {
@@ -1702,15 +1704,16 @@ export async function globalSearch(query: string) {
   const escapedQuery = query.replace(/[_%\\]/g, '\\$&');
   const searchPattern = `%${escapedQuery}%`;
   
-  const [customerResults, vendorResults, productResults, employeeResults, contractResults, projectResults] = await Promise.all([
+  const [customerResults, vendorResults, productResults, employeeResults, contractResults, projectResults, meetingResults] = await Promise.all([
     db.select().from(customers).where(or(like(customers.name, searchPattern), like(customers.email, searchPattern))).limit(5),
     db.select().from(vendors).where(or(like(vendors.name, searchPattern), like(vendors.contactName, searchPattern))).limit(5),
     db.select().from(products).where(or(like(products.name, searchPattern), like(products.sku, searchPattern))).limit(5),
     db.select().from(employees).where(or(like(employees.firstName, searchPattern), like(employees.lastName, searchPattern), like(employees.email, searchPattern))).limit(5),
     db.select().from(contracts).where(or(like(contracts.title, searchPattern), like(contracts.contractNumber, searchPattern))).limit(5),
     db.select().from(projects).where(or(like(projects.name, searchPattern), like(projects.projectNumber, searchPattern))).limit(5),
+    db.select().from(firefliesMeetings).where(or(like(firefliesMeetings.title, searchPattern), like(firefliesMeetings.participants, searchPattern))).limit(5),
   ]);
-  
+
   return {
     customers: customerResults,
     vendors: vendorResults,
@@ -1718,6 +1721,7 @@ export async function globalSearch(query: string) {
     employees: employeeResults,
     contracts: contractResults,
     projects: projectResults,
+    meetings: meetingResults,
   };
 }
 
@@ -3815,9 +3819,33 @@ export async function getPendingInventoryFromPOs() {
     : [];
   const productMap = new Map(productsData.map(p => [p.id, p]));
 
-  // Batch load all raw materials for name lookups
+  // Batch load only the raw materials we need for name lookups
   const rmIds = allRmLinks.map(link => link.rawMaterialId).filter((id): id is number => id != null);
-  const allRawMaterials = await db.select().from(rawMaterials);
+  // Only fetch raw materials that are referenced by rm links or match product names/skus
+  const neededRawMaterials = rmIds.length > 0
+    ? await db.select().from(rawMaterials).where(inArray(rawMaterials.id, rmIds))
+    : [];
+  // For name/sku matching fallback, only fetch if there are unlinked products
+  const unlinkedProductIds = filteredItems
+    .filter(item => !rmLinkMap.has(item.poItemId) && item.productId != null)
+    .map(item => item.productId!);
+  let fallbackRawMaterials: typeof neededRawMaterials = [];
+  if (unlinkedProductIds.length > 0) {
+    // Fetch raw materials that might match product names/skus (limited set)
+    const unlinkedProducts = unlinkedProductIds.map(id => productMap.get(id)).filter(Boolean);
+    const nameConditions = unlinkedProducts
+      .map(p => p!.name?.toLowerCase())
+      .filter(Boolean);
+    const skuConditions = unlinkedProducts
+      .map(p => p!.sku?.toLowerCase())
+      .filter(Boolean);
+    // Only do the full table scan fallback if there are unlinked items (rare case)
+    if (nameConditions.length > 0 || skuConditions.length > 0) {
+      fallbackRawMaterials = await db.select().from(rawMaterials).limit(200);
+    }
+  }
+  const allRawMaterials = [...neededRawMaterials, ...fallbackRawMaterials];
+  // Deduplicate
   const rmByIdMap = new Map(allRawMaterials.map(rm => [rm.id, rm]));
   const rmByNameMap = new Map(allRawMaterials.map(rm => [rm.name?.toLowerCase(), rm]));
   const rmBySkuMap = new Map(allRawMaterials.map(rm => [rm.sku?.toLowerCase(), rm]));
@@ -3888,7 +3916,8 @@ export async function getInboundShipmentsFromPOs() {
       eq(shipments.status, 'in_transit')
     )
   ))
-  .orderBy(desc(shipments.createdAt));
+  .orderBy(desc(shipments.createdAt))
+  .limit(200);
 }
 
 // Convert suggested PO to actual PO
@@ -7628,6 +7657,20 @@ export async function updateAiAgentTask(id: number, data: Partial<{
   await db.update(aiAgentTasks).set(data as any).where(eq(aiAgentTasks.id, id));
 }
 
+export async function bulkDeleteAiAgentTasks(filters?: { taskType?: string; status?: string }) {
+  const db = await getDb();
+  if (!db) return 0;
+  const conditions: any[] = [];
+  if (filters?.taskType) conditions.push(eq(aiAgentTasks.taskType, filters.taskType as any));
+  if (filters?.status) conditions.push(eq(aiAgentTasks.status, filters.status as any));
+  // Default: delete email-related tasks
+  if (!filters?.taskType && !filters?.status) {
+    conditions.push(or(eq(aiAgentTasks.taskType, 'reply_email' as any), eq(aiAgentTasks.taskType, 'send_email' as any)));
+  }
+  const result = await db.delete(aiAgentTasks).where(conditions.length === 1 ? conditions[0] : and(...conditions));
+  return (result as any)[0]?.affectedRows || 0;
+}
+
 export async function getPendingApprovalTasks() {
   const db = await getDb();
   if (!db) return [];
@@ -9730,9 +9773,11 @@ export async function createChecklistFromTemplate(
     for (const item of category.items) {
       await createDataRoomChecklistItem({
         checklistId: checklist.id,
+        dataRoomId,
         categoryName: category.name,
-        name: item.name,
-        description: item.description,
+        itemName: item.name,
+        itemDescription: item.description,
+        matchKeywords: item.keywords ? JSON.stringify(item.keywords) : undefined,
         sortOrder: sortOrder++,
         status: 'missing',
       } as any);
@@ -9848,8 +9893,10 @@ export async function createStandardChecklist(
     for (const item of category.items) {
       await createDataRoomChecklistItem({
         checklistId: checklist.id,
+        dataRoomId,
         categoryName: category.name,
-        name: item.name,
+        itemName: item.name,
+        matchKeywords: item.keywords ? JSON.stringify(item.keywords) : undefined,
         sortOrder: sortOrder++,
         status: 'missing',
       } as any);
@@ -9928,7 +9975,8 @@ export async function getInventoryManagementList() {
     })
     .from(inventory)
     .leftJoin(products, eq(inventory.productId, products.id))
-    .orderBy(products.name);
+    .orderBy(products.name)
+    .limit(500);
   return rows;
 }
 

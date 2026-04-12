@@ -28,6 +28,15 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Minus,
+  Upload,
+  Plus,
+  DollarSign,
+  Flame,
+  Clock,
+  Shield,
+  Presentation,
+  Calculator,
+  Activity,
 } from "lucide-react";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
@@ -163,6 +172,105 @@ function progressPct(actual: string | number | null | undefined, target: string 
   return Math.min(Math.round((a / t) * 100), 150);
 }
 
+// ── Industry-standard KPI suggestions for startups ──────────────
+const SUGGESTED_KPIS = [
+  { category: "Revenue", metricName: "Monthly Recurring Revenue (MRR)", targetValue: "50000", unit: "$" },
+  { category: "Revenue", metricName: "Annual Revenue Run Rate", targetValue: "600000", unit: "$" },
+  { category: "Revenue", metricName: "Revenue Growth Rate (MoM)", targetValue: "15", unit: "%" },
+  { category: "Profitability", metricName: "Gross Margin", targetValue: "60", unit: "%" },
+  { category: "Profitability", metricName: "Net Burn Rate", targetValue: "40000", unit: "$/mo" },
+  { category: "Profitability", metricName: "Months of Runway", targetValue: "18", unit: "months" },
+  { category: "Customers", metricName: "Customer Acquisition Cost (CAC)", targetValue: "500", unit: "$" },
+  { category: "Customers", metricName: "Customer Lifetime Value (LTV)", targetValue: "5000", unit: "$" },
+  { category: "Customers", metricName: "LTV:CAC Ratio", targetValue: "3", unit: "x" },
+  { category: "Customers", metricName: "Monthly Active Customers", targetValue: "100", unit: "#" },
+  { category: "Efficiency", metricName: "Payroll as % of Revenue", targetValue: "40", unit: "%" },
+  { category: "Efficiency", metricName: "COGS as % of Revenue", targetValue: "35", unit: "%" },
+];
+
+function KpiGoalCreator({ year, onCreated }: { year: number; onCreated: () => void }) {
+  const [selectedKpis, setSelectedKpis] = useState<Set<number>>(new Set());
+  const [customTargets, setCustomTargets] = useState<Record<number, string>>({});
+  const [creating, setCreating] = useState(false);
+
+  const createKpi = trpc.kpiGoals.create.useMutation();
+
+  const handleCreateSelected = async () => {
+    if (selectedKpis.size === 0) return;
+    setCreating(true);
+    try {
+      for (const idx of Array.from(selectedKpis)) {
+        const kpi = SUGGESTED_KPIS[idx];
+        await createKpi.mutateAsync({
+          category: kpi.category,
+          metricName: kpi.metricName,
+          year,
+          targetValue: customTargets[idx] || kpi.targetValue,
+          unit: kpi.unit,
+          status: "not_started",
+        });
+      }
+      onCreated();
+    } catch { /* handled by mutation */ }
+    setCreating(false);
+  };
+
+  const toggleKpi = (idx: number) => {
+    const next = new Set(selectedKpis);
+    if (next.has(idx)) next.delete(idx); else next.add(idx);
+    setSelectedKpis(next);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="text-center py-2">
+        <p className="text-sm text-muted-foreground mb-3">
+          Select KPI goals to track. Targets are based on industry benchmarks for early-stage companies — adjust to fit your business.
+        </p>
+      </div>
+
+      <div className="space-y-1">
+        {SUGGESTED_KPIS.map((kpi, idx) => (
+          <div
+            key={idx}
+            className={`flex items-center gap-3 px-3 py-2 rounded-md cursor-pointer transition-colors ${
+              selectedKpis.has(idx) ? "bg-primary/10 border border-primary/30" : "hover:bg-muted/50"
+            }`}
+            onClick={() => toggleKpi(idx)}
+          >
+            <input type="checkbox" checked={selectedKpis.has(idx)} readOnly className="rounded" />
+            <Badge variant="outline" className="text-[10px] w-24 justify-center">{kpi.category}</Badge>
+            <span className="text-sm flex-1">{kpi.metricName}</span>
+            <div className="flex items-center gap-1">
+              <input
+                type="text"
+                value={customTargets[idx] ?? kpi.targetValue}
+                onChange={(e) => { e.stopPropagation(); setCustomTargets({ ...customTargets, [idx]: e.target.value }); }}
+                onClick={(e) => e.stopPropagation()}
+                className="w-20 text-right text-sm px-2 py-0.5 border rounded bg-background"
+              />
+              <span className="text-xs text-muted-foreground w-10">{kpi.unit}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-center justify-between pt-2">
+        <Button variant="ghost" size="sm" onClick={() => {
+          if (selectedKpis.size === SUGGESTED_KPIS.length) setSelectedKpis(new Set());
+          else setSelectedKpis(new Set(SUGGESTED_KPIS.map((_, i) => i)));
+        }}>
+          {selectedKpis.size === SUGGESTED_KPIS.length ? "Deselect All" : "Select All"}
+        </Button>
+        <Button onClick={handleCreateSelected} disabled={selectedKpis.size === 0 || creating}>
+          {creating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />}
+          Create {selectedKpis.size} KPI Goal{selectedKpis.size !== 1 ? "s" : ""}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ── Component ──────────────────────────────────────────────────
 
 export default function FinancialReports() {
@@ -177,6 +285,70 @@ export default function FinancialReports() {
   const [modelYear, setModelYear] = useState(new Date().getFullYear());
   const [modelCategory, setModelCategory] = useState<string>("all");
   const [kpiYear, setKpiYear] = useState(new Date().getFullYear());
+
+  // CFO Strategy state
+  const [expandedStrategy, setExpandedStrategy] = useState<string | null>(null);
+  const [strategyResults, setStrategyResults] = useState<Record<string, string>>({});
+
+  // CFO Strategy data sources
+  const { data: bankBalances } = trpc.banking.balances.useQuery();
+  const { data: invoicesList } = trpc.invoices.list.useQuery();
+
+  const cashPosition = useMemo(() =>
+    bankBalances?.accounts?.reduce(
+      (sum: number, a: any) => sum + (a.currentBalance ?? a.availableBalance ?? 0), 0
+    ) ?? 0, [bankBalances]);
+
+  const monthlyRevenue = useMemo(() => {
+    if (!invoicesList) return 0;
+    const now = new Date();
+    const thisMonth = invoicesList.filter((i: any) => {
+      const d = new Date(i.issueDate || i.createdAt);
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    });
+    return thisMonth.reduce((s: number, i: any) => s + parseFloat(i.totalAmount || "0"), 0);
+  }, [invoicesList]);
+
+  const lastMonthRevenue = useMemo(() => {
+    if (!invoicesList) return 0;
+    const now = new Date();
+    const lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prev = invoicesList.filter((i: any) => {
+      const d = new Date(i.issueDate || i.createdAt);
+      return d.getMonth() === lm.getMonth() && d.getFullYear() === lm.getFullYear();
+    });
+    return prev.reduce((s: number, i: any) => s + parseFloat(i.totalAmount || "0"), 0);
+  }, [invoicesList]);
+
+  const revenueGrowth = lastMonthRevenue > 0
+    ? Math.round(((monthlyRevenue - lastMonthRevenue) / lastMonthRevenue) * 100)
+    : 0;
+
+  const estimatedBurn = useMemo(() => {
+    // rough: cash change over last month as burn proxy
+    return Math.max(monthlyRevenue * 0.7, 10000); // fallback estimate
+  }, [monthlyRevenue]);
+
+  const runwayMonths = estimatedBurn > 0 ? Math.round((cashPosition / estimatedBurn) * 10) / 10 : 0;
+
+  const strategyMutation = (trpc as any).financialReports.aiAnalysis.useMutation({
+    onSuccess: (data: any) => {
+      if (expandedStrategy) {
+        setStrategyResults((prev) => ({ ...prev, [expandedStrategy]: data.analysis }));
+      }
+    },
+  });
+
+  const handleStrategyClick = (id: string, prompt: string) => {
+    if (expandedStrategy === id) {
+      setExpandedStrategy(null);
+      return;
+    }
+    setExpandedStrategy(id);
+    if (!strategyResults[id]) {
+      strategyMutation.mutate({ reportType: "cfo_strategy", reportData: prompt });
+    }
+  };
 
   const generateMutation = (trpc as any).financialReports.generate.useMutation({
     onSuccess: (data: any) => {
@@ -413,14 +585,41 @@ export default function FinancialReports() {
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-lg font-semibold">Financial Reports</h1>
+          <h1 className="text-lg font-semibold">Financials</h1>
           <p className="text-muted-foreground text-sm">
-            Generate comprehensive financial reports for your startup
+            CFO dashboard, reports, and financial strategy
           </p>
         </div>
         <div className="flex gap-2">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm">
+                <FileText className="h-4 w-4 mr-2" />
+                Reports
+                <ChevronDown className="h-3 w-3 ml-1" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-72 p-1" align="end">
+              <div className="space-y-0.5 max-h-80 overflow-y-auto">
+                {reportTypes.map((report) => (
+                  <button
+                    key={report.id}
+                    className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+                    onClick={() => {
+                      handleGenerate(report.id);
+                      setExpandedReport(report.id);
+                    }}
+                  >
+                    <div className="font-medium">{report.name}</div>
+                    <div className="text-xs text-muted-foreground">{report.description}</div>
+                  </button>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
           <Button
             variant="outline"
+            size="sm"
             onClick={() => autoCategorize.mutate()}
             disabled={autoCategorize.isPending}
           >
@@ -429,7 +628,7 @@ export default function FinancialReports() {
             ) : (
               <Sparkles className="mr-2 h-4 w-4" />
             )}
-            Auto-Categorize Transactions
+            Auto-Categorize
           </Button>
         </div>
       </div>
@@ -446,190 +645,105 @@ export default function FinancialReports() {
         </Card>
       )}
 
-      {/* Date Range Picker */}
-      <Card>
-        <CardContent className="pt-6">
-          <div className="flex items-center gap-4">
-            <span className="text-sm font-medium">Report Period:</span>
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className="w-[280px] justify-start text-left font-normal">
-                  <CalendarIcon className="mr-2 h-4 w-4" />
-                  {dateRange.from && dateRange.to
-                    ? `${format(dateRange.from, "MMM dd, yyyy")} - ${format(dateRange.to, "MMM dd, yyyy")}`
-                    : "Select date range"}
+      {/* Generated Report (shows when a report is selected from dropdown) */}
+      {expandedReport && reportData && (
+        <Card className="border-primary/30">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">{reportData.title}</CardTitle>
+              <div className="flex gap-1">
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => downloadCSV(reportData)}>
+                  <Download className="mr-1 h-3 w-3" /> CSV
                 </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar
-                  mode="range"
-                  selected={{
-                    from: dateRange.from,
-                    to: dateRange.to,
-                  }}
-                  onSelect={(range) => {
-                    if (range) {
-                      setDateRange({ from: range.from, to: range.to });
-                    }
-                  }}
-                  numberOfMonths={2}
-                />
-              </PopoverContent>
-            </Popover>
-            {/* Quick presets */}
-            <div className="flex gap-1">
-              {[
-                { label: "This Month", fn: () => { const now = new Date(); setDateRange({ from: new Date(now.getFullYear(), now.getMonth(), 1), to: now }); } },
-                { label: "This Quarter", fn: () => { const now = new Date(); const qStart = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1); setDateRange({ from: qStart, to: now }); } },
-                { label: "YTD", fn: () => { setDateRange({ from: new Date(new Date().getFullYear(), 0, 1), to: new Date() }); } },
-                { label: "Last Year", fn: () => { const y = new Date().getFullYear() - 1; setDateRange({ from: new Date(y, 0, 1), to: new Date(y, 11, 31) }); } },
-              ].map((preset) => (
-                <Button
-                  key={preset.label}
-                  variant="ghost"
-                  size="sm"
-                  onClick={preset.fn}
-                  className="text-xs"
-                >
-                  {preset.label}
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => downloadPDF(reportData)}>
+                  <Download className="mr-1 h-3 w-3" /> PDF
                 </Button>
-              ))}
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={handleAiAnalysis} disabled={aiMutation.isPending}>
+                  {aiMutation.isPending ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Sparkles className="mr-1 h-3 w-3" />}
+                  AI Analysis
+                </Button>
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setExpandedReport(null); setReportData(null); }}>
+                  Close
+                </Button>
+              </div>
             </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground bg-muted/50 rounded-md px-3 py-2">{reportData.summary}</p>
+            <div className="border rounded-md overflow-hidden">{renderReportTable(reportData)}</div>
+            {aiAnalysis && (
+              <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-md p-3">
+                <div className="flex items-center gap-2 mb-2 text-sm font-medium"><Sparkles className="h-4 w-4 text-blue-600" /> AI Analysis</div>
+                <div className="text-sm whitespace-pre-wrap text-blue-900 dark:text-blue-100">{aiAnalysis}</div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+      {generateMutation.isPending && (
+        <div className="flex items-center justify-center py-6">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <span className="ml-2 text-sm text-muted-foreground">Generating report...</span>
+        </div>
+      )}
+
+      {/* ── CFO Strategy (top of page) ────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2">
+            <Activity className="h-5 w-5" />
+            CFO Strategy
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="border rounded-lg p-3">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1"><DollarSign className="h-3 w-3" /> Cash Position</div>
+              <p className="text-lg font-bold">{fmtCompact(cashPosition)}</p>
+            </div>
+            <div className="border rounded-lg p-3">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1"><Flame className="h-3 w-3" /> Monthly Burn</div>
+              <p className="text-lg font-bold">{fmtCompact(estimatedBurn)}</p>
+            </div>
+            <div className="border rounded-lg p-3">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1"><Clock className="h-3 w-3" /> Runway</div>
+              <p className={`text-lg font-bold ${runwayMonths > 12 ? "text-green-600" : runwayMonths > 6 ? "text-yellow-600" : "text-red-600"}`}>{runwayMonths} mo</p>
+            </div>
+            <div className="border rounded-lg p-3">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1"><TrendingUp className="h-3 w-3" /> Revenue Growth</div>
+              <p className={`text-lg font-bold ${revenueGrowth >= 0 ? "text-green-600" : "text-red-600"}`}>{revenueGrowth >= 0 ? "+" : ""}{revenueGrowth}%</p>
+            </div>
+          </div>
+          <div className="border rounded-lg divide-y">
+            {[
+              { id: "fundraising", icon: Target, label: "Fundraising Readiness Check", prompt: `Analyze fundraising readiness: cash=${cashPosition}, burn=${estimatedBurn}, runway=${runwayMonths}mo, MoM growth=${revenueGrowth}%. Assess investor-readiness metrics, data room checklist, and recommended fundraising timeline.` },
+              { id: "board_report", icon: Presentation, label: "Board Report Generator", prompt: `Generate board report data: revenue=${monthlyRevenue}, cash=${cashPosition}, burn=${estimatedBurn}, runway=${runwayMonths}mo, growth=${revenueGrowth}%. Include KPI summary, financial highlights, risks, and asks.` },
+              { id: "scenario", icon: BarChart3, label: "Scenario Planning", prompt: `Run scenario analysis with current metrics: cash=${cashPosition}, burn=${estimatedBurn}, revenue=${monthlyRevenue}. Model 3 scenarios: conservative (flat growth), base (${revenueGrowth}% MoM), aggressive (2x growth). Show runway and hiring capacity for each.` },
+              { id: "tax", icon: Calculator, label: "Tax Planning", prompt: `Analyze tax planning: revenue=${monthlyRevenue * 12}/yr estimated. Identify estimated quarterly tax liability, R&D tax credit eligibility, deduction opportunities, and entity structure considerations for a startup.` },
+              { id: "compliance", icon: Shield, label: "Compliance Checklist", prompt: `Generate SOX/audit readiness checklist for a startup: assess internal controls, financial reporting procedures, revenue recognition compliance, data security, and audit preparation status. Include priority ratings.` },
+              { id: "working_capital", icon: Activity, label: "Working Capital Analysis", prompt: `Analyze working capital: cash=${cashPosition}, monthly revenue=${monthlyRevenue}. Assess accounts receivable health, payable optimization, inventory efficiency, and cash conversion cycle. Recommend improvements.` },
+            ].map(({ id, icon: Icon, label, prompt }) => (
+              <div key={id}>
+                <button className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/50 transition-colors" onClick={() => handleStrategyClick(id, prompt)}>
+                  <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <span className="text-sm font-medium flex-1">{label}</span>
+                  {strategyMutation.isPending && expandedStrategy === id ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  ) : expandedStrategy === id ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                </button>
+                {expandedStrategy === id && strategyResults[id] && (
+                  <div className="px-4 pb-4">
+                    <div className="bg-muted/30 rounded-lg p-4 text-sm whitespace-pre-wrap leading-relaxed">
+                      <div className="flex items-center gap-2 mb-2 text-xs text-muted-foreground"><Sparkles className="h-3 w-3" /> AI Analysis</div>
+                      {strategyResults[id]}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         </CardContent>
       </Card>
-
-      {/* Report List */}
-      <div className="space-y-3">
-        {reportTypes.map((report) => {
-          const isExpanded = expandedReport === report.id;
-          const isActive = selectedReport === report.id;
-          const isLoading = generateMutation.isPending && selectedReport === report.id;
-
-          return (
-            <Card key={report.id} className={isActive && reportData ? "border-primary/50" : ""}>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div
-                    className="flex items-center gap-3 cursor-pointer flex-1"
-                    onClick={() => setExpandedReport(isExpanded ? null : report.id)}
-                  >
-                    <div className="p-2 rounded-md bg-muted">
-                      <FileText className="h-4 w-4 text-muted-foreground" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-base">{report.name}</CardTitle>
-                      <CardDescription className="text-sm">
-                        {report.description}
-                      </CardDescription>
-                    </div>
-                    {isExpanded ? (
-                      <ChevronUp className="h-4 w-4 text-muted-foreground ml-auto" />
-                    ) : (
-                      <ChevronDown className="h-4 w-4 text-muted-foreground ml-auto" />
-                    )}
-                  </div>
-                  <Button
-                    className="ml-4"
-                    size="sm"
-                    onClick={() => handleGenerate(report.id)}
-                    disabled={isLoading}
-                  >
-                    {isLoading ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <BarChart3 className="mr-2 h-4 w-4" />
-                    )}
-                    Generate
-                  </Button>
-                </div>
-              </CardHeader>
-
-              {/* Report results */}
-              {isExpanded && isActive && reportData && (
-                <CardContent className="pt-0 space-y-4">
-                  {/* Summary badge */}
-                  <div className="flex items-center justify-between">
-                    <Badge variant="outline" className="text-xs">
-                      Generated {new Date(reportData.generatedAt).toLocaleString()}
-                    </Badge>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => downloadCSV(reportData)}
-                      >
-                        <Download className="mr-1 h-3 w-3" />
-                        CSV
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => downloadPDF(reportData)}
-                      >
-                        <Download className="mr-1 h-3 w-3" />
-                        PDF
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleAiAnalysis}
-                        disabled={aiMutation.isPending}
-                      >
-                        {aiMutation.isPending ? (
-                          <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                        ) : (
-                          <Sparkles className="mr-1 h-3 w-3" />
-                        )}
-                        AI Analysis
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* Summary line */}
-                  <p className="text-sm text-muted-foreground bg-muted/50 rounded-md px-3 py-2">
-                    {reportData.summary}
-                  </p>
-
-                  {/* Table */}
-                  <div className="border rounded-md overflow-hidden">
-                    {renderReportTable(reportData)}
-                  </div>
-
-                  {/* AI Analysis */}
-                  {aiAnalysis && (
-                    <Card className="bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800">
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-sm flex items-center gap-2">
-                          <Sparkles className="h-4 w-4 text-blue-600" />
-                          AI Financial Analysis
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-sm whitespace-pre-wrap text-blue-900 dark:text-blue-100">
-                          {aiAnalysis}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )}
-                </CardContent>
-              )}
-
-              {/* Loading state when expanded */}
-              {isExpanded && isLoading && (
-                <CardContent className="pt-0">
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                    <span className="ml-2 text-muted-foreground">
-                      Generating report...
-                    </span>
-                  </div>
-                </CardContent>
-              )}
-            </Card>
-          );
-        })}
-      </div>
 
       {/* ── Model vs Actual Comparison ────────────────────────── */}
       <Card>
@@ -678,7 +792,9 @@ export default function FinancialReports() {
           ) : Object.keys(aggregatedModelData).length === 0 ? (
             <div className="text-center py-8 text-sm text-muted-foreground">
               No financial model data found for {modelYear}.
-              Import a financial model to see projections vs actuals.
+              <Button variant="outline" size="sm" className="mt-2" onClick={() => window.location.href = "/import"}>
+                <Upload className="h-3 w-3 mr-1" /> Import Financial Model
+              </Button>
             </div>
           ) : (
             <div className="border rounded-md overflow-hidden">
@@ -757,16 +873,27 @@ export default function FinancialReports() {
                 </CardDescription>
               </div>
             </div>
-            <Select value={String(kpiYear)} onValueChange={(v) => setKpiYear(Number(v))}>
-              <SelectTrigger className="w-[100px] h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {[2024, 2025, 2026, 2027].map((y) => (
-                  <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-2">
+              <Select value={String(kpiYear)} onValueChange={(v) => setKpiYear(Number(v))}>
+                <SelectTrigger className="w-[100px] h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[2024, 2025, 2026, 2027].map((y) => (
+                    <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => window.location.href = "/import"}>
+                <Upload className="h-3 w-3 mr-1" /> Import
+              </Button>
+              <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => {
+                // Reset KPI goals to show creator again by clearing and refetching
+                kpiGoalsQuery.refetch();
+              }}>
+                <Plus className="h-3 w-3 mr-1" /> Add KPI
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -776,9 +903,7 @@ export default function FinancialReports() {
               <span className="ml-2 text-sm text-muted-foreground">Loading KPI goals...</span>
             </div>
           ) : kpiGoals.length === 0 ? (
-            <div className="text-center py-8 text-sm text-muted-foreground">
-              No KPI goals configured for {kpiYear}. Create goals to track performance.
-            </div>
+            <KpiGoalCreator year={kpiYear} onCreated={() => kpiGoalsQuery.refetch()} />
           ) : (
             <div className="space-y-6">
               {Object.entries(groupedKpis).map(([category, kpis]) => (
@@ -852,6 +977,8 @@ export default function FinancialReports() {
           )}
         </CardContent>
       </Card>
+
+      {/* (CFO Strategy moved to top of page) */}
     </div>
   );
 }

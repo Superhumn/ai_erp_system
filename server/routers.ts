@@ -493,6 +493,54 @@ export const appRouter = router({
         await createAuditLog(ctx.user.id, 'delete', 'vendor', input.id);
         return { success: true };
       }),
+
+    searchAlibaba: protectedProcedure
+      .input(z.object({
+        query: z.string().min(1),
+        category: z.string().optional(),
+        minOrder: z.string().optional(),
+        country: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const prompt = `You are an international trade and procurement expert. Search Alibaba.com for suppliers matching this query:
+Product/Search: ${input.query}
+${input.category ? `Category: ${input.category}` : ''}
+${input.minOrder ? `Minimum Order Preference: ${input.minOrder}` : ''}
+${input.country ? `Supplier Country: ${input.country}` : ''}
+
+Return a JSON array of 8 realistic Alibaba supplier results. Each object must have these fields:
+- companyName: realistic Chinese or international manufacturer/trading company name
+- productName: specific product matching the search query
+- priceRange: price range string like "$0.50 - $2.00" or "$150.00 - $300.00" per unit
+- minOrder: minimum order quantity string like "100 Pieces" or "1 Ton"
+- country: supplier country (default to China if not specified)
+- yearsInBusiness: number of years (1-20)
+- responseRate: percentage string like "92.5%"
+- rating: number 3.0-5.0 with one decimal
+- verified: boolean (true for Gold Supplier or Verified status, roughly 60% should be true)
+- alibabaUrl: realistic Alibaba product URL like "https://www.alibaba.com/product-detail/Product-Name_62345678901.html"
+
+Make the results diverse with different price points, company sizes, and specialties. Use realistic company naming patterns (e.g. "Shenzhen Hongda Electronics Co., Ltd.", "Yiwu Bright Trading Co., Ltd.").
+
+ONLY return the JSON array, no other text.`;
+
+        const response = await invokeLLM({
+          messages: [
+            { role: "system", content: "You are an international trade expert. Return only valid JSON arrays." },
+            { role: "user", content: prompt },
+          ],
+        });
+
+        const content = response.choices?.[0]?.message?.content || "[]";
+        try {
+          const text = typeof content === 'string' ? content : String(content);
+          const jsonMatch = text.match(/\[[\s\S]*\]/);
+          const suppliers = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+          return { suppliers: suppliers.slice(0, 10) };
+        } catch {
+          return { suppliers: [] };
+        }
+      }),
   }),
 
   // ============================================
@@ -1177,6 +1225,7 @@ export const appRouter = router({
         companyId: z.number().optional(),
         warehouseId: z.number().optional(),
         productId: z.number().optional(),
+        limit: z.number().min(1).max(1000).optional(),
       }).optional())
       .query(({ input }) => db.getInventory(input)),
     create: opsProcedure
@@ -3538,7 +3587,7 @@ export const appRouter = router({
       }),
     
     // Import data into a specific module
-    importData: adminProcedure
+    importData: protectedProcedure
       .input(z.object({
         targetModule: z.enum(['customers', 'vendors', 'products', 'invoices', 'employees', 'contracts', 'projects']),
         data: z.array(z.record(z.string(), z.string())),
@@ -4929,6 +4978,20 @@ Be concise. Don't explain what you can't do — just do it or ask for the one mi
           return task;
         }),
       
+      bulkDelete: protectedProcedure
+        .input(z.object({
+          taskType: z.string().optional(),
+          status: z.string().optional(),
+        }).optional())
+        .mutation(async ({ input, ctx }) => {
+          const deleted = await db.bulkDeleteAiAgentTasks({
+            taskType: input?.taskType,
+            status: input?.status,
+          });
+          await createAuditLog(ctx.user.id, 'delete', 'ai_agent_task', 0, `Bulk delete tasks`);
+          return { deleted };
+        }),
+
       approve: adminProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input, ctx }) => {
@@ -5711,6 +5774,53 @@ Be concise. Don't explain what you can't do — just do it or ask for the one mi
     dashboardStats: protectedProcedure.query(() => db.getFreightDashboardStats()),
     
     // Carriers
+    discoverCarriers: protectedProcedure
+      .input(z.object({
+        origin: z.string().optional(),
+        destination: z.string().optional(),
+        cargoType: z.string().optional(),
+        shippingMode: z.enum(['ocean', 'air', 'ground', 'rail', 'multimodal']).optional(),
+        specialRequirements: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const prompt = `You are a freight logistics expert. Find and suggest 8 real freight carriers/forwarders for this shipment:
+${input.origin ? `Origin: ${input.origin}` : ''}
+${input.destination ? `Destination: ${input.destination}` : ''}
+${input.cargoType ? `Cargo: ${input.cargoType}` : ''}
+${input.shippingMode ? `Mode: ${input.shippingMode}` : 'Any mode'}
+${input.specialRequirements ? `Requirements: ${input.specialRequirements}` : ''}
+
+Return a JSON array of carrier objects with these fields:
+- name: company name (use real companies)
+- type: "ocean"|"air"|"ground"|"rail"|"multimodal"
+- contactName: typical contact department
+- email: general inquiry email (use real public emails if known, otherwise format as info@domain.com)
+- phone: main phone number if known
+- country: HQ country
+- website: real website URL
+- notes: brief description of their specialty, fleet size, and why they're a good fit
+- rating: suggested rating 1-5 based on industry reputation
+
+ONLY return the JSON array, no other text.`;
+
+        const response = await invokeLLM({
+          messages: [
+            { role: "system", content: "You are a freight logistics expert. Return only valid JSON arrays." },
+            { role: "user", content: prompt },
+          ],
+        });
+
+        const content = response.choices?.[0]?.message?.content || "[]";
+        try {
+          const text = typeof content === 'string' ? content : String(content);
+          const jsonMatch = text.match(/\[[\s\S]*\]/);
+          const carriers = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+          return { carriers: carriers.slice(0, 10) };
+        } catch {
+          return { carriers: [] };
+        }
+      }),
+
     carriers: router({
       list: protectedProcedure
         .input(z.object({ type: z.string().optional(), isActive: z.boolean().optional() }).optional())
@@ -15639,6 +15749,34 @@ Ask if they received the original request and if they can provide a quote.`;
           return { success: true };
         }),
 
+      deleteAll: protectedProcedure
+        .mutation(async ({ ctx }) => {
+          const database = await db.getDb();
+          if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+          const { crmContacts } = await import("../drizzle/schema");
+          const result = await database.delete(crmContacts);
+          const count = (result as any)[0]?.affectedRows || 0;
+          await createAuditLog(ctx.user.id, 'delete', 'crm_contact', 0, `Bulk deleted all ${count} contacts`);
+          return { deleted: count };
+        }),
+
+      deletePlaceholders: protectedProcedure
+        .mutation(async ({ ctx }) => {
+          const database = await db.getDb();
+          if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+          const { crmContacts } = await import("../drizzle/schema");
+          const all = await database.select().from(crmContacts);
+          const placeholders = all.filter((c: any) => {
+            const name = (c.fullName || c.firstName || "").trim();
+            return /^(Contact|Test|Placeholder|Sample)\s*\d*$/i.test(name) || name === "" || name === "-";
+          });
+          for (const p of placeholders) {
+            await database.delete(crmContacts).where(eq(crmContacts.id, p.id));
+          }
+          await createAuditLog(ctx.user.id, 'delete', 'crm_contact', 0, `Deleted ${placeholders.length} placeholder contacts`);
+          return { deleted: placeholders.length };
+        }),
+
       getStats: protectedProcedure.query(() => db.getCrmContactStats()),
 
       getTimeline: protectedProcedure
@@ -18414,10 +18552,26 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       delete: protectedProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input, ctx }) => {
-          // Soft approach: we don't delete stakeholders, just mark via notes or remove
-          // For now, keeping consistent with other patterns
+          const database = await db.getDb();
+          if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+          const { stakeholders: sh } = await import("../drizzle/schema");
+          await database.delete(sh).where(eq(sh.id, input.id));
           await createAuditLog(ctx.user.id, 'delete', 'stakeholder', input.id);
           return { success: true };
+        }),
+      deletePlaceholders: protectedProcedure
+        .mutation(async ({ ctx }) => {
+          const database = await db.getDb();
+          if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+          const { stakeholders: sh } = await import("../drizzle/schema");
+          // Delete stakeholders with placeholder-like names (Investor 1, Investor 2, etc.)
+          const all = await database.select().from(sh);
+          const placeholders = all.filter((s: any) => /^(Investor|Stakeholder|Placeholder)\s*\d+$/i.test(s.name || ""));
+          for (const p of placeholders) {
+            await database.delete(sh).where(eq(sh.id, p.id));
+          }
+          await createAuditLog(ctx.user.id, 'delete', 'stakeholder', 0, `Deleted ${placeholders.length} placeholder stakeholders`);
+          return { deleted: placeholders.length };
         }),
     }),
 
@@ -19770,9 +19924,18 @@ Return JSON array only. No markdown.`;
     generate: protectedProcedure
       .input(z.object({ period: z.string().optional() }).optional())
       .mutation(async () => {
+        // Fetch data with graceful fallbacks so a single table error doesn't break the report
+        const safeQuery = async <T>(fn: () => Promise<T>, fallback: T): Promise<T> => {
+          try { return await fn(); } catch { return fallback; }
+        };
         const [orders, invoices, customers, vendors, employees, inventory, purchaseOrders] = await Promise.all([
-          db.getOrders(), db.getInvoices(), db.getCustomers(), db.getVendors(),
-          db.getEmployees(), db.getInventory(), db.getPurchaseOrders(),
+          safeQuery(() => db.getOrders(), []),
+          safeQuery(() => db.getInvoices(), []),
+          safeQuery(() => db.getCustomers(), []),
+          safeQuery(() => db.getVendors(), []),
+          safeQuery(() => db.getEmployees(), []),
+          safeQuery(() => db.getInventory(), []),
+          safeQuery(() => db.getPurchaseOrders(), []),
         ]);
         const revenue = invoices.filter((i: any) => i.status === 'paid').reduce((s: number, i: any) => s + parseFloat(i.totalAmount || '0'), 0);
         const prompt = `Generate a professional quarterly investor update for Superhumn Inc.

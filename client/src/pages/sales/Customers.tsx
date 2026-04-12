@@ -31,7 +31,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Users, Plus, Search, Loader2, RefreshCw, ShoppingBag } from "lucide-react";
+import { Users, Plus, Search, Loader2, RefreshCw, ShoppingBag, Upload } from "lucide-react";
+import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { Link } from "wouter";
 import { getStatusColor } from "@/lib/statusColors";
@@ -202,6 +203,9 @@ export default function Customers() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          <Button variant="outline" onClick={() => window.location.href = "/import"}>
+            <Upload className="h-4 w-4 mr-1" /> Import
+          </Button>
           <Dialog open={isOpen} onOpenChange={setIsOpen}>
             <DialogTrigger asChild>
               <Button>
