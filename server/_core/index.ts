@@ -556,6 +556,30 @@ async function startServer() {
     // Start the email queue worker
     startEmailQueueWorker();
 
+    // One-time cleanup: remove non-food products (equipment, machinery, etc.)
+    (async () => {
+      try {
+        const db = await import("../db");
+        const allProducts = await db.getDb().then(async (d) => {
+          if (!d) return [];
+          const { products } = await import("../../drizzle/schema");
+          return d.select().from(products);
+        });
+        const equipmentKeywords = ["equipment", "machinery", "machine", "tools", "supplies", "office", "furniture", "hardware", "electronics", "forklift", "conveyor", "mixer", "oven", "printer", "computer", "laptop", "monitor", "desk"];
+        const toDelete = allProducts.filter((p: any) => {
+          const cat = (p.category || "").toLowerCase();
+          const name = (p.name || "").toLowerCase();
+          return equipmentKeywords.some(kw => cat.includes(kw) || name.includes(kw));
+        });
+        if (toDelete.length > 0) {
+          for (const p of toDelete) {
+            try { await db.deleteProduct(p.id); } catch { /* FK constraint, skip */ }
+          }
+          console.log(`[Startup] Cleaned up ${toDelete.length} non-food products (equipment/machinery)`);
+        }
+      } catch { /* skip */ }
+    })();
+
     // Start EDI polling scheduler (check every 5 minutes)
     import('../ediTransportService').then(({ startEdiPolling }) => {
       startEdiPolling(5 * 60 * 1000);

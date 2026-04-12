@@ -482,13 +482,24 @@ export async function deleteVendor(id: number) {
 // PRODUCT MANAGEMENT
 // ============================================
 
+// Non-food categories to exclude from product listings
+const EQUIPMENT_CATEGORIES = ["equipment", "machinery", "tools", "supplies", "office", "furniture", "hardware", "software", "electronics"];
+
 export async function getProducts(companyId?: number) {
   const db = await getDb();
   if (!db) return [];
+  let results;
   if (companyId) {
-    return db.select().from(products).where(eq(products.companyId, companyId)).orderBy(desc(products.createdAt));
+    results = await db.select().from(products).where(eq(products.companyId, companyId)).orderBy(desc(products.createdAt));
+  } else {
+    results = await db.select().from(products).orderBy(desc(products.createdAt));
   }
-  return db.select().from(products).orderBy(desc(products.createdAt));
+  // Filter out non-food items (equipment, machinery, etc.)
+  return results.filter((p: any) => {
+    const cat = (p.category || "").toLowerCase();
+    const name = (p.name || "").toLowerCase();
+    return !EQUIPMENT_CATEGORIES.some(ec => cat.includes(ec) || name.includes(ec));
+  });
 }
 
 export async function getProductById(id: number) {
