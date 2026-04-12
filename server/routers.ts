@@ -2534,32 +2534,79 @@ ONLY return the JSON array, no other text.`;
         // If this is a 409A valuation report, parse it for FMV value
         if (input.referenceType === "valuation" && (mimeType.includes("pdf") || mimeType.includes("image"))) {
           try {
-            const parsed = await parseUploadedDocument(url, input.name, undefined, mimeType);
-            if (parsed.success && (parsed as any).customsDocument) {
-              // Not a customs doc — try extracting FMV from the raw parse
-            }
-            // Use LLM to extract FMV specifically
             const { invokeLLM } = await import("./_core/llm");
+            let userContent: any;
+
+            if (mimeType.includes("pdf")) {
+              // Extract text from PDF so we can pass it as text to the LLM
+              // (Sending a PDF as image_url is not supported by Anthropic)
+              let pdfText: string | null = null;
+              try {
+                let pdfBuffer: Buffer | null = null;
+                if (url.startsWith("data:")) {
+                  const base64Data = url.split(",")[1];
+                  if (base64Data) pdfBuffer = Buffer.from(base64Data, "base64");
+                } else {
+                  const pdfResponse = await fetch(url);
+                  if (pdfResponse.ok) pdfBuffer = Buffer.from(await pdfResponse.arrayBuffer());
+                }
+                if (pdfBuffer) {
+                  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+                  const pdf = await (pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) })).promise;
+                  let text = "";
+                  for (let pageNumber = 1; pageNumber <= Math.min(pdf.numPages, 10); pageNumber++) {
+                    const page = await pdf.getPage(pageNumber);
+                    const tc = await page.getTextContent();
+                    text += tc.items.map((item: any) => item.str).join(" ") + "\n";
+                  }
+                  if (text.trim().length > 0) pdfText = text.substring(0, 30000);
+                }
+              } catch (pdfErr) {
+                console.warn("[409A] PDF text extraction failed:", pdfErr);
+              }
+              userContent = pdfText
+                ? `Document: ${input.name}\n\nEXTRACTED TEXT:\n${pdfText}`
+                : `Document: ${input.name} (PDF content could not be extracted)`;
+            } else {
+              // Image: pass directly as image_url
+              userContent = [
+                { type: "text" as const, text: `Document: ${input.name}` },
+                { type: "image_url" as const, image_url: { url } },
+              ];
+            }
+
             const fmvResponse = await invokeLLM({
               messages: [
                 { role: "system", content: "Extract the 409A fair market value per share from this valuation document. Return JSON: {\"fmvPerShare\": number, \"totalValuation\": number, \"valuationDate\": \"YYYY-MM-DD\", \"provider\": \"string\"}. If you cannot find the data, return {\"fmvPerShare\": null}." },
-                { role: "user", content: [
-                  { type: "text", text: `Document: ${input.name}` },
-                  ...(mimeType.includes("image") || mimeType.includes("pdf") ? [{ type: "image_url" as const, image_url: { url } }] : [{ type: "text" as const, text: `Base64 content available but not an image — file is ${mimeType}` }]),
-                ] },
+                { role: "user", content: userContent },
               ],
             });
             const fmvText = typeof fmvResponse.choices?.[0]?.message?.content === "string" ? fmvResponse.choices[0].message.content : "";
             try {
               const fmvData = JSON.parse(fmvText.replace(/```json\n?|\n?```/g, "").trim());
-              if (fmvData.fmvPerShare && input.referenceId) {
-                // Update the valuation record with parsed FMV
-                await db.updateValuation409a(input.referenceId, {
-                  fairMarketValue: String(fmvData.fmvPerShare),
-                  ...(fmvData.totalValuation ? { totalValuation: String(fmvData.totalValuation) } : {}),
-                  ...(fmvData.provider ? { provider: fmvData.provider } : {}),
-                });
-                console.log(`[409A] Parsed FMV from ${input.name}: $${fmvData.fmvPerShare}/share`);
+              if (fmvData.fmvPerShare) {
+                if (input.referenceId) {
+                  // Update the existing valuation record with parsed FMV
+                  await db.updateValuation409a(input.referenceId, {
+                    fairMarketValue: String(fmvData.fmvPerShare),
+                    ...(fmvData.totalValuation ? { totalValuation: String(fmvData.totalValuation) } : {}),
+                    ...(fmvData.provider ? { provider: fmvData.provider } : {}),
+                  });
+                  console.log(`[409A] Updated valuation ${input.referenceId} FMV from ${input.name}: $${fmvData.fmvPerShare}/share`);
+                } else {
+                  // No existing valuation record — create one from the extracted data
+                  const valuationDate = fmvData.valuationDate ? new Date(fmvData.valuationDate) : new Date();
+                  const newValuation = await db.createValuation409a({
+                    fairMarketValue: String(fmvData.fmvPerShare),
+                    valuationDate,
+                    ...(fmvData.totalValuation ? { totalValuation: String(fmvData.totalValuation) } : {}),
+                    ...(fmvData.provider ? { provider: fmvData.provider } : {}),
+                    ...(input.companyId ? { companyId: input.companyId } : {}),
+                    reportUrl: url,
+                    status: "approved",
+                  });
+                  console.log(`[409A] Created new valuation from ${input.name}: $${fmvData.fmvPerShare}/share (id=${newValuation.id})`);
+                }
               }
             } catch { /* FMV parse failed, that's ok */ }
           } catch (e) {
