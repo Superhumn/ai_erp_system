@@ -3001,11 +3001,15 @@ ONLY return the JSON array, no other text.`;
         fireflies: await (async () => {
           try {
             const config = await db.getFirefliesConfig(ctx.user.id);
+            console.log(`[getStatus] Fireflies config for user ${ctx.user.id}:`, config ? 'found' : 'not found');
             return {
               configured: !!config,
               status: config ? 'connected' : 'not_configured',
             };
-          } catch { return { configured: false, status: 'not_configured' }; }
+          } catch (e: any) {
+            console.warn(`[getStatus] Fireflies check failed:`, e.message);
+            return { configured: false, status: 'not_configured' };
+          }
         })(),
       };
     }),
@@ -17568,6 +17572,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         if (!validation.valid) {
           throw new TRPCError({ code: 'BAD_REQUEST', message: validation.error || 'Invalid Fireflies API key' });
         }
+        console.log(`[Fireflies] API key validated for user ${ctx.user.id}, saving config...`);
         return db.upsertFirefliesConfig(ctx.user.id, input);
       }),
     disconnect: protectedProcedure.mutation(async ({ ctx }) => {
