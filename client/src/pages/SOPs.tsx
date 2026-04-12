@@ -962,54 +962,13 @@ export default function SOPs() {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-3 animate-fade-in">
       {/* Header */}
-      <div>
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-            <BookOpen className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em]">
-              Standard Operating Procedures
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              Step-by-step guides for every workflow in the system. Select an SOP to view detailed instructions.
-            </p>
-          </div>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-[1.875rem] font-bold tracking-[-0.03em]">SOPs</h1>
+          <p className="text-muted-foreground text-sm">{sops.length} procedures — select to expand</p>
         </div>
-      </div>
-
-      {/* Quick Stats */}
-      <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
-        <Card className="p-4">
-          <div className="flex items-center gap-2">
-            <FileText className="h-4 w-4 text-muted-foreground" />
-            <span className="text-xl font-semibold tracking-[-0.02em]">{sops.length}</span>
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">Total SOPs</p>
-        </Card>
-        <Card className="p-4">
-          <div className="flex items-center gap-2">
-            <Users className="h-4 w-4 text-muted-foreground" />
-            <span className="text-xl font-semibold tracking-[-0.02em]">{allAudiences.length}</span>
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">Role Groups</p>
-        </Card>
-        <Card className="p-4">
-          <div className="flex items-center gap-2">
-            <Building2 className="h-4 w-4 text-teal-500" />
-            <span className="text-xl font-semibold tracking-[-0.02em]">1</span>
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">Copacker SOP</p>
-        </Card>
-        <Card className="p-4">
-          <div className="flex items-center gap-2">
-            <Truck className="h-4 w-4 text-sky-500" />
-            <span className="text-xl font-semibold tracking-[-0.02em]">1</span>
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">Vendor SOP</p>
-        </Card>
       </div>
 
       {/* Search & Filter Bar */}

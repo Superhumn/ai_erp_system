@@ -658,52 +658,27 @@ export default function InventoryHub() {
         </div>
       </div>
 
-      {/* Stats Row */}
-      <div className="grid grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Total Items</p>
-                <p className="text-xl font-semibold tracking-[-0.02em]">{stats.totalItems}</p>
-              </div>
-              <Package className="h-8 w-8 text-muted-foreground" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Low Stock</p>
-                <p className="text-xl font-semibold tracking-[-0.02em] text-amber-600">{stats.lowStock}</p>
-              </div>
-              <AlertTriangle className="h-8 w-8 text-amber-500" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Out of Stock</p>
-                <p className="text-xl font-semibold tracking-[-0.02em] text-red-600">{stats.outOfStock}</p>
-              </div>
-              <Package className="h-8 w-8 text-red-500" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">In Transit</p>
-                <p className="text-xl font-semibold tracking-[-0.02em] text-blue-600">{stats.inTransitCount}</p>
-              </div>
-              <Truck className="h-8 w-8 text-blue-500" />
-            </div>
-          </CardContent>
-        </Card>
+      {/* Compact KPI bar */}
+      <div className="flex items-center gap-5 flex-wrap text-sm border rounded-xl px-4 py-3 bg-card">
+        <div>
+          <span className="text-xs text-muted-foreground">Total Items</span>
+          <div className="font-bold text-base">{stats.totalItems}</div>
+        </div>
+        <div className="h-8 w-px bg-border" />
+        <div>
+          <span className="text-xs text-muted-foreground">Low Stock</span>
+          <div className="font-bold text-base text-amber-600">{stats.lowStock}</div>
+        </div>
+        <div className="h-8 w-px bg-border" />
+        <div>
+          <span className="text-xs text-muted-foreground">Out of Stock</span>
+          <div className="font-bold text-base text-red-600">{stats.outOfStock}</div>
+        </div>
+        <div className="h-8 w-px bg-border" />
+        <div>
+          <span className="text-xs text-muted-foreground">In Transit</span>
+          <div className="font-bold text-base text-blue-600">{stats.inTransitCount}</div>
+        </div>
       </div>
 
       {/* Unified Products & Inventory Table */}

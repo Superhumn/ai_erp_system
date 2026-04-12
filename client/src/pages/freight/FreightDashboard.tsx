@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import { formatCurrency } from "@/lib/format";
 export default function FreightDashboard() {
   const [tab, setTab] = useState("rfqs");
   const [search, setSearch] = useState("");
+  const [expandedId, setExpandedId] = useState<number | null>(null);
 
   const { data: stats, isLoading } = trpc.freight.dashboardStats.useQuery();
   const { data: rfqs } = trpc.freight.rfqs.list.useQuery({ status: undefined });
@@ -143,21 +144,42 @@ export default function FreightDashboard() {
                   rfqs
                     .filter((r: any) => !q || r.rfqNumber?.toLowerCase().includes(q) || r.title?.toLowerCase().includes(q))
                     .map((rfq: any) => (
-                      <TableRow key={rfq.id} className="cursor-pointer hover:bg-muted/50" onClick={() => window.location.href = `/freight/rfqs/${rfq.id}`}>
-                        <TableCell className="font-mono text-primary">{rfq.rfqNumber}</TableCell>
-                        <TableCell className="font-medium">{rfq.title || "-"}</TableCell>
-                        <TableCell>{rfq.originPort || rfq.origin || "-"}</TableCell>
-                        <TableCell>{rfq.destinationPort || rfq.destination || "-"}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline">
-                            {rfq.mode === "ocean" ? <Ship className="h-3 w-3 mr-1 inline" /> :
-                             rfq.mode === "air" ? <Plane className="h-3 w-3 mr-1 inline" /> :
-                             <Truck className="h-3 w-3 mr-1 inline" />}
-                            {rfq.mode || "—"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell><Badge>{(rfq.status || "draft").replace(/_/g, " ")}</Badge></TableCell>
-                      </TableRow>
+                      <React.Fragment key={rfq.id}>
+                        <TableRow className="cursor-pointer hover:bg-muted/50" onClick={() => setExpandedId(expandedId === rfq.id ? null : rfq.id)}>
+                          <TableCell className="font-mono text-primary">{rfq.rfqNumber}</TableCell>
+                          <TableCell className="font-medium">{rfq.title || "-"}</TableCell>
+                          <TableCell>{rfq.originCity || rfq.originPort || "-"}</TableCell>
+                          <TableCell>{rfq.destinationCity || rfq.destinationPort || "-"}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline">
+                              {rfq.mode === "ocean" ? <Ship className="h-3 w-3 mr-1 inline" /> :
+                               rfq.mode === "air" ? <Plane className="h-3 w-3 mr-1 inline" /> :
+                               <Truck className="h-3 w-3 mr-1 inline" />}
+                              {rfq.mode || "—"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell><Badge>{(rfq.status || "draft").replace(/_/g, " ")}</Badge></TableCell>
+                        </TableRow>
+                        {expandedId === rfq.id && (
+                          <TableRow>
+                            <TableCell colSpan={6} className="bg-muted/20 p-4">
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                                <div><span className="text-xs text-muted-foreground block">Cargo</span>{rfq.cargoDescription || "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Weight</span>{rfq.totalWeight ? `${rfq.totalWeight} kg` : "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Volume</span>{rfq.totalVolume ? `${rfq.totalVolume} cbm` : "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Packages</span>{rfq.numberOfPackages || "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Cargo Type</span>{rfq.cargoType || "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Incoterms</span>{rfq.incoterms || "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Ready Date</span>{rfq.readyDate ? format(new Date(rfq.readyDate), "MMM d") : "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Target Date</span>{rfq.targetDeliveryDate ? format(new Date(rfq.targetDeliveryDate), "MMM d") : "-"}</div>
+                              </div>
+                              <div className="flex gap-2 mt-3">
+                                <Button size="sm" variant="outline" onClick={() => window.location.href = `/freight/rfqs/${rfq.id}`}>View Full Details</Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </React.Fragment>
                     ))
                 ) : (
                   <TableRow>
@@ -188,18 +210,39 @@ export default function FreightDashboard() {
                   bookings
                     .filter((b: any) => !q || b.bookingNumber?.toLowerCase().includes(q) || b.trackingNumber?.toLowerCase().includes(q))
                     .map((b: any) => (
-                      <TableRow key={b.id} className="cursor-pointer hover:bg-muted/50">
-                        <TableCell className="font-mono text-primary">{b.bookingNumber}</TableCell>
-                        <TableCell>{b.trackingNumber || "-"}</TableCell>
-                        <TableCell>{b.carrierName || "-"}</TableCell>
-                        <TableCell>{b.etd ? format(new Date(b.etd), "MMM d") : "-"}</TableCell>
-                        <TableCell>{b.eta ? format(new Date(b.eta), "MMM d") : "-"}</TableCell>
-                        <TableCell>
-                          <Badge variant={b.status === "in_transit" ? "default" : b.status === "delivered" ? "secondary" : "outline"}>
-                            {(b.status || "pending").replace(/_/g, " ")}
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
+                      <React.Fragment key={b.id}>
+                        <TableRow className="cursor-pointer hover:bg-muted/50" onClick={() => setExpandedId(expandedId === b.id ? null : b.id)}>
+                          <TableCell className="font-mono text-primary">{b.bookingNumber}</TableCell>
+                          <TableCell>{b.trackingNumber || "-"}</TableCell>
+                          <TableCell>{b.carrierName || "-"}</TableCell>
+                          <TableCell>{b.etd ? format(new Date(b.etd), "MMM d") : "-"}</TableCell>
+                          <TableCell>{b.eta ? format(new Date(b.eta), "MMM d") : "-"}</TableCell>
+                          <TableCell>
+                            <Badge variant={b.status === "in_transit" ? "default" : b.status === "delivered" ? "secondary" : "outline"}>
+                              {(b.status || "pending").replace(/_/g, " ")}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                        {expandedId === b.id && (
+                          <TableRow>
+                            <TableCell colSpan={6} className="bg-muted/20 p-4">
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                                <div><span className="text-xs text-muted-foreground block">Container</span>{b.containerNumber || "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Vessel</span>{b.vesselName || "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Voyage</span>{b.voyageNumber || "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Cost</span>{b.agreedCost ? formatCurrency(parseFloat(b.agreedCost)) : "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Pickup</span>{b.pickupDate ? format(new Date(b.pickupDate), "MMM d, yyyy") : "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Departure</span>{b.departureDate ? format(new Date(b.departureDate), "MMM d, yyyy") : "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Arrival</span>{b.arrivalDate ? format(new Date(b.arrivalDate), "MMM d, yyyy") : "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Delivery</span>{b.deliveryDate ? format(new Date(b.deliveryDate), "MMM d, yyyy") : "-"}</div>
+                              </div>
+                              <div className="flex gap-2 mt-3">
+                                <Button size="sm" variant="outline" onClick={() => window.location.href = "/freight/tracking"}>Track Live</Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </React.Fragment>
                     ))
                 ) : (
                   <TableRow>
@@ -227,19 +270,41 @@ export default function FreightDashboard() {
               <TableBody>
                 {clearances && clearances.length > 0 ? (
                   clearances
-                    .filter((c: any) => !q || c.referenceNumber?.toLowerCase().includes(q))
+                    .filter((c: any) => !q || c.referenceNumber?.toLowerCase().includes(q) || c.clearanceNumber?.toLowerCase().includes(q))
                     .map((c: any) => (
-                      <TableRow key={c.id} className="cursor-pointer hover:bg-muted/50" onClick={() => window.location.href = `/freight/customs/${c.id}`}>
-                        <TableCell className="font-mono text-primary">{c.referenceNumber || c.id}</TableCell>
-                        <TableCell>{c.clearanceType || "-"}</TableCell>
-                        <TableCell>{c.portOfEntry || "-"}</TableCell>
-                        <TableCell>{c.customsBroker || "-"}</TableCell>
-                        <TableCell>
-                          <Badge variant={c.status === "cleared" ? "secondary" : c.status === "pending_documents" ? "destructive" : "outline"}>
-                            {(c.status || "pending").replace(/_/g, " ")}
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
+                      <React.Fragment key={c.id}>
+                        <TableRow className="cursor-pointer hover:bg-muted/50" onClick={() => setExpandedId(expandedId === c.id ? null : c.id)}>
+                          <TableCell className="font-mono text-primary">{c.clearanceNumber || c.referenceNumber || c.id}</TableCell>
+                          <TableCell>{c.type || "-"}</TableCell>
+                          <TableCell>{c.portOfEntry || "-"}</TableCell>
+                          <TableCell>{c.customsBroker || "-"}</TableCell>
+                          <TableCell>
+                            <Badge variant={c.status === "cleared" ? "secondary" : c.status === "pending_documents" ? "destructive" : "outline"}>
+                              {(c.status || "pending").replace(/_/g, " ")}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                        {expandedId === c.id && (
+                          <TableRow>
+                            <TableCell colSpan={5} className="bg-muted/20 p-4">
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                                <div><span className="text-xs text-muted-foreground block">HS Code</span>{c.hsCode || "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Country of Origin</span>{c.countryOfOrigin || "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Duties</span>{c.dutyAmount ? formatCurrency(parseFloat(c.dutyAmount)) : "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Taxes</span>{c.taxAmount ? formatCurrency(parseFloat(c.taxAmount)) : "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Submitted</span>{c.submissionDate ? format(new Date(c.submissionDate), "MMM d, yyyy") : "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Cleared</span>{c.actualClearanceDate ? format(new Date(c.actualClearanceDate), "MMM d, yyyy") : "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Cert of Origin</span>{c.certificateOfOrigin ? "Yes" : "No"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Total</span>{c.totalAmount ? formatCurrency(parseFloat(c.totalAmount)) : "-"}</div>
+                              </div>
+                              {c.notes && <p className="text-sm text-muted-foreground mt-2">{c.notes.split("---ISF_DATA---")[0].trim()}</p>}
+                              <div className="flex gap-2 mt-3">
+                                <Button size="sm" variant="outline" onClick={() => window.location.href = `/freight/customs/${c.id}`}>Full Details</Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </React.Fragment>
                     ))
                 ) : (
                   <TableRow>
@@ -269,17 +334,35 @@ export default function FreightDashboard() {
                   carriers
                     .filter((c: any) => !q || c.name?.toLowerCase().includes(q))
                     .map((c: any) => (
-                      <TableRow key={c.id} className="hover:bg-muted/50">
-                        <TableCell className="font-medium">{c.name}</TableCell>
-                        <TableCell><Badge variant="outline">{c.carrierType || c.mode || "-"}</Badge></TableCell>
-                        <TableCell>{c.contactName || "-"}</TableCell>
-                        <TableCell>{c.email || "-"}</TableCell>
-                        <TableCell>
-                          <Badge variant={c.status === "active" ? "default" : "secondary"}>
-                            {c.status || "active"}
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
+                      <React.Fragment key={c.id}>
+                        <TableRow className="hover:bg-muted/50 cursor-pointer" onClick={() => setExpandedId(expandedId === c.id ? null : c.id)}>
+                          <TableCell className="font-medium">{c.name}</TableCell>
+                          <TableCell><Badge variant="outline">{c.carrierType || c.mode || "-"}</Badge></TableCell>
+                          <TableCell>{c.contactName || "-"}</TableCell>
+                          <TableCell>{c.email || "-"}</TableCell>
+                          <TableCell>
+                            <Badge variant={c.status === "active" ? "default" : "secondary"}>
+                              {c.status || "active"}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                        {expandedId === c.id && (
+                          <TableRow>
+                            <TableCell colSpan={5} className="bg-muted/20 p-4">
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                                <div><span className="text-xs text-muted-foreground block">Phone</span>{c.phone || "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Address</span>{c.address || "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Country</span>{c.country || "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">SCAC Code</span>{c.scacCode || "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Services</span>{c.services || "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Rating</span>{c.rating ? `${c.rating}/5` : "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Transit Time</span>{c.transitTimeDays ? `${c.transitTimeDays} days` : "-"}</div>
+                                <div><span className="text-xs text-muted-foreground block">Notes</span>{c.notes || "-"}</div>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </React.Fragment>
                     ))
                 ) : (
                   <TableRow>
