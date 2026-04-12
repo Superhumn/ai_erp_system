@@ -174,6 +174,14 @@ export default function EmailInbox() {
     },
   });
 
+  const scanNowMutation = (trpc.emailScanning as any).scanNow.useMutation({
+    onSuccess: (result: any) => {
+      toast.success(`Scanned inbox: ${result.emailsProcessed} emails, ${result.attachmentsParsed} attachments parsed`);
+      utils.emailScanning.list.invalidate();
+    },
+    onError: (error: any) => toast.error("Scan failed: " + error.message),
+  });
+
   const bulkCategorizeMutation = trpc.emailScanning.bulkCategorize.useMutation({
     onSuccess: (result) => {
       if (result.success) {
@@ -391,6 +399,16 @@ export default function EmailInbox() {
               )}
               Categorize
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5 text-xs"
+              onClick={() => scanNowMutation.mutate({ folders: ["INBOX"], unseenOnly: false, limit: 200 })}
+              disabled={scanNowMutation.isPending}
+            >
+              {scanNowMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Inbox className="h-3.5 w-3.5" />}
+              {scanNowMutation.isPending ? "Scanning..." : "Scan All"}
+            </Button>
             <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-green-500/10 text-green-500 text-xs">
               <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
               Auto-syncing
@@ -576,6 +594,43 @@ export default function EmailInbox() {
               <p className="text-sm">No emails found</p>
             </div>
           ) : (
+            <>
+            {/* Bulk action bar */}
+            {selectedEmails.size > 0 && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-primary/5 border-b">
+                <span className="text-xs font-medium">{selectedEmails.size} selected</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-6 text-xs gap-1"
+                  onClick={() => {
+                    selectedEmails.forEach((id) => archiveEmailMutation.mutate({ id }));
+                    setSelectedEmails(new Set());
+                  }}
+                >
+                  <Archive className="h-3 w-3" /> Archive
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-6 text-xs gap-1 text-destructive hover:text-destructive"
+                  onClick={() => {
+                    selectedEmails.forEach((id) => deleteEmailMutation.mutate({ id }));
+                    setSelectedEmails(new Set());
+                  }}
+                >
+                  <Trash2 className="h-3 w-3" /> Delete
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 text-xs"
+                  onClick={() => setSelectedEmails(new Set())}
+                >
+                  Clear
+                </Button>
+              </div>
+            )}
             <div className="divide-y divide-border/30">
               {filteredEmails.map((email: any) => {
                 const isUnread = email.parsingStatus === "pending";
@@ -657,11 +712,33 @@ export default function EmailInbox() {
                             </Badge>
                           </div>
 
-                          {/* Body */}
+                          {/* Body — strip HTML tags for clean display */}
                           <div className="p-3 bg-background rounded-md border text-sm whitespace-pre-wrap max-h-[70vh] overflow-y-auto leading-relaxed">
-                            {emailDetail && emailDetail.id === email.id
-                              ? (emailDetail.bodyText || "(No content)")
-                              : (email.bodyText || "(No content)")}
+                            {(() => {
+                              const raw = (emailDetail && emailDetail.id === email.id)
+                                ? (emailDetail.bodyText || "(No content)")
+                                : (email.bodyText || "(No content)");
+                              // Strip HTML if it contains tags
+                              if (raw.includes("<") && raw.includes(">")) {
+                                return raw
+                                  .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+                                  .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+                                  .replace(/<br\s*\/?>/gi, "\n")
+                                  .replace(/<\/p>/gi, "\n\n")
+                                  .replace(/<\/div>/gi, "\n")
+                                  .replace(/<\/tr>/gi, "\n")
+                                  .replace(/<\/li>/gi, "\n")
+                                  .replace(/<[^>]+>/g, "")
+                                  .replace(/&nbsp;/g, " ")
+                                  .replace(/&amp;/g, "&")
+                                  .replace(/&lt;/g, "<")
+                                  .replace(/&gt;/g, ">")
+                                  .replace(/&quot;/g, '"')
+                                  .replace(/\n{3,}/g, "\n\n")
+                                  .trim();
+                              }
+                              return raw;
+                            })()}
                           </div>
 
                           {/* Parsed documents (if any from detail) */}
@@ -747,6 +824,7 @@ export default function EmailInbox() {
                 );
               })}
             </div>
+            </>
           )}
         </div>
 

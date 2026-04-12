@@ -10397,6 +10397,91 @@ Ask if they received the original request and if they can provide a quote.`;
   // EMAIL SCANNING & DOCUMENT PARSING
   // ============================================
   emailScanning: router({
+    // Manual scan — scan specific folders, date range, all emails (not just unseen)
+    scanNow: protectedProcedure
+      .input(z.object({
+        folders: z.array(z.string()).optional(), // e.g. ["INBOX", "[Gmail]/All Mail", "Archive"]
+        since: z.string().optional(), // ISO date string
+        unseenOnly: z.boolean().optional(),
+        limit: z.number().optional(),
+      }).optional())
+      .mutation(async ({ input }) => {
+        const { scanAndCategorizeInbox, getImapConfig } = await import("./_core/emailInboxScanner");
+        const { parseUploadedDocument } = await import("./documentImportService");
+        const config = getImapConfig();
+        if (!config) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "IMAP not configured. Set IMAP_HOST, IMAP_USER, IMAP_PASSWORD in env." });
+
+        const folders = input?.folders || ["INBOX", "[Gmail]/All Mail"];
+        const since = input?.since ? new Date(input.since) : undefined;
+        const limit = input?.limit || 100;
+        const unseenOnly = input?.unseenOnly ?? false; // Default: scan ALL emails, not just unseen
+
+        let totalProcessed = 0;
+        let totalAttachmentsParsed = 0;
+        const errors: string[] = [];
+
+        for (const folder of folders) {
+          try {
+            const { scanResult, parsedResults } = await scanAndCategorizeInbox(config, {
+              folder,
+              unseenOnly,
+              limit,
+              since,
+              fullAiParsing: true,
+              markAsSeen: true,
+            });
+
+            for (const { email } of parsedResults) {
+              try {
+                await db.createInboundEmail?.({
+                  fromEmail: email.from.address,
+                  fromName: email.from.name || "",
+                  toEmail: email.to.join(", ") || "inbox",
+                  subject: email.subject,
+                  bodyText: email.bodyText?.substring(0, 10000) || "",
+                  receivedAt: email.date,
+                  status: "parsed",
+                  category: email.categorization?.category || "other",
+                } as any);
+
+                // Parse attachments
+                if ((email as any).attachmentContents?.length > 0) {
+                  for (const att of (email as any).attachmentContents) {
+                    try {
+                      const base64 = att.data.toString("base64");
+                      const dataUrl = `data:${att.contentType};base64,${base64}`;
+                      const parsed = await parseUploadedDocument(dataUrl, att.filename, undefined, att.contentType);
+                      if (parsed.success) {
+                        await db.createDocument?.({
+                          name: att.filename,
+                          type: parsed.documentType === "customs_document" ? "customs" : parsed.documentType === "vendor_invoice" ? "invoice" : "other",
+                          referenceType: "email",
+                          fileData: base64,
+                          mimeType: att.contentType,
+                          description: `Auto-parsed from email: ${email.subject}`,
+                        } as any);
+                        totalAttachmentsParsed++;
+                      }
+                    } catch { /* skip */ }
+                  }
+                }
+                totalProcessed++;
+              } catch { /* skip */ }
+            }
+          } catch (e: any) {
+            errors.push(`${folder}: ${e.message}`);
+          }
+        }
+
+        return {
+          success: true,
+          foldersScanned: folders,
+          emailsProcessed: totalProcessed,
+          attachmentsParsed: totalAttachmentsParsed,
+          errors,
+        };
+      }),
+
     // List inbound emails with category filtering
     list: protectedProcedure
       .input(z.object({
