@@ -167,7 +167,9 @@ Return JSON with this structure:
       return getDefaultCategorization();
     }
 
-    const content = typeof messageContent === 'string' ? messageContent : JSON.stringify(messageContent);
+    let content = typeof messageContent === 'string' ? messageContent : JSON.stringify(messageContent);
+    // Strip markdown code fences if present
+    content = content.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
     const parsed = JSON.parse(content);
     
     return {
@@ -566,7 +568,9 @@ Only include fields that have actual values - omit null/empty fields.`;
       return { success: false, documents: [], categorization, error: "No response from AI" };
     }
 
-    const content = typeof messageContent === 'string' ? messageContent : JSON.stringify(messageContent);
+    let content = typeof messageContent === 'string' ? messageContent : JSON.stringify(messageContent);
+    // Strip markdown code fences if present
+    content = content.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
     const parsed = JSON.parse(content);
     return {
       success: true,
@@ -691,7 +695,9 @@ Return a JSON object with this exact structure:
       return { success: false, documents: [], error: "No response from AI" };
     }
 
-    const content = typeof messageContent === 'string' ? messageContent : JSON.stringify(messageContent);
+    let content = typeof messageContent === 'string' ? messageContent : JSON.stringify(messageContent);
+    // Strip markdown code fences if present
+    content = content.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
     const parsed = JSON.parse(content);
     return {
       success: true,

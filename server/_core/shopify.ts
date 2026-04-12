@@ -215,20 +215,19 @@ export async function ensureValidToken(storeId: number): Promise<string> {
   const store = await getShopifyStoreById(storeId);
   if (!store) throw new Error(`Shopify store ${storeId} not found`);
 
-  const now = Date.now();
-  const bufferMs = 10 * 60 * 1000; // 10 minute buffer
+  if (!store.accessToken) throw new Error(`No access token for store ${store.storeDomain}`);
 
-  if (
-    store.accessToken &&
-    store.tokenExpiresAt &&
-    new Date(store.tokenExpiresAt).getTime() > now + bufferMs
-  ) {
-    return store.accessToken;
+  // Decrypt the stored token
+  try {
+    const { decrypt } = await import("./crypto");
+    const decrypted = decrypt(store.accessToken);
+    if (decrypted && decrypted.length > 10) return decrypted;
+  } catch {
+    // Token might not be encrypted (legacy), try using it raw
   }
 
-  // Token expired or about to expire — refresh
-  console.log(`[Shopify Token] Token for ${store.storeDomain} expired or expiring soon, refreshing...`);
-  return refreshShopifyToken(storeId);
+  // Fallback: return raw token (might work if stored unencrypted)
+  return store.accessToken;
 }
 
 // ============================================
