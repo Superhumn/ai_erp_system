@@ -104,7 +104,7 @@ function getMenuGroups(role: string = "user") {
   {
     label: "_ops",
     items: [
-      { icon: Warehouse, label: "Inventory & Work Orders", path: "/operations/inventory-hub" },
+      { icon: Warehouse, label: "Inventory", path: "/operations/inventory-hub" },
       { icon: Users, label: "Vendors & Locations", path: "/operations/vendors" },
     ],
   },
