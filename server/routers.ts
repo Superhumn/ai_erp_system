@@ -12984,8 +12984,8 @@ Ask if they received the original request and if they can provide a quote.`;
           try {
             // Get Google OAuth token for the user configured for sync (or current user as fallback)
             const syncUserId = config.syncUserId || ctx.user.id;
-            const token = await db.getGoogleOAuthTokenByUserId(syncUserId);
-            if (!token) {
+            const { accessToken: syncAccessToken, error: syncTokenErr } = await getValidGoogleToken(syncUserId);
+            if (syncTokenErr || !syncAccessToken) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected. Please connect your Google account first.' });
             }
 
@@ -12995,8 +12995,7 @@ Ask if they received the original request and if they can provide a quote.`;
             const result = await syncGoogleDriveFolder({
               dataRoomId: input.dataRoomId,
               folderId: config.googleDriveFolderId,
-              accessToken: token.accessToken,
-              refreshToken: token.refreshToken || undefined,
+              accessToken: syncAccessToken,
               syncSubfolders: config.syncSubfolders,
               includeFileTypes: config.includeFileTypes ? JSON.parse(config.includeFileTypes) : undefined,
               excludeFileTypes: config.excludeFileTypes ? JSON.parse(config.excludeFileTypes) : undefined,
@@ -13045,13 +13044,13 @@ Ask if they received the original request and if they can provide a quote.`;
       listDriveFolders: protectedProcedure
         .input(z.object({ parentId: z.string().optional() }))
         .query(async ({ input, ctx }) => {
-          const token = await db.getGoogleOAuthTokenByUserId(ctx.user.id);
-          if (!token) {
+          const { accessToken: listAccessToken, error: listTokenErr } = await getValidGoogleToken(ctx.user.id);
+          if (listTokenErr || !listAccessToken) {
             throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected' });
           }
 
           const { listGoogleDriveFolders } = await import('./googleDriveSyncService');
-          return listGoogleDriveFolders(token.accessToken, input.parentId);
+          return listGoogleDriveFolders(listAccessToken, input.parentId);
         }),
     }),
 
@@ -14468,8 +14467,8 @@ Ask if they received the original request and if they can provide a quote.`;
           try {
             // Get Google OAuth token for the user configured for sync (or current user as fallback)
             const syncUserId = config.syncUserId || ctx.user.id;
-            const token = await db.getGoogleOAuthToken(syncUserId);
-            if (!token) {
+            const { accessToken: syncAccessToken, error: syncTokenErr } = await getValidGoogleToken(syncUserId);
+            if (syncTokenErr || !syncAccessToken) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected. Please connect your Google account first.' });
             }
 
@@ -14479,8 +14478,7 @@ Ask if they received the original request and if they can provide a quote.`;
             const result = await syncGoogleDriveFolder({
               dataRoomId: input.dataRoomId,
               folderId: config.googleDriveFolderId,
-              accessToken: token.accessToken,
-              refreshToken: token.refreshToken || undefined,
+              accessToken: syncAccessToken,
               syncSubfolders: config.syncSubfolders,
               includeFileTypes: config.includeFileTypes ? JSON.parse(config.includeFileTypes) : undefined,
               excludeFileTypes: config.excludeFileTypes ? JSON.parse(config.excludeFileTypes) : undefined,
@@ -14529,13 +14527,13 @@ Ask if they received the original request and if they can provide a quote.`;
       listDriveFolders: protectedProcedure
         .input(z.object({ parentId: z.string().optional() }))
         .query(async ({ input, ctx }) => {
-          const token = await db.getGoogleOAuthToken(ctx.user.id);
-          if (!token) {
+          const { accessToken: listAccessToken, error: listTokenErr } = await getValidGoogleToken(ctx.user.id);
+          if (listTokenErr || !listAccessToken) {
             throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected' });
           }
 
           const { listGoogleDriveFolders } = await import('./googleDriveSyncService');
-          return listGoogleDriveFolders(token.accessToken, input.parentId);
+          return listGoogleDriveFolders(listAccessToken, input.parentId);
         }),
     }),
 
