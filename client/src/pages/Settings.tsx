@@ -5,10 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Settings as SettingsIcon, User, Shield, Bell, Database, Link, ExternalLink } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useLocation } from "wouter";
+import { trpc } from "@/lib/trpc";
 
 export default function Settings() {
   const { user } = useAuth();
   const [, navigate] = useLocation();
+  const { data: integrationStatus } = trpc.integrations.getStatus.useQuery();
 
   const roleColors: Record<string, string> = {
     admin: "bg-red-500/10 text-red-500",
@@ -164,11 +166,17 @@ export default function Settings() {
             <div className="space-y-3">
               <div className="flex items-center justify-between text-sm">
                 <span>QuickBooks Online</span>
-                <Badge variant="secondary">Not Connected</Badge>
+                <Badge variant={integrationStatus?.quickbooks?.status === 'connected' ? 'default' : 'secondary'}>
+                  {integrationStatus?.quickbooks?.status === 'connected' ? 'Connected' : 'Not Connected'}
+                </Badge>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span>Shopify</span>
-                <Badge variant="secondary">Not Connected</Badge>
+                <Badge variant={integrationStatus?.shopify?.status === 'connected' ? 'default' : 'secondary'}>
+                  {integrationStatus?.shopify?.status === 'connected'
+                    ? `Connected (${integrationStatus.shopify.storeCount} store${integrationStatus.shopify.storeCount === 1 ? '' : 's'})`
+                    : 'Not Connected'}
+                </Badge>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span>Airtable</span>

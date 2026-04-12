@@ -271,7 +271,7 @@ export default function Orders() {
                         <span className="hover:underline">{order.orderNumber}</span>
                       </Link>
                     </TableCell>
-                    <TableCell className="font-medium">Customer #{order.customerId || "-"}</TableCell>
+                    <TableCell className="font-medium">{customers?.find((c) => c.id === order.customerId)?.name || (order.customerId ? `Customer #${order.customerId}` : "-")}</TableCell>
                     <TableCell>
                       {order.orderDate
                         ? format(new Date(order.orderDate), "MMM d, yyyy")
