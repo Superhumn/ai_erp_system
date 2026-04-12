@@ -17694,7 +17694,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
                       firstName: (participant.name || participant.email.split("@")[0]).split(" ")[0] || "",
                       fullName: participant.name || participant.email.split("@")[0],
                       email: participant.email,
-                      source: "meeting" as any,
+                      source: "fireflies" as any,
                     });
                     contact = await db.getCrmContactById(contactId);
                     contactsCreated++;
