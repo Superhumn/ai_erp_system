@@ -318,16 +318,11 @@ export default function CRMHub() {
   }, [enrichedDeals, search]);
 
   return (
-    <div className="space-y-4 animate-fade-in">
+    <div className="space-y-2 animate-fade-in">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em]">
-            CRM Hub
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Deal pipeline with contact details
-          </p>
+          <h1 className="text-xl font-bold tracking-[-0.02em]">CRM Hub</h1>
         </div>
         <div className="flex gap-2">
           <Button
@@ -650,48 +645,25 @@ export default function CRMHub() {
         const totalDeals = (dealStats?.open || 0) + (dealStats?.won || 0) + (dealStats?.lost || 0);
         const conversionRate = totalDeals > 0 ? Math.round(((dealStats?.won || 0) / totalDeals) * 100) : 0;
         return (
-          <div className="flex items-center gap-5 flex-wrap text-sm border rounded-xl px-4 py-3 bg-card">
-            <div>
-              <span className="text-xs text-muted-foreground">Pipeline</span>
-              <div className="font-bold text-base">${openVal.toLocaleString()}</div>
-            </div>
-            <div className="h-8 w-px bg-border" />
-            <div>
-              <span className="text-xs text-muted-foreground">Won Revenue</span>
-              <div className="font-bold text-base text-green-600">${wonVal.toLocaleString()}</div>
-            </div>
-            <div className="h-8 w-px bg-border" />
-            <div>
-              <span className="text-xs text-muted-foreground">Open Deals</span>
-              <div className="font-bold text-base">{dealStats?.open || 0}</div>
-            </div>
-            <div className="h-8 w-px bg-border" />
-            <div>
-              <span className="text-xs text-muted-foreground">Win Rate</span>
-              <div className="font-bold text-base">{conversionRate}%</div>
-            </div>
-            <div className="h-8 w-px bg-border" />
-            <div>
-              <span className="text-xs text-muted-foreground">Contacts</span>
-              <div className="font-bold text-base">{contactStats?.total || 0}</div>
-            </div>
-            <div className="h-8 w-px bg-border" />
-            <div>
-              <span className="text-xs text-muted-foreground">Customers</span>
-              <div className="font-bold text-base">{contactStats?.customers || 0}</div>
-            </div>
+          <div className="flex items-center gap-4 text-xs border rounded-xl px-3 py-2 bg-card">
+            <div><span className="text-muted-foreground">Pipeline</span> <span className="font-bold">${openVal.toLocaleString()}</span></div>
+            <div className="h-5 w-px bg-border" />
+            <div><span className="text-muted-foreground">Won</span> <span className="font-bold text-green-600">${wonVal.toLocaleString()}</span></div>
+            <div className="h-5 w-px bg-border" />
+            <div><span className="text-muted-foreground">Open</span> <span className="font-bold">{dealStats?.open || 0}</span></div>
+            <div className="h-5 w-px bg-border" />
+            <div><span className="text-muted-foreground">Win Rate</span> <span className="font-bold">{conversionRate}%</span></div>
+            <div className="h-5 w-px bg-border" />
+            <div><span className="text-muted-foreground">Contacts</span> <span className="font-bold">{contactStats?.total || 0}</span></div>
           </div>
         );
       })()}
 
-      {/* Deals Table — shown first */}
-      <Card>
-        <CardHeader>
+      {/* Deals Table */}
+      <Card className="py-3">
+        <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Deals</CardTitle>
-              <CardDescription>All open deals with contact details</CardDescription>
-            </div>
+            <CardTitle className="text-sm">Deals</CardTitle>
             <div className="flex items-center gap-2">
               <div className="relative">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -738,8 +710,8 @@ export default function CRMHub() {
                 <TableBody>
                   {filteredDeals.map((deal: any) => (
                     <React.Fragment key={deal.id}>
-                    <TableRow className="hover:bg-muted/50 cursor-pointer" onClick={() => setExpandedDealId(expandedDealId === deal.id ? null : deal.id)}>
-                      <TableCell className="font-medium">
+                    <TableRow className="hover:bg-muted/50 cursor-pointer text-xs h-9" onClick={() => setExpandedDealId(expandedDealId === deal.id ? null : deal.id)}>
+                      <TableCell className="font-medium py-1.5">
                         <div className="flex items-center gap-1">
                           {expandedDealId === deal.id ? <ChevronUp className="h-3 w-3 text-muted-foreground" /> : <ChevronDown className="h-3 w-3 text-muted-foreground" />}
                           {deal.name}
@@ -831,15 +803,12 @@ export default function CRMHub() {
       </Card>
 
       {/* Contacts Table */}
-      <Card>
-        <CardHeader>
+      <Card className="py-3">
+        <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <Users className="h-5 w-5" />
-                Contacts
-              </CardTitle>
-              <CardDescription>{contacts?.length || 0} contacts in your CRM</CardDescription>
+            <CardTitle className="text-sm flex items-center gap-2">
+              Contacts <span className="text-muted-foreground font-normal">({contacts?.length || 0})</span>
+            </CardTitle>
             </div>
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
