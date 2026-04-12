@@ -1063,8 +1063,10 @@ export default function PeopleAndEquity() {
                     )}
                   </div>
 
-                  {/* Assigned Tasks */}
-                  <EmployeeTasksSection email={selectedPerson.email} name={selectedPerson.name} />
+                  {/* Assigned Tasks — only for team members, not investors/advisors */}
+                  {!["investor", "advisor", "board_member"].includes(selectedPerson.type) && (
+                    <EmployeeTasksSection email={selectedPerson.email} name={selectedPerson.name} />
+                  )}
 
                   {/* Documents */}
                   <div>

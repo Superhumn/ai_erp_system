@@ -62,10 +62,57 @@ const oauthCallbackLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+async function cleanupPlaceholders() {
+  try {
+    const db = await import("../db");
+    const database = await db.getDb();
+    if (!database) return;
+    const schema = await import("../../drizzle/schema");
+    const { eq } = await import("drizzle-orm");
+
+    // Delete placeholder stakeholders (Investor 1, 2, 3, etc.)
+    const stakeholders = await database.select().from(schema.stakeholders);
+    const placeholderSH = stakeholders.filter((s: any) => /^(Investor|Stakeholder|Placeholder)\s*\d+$/i.test(s.name || ""));
+    for (const p of placeholderSH) {
+      await database.delete(schema.stakeholders).where(eq(schema.stakeholders.id, p.id));
+    }
+    if (placeholderSH.length > 0) console.log(`[Cleanup] Deleted ${placeholderSH.length} placeholder stakeholders`);
+
+    // Delete placeholder contacts (Contact 1, 2, 3, etc.)
+    const contacts = await database.select().from(schema.crmContacts);
+    const placeholderContacts = contacts.filter((c: any) => {
+      const name = (c.fullName || c.firstName || "").trim();
+      return /^(Contact|Test|Placeholder|Sample)\s*\d*$/i.test(name);
+    });
+    for (const p of placeholderContacts) {
+      await database.delete(schema.crmContacts).where(eq(schema.crmContacts.id, p.id));
+    }
+    if (placeholderContacts.length > 0) console.log(`[Cleanup] Deleted ${placeholderContacts.length} placeholder contacts`);
+
+    // Delete data room ID 1
+    try {
+      await database.delete(schema.dataRoomChecklistItems).where(eq(schema.dataRoomChecklistItems.dataRoomId, 1));
+      await database.delete(schema.dataRoomChecklists).where(eq(schema.dataRoomChecklists.dataRoomId, 1));
+      await database.delete(schema.dataRoomDocuments).where(eq(schema.dataRoomDocuments.dataRoomId, 1));
+      await database.delete(schema.dataRoomFolders).where(eq(schema.dataRoomFolders.dataRoomId, 1));
+      await database.delete(schema.dataRoomLinks).where(eq(schema.dataRoomLinks.dataRoomId, 1));
+      await database.delete(schema.dataRooms).where(eq(schema.dataRooms.id, 1));
+      console.log("[Cleanup] Deleted data room ID 1");
+    } catch (e) {
+      // Data room tables may not exist yet
+    }
+  } catch (e) {
+    console.warn("[Cleanup] Skipped:", e instanceof Error ? e.message : e);
+  }
+}
+
 async function startServer() {
   await initErrorTracking();
 
   validateCriticalConfig();
+
+  // Run one-time cleanup on startup
+  cleanupPlaceholders();
 
   const emailConfigValidation = validateEmailConfig();
   if (!emailConfigValidation.valid) {
