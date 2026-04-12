@@ -207,8 +207,8 @@ export async function upsertGoogleOAuthToken(data: InsertGoogleOAuthToken) {
         accessToken: data.accessToken,
         refreshToken: data.refreshToken ?? existing.refreshToken,
         expiresAt: data.expiresAt,
-        scope: data.scope,
-        googleEmail: data.googleEmail,
+        scope: data.scope || existing.scope,
+        googleEmail: data.googleEmail || existing.googleEmail,
       })
       .where(eq(googleOAuthTokens.userId, data.userId));
     return { id: existing.id };

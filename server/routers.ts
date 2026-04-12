@@ -2519,8 +2519,45 @@ ONLY return the JSON array, no other text.`;
           mimeType,
           uploadedBy: ctx.user.id,
         });
-        
+
         await createAuditLog(ctx.user.id, 'create', 'document', result.id, input.name);
+
+        // If this is a 409A valuation report, parse it for FMV value
+        if (input.referenceType === "valuation" && (mimeType.includes("pdf") || mimeType.includes("image"))) {
+          try {
+            const parsed = await parseUploadedDocument(url, input.name, undefined, mimeType);
+            if (parsed.success && (parsed as any).customsDocument) {
+              // Not a customs doc — try extracting FMV from the raw parse
+            }
+            // Use LLM to extract FMV specifically
+            const { invokeLLM } = await import("./_core/llm");
+            const fmvResponse = await invokeLLM({
+              messages: [
+                { role: "system", content: "Extract the 409A fair market value per share from this valuation document. Return JSON: {\"fmvPerShare\": number, \"totalValuation\": number, \"valuationDate\": \"YYYY-MM-DD\", \"provider\": \"string\"}. If you cannot find the data, return {\"fmvPerShare\": null}." },
+                { role: "user", content: [
+                  { type: "text", text: `Document: ${input.name}` },
+                  ...(mimeType.includes("image") || mimeType.includes("pdf") ? [{ type: "image_url" as const, image_url: { url } }] : [{ type: "text" as const, text: `Base64 content available but not an image — file is ${mimeType}` }]),
+                ] },
+              ],
+            });
+            const fmvText = typeof fmvResponse.choices?.[0]?.message?.content === "string" ? fmvResponse.choices[0].message.content : "";
+            try {
+              const fmvData = JSON.parse(fmvText.replace(/```json\n?|\n?```/g, "").trim());
+              if (fmvData.fmvPerShare && input.referenceId) {
+                // Update the valuation record with parsed FMV
+                await db.updateValuation409a(input.referenceId, {
+                  fairMarketValue: String(fmvData.fmvPerShare),
+                  ...(fmvData.totalValuation ? { totalValuation: String(fmvData.totalValuation) } : {}),
+                  ...(fmvData.provider ? { provider: fmvData.provider } : {}),
+                });
+                console.log(`[409A] Parsed FMV from ${input.name}: $${fmvData.fmvPerShare}/share`);
+              }
+            } catch { /* FMV parse failed, that's ok */ }
+          } catch (e) {
+            console.warn("[409A] Failed to parse valuation document:", e);
+          }
+        }
+
         return result;
       }),
     delete: protectedProcedure
