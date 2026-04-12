@@ -67,7 +67,7 @@
   --chart-3: oklch(0.55 0.18 280);
   --chart-4: oklch(0.60 0.14 200);
   --chart-5: oklch(0.50 0.12 300);
-  --radius: 0.625rem;
+  --radius: 1rem;
   /* Light mode: Clean whites with warm undertones */
   --background: oklch(0.988 0.001 264);
   --foreground: oklch(0.145 0.015 264);
@@ -165,11 +165,11 @@
   input[type="radio"]:not(:disabled) {
     @apply cursor-pointer;
   }
-  /* Lightfield typography scale */
-  h1 { @apply text-[1.75rem] font-semibold tracking-[-0.025em] leading-tight; }
+  /* Typography scale — larger, bolder for dashboard aesthetic */
+  h1 { @apply text-2xl font-bold tracking-[-0.025em] leading-tight; }
   h2 { @apply text-xl font-semibold tracking-[-0.02em] leading-tight; }
-  h3 { @apply text-base font-semibold tracking-[-0.01em] leading-snug; }
-  h4 { @apply text-sm font-medium tracking-[-0.006em] leading-snug; }
+  h3 { @apply text-lg font-semibold tracking-[-0.01em] leading-snug; }
+  h4 { @apply text-base font-medium tracking-[-0.006em] leading-snug; }
 }
 
 @layer components {
@@ -233,11 +233,11 @@
 }
 
 .data-table th {
-  @apply text-left font-medium text-muted-foreground px-4 py-3 border-b text-xs tracking-wide;
+  @apply text-left font-medium text-muted-foreground px-5 py-3.5 border-b text-xs tracking-wide;
 }
 
 .data-table td {
-  @apply px-4 py-3.5 border-b border-border/50;
+  @apply px-5 py-4 border-b border-border/40;
 }
 
 .data-table tr {
@@ -273,15 +273,15 @@
    Clean metrics, strong value hierarchy
    ============================================ */
 .kpi-card {
-  @apply p-5 rounded-xl border bg-card;
+  @apply p-6 rounded-2xl border border-border/60 bg-card shadow-sm;
 }
 
 .kpi-card-title {
-  @apply text-[11px] font-medium text-muted-foreground uppercase tracking-wider;
+  @apply text-xs font-medium text-muted-foreground uppercase tracking-wider;
 }
 
 .kpi-card-value {
-  @apply text-2xl font-semibold mt-2 tracking-[-0.02em];
+  @apply text-3xl font-bold mt-2 tracking-[-0.02em];
 }
 
 .kpi-card-change {
@@ -305,16 +305,16 @@
 }
 
 .module-title {
-  @apply text-[1.75rem] font-semibold tracking-[-0.025em];
+  @apply text-2xl font-bold tracking-[-0.025em];
 }
 
 .module-description {
-  @apply text-muted-foreground mt-1 text-sm;
+  @apply text-muted-foreground mt-1;
 }
 
 /* Form sections */
 .form-section {
-  @apply space-y-5 p-6 rounded-xl border bg-card;
+  @apply space-y-5 p-6 rounded-2xl border border-border/60 bg-card shadow-sm;
 }
 
 .form-section-title {
@@ -531,7 +531,7 @@
 }
 
 .lf-page-title {
-  @apply text-[1.75rem] font-semibold tracking-[-0.025em] leading-none;
+  @apply text-2xl font-bold tracking-[-0.025em] leading-none;
 }
 
 .lf-page-subtitle {
@@ -550,7 +550,7 @@
 
 /* List item pattern */
 .lf-list-item {
-  @apply flex items-center justify-between py-3 px-4 rounded-lg hover:bg-accent/50 transition-colors duration-100 cursor-pointer;
+  @apply flex items-center justify-between py-3.5 px-5 rounded-xl hover:bg-accent/50 transition-colors duration-100 cursor-pointer;
 }
 
 /* Inline stat */
@@ -559,7 +559,7 @@
 }
 
 .lf-stat-value {
-  @apply text-2xl font-semibold tracking-[-0.02em] tabular-nums;
+  @apply text-3xl font-bold tracking-[-0.02em] tabular-nums;
 }
 
 .lf-stat-label {
