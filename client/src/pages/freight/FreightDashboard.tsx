@@ -44,12 +44,20 @@ export default function FreightDashboard() {
           <h1 className="text-[1.875rem] font-bold tracking-[-0.03em]">Freight & Logistics</h1>
           <p className="text-muted-foreground text-sm">Shipments, quotes, carriers, and customs</p>
         </div>
-        <Link href="/freight/rfqs/new">
-          <Button>
-            <Plus className="h-4 w-4 mr-2" />
-            New Quote Request
-          </Button>
-        </Link>
+        <div className="flex gap-2">
+          <Link href="/freight/tracking">
+            <Button variant="outline">
+              <Package className="h-4 w-4 mr-2" />
+              Track Shipments
+            </Button>
+          </Link>
+          <Link href="/freight/rfqs/new">
+            <Button>
+              <Plus className="h-4 w-4 mr-2" />
+              New Quote Request
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* Compact KPI bar */}
