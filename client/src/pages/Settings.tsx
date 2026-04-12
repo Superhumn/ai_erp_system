@@ -159,7 +159,7 @@ export default function Settings() {
             {[
               { name: "QuickBooks", connected: integrationStatus?.quickbooks?.status === "connected" },
               { name: "Shopify", connected: integrationStatus?.shopify?.status === "connected" },
-              { name: "Fireflies", connected: !!process.env.FIREFLIES_API_KEY },
+              { name: "Fireflies", connected: (integrationStatus as any)?.fireflies?.status === "connected" },
             ].map((i) => (
               <div key={i.name} className="flex items-center justify-between text-sm">
                 <span>{i.name}</span>
