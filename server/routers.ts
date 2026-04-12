@@ -12063,13 +12063,20 @@ Ask if they received the original request and if they can provide a quote.`;
             ? parseInt(driveFile.size)
             : undefined;
 
-          // Try to download small files (<2MB) inline, skip large ones
+          // Try to upload small files to storage; if storage not configured, keep Google Drive link
           if (fileSize && fileSize < 2 * 1024 * 1024) {
             try {
               const downloaded = await downloadDriveFile(accessToken, driveFile.id, driveFile.mimeType);
               if ('buffer' in downloaded && downloaded.buffer.length < 5 * 1024 * 1024) {
-                storageUrl = `data:${downloaded.exportedMimeType};base64,${downloaded.buffer.toString('base64')}`;
-                storageType = 's3';
+                try {
+                  const fileKey = `dataroom/${input.dataRoomId}/${Date.now()}-${driveFile.name}`;
+                  const result = await storagePut(fileKey, downloaded.buffer, downloaded.exportedMimeType);
+                  storageUrl = result.url;
+                  storageKey = result.key;
+                  storageType = 's3';
+                } catch {
+                  // Storage not configured — keep Google Drive link (don't store base64)
+                }
               }
             } catch { /* download failed, keep Google link */ }
           }
@@ -12276,12 +12283,8 @@ Ask if they received the original request and if they can provide a quote.`;
                 storageKey = result.key;
                 storageType = 's3';
               } catch {
-                // Storage not configured — store as base64 data URL for small files (<5MB)
-                if (downloaded.buffer.length < 5 * 1024 * 1024) {
-                  storageUrl = `data:${downloaded.exportedMimeType};base64,${downloaded.buffer.toString('base64')}`;
-                  storageType = 's3'; // treat as locally-stored, not a Drive link
-                }
-                // For larger files without storage, keep Google link as fallback
+                // Storage not configured — keep Google Drive link instead of base64
+                storageUrl = driveFile.webViewLink || undefined;
               }
             } else {
               console.warn(`[GoogleDrive Sync] Failed to download ${driveFile.name}: ${downloaded.error}`);

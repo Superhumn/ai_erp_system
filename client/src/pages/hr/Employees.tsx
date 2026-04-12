@@ -113,12 +113,15 @@ const statusColors: Record<string, string> = {
 interface UnifiedRow {
   key: string;
   stakeholderId: number | null;
+  employeeId: number | null;
+  userId: number | null;
   name: string;
   email: string;
   type: string;
   title: string;
   department: string;
   salary: string;
+  hireDate: string | null;
   totalShares: number;
   totalGrantValue: number;
   ownershipPct: number | null;
@@ -381,12 +384,15 @@ export default function PeopleAndEquity() {
       result.push({
         key: `sh-${sh.id}`,
         stakeholderId: sh.id,
+        employeeId: matchingEmp?.id ?? null,
+        userId: matchingEmp?.userId ?? sh.userId ?? null,
         name: personName,
         email,
         type: sh.type || (matchingEmp ? matchingEmp.employmentType : "-"),
         title: sh.title || matchingEmp?.jobTitle || "-",
         department: matchingEmp ? (matchingEmp.departmentId ? `Dept #${matchingEmp.departmentId}` : "-") : "-",
         salary: matchingEmp?.salary ? fmt$(matchingEmp.salary) : "-",
+        hireDate: matchingEmp?.hireDate ? String(matchingEmp.hireDate) : null,
         totalShares,
         totalGrantValue: totalValue,
         ownershipPct: totalOutstandingShares > 0 && totalShares > 0 ? (totalShares / totalOutstandingShares) * 100 : null,
@@ -400,12 +406,15 @@ export default function PeopleAndEquity() {
       result.push({
         key: `emp-${e.id}`,
         stakeholderId: null,
+        employeeId: e.id,
+        userId: (e as any).userId ?? null,
         name: `${e.firstName} ${e.lastName}`,
         email: e.email || "-",
         type: e.employmentType || "employee",
         title: e.jobTitle || "-",
         department: e.departmentId ? `Dept #${e.departmentId}` : "-",
         salary: e.salary ? fmt$(e.salary) : "-",
+        hireDate: e.hireDate ? String(e.hireDate) : null,
         totalShares: 0,
         totalGrantValue: 0,
         ownershipPct: null,
@@ -846,6 +855,38 @@ export default function PeopleAndEquity() {
         </div>
       </div>
 
+      {/* Payroll Summary */}
+      {employees && employees.length > 0 && (() => {
+        const active = employees.filter((e) => e.status === "active");
+        const annualPayroll = active.reduce((sum, e) => {
+          const sal = parseFloat(String(e.salary || "0"));
+          if (!sal) return sum;
+          const freq = (e as any).salaryFrequency || "annual";
+          if (freq === "hourly") return sum + sal * 2080;
+          if (freq === "monthly") return sum + sal * 12;
+          if (freq === "biweekly") return sum + sal * 26;
+          if (freq === "weekly") return sum + sal * 52;
+          return sum + sal;
+        }, 0);
+        const avgSalary = active.length > 0 ? annualPayroll / active.length : 0;
+        return (
+          <div className="grid grid-cols-3 gap-4">
+            <Card><CardContent className="pt-4 pb-4">
+              <div className="text-sm text-muted-foreground">Active Employees</div>
+              <div className="text-2xl font-semibold">{active.length}</div>
+            </CardContent></Card>
+            <Card><CardContent className="pt-4 pb-4">
+              <div className="text-sm text-muted-foreground">Annual Payroll</div>
+              <div className="text-2xl font-semibold">{fmt$(annualPayroll)}</div>
+            </CardContent></Card>
+            <Card><CardContent className="pt-4 pb-4">
+              <div className="text-sm text-muted-foreground">Avg Salary</div>
+              <div className="text-2xl font-semibold">{fmt$(avgSalary)}</div>
+            </CardContent></Card>
+          </div>
+        );
+      })()}
+
       {/* Cap Table Visual */}
       {grants && grants.length > 0 && (
         <Card>
@@ -997,28 +1038,192 @@ export default function PeopleAndEquity() {
                   <DialogDescription>{selectedPerson.title !== "-" ? selectedPerson.title : ""} {selectedPerson.department !== "-" ? `- ${selectedPerson.department}` : ""}</DialogDescription>
                 </DialogHeader>
 
+                <PersonDetailContent person={selectedPerson} personGrants={personGrants} scMap={scMap} />
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ── Full Employee Detail Panel (all sections in one view) ──
+function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedRow; personGrants: any[]; scMap: Map<number, string> }) {
+  const { data: compHistory } = trpc.employees.compensationHistory.useQuery(
+    { employeeId: person.employeeId! },
+    { enabled: !!person.employeeId }
+  );
+  const { data: payments } = trpc.employeePayments.list.useQuery(
+    { employeeId: person.employeeId! },
+    { enabled: !!person.employeeId }
+  );
+  const { data: timeEntries } = trpc.timeTracking.entries.list.useQuery(
+    { userId: person.userId! },
+    { enabled: !!person.userId }
+  );
+  const { data: allContracts } = trpc.contracts.list.useQuery();
+  const personContracts = useMemo(() => {
+    if (!allContracts) return [];
+    return (allContracts as any[]).filter((c: any) =>
+      (c.partyType === "employee" && c.partyId === person.employeeId) ||
+      (c.partyName && person.name && c.partyName.toLowerCase().includes(person.name.toLowerCase()))
+    );
+  }, [allContracts, person]);
+
+  return (
                 <div className="space-y-5">
                   {/* Personal Information */}
                   <div>
                     <h4 className="text-sm font-semibold text-muted-foreground mb-2">Personal Information</h4>
                     <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
-                      <div className="flex justify-between"><span className="text-muted-foreground">Name</span><span>{selectedPerson.name}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Email</span><span>{selectedPerson.email || "-"}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Name</span><span>{person.name}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Email</span><span>{person.email || "-"}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Type</span><span>
-                        {selectedPerson.type && selectedPerson.type !== "-" ? (
-                          <Badge className={typeColors[selectedPerson.type] || "bg-gray-500/10 text-gray-600"}>{selectedPerson.type.replace(/_/g, " ")}</Badge>
+                        {person.type && person.type !== "-" ? (
+                          <Badge className={typeColors[person.type] || "bg-gray-500/10 text-gray-600"}>{person.type.replace(/_/g, " ")}</Badge>
                         ) : "-"}
                       </span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Title</span><span>{selectedPerson.title}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Department</span><span>{selectedPerson.department}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Salary</span><span>{selectedPerson.salary}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Title</span><span>{person.title}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Department</span><span>{person.department}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Salary</span><span>{person.salary}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Hire Date</span><span>{person.hireDate ? fmtDate(person.hireDate) : "-"}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Status</span><span>
-                        {selectedPerson.status && selectedPerson.status !== "-" ? (
-                          <Badge className={statusColors[selectedPerson.status] || "bg-gray-500/10 text-gray-600"}>{selectedPerson.status.replace(/_/g, " ")}</Badge>
+                        {person.status && person.status !== "-" ? (
+                          <Badge className={statusColors[person.status] || "bg-gray-500/10 text-gray-600"}>{person.status.replace(/_/g, " ")}</Badge>
                         ) : "-"}
                       </span></div>
                     </div>
                   </div>
+
+                  {/* Compensation History */}
+                  {person.employeeId && (
+                    <div>
+                      <h4 className="text-sm font-semibold text-muted-foreground mb-2">Compensation History</h4>
+                      {compHistory && (compHistory as any[]).length > 0 ? (
+                        <div className="border rounded-lg overflow-hidden">
+                          <Table className="text-sm">
+                            <TableHeader><TableRow>
+                              <TableHead>Effective Date</TableHead>
+                              <TableHead className="text-right">Salary</TableHead>
+                              <TableHead>Frequency</TableHead>
+                              <TableHead>Reason</TableHead>
+                            </TableRow></TableHeader>
+                            <TableBody>
+                              {(compHistory as any[]).map((c: any) => (
+                                <TableRow key={c.id}>
+                                  <TableCell>{fmtDate(c.effectiveDate)}</TableCell>
+                                  <TableCell className="text-right font-medium">{fmt$(c.salary)}</TableCell>
+                                  <TableCell>{c.salaryFrequency || "-"}</TableCell>
+                                  <TableCell>{c.reason || "-"}</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground italic">No compensation history recorded.</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Payments */}
+                  {person.employeeId && (
+                    <div>
+                      <h4 className="text-sm font-semibold text-muted-foreground mb-2">Payments</h4>
+                      {payments && (payments as any[]).length > 0 ? (
+                        <div className="border rounded-lg overflow-hidden">
+                          <Table className="text-sm">
+                            <TableHeader><TableRow>
+                              <TableHead>Date</TableHead>
+                              <TableHead>Type</TableHead>
+                              <TableHead className="text-right">Amount</TableHead>
+                              <TableHead>Method</TableHead>
+                              <TableHead>Status</TableHead>
+                            </TableRow></TableHeader>
+                            <TableBody>
+                              {(payments as any[]).slice(0, 20).map((p: any) => (
+                                <TableRow key={p.id}>
+                                  <TableCell>{fmtDate(p.paymentDate)}</TableCell>
+                                  <TableCell><Badge variant="outline">{p.type}</Badge></TableCell>
+                                  <TableCell className="text-right font-medium">{fmt$(p.amount)}</TableCell>
+                                  <TableCell>{p.paymentMethod?.replace(/_/g, " ") || "-"}</TableCell>
+                                  <TableCell><Badge variant="secondary">{p.status}</Badge></TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground italic">No payment records.</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Assigned Tasks */}
+                  {!["investor", "advisor", "board_member"].includes(person.type) && (
+                    <EmployeeTasksSection email={person.email} name={person.name} />
+                  )}
+
+                  {/* Time Tracked */}
+                  {person.userId && (
+                    <div>
+                      <h4 className="text-sm font-semibold text-muted-foreground mb-2">Time Tracked</h4>
+                      {timeEntries && (timeEntries as any[]).length > 0 ? (
+                        <div className="border rounded-lg overflow-hidden">
+                          <Table className="text-sm">
+                            <TableHeader><TableRow>
+                              <TableHead>Date</TableHead>
+                              <TableHead>Task</TableHead>
+                              <TableHead className="text-right">Hours</TableHead>
+                              <TableHead>Category</TableHead>
+                              <TableHead>Status</TableHead>
+                            </TableRow></TableHeader>
+                            <TableBody>
+                              {(timeEntries as any[]).slice(0, 15).map((t: any) => (
+                                <TableRow key={t.id}>
+                                  <TableCell>{fmtDate(t.date)}</TableCell>
+                                  <TableCell className="max-w-[200px] truncate">{t.taskDescription}</TableCell>
+                                  <TableCell className="text-right font-medium">{parseFloat(t.hours || "0").toFixed(1)}</TableCell>
+                                  <TableCell><Badge variant="outline">{t.category}</Badge></TableCell>
+                                  <TableCell><Badge variant="secondary">{t.status}</Badge></TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground italic">No time entries.</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Contracts */}
+                  {personContracts.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-semibold text-muted-foreground mb-2">Contracts</h4>
+                      <div className="border rounded-lg overflow-hidden">
+                        <Table className="text-sm">
+                          <TableHeader><TableRow>
+                            <TableHead>Title</TableHead>
+                            <TableHead>Type</TableHead>
+                            <TableHead className="text-right">Value</TableHead>
+                            <TableHead>Status</TableHead>
+                          </TableRow></TableHeader>
+                          <TableBody>
+                            {personContracts.map((c: any) => (
+                              <TableRow key={c.id}>
+                                <TableCell className="font-medium">{c.title}</TableCell>
+                                <TableCell>{c.type || "-"}</TableCell>
+                                <TableCell className="text-right">{c.value ? fmt$(c.value) : "-"}</TableCell>
+                                <TableCell><Badge variant="secondary">{c.status}</Badge></TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Equity Grants */}
                   <div>
@@ -1066,26 +1271,16 @@ export default function PeopleAndEquity() {
                     )}
                   </div>
 
-                  {/* Assigned Tasks — only for team members, not investors/advisors */}
-                  {!["investor", "advisor", "board_member"].includes(selectedPerson.type) && (
-                    <EmployeeTasksSection email={selectedPerson.email} name={selectedPerson.name} />
-                  )}
-
                   {/* Documents */}
                   <div>
                     <h4 className="text-sm font-semibold text-muted-foreground mb-2">Documents</h4>
-                    {selectedPerson.stakeholderId ? (
-                      <DocumentsCell referenceType="stakeholder" referenceId={selectedPerson.stakeholderId} />
+                    {person.stakeholderId ? (
+                      <DocumentsCell referenceType="stakeholder" referenceId={person.stakeholderId} />
                     ) : (
-                      <p className="text-sm text-muted-foreground italic">No stakeholder record linked for document uploads.</p>
+                      <p className="text-sm text-muted-foreground italic">No stakeholder record linked.</p>
                     )}
                   </div>
+
                 </div>
-              </>
-            );
-          })()}
-        </DialogContent>
-      </Dialog>
-    </div>
   );
 }
