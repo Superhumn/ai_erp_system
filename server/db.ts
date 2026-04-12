@@ -1807,10 +1807,10 @@ export async function upsertGoogleOAuthToken(data: InsertGoogleOAuthToken) {
     .onDuplicateKeyUpdate({
       set: {
         accessToken: data.accessToken,
-        refreshToken: sql`COALESCE(${data.refreshToken}, ${googleOAuthTokens.refreshToken})`,
+        refreshToken: sql`COALESCE(${data.refreshToken ?? null}, ${googleOAuthTokens.refreshToken})`,
         expiresAt: data.expiresAt,
-        scope: sql`COALESCE(${data.scope}, ${googleOAuthTokens.scope})`,
-        googleEmail: sql`COALESCE(${data.googleEmail}, ${googleOAuthTokens.googleEmail})`,
+        scope: sql`COALESCE(${data.scope ?? null}, ${googleOAuthTokens.scope})`,
+        googleEmail: sql`COALESCE(${data.googleEmail ?? null}, ${googleOAuthTokens.googleEmail})`,
       },
     });
   return { id: result[0].insertId };
