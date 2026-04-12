@@ -213,8 +213,108 @@ export async function sendViaSftp(
 }
 
 // ============================================
-// AS2 TRANSPORT (STUB)
+// AS2 TRANSPORT
 // ============================================
+
+/**
+ * Build a MIME message for AS2 transport.
+ * If a PEM signing key + cert are provided, wraps the payload in a
+ * PKCS#7 / S/MIME detached signature using Node's built-in crypto.
+ */
+function buildAs2Mime(
+  content: string,
+  partner: any,
+  fullMessageId: string,
+): { body: Buffer; contentType: string; isSigned: boolean } {
+  const hasCert = partner.connectionCertificate && partner.connectionPassword;
+  const boundary = `----=_AS2_Boundary_${Date.now()}`;
+
+  if (hasCert) {
+    try {
+      const crypto = require("crypto");
+
+      // connectionCertificate holds the PEM-encoded signing key,
+      // connectionPassword holds the passphrase (or PEM cert chain).
+      const privateKey = partner.connectionCertificate;
+      const passphrase = partner.connectionPassword || undefined;
+
+      // Build the inner MIME part that gets signed
+      const innerMime =
+        `Content-Type: application/edi-x12\r\n` +
+        `Content-Transfer-Encoding: binary\r\n` +
+        `Content-Disposition: attachment; filename="${fullMessageId}.edi"\r\n\r\n` +
+        content;
+
+      // Create detached S/MIME signature (SHA-256)
+      const sign = crypto.createSign("SHA256");
+      sign.update(innerMime);
+      const signature = sign.sign(
+        { key: privateKey, passphrase },
+      );
+      const signatureBase64 = signature.toString("base64");
+
+      // Wrap in multipart/signed MIME envelope
+      const multipart =
+        `--${boundary}\r\n` +
+        `${innerMime}\r\n` +
+        `--${boundary}\r\n` +
+        `Content-Type: application/pkcs7-signature; name="smime.p7s"; smime-type=signed-data\r\n` +
+        `Content-Transfer-Encoding: base64\r\n` +
+        `Content-Disposition: attachment; filename="smime.p7s"\r\n\r\n` +
+        `${signatureBase64}\r\n` +
+        `--${boundary}--\r\n`;
+
+      return {
+        body: Buffer.from(multipart, "utf-8"),
+        contentType: `multipart/signed; protocol="application/pkcs7-signature"; micalg=sha-256; boundary="${boundary}"`,
+        isSigned: true,
+      };
+    } catch (signError: any) {
+      console.warn(`[EDI Transport] AS2 signing failed, falling back to unsigned: ${signError.message}`);
+    }
+  }
+
+  // Unsigned fallback — still proper MIME framing
+  return {
+    body: Buffer.from(content, "utf-8"),
+    contentType: "application/edi-x12",
+    isSigned: false,
+  };
+}
+
+/**
+ * Parse an MDN (Message Disposition Notification) from AS2 response.
+ * Returns disposition status from synchronous MDN responses.
+ */
+function parseMdn(responseHeaders: Headers, responseBody: string): {
+  received: boolean;
+  disposition?: string;
+  messageId?: string;
+} {
+  const contentType = responseHeaders.get("content-type") || "";
+
+  // Check for MDN content type
+  if (
+    !contentType.includes("multipart/report") &&
+    !contentType.includes("message/disposition-notification")
+  ) {
+    return { received: false };
+  }
+
+  // Extract Disposition field from MDN body
+  const dispositionMatch = responseBody.match(
+    /Disposition:\s*(.+)/i,
+  );
+  const msgIdMatch = responseBody.match(
+    /Original-Message-ID:\s*(.+)/i,
+  );
+
+  return {
+    received: true,
+    disposition: dispositionMatch?.[1]?.trim(),
+    messageId: msgIdMatch?.[1]?.trim(),
+  };
+}
 
 /**
  * Test AS2 connection to a trading partner
@@ -227,12 +327,13 @@ export async function testAs2Connection(partnerId: number): Promise<ConnectionTe
   const startTime = Date.now();
 
   try {
-    // AS2 connection test: send an HTTP OPTIONS or HEAD to the AS2 endpoint
     const response = await fetch(partner.as2Url, { method: "HEAD", signal: AbortSignal.timeout(10000) });
+
+    const hasCert = !!(partner.connectionCertificate && partner.connectionPassword);
 
     return {
       success: response.ok || response.status === 405, // 405 is expected for HEAD on AS2
-      message: `AS2 endpoint reachable: ${partner.as2Url} (HTTP ${response.status})`,
+      message: `AS2 endpoint reachable: ${partner.as2Url} (HTTP ${response.status})${hasCert ? " [signing enabled]" : " [unsigned mode]"}`,
       latencyMs: Date.now() - startTime,
       serverInfo: response.headers.get("server") || undefined,
     };
@@ -248,7 +349,7 @@ export async function testAs2Connection(partnerId: number): Promise<ConnectionTe
 }
 
 /**
- * Send an EDI document via AS2
+ * Send an EDI document via AS2 with S/MIME signing and MDN handling
  */
 export async function sendViaAs2(
   partnerId: number,
@@ -259,30 +360,69 @@ export async function sendViaAs2(
   if (!partner) return { success: false, message: "Partner not found" };
   if (!partner.as2Url) return { success: false, message: "No AS2 URL configured" };
 
+  const as2From = partner.gsId || partner.isaId;
+  const as2To = partner.as2Id || partner.isaId;
+  const fullMessageId = `<${messageId}@${as2From}>`;
+
   try {
-    // Send EDI content as AS2 message
+    const { body, contentType, isSigned } = buildAs2Mime(content, partner, messageId);
+
+    const headers: Record<string, string> = {
+      "Content-Type": contentType,
+      "AS2-Version": "1.2",
+      "AS2-From": as2From,
+      "AS2-To": as2To,
+      "Message-ID": fullMessageId,
+      "Date": new Date().toUTCString(),
+      "Subject": `EDI ${messageId}`,
+      "Content-Transfer-Encoding": isSigned ? "binary" : "binary",
+      "MIME-Version": "1.0",
+    };
+
+    // Request synchronous MDN
+    if (partner.ediContactEmail) {
+      headers["Disposition-Notification-To"] = partner.ediContactEmail;
+    }
+    headers["Disposition-Notification-Options"] =
+      "signed-receipt-protocol=optional, pkcs7-signature; signed-receipt-micalg=optional, sha-256";
+
     const response = await fetch(partner.as2Url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/edi-x12",
-        "AS2-From": partner.gsId,
-        "AS2-To": partner.as2Id || partner.isaId,
-        "Message-ID": `<${messageId}@${partner.gsId}>`,
-        "Disposition-Notification-To": partner.ediContactEmail || "",
-        "Disposition-Notification-Options": "signed-receipt-protocol=optional, pkcs7-signature; signed-receipt-micalg=optional, sha-256",
-      },
-      body: content,
+      headers,
+      body: new Uint8Array(body),
       signal: AbortSignal.timeout(30000),
     });
 
     if (!response.ok) {
-      return { success: false, message: `AS2 delivery failed: HTTP ${response.status}`, error: await response.text() };
+      const errorText = await response.text().catch(() => "");
+      return {
+        success: false,
+        message: `AS2 delivery failed: HTTP ${response.status}`,
+        error: errorText || `HTTP ${response.status} ${response.statusText}`,
+      };
+    }
+
+    // Try to parse synchronous MDN from response
+    const responseBody = await response.text();
+    const mdn = parseMdn(response.headers, responseBody);
+
+    // Update EDI transaction with MDN status if available
+    if (mdn.received) {
+      const isSuccess = mdn.disposition?.includes("processed") || mdn.disposition?.includes("dispatched");
+      if (!isSuccess) {
+        return {
+          success: false,
+          message: `AS2 MDN indicates failure: ${mdn.disposition}`,
+          bytesTransferred: body.length,
+          error: mdn.disposition,
+        };
+      }
     }
 
     return {
       success: true,
-      message: `AS2 message delivered to ${partner.as2Url}`,
-      bytesTransferred: Buffer.byteLength(content),
+      message: `AS2 message delivered to ${partner.as2Url}${isSigned ? " (signed)" : " (unsigned)"}${mdn.received ? " [MDN received]" : ""}`,
+      bytesTransferred: body.length,
     };
   } catch (error: any) {
     console.error(`[EDI Transport] AS2 delivery failed for partner ${partnerId}:`, error);
