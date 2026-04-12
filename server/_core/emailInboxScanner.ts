@@ -122,7 +122,7 @@ export async function scanInbox(
     markAsSeen = false,
   } = options;
 
-  // Reset AI parse counter for this scan cycle
+  // Reset AI parse counter for this scan cycle — allow up to 10 per scan
   (globalThis as any).__aiParseCount = 0;
 
   const result: InboxScanResult = {
@@ -232,7 +232,7 @@ export async function scanInbox(
             const emailAge = scannedEmail.date ? (Date.now() - new Date(scannedEmail.date).getTime()) : Infinity;
             const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
             if (!((globalThis as any).__aiParseCount)) (globalThis as any).__aiParseCount = 0;
-            if ((globalThis as any).__aiParseCount < 2 && emailAge < SEVEN_DAYS) {
+            if ((globalThis as any).__aiParseCount < 10 && emailAge < SEVEN_DAYS) {
               (globalThis as any).__aiParseCount++;
               try {
                 const { invokeLLM } = await import("./llm");
@@ -366,7 +366,32 @@ async function parseImapMessage(
       extractAttachments(message.bodyStructure, attachments);
     }
 
-    return {
+    // Download actual attachment content for parseable files
+    const attachmentContents: Array<{ filename: string; contentType: string; data: Buffer }> = [];
+    if (message.bodyStructure?.childNodes) {
+      let partIndex = 1;
+      for (const child of message.bodyStructure.childNodes) {
+        partIndex++;
+        if (child.disposition === "attachment" || (child.disposition === "inline" && child.type !== "text")) {
+          const filename = child.dispositionParameters?.filename || child.parameters?.name || "";
+          const contentType = `${child.type}/${child.subtype}`;
+          // Only download PDFs, images, docs (skip large files >5MB)
+          const isParseable = /pdf|image|msword|spreadsheet|csv|excel|png|jpg|jpeg/i.test(contentType) || /\.pdf$|\.png$|\.jpg$|\.jpeg$|\.xlsx?$|\.csv$|\.doc/i.test(filename);
+          if (isParseable && (child.size || 0) < 5 * 1024 * 1024) {
+            try {
+              const part = await client.download(uid.toString(), String(partIndex), { uid: true });
+              if (part?.content) {
+                const chunks: Buffer[] = [];
+                for await (const chunk of part.content) chunks.push(chunk);
+                attachmentContents.push({ filename, contentType, data: Buffer.concat(chunks) });
+              }
+            } catch { /* attachment download failed, skip */ }
+          }
+        }
+      }
+    }
+
+    const result: any = {
       uid,
       messageId: envelope.messageId || `${uid}`,
       from: {
@@ -379,8 +404,10 @@ async function parseImapMessage(
       bodyText: bodyText || bodyHtml?.replace(/<[^>]*>/g, " ").trim() || "",
       bodyHtml,
       attachments,
+      attachmentContents,
       flags: message.flags ? Array.from(message.flags) : [],
     };
+    return result;
   } catch (error) {
     console.error("Error parsing IMAP message:", error);
     return null;

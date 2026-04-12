@@ -580,39 +580,91 @@ async function startServer() {
     // Start email inbox polling (IMAP) — supports multiple inboxes
     (async () => {
       try {
-        const { scanInbox } = await import("./emailInboxScanner");
+        const { scanAndCategorizeInbox } = await import("./emailInboxScanner");
+        const db = await import("../db");
+        const { parseUploadedDocument } = await import("../documentImportService");
+
         const inboxes = [
           { host: process.env.IMAP_HOST, user: process.env.IMAP_USER, password: process.env.IMAP_PASSWORD, port: parseInt(process.env.IMAP_PORT || "993") },
           { host: process.env.IMAP_HOST_2, user: process.env.IMAP_USER_2, password: process.env.IMAP_PASSWORD_2, port: parseInt(process.env.IMAP_PORT_2 || "993") },
         ].filter(i => i.host && i.user && i.password);
 
         if (inboxes.length > 0) {
-          const POLL_INTERVAL = 30 * 60 * 1000; // 30 minutes
-          console.log(`[Email Polling] Starting inbox scanner for ${inboxes.length} inbox(es) with 30m interval`);
+          const POLL_INTERVAL = 5 * 60 * 1000; // 5 minutes
+          console.log(`[Email Polling] Starting inbox scanner for ${inboxes.length} inbox(es) with 5m interval`);
           for (const inbox of inboxes) {
             console.log(`[Email Polling] Monitoring: ${inbox.user}`);
           }
-          // Ongoing polling — only new/unseen emails
+
+          const processInbox = async (inbox: any) => {
+            try {
+              const { scanResult, parsedResults } = await scanAndCategorizeInbox(
+                { host: inbox.host!, port: inbox.port, secure: true, auth: { user: inbox.user!, pass: inbox.password! } },
+                { unseenOnly: true, limit: 50, fullAiParsing: true, markAsSeen: true }
+              );
+
+              // Save each email to DB and parse attachments
+              for (const { email, parseResult } of parsedResults) {
+                try {
+                  // Save inbound email record
+                  const savedEmail = await db.createInboundEmail?.({
+                    fromEmail: email.from.address,
+                    fromName: email.from.name || "",
+                    toEmail: email.to.join(", ") || "inbox",
+                    subject: email.subject,
+                    bodyText: email.bodyText?.substring(0, 10000) || "",
+                    receivedAt: email.date,
+                    status: "parsed",
+                    category: email.categorization?.category || "other",
+                  } as any);
+
+                  // Parse attachments with AI document parser
+                  if ((email as any).attachmentContents?.length > 0) {
+                    for (const att of (email as any).attachmentContents) {
+                      try {
+                        const base64 = att.data.toString("base64");
+                        const dataUrl = `data:${att.contentType};base64,${base64}`;
+                        const parsed = await parseUploadedDocument(dataUrl, att.filename, undefined, att.contentType);
+                        if (parsed.success) {
+                          console.log(`[Email Polling] Parsed attachment ${att.filename}: ${parsed.documentType} (confidence: ${(parsed as any).confidence || "?"})`);
+                          // Save parsed document
+                          await db.createDocument?.({
+                            name: att.filename,
+                            type: parsed.documentType === "customs_document" ? "customs" : parsed.documentType === "vendor_invoice" ? "invoice" : "other",
+                            referenceType: "email",
+                            referenceId: savedEmail?.id,
+                            fileData: base64,
+                            mimeType: att.contentType,
+                            description: `Auto-parsed from email: ${email.subject}`,
+                          } as any);
+                        }
+                      } catch (e) {
+                        console.warn(`[Email Polling] Failed to parse attachment ${att.filename}:`, e);
+                      }
+                    }
+                  }
+                } catch (e) {
+                  console.warn(`[Email Polling] Failed to save email:`, e);
+                }
+              }
+
+              if (scanResult.newEmails > 0) {
+                console.log(`[Email Polling] Processed ${scanResult.newEmails} new emails from ${inbox.user}`);
+              }
+            } catch (e) {
+              console.warn(`[Email Polling] Scan failed for ${inbox.user}:`, e);
+            }
+          };
+
+          // Ongoing polling
           setInterval(async () => {
-            for (const inbox of inboxes) {
-              try {
-                await scanInbox({ host: inbox.host!, port: inbox.port, secure: true, auth: { user: inbox.user!, pass: inbox.password! } }, { unseenOnly: true, limit: 100 });
-              } catch (e) {
-                console.warn(`[Email Polling] Scan failed for ${inbox.user}:`, e);
-              }
-            }
+            for (const inbox of inboxes) await processInbox(inbox);
           }, POLL_INTERVAL);
-          // Initial sync after 2 minutes — only unseen, small batch (no AI flood)
+
+          // Initial sync after 1 minute
           setTimeout(async () => {
-            for (const inbox of inboxes) {
-              try {
-                await scanInbox({ host: inbox.host!, port: inbox.port, secure: true, auth: { user: inbox.user!, pass: inbox.password! } }, { unseenOnly: true, limit: 20 });
-                console.log(`[Email Polling] Initial sync complete for ${inbox.user}`);
-              } catch (e) {
-                console.warn(`[Email Polling] Initial sync failed for ${inbox.user}:`, e);
-              }
-            }
-          }, 2 * 60 * 1000);
+            for (const inbox of inboxes) await processInbox(inbox);
+          }, 60 * 1000);
         }
       } catch (e) {
         console.warn("[Email Polling] Could not initialize:", e);
