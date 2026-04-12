@@ -95,6 +95,10 @@ import {
 
 function getMenuGroups(role: string = "user") {
   const isAdmin = ["admin", "exec"].includes(role);
+  const hasFinance = ["admin", "exec", "finance"].includes(role);
+  const hasOps = ["admin", "exec", "ops"].includes(role);
+  const hasLegal = ["admin", "exec", "legal"].includes(role);
+  const hasSales = ["admin", "exec", "ops", "finance"].includes(role);
   return [
   {
     label: "_main",
@@ -106,37 +110,41 @@ function getMenuGroups(role: string = "user") {
       { icon: MessageSquare, label: "Messaging", path: "/messaging" },
     ],
   },
-  {
+  ...(hasOps || isAdmin ? [{
     label: "_ops",
     items: [
       { icon: Warehouse, label: "Inventory", path: "/operations/inventory-hub" },
       { icon: Users, label: "Vendors & Locations", path: "/operations/vendors" },
       { icon: Truck, label: "Freight & Logistics", path: "/freight" },
     ],
-  },
-  {
+  }] : []),
+  ...(hasSales || isAdmin ? [{
     label: "_sell",
     items: [
       { icon: ShoppingCart, label: "Orders", path: "/sales/orders" },
       { icon: UserCircle, label: "Customers & CRM", path: "/crm/hub" },
-      { icon: TrendingUp, label: "Fundraising", path: "/crm/campaigns" },
-      { icon: BarChart3, label: "Financials", path: "/finance/reports" },
+      ...(isAdmin ? [{ icon: TrendingUp, label: "Fundraising", path: "/crm/campaigns" }] : []),
+      ...(hasFinance || isAdmin ? [{ icon: BarChart3, label: "Financials", path: "/finance/reports" }] : []),
     ],
-  },
+  }] : []),
   {
     label: "_people",
     items: [
+      // Everyone gets their own employee pages
+      { icon: Clock, label: "Time Tracking", path: "/hr/time-tracking" },
+      { icon: LineChart, label: "Equity Portal", path: "/hr/equity-portal" },
+      // Admin/exec get management views
       ...(isAdmin ? [
         { icon: Users, label: "People & Equity", path: "/hr/employees" },
         { icon: Banknote, label: "Payroll", path: "/hr/payroll" },
         { icon: FileBarChart, label: "Cap Table", path: "/hr/equity-reports" },
+      ] : []),
+      // Legal access
+      ...(hasLegal || isAdmin ? [
         { icon: Scale, label: "Contracts", path: "/legal/contracts" },
         { icon: Scale, label: "Legal Cases", path: "/legal/disputes" },
         { icon: FileText, label: "Legal Documents", path: "/legal/documents" },
-      ] : [
-        { icon: Clock, label: "Time Tracking", path: "/hr/time-tracking" },
-        { icon: LineChart, label: "Equity Portal", path: "/hr/equity-portal" },
-      ]),
+      ] : []),
     ],
   },
   {
@@ -149,7 +157,9 @@ function getMenuGroups(role: string = "user") {
         { icon: BookOpen, label: "SOPs", path: "/sops" },
         { icon: Award, label: "Grants", path: "/grants/submitter" },
         { icon: Network, label: "EDI", path: "/edi" },
-      ] : []),
+      ] : [
+        { icon: BookOpen, label: "SOPs", path: "/sops" },
+      ]),
       { icon: Settings, label: "Settings", path: "/settings" },
     ],
   },
