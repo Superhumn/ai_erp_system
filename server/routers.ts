@@ -1,7 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { eq, and } from "drizzle-orm";
-import { decrypt } from "./_core/crypto";
+import { safeDecryptToken } from "./_core/crypto";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
@@ -156,21 +156,6 @@ async function refreshGoogleToken(refreshToken: string): Promise<{ accessToken?:
   } catch (error: any) {
     console.error('[Google OAuth] Error refreshing token:', error);
     return { error: error.message };
-  }
-}
-
-// Helper to safely decrypt a Shopify access token that may be stored encrypted.
-// Encrypted tokens have the format "iv:authTag:ciphertext" (three colon-separated hex parts).
-// Plain-text tokens (e.g. shpat_xxx) pass through unchanged.
-function safeDecryptToken(token: string): string {
-  const parts = token.split(':');
-  if (parts.length !== 3) {
-    return token; // Not in encrypted format — treat as plain text
-  }
-  try {
-    return decrypt(token);
-  } catch {
-    return token; // Decryption failed — fall back to raw value
   }
 }
 
@@ -2959,8 +2944,8 @@ ONLY return the JSON array, no other text.`;
               expiresAt: refreshed.expiresAt,
               googleEmail: googleToken.googleEmail,
             });
-          } catch (e: any) {
-            console.warn('[getStatus] Failed to save refreshed Google token:', e.message);
+          } catch (e) {
+            console.warn('[getStatus] Failed to save refreshed Google token:', e);
           }
           googleConnected = true;
         }

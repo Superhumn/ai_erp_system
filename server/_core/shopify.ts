@@ -10,19 +10,7 @@
 
 import crypto from "crypto";
 import https from "https";
-import { decrypt } from "./crypto";
-
-// Decrypt an access token that may be stored encrypted (format: "iv:authTag:ciphertext").
-// Falls back to the raw value for plain-text tokens.
-function safeDecryptToken(token: string): string {
-  const parts = token.split(':');
-  if (parts.length !== 3) return token;
-  try {
-    return decrypt(token);
-  } catch {
-    return token;
-  }
-}
+import { safeDecryptToken } from "./crypto";
 
 /**
  * Verify Shopify webhook signature

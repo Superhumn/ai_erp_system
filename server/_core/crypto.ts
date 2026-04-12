@@ -59,6 +59,24 @@ export function decrypt(encryptedText: string, secret?: string): string {
 }
 
 /**
+ * Safely decrypt a token that may be stored encrypted (format: "iv:authTag:ciphertext").
+ * Returns the original string unchanged for plain-text tokens (e.g. Shopify shpat_xxx)
+ * or if decryption fails, providing backwards compatibility with tokens stored before
+ * encryption was introduced.
+ */
+export function safeDecryptToken(token: string): string {
+  const parts = token.split(':');
+  if (parts.length !== 3) {
+    return token; // Not in encrypted format — treat as plain text
+  }
+  try {
+    return decrypt(token);
+  } catch {
+    return token; // Decryption failed — fall back to raw value
+  }
+}
+
+/**
  * Create an HMAC-signed OAuth state parameter
  * Format: "payload.signature" where payload is base64url-encoded JSON
  */
