@@ -10,6 +10,19 @@
 
 import crypto from "crypto";
 import https from "https";
+import { decrypt } from "./crypto";
+
+// Decrypt an access token that may be stored encrypted (format: "iv:authTag:ciphertext").
+// Falls back to the raw value for plain-text tokens.
+function safeDecryptToken(token: string): string {
+  const parts = token.split(':');
+  if (parts.length !== 3) return token;
+  try {
+    return decrypt(token);
+  } catch {
+    return token;
+  }
+}
 
 /**
  * Verify Shopify webhook signature
@@ -223,7 +236,7 @@ export async function ensureValidToken(storeId: number): Promise<string> {
     store.tokenExpiresAt &&
     new Date(store.tokenExpiresAt).getTime() > now + bufferMs
   ) {
-    return store.accessToken;
+    return safeDecryptToken(store.accessToken);
   }
 
   // Token expired or about to expire — refresh

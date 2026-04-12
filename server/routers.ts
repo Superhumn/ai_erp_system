@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { eq, and } from "drizzle-orm";
+import { decrypt } from "./_core/crypto";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
@@ -155,6 +156,21 @@ async function refreshGoogleToken(refreshToken: string): Promise<{ accessToken?:
   } catch (error: any) {
     console.error('[Google OAuth] Error refreshing token:', error);
     return { error: error.message };
+  }
+}
+
+// Helper to safely decrypt a Shopify access token that may be stored encrypted.
+// Encrypted tokens have the format "iv:authTag:ciphertext" (three colon-separated hex parts).
+// Plain-text tokens (e.g. shpat_xxx) pass through unchanged.
+function safeDecryptToken(token: string): string {
+  const parts = token.split(':');
+  if (parts.length !== 3) {
+    return token; // Not in encrypted format — treat as plain text
+  }
+  try {
+    return decrypt(token);
+  } catch {
+    return token; // Decryption failed — fall back to raw value
   }
 }
 
@@ -2935,13 +2951,17 @@ ONLY return the JSON array, no other text.`;
       if (googleToken && !googleConnected && googleToken.refreshToken) {
         const refreshed = await refreshGoogleToken(googleToken.refreshToken);
         if (refreshed.accessToken && refreshed.expiresAt) {
-          await db.upsertGoogleOAuthToken({
-            userId: ctx.user.id,
-            accessToken: refreshed.accessToken,
-            refreshToken: googleToken.refreshToken,
-            expiresAt: refreshed.expiresAt,
-            googleEmail: googleToken.googleEmail,
-          });
+          try {
+            await db.upsertGoogleOAuthToken({
+              userId: ctx.user.id,
+              accessToken: refreshed.accessToken,
+              refreshToken: googleToken.refreshToken,
+              expiresAt: refreshed.expiresAt,
+              googleEmail: googleToken.googleEmail,
+            });
+          } catch (e: any) {
+            console.warn('[getStatus] Failed to save refreshed Google token:', e.message);
+          }
           googleConnected = true;
         }
       }
@@ -3084,8 +3104,9 @@ ONLY return the JSON array, no other text.`;
         .mutation(async ({ input }) => {
           const store = await db.getShopifyStoreById(input.storeId);
           if (!store || !store.accessToken) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Store not found or not connected' });
+          const accessToken = safeDecryptToken(store.accessToken);
           const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/shop.json`, {
-            headers: { 'X-Shopify-Access-Token': store.accessToken, 'Content-Type': 'application/json' },
+            headers: { 'X-Shopify-Access-Token': accessToken, 'Content-Type': 'application/json' },
           });
           if (!response.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: `Shopify API error: ${response.status}` });
           return { success: true, message: 'Connection is active' };
@@ -9878,7 +9899,7 @@ Ask if they received the original request and if they can provide a quote.`;
             try {
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/orders.json?status=any&limit=50`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': safeDecryptToken(store.accessToken!),
                   'Content-Type': 'application/json',
                 },
               });
@@ -9965,7 +9986,7 @@ Ask if they received the original request and if they can provide a quote.`;
             try {
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/products.json?limit=100`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': safeDecryptToken(store.accessToken!),
                   'Content-Type': 'application/json',
                 },
               });
@@ -10041,7 +10062,7 @@ Ask if they received the original request and if they can provide a quote.`;
               // Get inventory levels from Shopify
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/inventory_levels.json?limit=100`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': safeDecryptToken(store.accessToken!),
                   'Content-Type': 'application/json',
                 },
               });
@@ -10111,7 +10132,7 @@ Ask if they received the original request and if they can provide a quote.`;
             try {
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/customers.json?limit=100`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': safeDecryptToken(store.accessToken!),
                   'Content-Type': 'application/json',
                 },
               });
