@@ -67,7 +67,7 @@
   --chart-3: oklch(0.55 0.18 280);
   --chart-4: oklch(0.60 0.14 200);
   --chart-5: oklch(0.50 0.12 300);
-  --radius: 1rem;
+  --radius: 1.25rem;
   /* Light mode: Clean whites with warm undertones */
   --background: oklch(0.988 0.001 264);
   --foreground: oklch(0.145 0.015 264);
@@ -273,7 +273,7 @@
    Clean metrics, strong value hierarchy
    ============================================ */
 .kpi-card {
-  @apply p-6 rounded-2xl border border-border/60 bg-card shadow-sm;
+  @apply p-7 rounded-3xl border border-border/40 bg-card shadow-[0_2px_12px_-2px_rgba(0,0,0,0.06)];
 }
 
 .kpi-card-title {
@@ -281,7 +281,7 @@
 }
 
 .kpi-card-value {
-  @apply text-3xl font-bold mt-2 tracking-[-0.02em];
+  @apply text-4xl font-bold mt-2 tracking-[-0.03em];
 }
 
 .kpi-card-change {
@@ -314,7 +314,7 @@
 
 /* Form sections */
 .form-section {
-  @apply space-y-5 p-6 rounded-2xl border border-border/60 bg-card shadow-sm;
+  @apply space-y-5 p-7 rounded-3xl border border-border/40 bg-card shadow-[0_2px_12px_-2px_rgba(0,0,0,0.06)];
 }
 
 .form-section-title {
@@ -550,7 +550,7 @@
 
 /* List item pattern */
 .lf-list-item {
-  @apply flex items-center justify-between py-3.5 px-5 rounded-xl hover:bg-accent/50 transition-colors duration-100 cursor-pointer;
+  @apply flex items-center justify-between py-4 px-6 rounded-2xl hover:bg-accent/50 transition-colors duration-100 cursor-pointer;
 }
 
 /* Inline stat */
@@ -559,7 +559,7 @@
 }
 
 .lf-stat-value {
-  @apply text-3xl font-bold tracking-[-0.02em] tabular-nums;
+  @apply text-4xl font-bold tracking-[-0.03em] tabular-nums;
 }
 
 .lf-stat-label {
