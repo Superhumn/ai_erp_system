@@ -1,5 +1,62 @@
 import crypto from 'crypto';
 
+// Maximum age for signed OAuth state tokens (10 minutes)
+const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000;
+
+/**
+ * Creates an HMAC-signed OAuth state parameter to prevent CSRF attacks.
+ * Format: "<userId>:<timestampMs>:<hmac-sha256-hex>"
+ */
+export function createSignedOAuthState(userId: number): string {
+  const key = process.env.JWT_SECRET;
+  if (!key) {
+    throw new Error('JWT_SECRET is required for OAuth state signing');
+  }
+  const payload = `${userId}:${Date.now()}`;
+  const mac = crypto.createHmac('sha256', key).update(payload).digest('hex');
+  return `${payload}:${mac}`;
+}
+
+/**
+ * Validates an HMAC-signed OAuth state parameter.
+ * Returns the userId on success, or an error string on failure.
+ */
+export function verifySignedOAuthState(state: string): { userId?: number; error?: string } {
+  try {
+    const key = process.env.JWT_SECRET;
+    if (!key) return { error: 'JWT_SECRET is required' };
+
+    // The mac is the last colon-delimited segment; payload is everything before it.
+    const lastColon = state.lastIndexOf(':');
+    if (lastColon === -1) return { error: 'Invalid state format' };
+
+    const payload = state.slice(0, lastColon);
+    const mac = state.slice(lastColon + 1);
+
+    const expectedMac = crypto.createHmac('sha256', key).update(payload).digest('hex');
+    const macBuf = Buffer.from(mac, 'hex');
+    const expectedBuf = Buffer.from(expectedMac, 'hex');
+
+    // Reject if lengths differ (e.g. truncated / non-hex input) before timingSafeEqual
+    if (macBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(macBuf, expectedBuf)) {
+      return { error: 'Invalid state signature' };
+    }
+
+    const [userIdStr, timestampStr] = payload.split(':');
+    const timestamp = parseInt(timestampStr, 10);
+    if (isNaN(timestamp) || Date.now() - timestamp > OAUTH_STATE_MAX_AGE_MS) {
+      return { error: 'State expired' };
+    }
+
+    const userId = parseInt(userIdStr, 10);
+    if (isNaN(userId) || userId <= 0) return { error: 'Invalid user ID in state' };
+
+    return { userId };
+  } catch {
+    return { error: 'State validation failed' };
+  }
+}
+
 /**
  * Encrypts a string using AES-256-CBC encryption with a random IV
  * @param text - The text to encrypt

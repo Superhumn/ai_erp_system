@@ -12,6 +12,7 @@ import { ENV, validateEmailConfig } from "./env";
 import * as sendgridProvider from "./sendgridProvider";
 import * as emailService from "./emailService";
 import * as db from "../db";
+import { verifySignedOAuthState } from "./crypto";
 import { startEmailQueueWorker } from "../emailQueueWorker";
 import { startOrchestrator } from "../supplyChainOrchestrator";
 import { startScheduler } from "../aiAgentScheduler";
@@ -191,25 +192,16 @@ async function startServer() {
             const timestamp = event.timestamp
               ? new Date(event.timestamp * 1000)
               : new Date();
-            const emailEvent = await (db as any).createEmailEvent({
-              providerEventType,
-              providerMessageId,
-              providerTimestamp: timestamp,
-              rawEventJson: event,
-              email,
-              reason: event.reason || event.response || null,
-              bounceType: event.type || null,
-              processedAt: new Date(),
-            });
+
+            // Look up the linked message first so we can include emailMessageId
+            // in the single insert rather than creating a duplicate row.
+            let emailMessageId: number | undefined;
             if (providerMessageId) {
               const message = await (
                 db as any
               ).getEmailMessageByProviderMessageId(providerMessageId);
               if (message) {
-                await (db as any).createEmailEvent({
-                  ...emailEvent,
-                  emailMessageId: message.id,
-                });
+                emailMessageId = message.id;
                 const newStatus =
                   sendgridProvider.mapEventToStatus(providerEventType);
                 if (newStatus)
@@ -219,6 +211,18 @@ async function startServer() {
                   );
               }
             }
+
+            await (db as any).createEmailEvent({
+              providerEventType,
+              providerMessageId,
+              providerTimestamp: timestamp,
+              rawEventJson: event,
+              email,
+              reason: event.reason || event.response || null,
+              bounceType: event.type || null,
+              processedAt: new Date(),
+              ...(emailMessageId !== undefined ? { emailMessageId } : {}),
+            });
           } catch (eventError) {
             console.error(
               "[SendGrid Webhook] Error processing event:",
@@ -320,9 +324,10 @@ async function startServer() {
   app.get("/api/google/callback", oauthCallbackLimiter, async (req, res) => {
     const { code, state } = req.query;
     if (!code || !state) return res.redirect("/import?error=missing_params");
-    const userId = parseInt(state as string, 10);
-    if (isNaN(userId) || userId <= 0)
+    const stateResult = verifySignedOAuthState(state as string);
+    if (stateResult.error || !stateResult.userId)
       return res.redirect("/import?error=invalid_state");
+    const userId = stateResult.userId;
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
     if (!clientId || !clientSecret)
@@ -546,11 +551,6 @@ async function startServer() {
       }
     }
   );
-
-  // Health check endpoint for Railway and other deployment platforms
-  app.get("/api/health", (_req, res) => {
-    res.status(200).json({ ok: true });
-  });
 
   // tRPC API
   app.use(
