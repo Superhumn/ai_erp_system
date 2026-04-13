@@ -106,6 +106,7 @@ function getMenuGroups(role: string = "user") {
       { icon: LayoutDashboard, label: "Dashboard", path: "/" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: Mic, label: "Meetings", path: "/meetings" },
+      { icon: MessageSquare, label: "Messaging", path: "/messaging" },
     ],
   },
   ...(hasSales || isAdmin ? [{
@@ -144,9 +145,11 @@ function getMenuGroups(role: string = "user") {
     label: "_tools",
     items: [
       { icon: Target, label: "Projects", path: "/projects" },
+      { icon: BookOpen, label: "SOPs", path: "/sops" },
       ...(isAdmin ? [
         { icon: FolderLock, label: "Data Room", path: "/dataroom/1" },
         { icon: Megaphone, label: "Investor Updates", path: "/investor-updates" },
+        { icon: Award, label: "Grants", path: "/grants/submitter" },
         { icon: Upload, label: "Import", path: "/import" },
         { icon: Network, label: "EDI", path: "/edi" },
       ] : []),
