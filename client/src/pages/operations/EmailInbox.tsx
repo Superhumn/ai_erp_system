@@ -704,6 +704,36 @@ export default function EmailInbox() {
                           <div className="text-sm whitespace-pre-wrap leading-relaxed max-h-[50vh] overflow-y-auto">
                             {cleanEmailBody(email.bodyText || "(No content)")}
                           </div>
+                          {/* Quick reply snippets */}
+                          <div className="mt-3 pt-3 border-t border-border/30">
+                            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Quick Reply</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {[
+                                "Got it, thanks.",
+                                "Yes that works.",
+                                "Can you send me the invoice?",
+                                "Please send updated pricing.",
+                                "What's the lead time on this?",
+                                "Confirmed. Please proceed.",
+                                "Not interested, thanks.",
+                                "Let me check and get back to you.",
+                                "Can we schedule a call?",
+                                "Please send the PO.",
+                              ].map((snippet) => (
+                                <button
+                                  key={snippet}
+                                  className="px-2.5 py-1 text-xs border rounded-lg hover:bg-accent transition-colors"
+                                  onClick={() => {
+                                    // Copy to clipboard for now — will send via Gmail when connected
+                                    navigator.clipboard.writeText(snippet);
+                                    toast.success("Copied to clipboard");
+                                  }}
+                                >
+                                  {snippet}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
                         </div>
                       )}
                       </div>
