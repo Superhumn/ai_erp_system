@@ -2573,12 +2573,15 @@ ONLY return the JSON array, no other text.`;
               let sheetText: string | null = null;
               try {
                 const xlsxMod = await import("xlsx");
-                const XLSX = (xlsxMod as any).default ?? xlsxMod;
-                const workbook = XLSX.read(buffer, { type: "buffer" });
+                // CJS modules via dynamic import may expose exports under .default
+                const xlsxLib = ('default' in xlsxMod && typeof (xlsxMod as any).default?.read === 'function')
+                  ? (xlsxMod as any).default as typeof xlsxMod
+                  : xlsxMod;
+                const workbook = xlsxLib.read(buffer, { type: "buffer" });
                 let text = "";
                 for (const sheetName of workbook.SheetNames) {
                   text += `Sheet: ${sheetName}\n`;
-                  text += XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]).substring(0, 10000);
+                  text += xlsxLib.utils.sheet_to_csv(workbook.Sheets[sheetName]).substring(0, 10000);
                   text += "\n";
                 }
                 if (text.trim().length > 0) sheetText = text.substring(0, 30000);
