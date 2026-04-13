@@ -11064,14 +11064,65 @@ Ask if they received the original request and if they can provide a quote.`;
     archiveEmail: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
+        const email = await db.getInboundEmailById(input.id);
+        // Archive in Gmail — mark as read and move out of inbox
+        if (email?.messageId) {
+          try {
+            const { getImapConfig } = await import("./_core/emailInboxScanner");
+            const { ImapFlow } = await import("imapflow");
+            const config = getImapConfig();
+            if (config) {
+              const client = new ImapFlow({ host: config.host, port: config.port, secure: config.secure, auth: config.auth, logger: false });
+              await client.connect();
+              await client.mailboxOpen("INBOX");
+              const uids = await client.search({ header: { "message-id": email.messageId } }, { uid: true });
+              if (uids && uids.length > 0) {
+                await client.messageFlagsAdd(uids.map(String), ["\\Seen"], { uid: true });
+              }
+              await client.logout();
+            }
+          } catch (e) {
+            console.warn(`[Email] Failed to archive in Gmail:`, e instanceof Error ? e.message : e);
+          }
+        }
         await db.updateInboundEmailStatus(input.id, "archived");
         return { success: true };
       }),
 
-    // Delete email permanently
+    // Delete email permanently — also deletes from Gmail via IMAP
     deleteEmail: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
+        // Get the email to find its messageId
+        const email = await db.getInboundEmailById(input.id);
+
+        // Try to delete from Gmail via IMAP
+        if (email?.messageId) {
+          try {
+            const { getImapConfig } = await import("./_core/emailInboxScanner");
+            const { ImapFlow } = await import("imapflow");
+            const config = getImapConfig();
+            if (config) {
+              const client = new ImapFlow({
+                host: config.host, port: config.port, secure: config.secure,
+                auth: config.auth, logger: false,
+              });
+              await client.connect();
+              await client.mailboxOpen("INBOX");
+              // Search by message ID header
+              const uids = await client.search({ header: { "message-id": email.messageId } }, { uid: true });
+              if (uids && uids.length > 0) {
+                await client.messageDelete(uids.map(String), { uid: true });
+                console.log(`[Email] Deleted message ${email.messageId} from Gmail`);
+              }
+              await client.logout();
+            }
+          } catch (e) {
+            console.warn(`[Email] Failed to delete from Gmail:`, e instanceof Error ? e.message : e);
+          }
+        }
+
+        // Delete from ERP DB
         await db.deleteInboundEmail(input.id);
         return { success: true };
       }),
