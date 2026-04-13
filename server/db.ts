@@ -5344,7 +5344,18 @@ export async function notifyUsersOfEvent(
 export async function createInboundEmail(input: InsertInboundEmail) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
+
+  // Deduplicate: skip if same subject + sender + date already exists
+  if (input.subject && input.fromEmail) {
+    const existing = await db.select({ id: inboundEmails.id }).from(inboundEmails)
+      .where(and(
+        eq(inboundEmails.subject, input.subject),
+        eq(inboundEmails.fromEmail, input.fromEmail),
+      ))
+      .limit(1);
+    if (existing.length > 0) return { id: existing[0].id };
+  }
+
   const result = await db.insert(inboundEmails).values(input);
   return { id: result[0].insertId };
 }
@@ -10015,6 +10026,18 @@ export async function getChecklistSummary(dataRoomId: number) {
 // ============================================
 // ORDER ITEMS
 // ============================================
+
+export async function deleteOrder(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(orders).where(eq(orders.id, id));
+}
+
+export async function deleteOrderItems(orderId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(orderItems).where(eq(orderItems.orderId, orderId));
+}
 
 export async function getOrderItems(orderId: number) {
   const db = await getDb();

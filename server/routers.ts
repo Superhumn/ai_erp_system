@@ -1232,6 +1232,29 @@ ONLY return the JSON array, no other text.`;
 
         return { success: true };
       }),
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        // Delete order items first
+        try { await db.deleteOrderItems(input.id); } catch { /* no items */ }
+        await db.deleteOrder(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'order', input.id);
+        return { success: true };
+      }),
+    bulkDelete: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()) }))
+      .mutation(async ({ input, ctx }) => {
+        let deleted = 0;
+        for (const id of input.ids) {
+          try {
+            try { await db.deleteOrderItems(id); } catch { /* no items */ }
+            await db.deleteOrder(id);
+            deleted++;
+          } catch { /* skip */ }
+        }
+        await createAuditLog(ctx.user.id, 'delete', 'order', 0, undefined, undefined, { bulkDeleted: deleted });
+        return { success: true, deleted };
+      }),
   }),
 
   // ============================================

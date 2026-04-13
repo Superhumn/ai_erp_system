@@ -55,7 +55,7 @@ export default function CRMHub() {
   const [search, setSearch] = useState("");
   const [dealsSearch, setDealsSearch] = useState("");
   const [isDealDialogOpen, setIsDealDialogOpen] = useState(false);
-  const [dealForm, setDealForm] = useState({ name: "", contactId: 0, contactName: "", contactEmail: "", stage: "discovery", amount: "", source: "", notes: "" });
+  const [dealForm, setDealForm] = useState({ name: "", contactId: 0, contactName: "", contactEmail: "", contactCompany: "", stage: "discovery", amount: "", source: "", notes: "" });
   const [isContactDialogOpen, setIsContactDialogOpen] = useState(false);
   const [isCaptureDialogOpen, setIsCaptureDialogOpen] = useState(false);
   const [captureMethod, setCaptureMethod] = useState<string>("manual");
@@ -1042,6 +1042,10 @@ export default function CRMHub() {
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1">
+              <Label className="text-xs">Deal Name</Label>
+              <Input placeholder="e.g., Whole Foods Q3 Order" value={dealForm.name} onChange={(e) => setDealForm({ ...dealForm, name: e.target.value })} />
+            </div>
+            <div className="space-y-1">
               <Label className="text-xs">Contact *</Label>
               <Select value={dealForm.contactId?.toString() || "0"} onValueChange={(v) => {
                 if (v === "new") {
@@ -1061,6 +1065,7 @@ export default function CRMHub() {
               {(!dealForm.contactId || dealForm.contactId === 0) && (
                 <div className="space-y-2 mt-2">
                   <Input placeholder="Contact name *" value={dealForm.contactName || ""} onChange={(e) => setDealForm({ ...dealForm, contactName: e.target.value })} />
+                  <Input placeholder="Company name" value={dealForm.contactCompany || ""} onChange={(e) => setDealForm({ ...dealForm, contactCompany: e.target.value })} />
                   <Input placeholder="Contact email" value={dealForm.contactEmail || ""} onChange={(e) => setDealForm({ ...dealForm, contactEmail: e.target.value })} />
                 </div>
               )}
@@ -1107,6 +1112,7 @@ export default function CRMHub() {
                     firstName,
                     lastName,
                     email: dealForm.contactEmail || "",
+                    organization: dealForm.contactCompany || "",
                     phone: "",
                     contactType: "lead" as ContactType,
                     source: "manual" as ContactSource,

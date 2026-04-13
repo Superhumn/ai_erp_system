@@ -40,6 +40,7 @@ export default function Orders() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [selectedOrders, setSelectedOrders] = useState<Set<number>>(new Set());
   const [formData, setFormData] = useState({
     customerId: 0,
     subtotal: "",
@@ -52,6 +53,15 @@ export default function Orders() {
   const { data: orders, isLoading } = trpc.orders.list.useQuery();
   const { data: customers } = trpc.customers.list.useQuery();
   const createCustomer = trpc.customers.create.useMutation();
+  const bulkDeleteOrders = trpc.orders.bulkDelete.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Deleted ${data.deleted} order(s)`);
+      setSelectedOrders(new Set());
+      utils.orders.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   const createOrder = trpc.orders.create.useMutation({
     onSuccess: () => {
       toast.success("Order created successfully");
@@ -254,8 +264,24 @@ export default function Orders() {
             </div>
           ) : (
             <Table>
+              {selectedOrders.size > 0 && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-primary/5 border-b rounded-t-lg">
+                  <span className="text-xs font-medium">{selectedOrders.size} selected</span>
+                  <Button size="sm" variant="destructive" className="h-6 text-xs" onClick={() => bulkDeleteOrders.mutate({ ids: Array.from(selectedOrders) })} disabled={bulkDeleteOrders.isPending}>
+                    {bulkDeleteOrders.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+                    Delete Selected
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setSelectedOrders(new Set())}>Clear</Button>
+                </div>
+              )}
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-8">
+                    <input type="checkbox" className="rounded" checked={selectedOrders.size === (filteredOrders?.length || 0) && selectedOrders.size > 0} onChange={(e) => {
+                      if (e.target.checked) setSelectedOrders(new Set(filteredOrders?.map(o => o.id) || []));
+                      else setSelectedOrders(new Set());
+                    }} />
+                  </TableHead>
                   <TableHead>Order #</TableHead>
                   <TableHead>Customer</TableHead>
                   <TableHead>Date</TableHead>
@@ -270,6 +296,13 @@ export default function Orders() {
                     className="cursor-pointer hover:bg-muted/50"
                     onClick={() => window.location.href = `/sales/orders/${order.id}`}
                   >
+                    <TableCell className="w-8" onClick={(e) => e.stopPropagation()}>
+                      <input type="checkbox" className="rounded" checked={selectedOrders.has(order.id)} onChange={(e) => {
+                        const next = new Set(selectedOrders);
+                        if (e.target.checked) next.add(order.id); else next.delete(order.id);
+                        setSelectedOrders(next);
+                      }} />
+                    </TableCell>
                     <TableCell className="font-mono">
                       <Link href={`/sales/orders/${order.id}`}>
                         <span className="text-primary hover:underline">{order.orderNumber}</span>

@@ -237,6 +237,15 @@ async function ensureTables() {
         updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
       )`,
     ];
+    // Add missing columns to existing tables
+    const alterColumns = [
+      "ALTER TABLE kpi_goals ADD COLUMN status ENUM('not_started','on_track','at_risk','behind','exceeded') DEFAULT 'not_started'",
+      "ALTER TABLE kpi_goals ADD COLUMN notes TEXT",
+      "ALTER TABLE kpi_goals ADD COLUMN companyId INT",
+    ];
+    for (const alt of alterColumns) {
+      try { await database.execute(require('drizzle-orm/sql').sql.raw(alt)); } catch { /* already exists */ }
+    }
     for (const tableSQL of tables) {
       try { await database.execute(sql.raw(tableSQL)); } catch { /* already exists */ }
     }

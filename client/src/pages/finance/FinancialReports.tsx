@@ -1238,17 +1238,36 @@ export default function FinancialReports() {
           </Card>
           <Card className="py-2">
             <CardHeader className="pb-1 px-3">
+              <CardTitle className="text-xs text-muted-foreground uppercase tracking-wider">CFO Strategy</CardTitle>
+            </CardHeader>
+            <CardContent className="px-2 py-0 space-y-0.5">
+              {[
+                { id: "fundraising", label: "Fundraising Readiness" },
+                { id: "board_report", label: "Board Report" },
+                { id: "scenario", label: "Scenario Planning" },
+                { id: "tax", label: "Tax Planning" },
+                { id: "compliance", label: "Compliance Checklist" },
+                { id: "working_capital", label: "Working Capital" },
+              ].map(s => (
+                <button key={s.id} className={`w-full text-left px-2 py-1.5 text-xs rounded-lg hover:bg-muted transition-colors ${expandedStrategy === s.id ? "bg-primary/10 text-primary font-medium" : ""}`} onClick={() => handleStrategyClick(s.id, s.label)}>
+                  {s.label}
+                </button>
+              ))}
+            </CardContent>
+          </Card>
+          <Card className="py-2">
+            <CardHeader className="pb-1 px-3">
               <CardTitle className="text-xs text-muted-foreground uppercase tracking-wider">Actions</CardTitle>
             </CardHeader>
             <CardContent className="px-2 py-0 space-y-0.5">
               <button className="w-full text-left px-2 py-1.5 text-xs rounded-lg hover:bg-muted transition-colors" onClick={() => autoCategorize.mutate()}>
-                Auto-Categorize Transactions
+                Auto-Categorize
               </button>
               <button className="w-full text-left px-2 py-1.5 text-xs rounded-lg hover:bg-muted transition-colors" onClick={() => window.location.href = "/import"}>
-                Import Financial Data
+                Import Data
               </button>
               <button className="w-full text-left px-2 py-1.5 text-xs rounded-lg hover:bg-muted transition-colors" onClick={() => window.location.href = "/settings/integrations"}>
-                Connect QuickBooks
+                QuickBooks
               </button>
             </CardContent>
           </Card>
