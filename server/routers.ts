@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { eq, and } from "drizzle-orm";
+import { safeDecryptToken } from "./_core/crypto";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
@@ -2984,13 +2985,17 @@ ONLY return the JSON array, no other text.`;
       if (googleToken && !googleConnected && googleToken.refreshToken) {
         const refreshed = await refreshGoogleToken(googleToken.refreshToken);
         if (refreshed.accessToken && refreshed.expiresAt) {
-          await db.upsertGoogleOAuthToken({
-            userId: ctx.user.id,
-            accessToken: refreshed.accessToken,
-            refreshToken: googleToken.refreshToken,
-            expiresAt: refreshed.expiresAt,
-            googleEmail: googleToken.googleEmail,
-          });
+          try {
+            await db.upsertGoogleOAuthToken({
+              userId: ctx.user.id,
+              accessToken: refreshed.accessToken,
+              refreshToken: googleToken.refreshToken,
+              expiresAt: refreshed.expiresAt,
+              googleEmail: googleToken.googleEmail,
+            });
+          } catch (e) {
+            console.warn('[getStatus] Failed to save refreshed Google token:', e);
+          }
           googleConnected = true;
         }
       }
@@ -3133,8 +3138,9 @@ ONLY return the JSON array, no other text.`;
         .mutation(async ({ input }) => {
           const store = await db.getShopifyStoreById(input.storeId);
           if (!store || !store.accessToken) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Store not found or not connected' });
+          const accessToken = safeDecryptToken(store.accessToken);
           const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/shop.json`, {
-            headers: { 'X-Shopify-Access-Token': store.accessToken, 'Content-Type': 'application/json' },
+            headers: { 'X-Shopify-Access-Token': accessToken, 'Content-Type': 'application/json' },
           });
           if (!response.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: `Shopify API error: ${response.status}` });
           return { success: true, message: 'Connection is active' };
@@ -9927,7 +9933,7 @@ Ask if they received the original request and if they can provide a quote.`;
             try {
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/orders.json?status=any&limit=50`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': safeDecryptToken(store.accessToken!),
                   'Content-Type': 'application/json',
                 },
               });
@@ -10014,7 +10020,7 @@ Ask if they received the original request and if they can provide a quote.`;
             try {
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/products.json?limit=100`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': safeDecryptToken(store.accessToken!),
                   'Content-Type': 'application/json',
                 },
               });
@@ -10087,10 +10093,29 @@ Ask if they received the original request and if they can provide a quote.`;
           for (const store of activeStores) {
             if (!store) continue;
             try {
-              // Get inventory levels from Shopify
-              const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/inventory_levels.json?limit=100`, {
+              const token = safeDecryptToken(store.accessToken!);
+              const apiBase = `https://${store.storeDomain}/admin/api/2024-01`;
+
+              // Step 1: Fetch active locations (inventory_levels requires location_ids)
+              const locResp = await fetch(`${apiBase}/locations.json`, {
+                headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+              });
+              if (!locResp.ok) throw new Error(`Shopify locations API error: ${locResp.status}`);
+              const locData = await locResp.json();
+              const locationIds: number[] = (locData.locations || [])
+                .filter((l: any) => l.active)
+                .map((l: any) => l.id);
+
+              if (locationIds.length === 0) {
+                console.warn(`[Shopify Sync] No active locations for ${store.storeDomain}, skipping inventory sync`);
+                await db.updateShopifyStore(store.id, { lastSyncAt: new Date() });
+                continue;
+              }
+
+              // Step 2: Fetch inventory levels for those locations
+              const response = await fetch(`${apiBase}/inventory_levels.json?location_ids=${locationIds.join(',')}&limit=250`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': token,
                   'Content-Type': 'application/json',
                 },
               });
@@ -10160,7 +10185,7 @@ Ask if they received the original request and if they can provide a quote.`;
             try {
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/customers.json?limit=100`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': safeDecryptToken(store.accessToken!),
                   'Content-Type': 'application/json',
                 },
               });
