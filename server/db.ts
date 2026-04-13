@@ -1396,6 +1396,12 @@ export async function createDocument(data: InsertDocument) {
   return { id: result[0].insertId };
 }
 
+export async function updateDocument(id: number, data: Partial<InsertDocument>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(documents).set(data as any).where(eq(documents.id, id));
+}
+
 export async function deleteDocument(id: number) {
   const db = await getDb();
   if (!db) return;
