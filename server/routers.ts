@@ -16988,12 +16988,10 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       .mutation(({ input, ctx }) => {
         // Convert empty strings to undefined for optional fields
         const cleaned: Record<string, any> = {
-          companyId: (ctx.user as any).companyId,
           name: input.name,
           roundType: input.roundType,
           status: input.status,
           raisedAmount: "0",
-          createdBy: ctx.user.id,
         };
         if (input.description) cleaned.description = input.description;
         if (input.targetAmount) cleaned.targetAmount = input.targetAmount;
