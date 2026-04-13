@@ -2746,6 +2746,8 @@ ONLY return the JSON array, no other text.`;
     tasks: protectedProcedure
       .input(z.object({ projectId: z.number() }))
       .query(({ input }) => input.projectId === 0 ? db.getAllProjectTasks() : db.getProjectTasks(input.projectId)),
+    listAllTasks: protectedProcedure
+      .query(() => db.getAllProjectTasks()),
   }),
 
   // ============================================
