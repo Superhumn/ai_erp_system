@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -229,6 +229,12 @@ function StudyDetail({ studyId, onBack }: { studyId: number; onBack: () => void 
   const utils = trpc.useUtils();
   const [elect280C, setElect280C] = useState(false);
   const { data: study, isLoading, refetch } = trpc.rdTaxCredit.getStudy.useQuery({ id: studyId });
+
+  useEffect(() => {
+    if (study) {
+      setElect280C(parseFloat(String(study.section280CReduction)) > 0);
+    }
+  }, [study?.section280CReduction]);
   const calculateCredit = trpc.rdTaxCredit.calculate.useMutation({
     onSuccess: (result) => {
       toast.success(`Credit calculated: ${fmt(result.netCredit)}`);
