@@ -50,6 +50,10 @@ async function startServer() {
     console.warn("[Email Config] Email features will be disabled until configuration is provided.");
   }
 
+  if (!ENV.cookieSecret) {
+    console.error("[Security] CRITICAL: JWT_SECRET is not set. All session tokens are trivially forgeable. Set JWT_SECRET before deploying.");
+  }
+
   const app = express();
   const server = createServer(app);
 

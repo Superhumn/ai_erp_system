@@ -41,6 +41,9 @@ const trpcClient = trpc.createClient({
   links: [
     httpBatchLink({
       url: "/api/trpc",
+      // @ts-expect-error: tRPC v11's transformer boolean flag resolves to `false` when
+      // strictNullChecks is disabled, producing a false-positive. The server
+      // initTRPC.create() in server/_core/trpc.ts does use transformer: superjson.
       transformer: superjson,
       fetch(input, init) {
         return globalThis.fetch(input, {
