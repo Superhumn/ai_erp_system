@@ -189,7 +189,10 @@ export default function RetailerOnboarding() {
   });
 
   const updatePartner = trpc.edi.partners.update.useMutation({
-    onSuccess: () => toast.success("Partner activated"),
+    onSuccess: () => {
+      toast.success("Partner activated");
+      setStep("done");
+    },
     onError: (error) => toast.error(error.message),
   });
 
@@ -328,7 +331,6 @@ export default function RetailerOnboarding() {
   const handleActivate = () => {
     if (!createdPartnerId) return;
     updatePartner.mutate({ id: createdPartnerId, status: "active", testMode: false });
-    setStep("done");
   };
 
   // ---- Filtered templates ----

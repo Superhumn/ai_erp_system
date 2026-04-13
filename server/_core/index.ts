@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
 import net from "net";
+import { sql } from "drizzle-orm";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import rateLimit from "express-rate-limit";
 import { registerOAuthRoutes } from "./oauth";
@@ -80,38 +81,157 @@ async function ensureTables() {
       )`,
       `CREATE TABLE IF NOT EXISTS fireflies_meetings (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        companyId INT,
-        firefliesId VARCHAR(128) NOT NULL,
-        title VARCHAR(500),
+        firefliesId VARCHAR(128) NOT NULL UNIQUE,
+        title VARCHAR(500) NOT NULL,
         date TIMESTAMP NULL,
         duration INT,
+        organizerEmail VARCHAR(320),
+        organizerName VARCHAR(255),
         participants TEXT,
-        transcript TEXT,
         summary TEXT,
-        aiSummary TEXT,
-        actionItemsRaw TEXT,
-        videoUrl TEXT,
-        audioUrl TEXT,
-        status ENUM('pending','contacts_created','tasks_created','fully_processed') DEFAULT 'pending',
-        crmContactId INT,
-        linkedEntityType VARCHAR(64),
-        linkedEntityId INT,
-        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
+        shortSummary TEXT,
+        keywords TEXT,
+        topics TEXT,
+        sentimentAnalysis TEXT,
+        transcriptUrl TEXT,
+        transcriptText TEXT,
+        actionItems TEXT,
+        processingStatus ENUM('pending','contacts_created','tasks_created','project_created','fully_processed','skipped','error') NOT NULL DEFAULT 'pending',
+        processedAt TIMESTAMP NULL,
+        processedBy INT,
+        processingNotes TEXT,
+        autoCreatedProjectId INT,
+        autoCreatedTaskCount INT DEFAULT 0,
+        autoCreatedContactCount INT DEFAULT 0,
+        meetingSource VARCHAR(64),
+        calendarEventId VARCHAR(255),
+        recordingUrl TEXT,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )`,
       `CREATE TABLE IF NOT EXISTS fireflies_action_items (
         id INT AUTO_INCREMENT PRIMARY KEY,
         meetingId INT NOT NULL,
-        text TEXT,
+        firefliesMeetingId VARCHAR(128) NOT NULL,
+        text TEXT NOT NULL,
         assignee VARCHAR(255),
+        assigneeEmail VARCHAR(320),
         dueDate TIMESTAMP NULL,
-        status ENUM('pending','completed','cancelled') DEFAULT 'pending',
-        linkedTaskId INT,
-        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+        projectTaskId INT,
+        crmContactId INT,
+        status ENUM('pending','converted_to_task','skipped','completed') NOT NULL DEFAULT 'pending',
+        convertedAt TIMESTAMP NULL,
+        convertedBy INT,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )`,
+      // Orchestrator tables
+      `CREATE TABLE IF NOT EXISTS supplyChainWorkflows (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        companyId INT,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        workflowType ENUM('demand_forecasting','production_planning','material_requirements','procurement','inventory_reorder','inventory_transfer','inventory_optimization','work_order_generation','production_scheduling','freight_procurement','shipment_tracking','order_fulfillment','supplier_management','quality_inspection','invoice_matching','payment_processing','exception_handling','vendor_quote_procurement','vendor_quote_analysis','custom') NOT NULL,
+        triggerType ENUM('scheduled','event','threshold','manual','continuous') DEFAULT 'scheduled' NOT NULL,
+        cronSchedule VARCHAR(64),
+        triggerEvents TEXT,
+        thresholdConfig TEXT,
+        executionConfig TEXT,
+        maxConcurrentRuns INT DEFAULT 1,
+        timeoutMinutes INT DEFAULT 60,
+        retryAttempts INT DEFAULT 3,
+        retryDelayMinutes INT DEFAULT 5,
+        requiresApproval BOOLEAN DEFAULT FALSE,
+        autoApproveThreshold DECIMAL(14,2),
+        approvalRoles TEXT,
+        escalationMinutes INT DEFAULT 60,
+        escalationRoles TEXT,
+        dependsOnWorkflows TEXT,
+        isActive BOOLEAN DEFAULT TRUE NOT NULL,
+        lastRunAt TIMESTAMP NULL,
+        nextScheduledRun TIMESTAMP NULL,
+        successCount INT DEFAULT 0,
+        failureCount INT DEFAULT 0,
+        createdBy INT,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS workflowRuns (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        workflowId INT NOT NULL,
+        runNumber VARCHAR(64) NOT NULL,
+        status ENUM('queued','running','awaiting_approval','approved','rejected','completed','failed','cancelled','timed_out') DEFAULT 'queued' NOT NULL,
+        triggeredBy ENUM('schedule','event','threshold','manual','dependency') NOT NULL,
+        triggerData TEXT,
+        triggeredByUserId INT,
+        startedAt TIMESTAMP NULL,
+        completedAt TIMESTAMP NULL,
+        durationMs INT,
+        totalSteps INT DEFAULT 0,
+        completedSteps INT DEFAULT 0,
+        currentStepName VARCHAR(255),
+        progressPercent INT DEFAULT 0,
+        inputData TEXT,
+        outputData TEXT,
+        errorMessage TEXT,
+        errorDetails TEXT,
+        itemsProcessed INT DEFAULT 0,
+        itemsSucceeded INT DEFAULT 0,
+        itemsFailed INT DEFAULT 0,
+        totalValue DECIMAL(14,2),
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS approvalThresholds (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        companyId INT,
+        name VARCHAR(255) NOT NULL,
+        entityType ENUM('purchase_order','work_order','inventory_transfer','freight_booking','payment','vendor_rfq','price_override','exception') NOT NULL,
+        autoApproveMaxAmount DECIMAL(14,2),
+        level1MaxAmount DECIMAL(14,2),
+        level2MaxAmount DECIMAL(14,2),
+        level3MaxAmount DECIMAL(14,2),
+        level1Roles TEXT,
+        level2Roles TEXT,
+        level3Roles TEXT,
+        execRoles TEXT,
+        level1EscalationMinutes INT DEFAULT 60,
+        level2EscalationMinutes INT DEFAULT 120,
+        level3EscalationMinutes INT DEFAULT 240,
+        conditions TEXT,
+        isActive BOOLEAN DEFAULT TRUE NOT NULL,
+        createdBy INT,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS exceptionRules (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        companyId INT,
+        name VARCHAR(255) NOT NULL,
+        ruleType ENUM('price_variance','quantity_variance','delivery_delay','quality_issue','budget_exceeded','inventory_discrepancy','custom') NOT NULL,
+        conditions TEXT,
+        severity ENUM('low','medium','high','critical') DEFAULT 'medium' NOT NULL,
+        autoResolveAction TEXT,
+        notifyRoles TEXT,
+        isActive BOOLEAN DEFAULT TRUE NOT NULL,
+        createdBy INT,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
       )`,
     ];
-    for (const sql of tables) {
-      try { await database.execute(require('drizzle-orm/sql').sql.raw(sql)); } catch { /* already exists */ }
+    for (const tableSQL of tables) {
+      try { await database.execute(sql.raw(tableSQL)); } catch { /* already exists */ }
+    }
+    // Add missing columns to existing tables
+    const alterStatements = [
+      "ALTER TABLE fireflies_meetings ADD COLUMN videoUrl TEXT",
+      "ALTER TABLE fireflies_meetings ADD COLUMN audioUrl TEXT",
+      "ALTER TABLE fireflies_meetings ADD COLUMN crmContactId INT",
+      "ALTER TABLE fireflies_meetings ADD COLUMN linkedEntityType VARCHAR(64)",
+      "ALTER TABLE fireflies_meetings ADD COLUMN linkedEntityId INT",
+    ];
+    for (const sql of alterStatements) {
+      try { await database.execute(require('drizzle-orm/sql').sql.raw(sql)); } catch { /* column already exists */ }
     }
     console.log("[Startup] Ensured critical tables exist");
   } catch (e) {
@@ -424,10 +544,10 @@ async function startServer() {
     }
   });
 
-  // Google OAuth callback
-  app.get('/api/google/callback', oauthCallbackLimiter, async (req, res) => {
+  // Shared handler for Google OAuth callbacks.
+  // `selfRedirectUri` must exactly match the redirect_uri used when the auth URL was generated.
+  async function handleGoogleOAuthCallback(req: any, res: any, selfRedirectUri: string) {
     const { code, state } = req.query;
-    // Determine the redirect page from the state (defaults to /import)
     let returnTo = '/import';
     if (!code || !state) return res.redirect(`${returnTo}?error=missing_params`);
     const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -438,7 +558,7 @@ async function startServer() {
       const { verifySignedOAuthState } = await import('./crypto');
       const stateData = verifySignedOAuthState(state as string);
       if (!stateData) return res.redirect(`${returnTo}?error=invalid_state`);
-      // Use returnTo from state if the caller encoded one (e.g. Gmail pages)
+      // Use returnTo from state if the caller encoded one (e.g. Gmail/Workspace pages)
       if (typeof stateData.returnTo === 'string' && stateData.returnTo.startsWith('/')) {
         returnTo = stateData.returnTo;
       }
@@ -451,7 +571,7 @@ async function startServer() {
       const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, code: code as string, grant_type: 'authorization_code', redirect_uri: `${process.env.VITE_APP_URL || 'http://localhost:3000'}/api/google/callback` }),
+        body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, code: code as string, grant_type: 'authorization_code', redirect_uri: selfRedirectUri }),
       });
       if (!tokenResponse.ok) return res.redirect(`${returnTo}?error=token_exchange_failed`);
       const tokens = await tokenResponse.json();
@@ -465,6 +585,20 @@ async function startServer() {
       logger.error("Google OAuth error", { error: error instanceof Error ? error.message : String(error) });
       res.redirect(`${returnTo}?error=oauth_failed`);
     }
+  }
+
+  // Google OAuth callback — legacy path used by sheetsImport.getAuthUrl
+  app.get('/api/google/callback', oauthCallbackLimiter, (req, res) => {
+    const redirectUri = `${process.env.VITE_APP_URL || 'http://localhost:3000'}/api/google/callback`;
+    return handleGoogleOAuthCallback(req, res, redirectUri);
+  });
+
+  // Google OAuth callback — path used by gmail.getAuthUrl and googleWorkspace.getAuthUrl
+  // (generated by getGoogleFullAccessAuthUrl in server/_core/googleDrive.ts)
+  app.get('/api/oauth/google/callback', oauthCallbackLimiter, (req, res) => {
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.VITE_APP_URL || process.env.APP_URL || 'http://localhost:3000'}/api/oauth/google/callback`;
+    console.log(`[Google OAuth] Token exchange with redirect_uri: ${redirectUri}`);
+    return handleGoogleOAuthCallback(req, res, redirectUri);
   });
 
   // Shopify OAuth callback

@@ -227,9 +227,8 @@ export async function ensureValidToken(storeId: number): Promise<string> {
     return safeDecryptToken(store.accessToken);
   }
 
-  // Token expired or about to expire — refresh
-  console.log(`[Shopify Token] Token for ${store.storeDomain} expired or expiring soon, refreshing...`);
-  return refreshShopifyToken(storeId);
+  // Fallback: return raw token (might work if stored unencrypted)
+  return store.accessToken;
 }
 
 // ============================================
@@ -502,6 +501,11 @@ async function syncCustomers(
       const shopifyId = String(sc.id);
       const name = [sc.first_name, sc.last_name].filter(Boolean).join(" ") || sc.email || "Unknown";
       const email = sc.email || null;
+
+      // Skip junk entries (contact form submissions, empty records)
+      const lowerName = name.toLowerCase();
+      if (lowerName === "contact form" || lowerName === "unknown") continue;
+      if (!email && (!sc.first_name || sc.first_name === "Contact")) continue;
 
       // Check by shopify ID first, then by email
       let existing = await getCustomerByShopifyId(shopifyId);

@@ -2535,32 +2535,79 @@ ONLY return the JSON array, no other text.`;
         // If this is a 409A valuation report, parse it for FMV value
         if (input.referenceType === "valuation" && (mimeType.includes("pdf") || mimeType.includes("image"))) {
           try {
-            const parsed = await parseUploadedDocument(url, input.name, undefined, mimeType);
-            if (parsed.success && (parsed as any).customsDocument) {
-              // Not a customs doc — try extracting FMV from the raw parse
-            }
-            // Use LLM to extract FMV specifically
             const { invokeLLM } = await import("./_core/llm");
+            let userContent: any;
+
+            if (mimeType.includes("pdf")) {
+              // Extract text from PDF so we can pass it as text to the LLM
+              // (Sending a PDF as image_url is not supported by Anthropic)
+              let pdfText: string | null = null;
+              try {
+                let pdfBuffer: Buffer | null = null;
+                if (url.startsWith("data:")) {
+                  const base64Data = url.split(",")[1];
+                  if (base64Data) pdfBuffer = Buffer.from(base64Data, "base64");
+                } else {
+                  const pdfResponse = await fetch(url);
+                  if (pdfResponse.ok) pdfBuffer = Buffer.from(await pdfResponse.arrayBuffer());
+                }
+                if (pdfBuffer) {
+                  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+                  const pdf = await (pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) })).promise;
+                  let text = "";
+                  for (let pageNumber = 1; pageNumber <= Math.min(pdf.numPages, 10); pageNumber++) {
+                    const page = await pdf.getPage(pageNumber);
+                    const tc = await page.getTextContent();
+                    text += tc.items.map((item: any) => item.str).join(" ") + "\n";
+                  }
+                  if (text.trim().length > 0) pdfText = text.substring(0, 30000);
+                }
+              } catch (pdfErr) {
+                console.warn("[409A] PDF text extraction failed:", pdfErr);
+              }
+              userContent = pdfText
+                ? `Document: ${input.name}\n\nEXTRACTED TEXT:\n${pdfText}`
+                : `Document: ${input.name} (PDF content could not be extracted)`;
+            } else {
+              // Image: pass directly as image_url
+              userContent = [
+                { type: "text" as const, text: `Document: ${input.name}` },
+                { type: "image_url" as const, image_url: { url } },
+              ];
+            }
+
             const fmvResponse = await invokeLLM({
               messages: [
                 { role: "system", content: "Extract the 409A fair market value per share from this valuation document. Return JSON: {\"fmvPerShare\": number, \"totalValuation\": number, \"valuationDate\": \"YYYY-MM-DD\", \"provider\": \"string\"}. If you cannot find the data, return {\"fmvPerShare\": null}." },
-                { role: "user", content: [
-                  { type: "text", text: `Document: ${input.name}` },
-                  ...(mimeType.includes("image") || mimeType.includes("pdf") ? [{ type: "image_url" as const, image_url: { url } }] : [{ type: "text" as const, text: `Base64 content available but not an image — file is ${mimeType}` }]),
-                ] },
+                { role: "user", content: userContent },
               ],
             });
             const fmvText = typeof fmvResponse.choices?.[0]?.message?.content === "string" ? fmvResponse.choices[0].message.content : "";
             try {
               const fmvData = JSON.parse(fmvText.replace(/```json\n?|\n?```/g, "").trim());
-              if (fmvData.fmvPerShare && input.referenceId) {
-                // Update the valuation record with parsed FMV
-                await db.updateValuation409a(input.referenceId, {
-                  fairMarketValue: String(fmvData.fmvPerShare),
-                  ...(fmvData.totalValuation ? { totalValuation: String(fmvData.totalValuation) } : {}),
-                  ...(fmvData.provider ? { provider: fmvData.provider } : {}),
-                });
-                console.log(`[409A] Parsed FMV from ${input.name}: $${fmvData.fmvPerShare}/share`);
+              if (fmvData.fmvPerShare) {
+                if (input.referenceId) {
+                  // Update the existing valuation record with parsed FMV
+                  await db.updateValuation409a(input.referenceId, {
+                    fairMarketValue: String(fmvData.fmvPerShare),
+                    ...(fmvData.totalValuation ? { totalValuation: String(fmvData.totalValuation) } : {}),
+                    ...(fmvData.provider ? { provider: fmvData.provider } : {}),
+                  });
+                  console.log(`[409A] Updated valuation ${input.referenceId} FMV from ${input.name}: $${fmvData.fmvPerShare}/share`);
+                } else {
+                  // No existing valuation record — create one from the extracted data
+                  const valuationDate = fmvData.valuationDate ? new Date(fmvData.valuationDate) : new Date();
+                  const newValuation = await db.createValuation409a({
+                    fairMarketValue: String(fmvData.fmvPerShare),
+                    valuationDate,
+                    ...(fmvData.totalValuation ? { totalValuation: String(fmvData.totalValuation) } : {}),
+                    ...(fmvData.provider ? { provider: fmvData.provider } : {}),
+                    ...(input.companyId ? { companyId: input.companyId } : {}),
+                    reportUrl: url,
+                    status: "approved",
+                  });
+                  console.log(`[409A] Created new valuation from ${input.name}: $${fmvData.fmvPerShare}/share (id=${newValuation.id})`);
+                }
               }
             } catch { /* FMV parse failed, that's ok */ }
           } catch (e) {
@@ -2700,6 +2747,8 @@ ONLY return the JSON array, no other text.`;
     tasks: protectedProcedure
       .input(z.object({ projectId: z.number() }))
       .query(({ input }) => input.projectId === 0 ? db.getAllProjectTasks() : db.getProjectTasks(input.projectId)),
+    listAllTasks: protectedProcedure
+      .query(() => db.getAllProjectTasks()),
   }),
 
   // ============================================
@@ -16846,13 +16895,15 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         status: z.enum(["planning", "active", "paused", "closed", "cancelled"]).default("planning"),
         notes: z.string().optional(),
       }))
-      .mutation(({ input }) => {
+      .mutation(({ input, ctx }) => {
         // Convert empty strings to undefined for optional fields
         const cleaned: Record<string, any> = {
+          companyId: (ctx.user as any).companyId,
           name: input.name,
           roundType: input.roundType,
           status: input.status,
           raisedAmount: "0",
+          createdBy: ctx.user.id,
         };
         if (input.description) cleaned.description = input.description;
         if (input.targetAmount) cleaned.targetAmount = input.targetAmount;
@@ -17609,9 +17660,11 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       .mutation(async ({ ctx }) => {
       const config = await db.getFirefliesConfig(ctx.user.id);
       if (!config) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fireflies not configured' });
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fireflies not configured. Go to Settings → Fireflies to enter your API key.' });
       }
+      console.log(`[Fireflies Sync] Fetching transcripts for user ${ctx.user.id} with key ${config.apiKey.substring(0, 8)}...`);
       const transcripts = await listTranscripts(config.apiKey);
+      console.log(`[Fireflies Sync] Got ${transcripts.length} transcripts from API`);
       let synced = 0;
       let skipped = 0;
       let dealsCreated = 0;
@@ -17627,14 +17680,15 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         const participants = fullTranscript ? extractParticipants(fullTranscript) : [];
         await db.createFirefliesMeeting({
           firefliesId: t.id,
-          title: t.title,
+          title: t.title || 'Untitled Meeting',
           date: t.date ? new Date(t.date) : new Date(),
           duration: t.duration,
+          organizerEmail: fullTranscript?.organizer_email || t.organizer_email || null,
           participants: JSON.stringify(participants),
-          transcript: fullTranscript?.transcript_url || null,
+          transcriptUrl: fullTranscript?.transcript_url || null,
           summary: fullTranscript?.summary ? JSON.stringify(fullTranscript.summary) : null,
-          actionItemsRaw: fullTranscript ? JSON.stringify(parseActionItems(fullTranscript?.summary?.action_items || [])) : null,
-          status: 'pending',
+          actionItems: fullTranscript ? JSON.stringify(parseActionItems(fullTranscript?.summary?.action_items || [])) : null,
+          processingStatus: 'pending',
         });
         synced++;
 
@@ -17671,7 +17725,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
                       firstName: (participant.name || participant.email.split("@")[0]).split(" ")[0] || "",
                       fullName: participant.name || participant.email.split("@")[0],
                       email: participant.email,
-                      source: "meeting" as any,
+                      source: "fireflies" as any,
                     });
                     contact = await db.getCrmContactById(contactId);
                     contactsCreated++;
@@ -17739,8 +17793,11 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         let projectId: number | undefined;
 
         // Create contacts from participants
-        if (input.createContacts && Array.isArray(meeting.participants)) {
-          for (const p of meeting.participants as Array<{ name: string; email: string }>) {
+        const parsedParticipants: Array<{ name: string; email: string }> =
+          typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
+          Array.isArray(meeting.participants) ? meeting.participants : [];
+        if (input.createContacts && parsedParticipants.length > 0) {
+          for (const p of parsedParticipants) {
             if (p.email) {
               try {
                 await db.createCrmContact({
@@ -17767,8 +17824,8 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         }
 
         // Create tasks from action items
-        if (input.createTasks && Array.isArray(meeting.actionItemsRaw)) {
-          for (const item of (meeting.actionItemsRaw ? JSON.parse(meeting.actionItemsRaw) : []) as Array<{ text: string }>) {
+        if (input.createTasks && meeting.actionItems) {
+          for (const item of (meeting.actionItems ? JSON.parse(meeting.actionItems) : []) as Array<{ text: string }>) {
             if (projectId) {
               await db.createProjectTask({
                 projectId,
@@ -17780,14 +17837,21 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           }
         }
 
-        const status = contactsCreated > 0 && tasksCreated > 0 ? 'fully_processed'
+        const status: 'fully_processed' | 'contacts_created' | 'tasks_created' | 'pending' =
+          contactsCreated > 0 && tasksCreated > 0 ? 'fully_processed'
           : contactsCreated > 0 ? 'contacts_created'
           : tasksCreated > 0 ? 'tasks_created'
           : 'pending';
 
         await db.updateFirefliesMeeting(input.meetingId, {
-          aiSummary: JSON.stringify({ status, contactsCreated, tasksCreated, projectId }),
-        } as any);
+          processingStatus: status,
+          processedAt: new Date(),
+          processedBy: ctx.user.id,
+          processingNotes: JSON.stringify({ contactsCreated, tasksCreated, projectId }),
+          autoCreatedContactCount: contactsCreated,
+          autoCreatedTaskCount: tasksCreated,
+          autoCreatedProjectId: projectId,
+        });
 
         return { contactsCreated, tasksCreated, projectId };
       }),
@@ -17797,16 +17861,22 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         createTasks: z.boolean().optional(),
         createProjects: z.boolean().optional(),
       }).optional())
-      .mutation(async ({ ctx }) => {
+      .mutation(async ({ input, ctx }) => {
       const meetings = await db.getFirefliesMeetings({ status: 'pending' });
       let processed = 0;
       let contactsCreated = 0;
       let tasksCreated = 0;
       let projectsCreated = 0;
+      const doContacts = input?.createContacts !== false;
+      const doTasks = input?.createTasks === true;
+      const doProjects = input?.createProjects === true;
       for (const meeting of meetings) {
-        // Auto-create contacts from participants
-        if (Array.isArray(meeting.participants)) {
-          for (const p of meeting.participants as Array<{ name: string; email: string }>) {
+        if (doContacts) {
+          // Auto-create contacts from participants
+          const parsedParticipants: Array<{ name: string; email: string }> =
+            typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
+            Array.isArray(meeting.participants) ? meeting.participants : [];
+          for (const p of parsedParticipants) {
             if (p.email) {
               try {
                 await db.createCrmContact({
@@ -17820,7 +17890,31 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             }
           }
         }
-        await db.updateFirefliesMeeting(meeting.id, { aiSummary: 'fully_processed' } as any);
+        if (doTasks && meeting.actionItems) {
+          const items = (meeting.actionItems ? JSON.parse(meeting.actionItems) : []) as Array<{ text: string }>;
+          let projectId: number | undefined;
+          if (doProjects) {
+            const project = await db.createProject({
+              projectNumber: `FF-${Date.now()}`,
+              name: meeting.title || 'Untitled Meeting Project',
+              status: 'planning',
+              createdBy: ctx.user.id,
+            } as any);
+            projectId = project.id;
+            projectsCreated++;
+          }
+          for (const item of items) {
+            if (projectId) {
+              await db.createProjectTask({
+                projectId,
+                name: item.text,
+                status: 'todo',
+              } as any);
+              tasksCreated++;
+            }
+          }
+        }
+        await db.updateFirefliesMeeting(meeting.id, { processingStatus: 'fully_processed' });
         processed++;
       }
       return { processed, contactsCreated, tasksCreated, projectsCreated };
@@ -20236,6 +20330,7 @@ Return JSON array only. No markdown.`;
         asks: z.string().optional(),
         callsToAction: z.string().optional(),
         status: z.enum(["draft", "review", "sent"]).optional(),
+        sentAt: z.date().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
@@ -20447,6 +20542,210 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         const { kpiGoals: kg } = await import("../drizzle/schema");
         const rows = await database.selectDistinct({ category: kg.category }).from(kg);
         return rows.map(r => r.category).filter(Boolean);
+      }),
+  }),
+
+  // ============================================
+  // FINANCIAL REPORTS
+  // ============================================
+  financialReports: router({
+    generate: financeProcedure
+      .input(z.object({
+        reportType: z.string(),
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const safeQuery = async <T>(fn: () => Promise<T>, fallback: T): Promise<T> => {
+          try { return await fn(); } catch { return fallback; }
+        };
+
+        const now = new Date();
+        const startDate = input.startDate ? new Date(input.startDate) : new Date(now.getFullYear(), now.getMonth(), 1);
+        const endDate = input.endDate ? new Date(input.endDate) : now;
+
+        const [invoices, bills, accounts, orders, customers, vendors, inventory] = await Promise.all([
+          safeQuery(() => db.getInvoices(), []),
+          safeQuery(() => db.getBills(), []),
+          safeQuery(() => db.getAccounts(), []),
+          safeQuery(() => db.getOrders(), []),
+          safeQuery(() => db.getCustomers(), []),
+          safeQuery(() => db.getVendors(), []),
+          safeQuery(() => db.getInventory(), []),
+        ]);
+
+        const paidInvoices = (invoices as any[]).filter((i: any) => i.status === 'paid');
+        const totalRevenue = paidInvoices.reduce((s: number, i: any) => s + parseFloat(i.totalAmount || '0'), 0);
+        const totalExpenses = (bills as any[]).reduce((s: number, b: any) => s + parseFloat(b.totalAmount || '0'), 0);
+        const netIncome = totalRevenue - totalExpenses;
+
+        type ReportRow = {
+          label: string;
+          amount: number | string | null;
+          type: string;
+          pct?: string;
+          count?: number;
+          quantity?: number | null;
+          unitCost?: number | null;
+          revenue?: number;
+          expenses?: number;
+          cumulative?: number;
+        };
+
+        let title = 'Financial Report';
+        let headers: string[] = ['Item', 'Amount'];
+        let rows: ReportRow[] = [];
+        let summary = '';
+
+        switch (input.reportType) {
+          case 'profit_loss': {
+            title = 'Profit & Loss Statement';
+            headers = ['Item', 'Amount'];
+            rows = [
+              { label: 'Revenue', amount: totalRevenue, type: 'header' },
+              ...paidInvoices.slice(0, 10).map((i: any) => ({
+                label: `  Invoice #${i.invoiceNumber || i.id}`,
+                amount: parseFloat(i.totalAmount || '0'),
+                type: 'item',
+              })),
+              { label: 'Total Revenue', amount: totalRevenue, type: 'total' },
+              { label: 'Expenses', amount: null, type: 'header' },
+              ...(bills as any[]).slice(0, 10).map((b: any) => ({
+                label: `  Bill #${b.billNumber || b.id}`,
+                amount: parseFloat(b.totalAmount || '0'),
+                type: 'item',
+              })),
+              { label: 'Total Expenses', amount: totalExpenses, type: 'total' },
+              { label: 'Net Income', amount: netIncome, type: 'grand_total' },
+            ];
+            summary = `Net income: $${netIncome.toLocaleString()} on revenue of $${totalRevenue.toLocaleString()}`;
+            break;
+          }
+          case 'balance_sheet': {
+            title = 'Balance Sheet';
+            headers = ['Item', 'Amount'];
+            const assetAccounts = (accounts as any[]).filter((a: any) => a.type === 'asset');
+            const liabilityAccounts = (accounts as any[]).filter((a: any) => a.type === 'liability');
+            const equityAccounts = (accounts as any[]).filter((a: any) => a.type === 'equity');
+            const totalAssets = assetAccounts.reduce((s: number, a: any) => s + parseFloat(a.balance || '0'), 0);
+            const totalLiabilities = liabilityAccounts.reduce((s: number, a: any) => s + parseFloat(a.balance || '0'), 0);
+            const totalEquity = equityAccounts.reduce((s: number, a: any) => s + parseFloat(a.balance || '0'), 0);
+            rows = [
+              { label: 'Assets', amount: null, type: 'header' },
+              ...assetAccounts.map((a: any) => ({ label: `  ${a.name}`, amount: parseFloat(a.balance || '0'), type: 'item' })),
+              { label: 'Total Assets', amount: totalAssets, type: 'total' },
+              { label: 'Liabilities', amount: null, type: 'header' },
+              ...liabilityAccounts.map((a: any) => ({ label: `  ${a.name}`, amount: parseFloat(a.balance || '0'), type: 'item' })),
+              { label: 'Total Liabilities', amount: totalLiabilities, type: 'total' },
+              { label: 'Equity', amount: null, type: 'header' },
+              ...equityAccounts.map((a: any) => ({ label: `  ${a.name}`, amount: parseFloat(a.balance || '0'), type: 'item' })),
+              { label: 'Total Equity', amount: totalEquity, type: 'total' },
+              { label: "Total Liabilities & Equity", amount: totalLiabilities + totalEquity, type: 'grand_total' },
+            ];
+            summary = `Total assets: $${totalAssets.toLocaleString()}, liabilities: $${totalLiabilities.toLocaleString()}`;
+            break;
+          }
+          case 'accounts_receivable': {
+            title = 'Accounts Receivable Aging';
+            headers = ['Customer', 'Amount', 'Age (days)'];
+            const openInvoices = (invoices as any[]).filter((i: any) => ['sent', 'overdue', 'partial'].includes(i.status));
+            rows = openInvoices.map((i: any) => {
+              const daysOld = Math.floor((now.getTime() - new Date(i.createdAt || now).getTime()) / 86400000);
+              return { label: i.customerName || `Invoice #${i.invoiceNumber}`, amount: parseFloat(i.totalAmount || '0'), type: daysOld > 90 ? 'overdue' : 'item', count: daysOld };
+            });
+            summary = `${openInvoices.length} open invoices totalling $${openInvoices.reduce((s: number, i: any) => s + parseFloat(i.totalAmount || '0'), 0).toLocaleString()}`;
+            break;
+          }
+          case 'revenue_by_customer': {
+            title = 'Revenue by Customer';
+            headers = ['Customer', 'Revenue', '% of Total'];
+            const byCustomer: Record<string, number> = {};
+            for (const inv of paidInvoices) {
+              const name = inv.customerName || `Customer #${inv.customerId}`;
+              byCustomer[name] = (byCustomer[name] || 0) + parseFloat(inv.totalAmount || '0');
+            }
+            rows = Object.entries(byCustomer)
+              .sort(([, a], [, b]) => b - a)
+              .map(([name, amount]) => ({
+                label: name,
+                amount,
+                type: 'item',
+                pct: totalRevenue > 0 ? `${((amount / totalRevenue) * 100).toFixed(1)}%` : '0%',
+              }));
+            summary = `${Object.keys(byCustomer).length} customers, total revenue $${totalRevenue.toLocaleString()}`;
+            break;
+          }
+          case 'expense_by_vendor': {
+            title = 'Expenses by Vendor';
+            headers = ['Vendor', 'Amount', '% of Total'];
+            const byVendor: Record<string, number> = {};
+            for (const bill of bills as any[]) {
+              const name = bill.vendorName || `Vendor #${bill.vendorId}`;
+              byVendor[name] = (byVendor[name] || 0) + parseFloat(bill.totalAmount || '0');
+            }
+            rows = Object.entries(byVendor)
+              .sort(([, a], [, b]) => b - a)
+              .map(([name, amount]) => ({
+                label: name,
+                amount,
+                type: 'item',
+                pct: totalExpenses > 0 ? `${((amount / totalExpenses) * 100).toFixed(1)}%` : '0%',
+              }));
+            summary = `${Object.keys(byVendor).length} vendors, total spend $${totalExpenses.toLocaleString()}`;
+            break;
+          }
+          case 'tax_summary': {
+            title = 'Tax Summary';
+            headers = ['Item', 'Amount'];
+            const totalTax = paidInvoices.reduce((s: number, i: any) => s + parseFloat(i.taxAmount || '0'), 0);
+            rows = [
+              { label: 'Gross Revenue', amount: totalRevenue, type: 'item' },
+              { label: 'Total Tax Collected', amount: totalTax, type: 'item' },
+              { label: 'Net Revenue (ex-tax)', amount: totalRevenue - totalTax, type: 'total' },
+              { label: 'Deductible Expenses', amount: totalExpenses, type: 'item' },
+              { label: 'Estimated Taxable Income', amount: netIncome, type: 'grand_total' },
+            ];
+            summary = `Estimated taxable income: $${netIncome.toLocaleString()}`;
+            break;
+          }
+          default: {
+            title = 'Monthly Financial Summary';
+            headers = ['Metric', 'Value'];
+            rows = [
+              { label: 'Total Revenue', amount: totalRevenue, type: 'item' },
+              { label: 'Total Expenses', amount: totalExpenses, type: 'item' },
+              { label: 'Net Income', amount: netIncome, type: 'total' },
+              { label: 'Open Orders', amount: (orders as any[]).length, type: 'item' },
+              { label: 'Active Customers', amount: (customers as any[]).length, type: 'item' },
+              { label: 'Active Vendors', amount: (vendors as any[]).length, type: 'item' },
+              { label: 'Inventory SKUs', amount: (inventory as any[]).length, type: 'item' },
+            ];
+            summary = `Revenue $${totalRevenue.toLocaleString()}, expenses $${totalExpenses.toLocaleString()}, net $${netIncome.toLocaleString()}`;
+          }
+        }
+
+        return { title, headers, rows, generatedAt: new Date().toISOString(), summary };
+      }),
+
+    aiAnalysis: financeProcedure
+      .input(z.object({
+        reportType: z.string(),
+        reportData: z.string(),
+        strategyId: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const prompt = input.reportType === 'cfo_strategy'
+          ? `As a CFO advisor, analyze this financial strategy scenario and provide actionable recommendations:\n\n${input.reportData}`
+          : `As a financial analyst, review this ${input.reportType.replace(/_/g, ' ')} report and provide key insights, trends, risks, and recommendations:\n\n${input.reportData}`;
+
+        const response = await invokeLLM({
+          messages: [
+            { role: 'system', content: 'You are a senior CFO and financial analyst. Provide concise, data-driven financial insights and specific action items.' },
+            { role: 'user', content: prompt },
+          ],
+        });
+        const analysis = response.choices?.[0]?.message?.content;
+        return { analysis: typeof analysis === 'string' ? analysis : 'Analysis unavailable at this time.' };
       }),
   }),
 });

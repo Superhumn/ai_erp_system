@@ -124,7 +124,9 @@ export default function EDITransactions() {
   // Detail view
   if (selectedTxnId && selectedTxn) {
     const txnAny = selectedTxn as any;
-    const parsedData = selectedTxn.parsedData ? JSON.parse(selectedTxn.parsedData) : null;
+    const parsedData = (() => {
+      try { return selectedTxn.parsedData ? JSON.parse(selectedTxn.parsedData) : null; } catch { return null; }
+    })();
 
     return (
       <div className="p-6 space-y-6">
