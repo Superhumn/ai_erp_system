@@ -713,7 +713,7 @@ function Form6765Tab({ studyId }: { studyId: number }) {
               )}
               <span className="text-muted-foreground">Line 6 — Base amount</span><span className="text-right font-mono">{fmt(form.line6_baseAmount)}</span>
               <span className="text-muted-foreground">Line 7 — QREs over base</span><span className="text-right font-mono">{fmt(form.line7_excessQre)}</span>
-              <span className="text-muted-foreground">Line 8 — Credit rate</span><span className="text-right font-mono">{(form.line8_creditRate * 100).toFixed(0)}%</span>
+              <span className="text-muted-foreground">Line 8 — Credit rate</span><span className="text-right font-mono">{((parseFloat(String(form.line8_creditRate ?? 0))) * 100).toFixed(0)}%</span>
               <span className="text-muted-foreground font-semibold">Line 9 — Gross credit</span><span className="text-right font-mono font-semibold">{fmt(form.line9_grossCredit)}</span>
               <span className="text-muted-foreground">Line 10 — §280C reduction</span><span className="text-right font-mono text-red-500">{fmt(form.line10_section280C)}</span>
               <span className="text-muted-foreground font-bold">Line 11 — Net credit</span><span className="text-right font-mono font-bold text-green-600 text-lg">{fmt(form.line11_netCredit)}</span>

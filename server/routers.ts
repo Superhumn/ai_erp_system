@@ -2454,6 +2454,9 @@ export const appRouter = router({
         const qualifyingExpenses = study.expenses.filter(e => qualifyingProjectIds.has(e.projectId));
         const qreTotals = aggregateExpensesByCategory(qualifyingExpenses);
 
+        const storedReduction = parseFloat(String(study.section280CReduction)) || 0;
+        const elect280CReduction = storedReduction > 0;
+
         const result = calculateRdTaxCredit({
           calculationMethod: study.calculationMethod as "regular" | "asc",
           wageQre: qreTotals.wageQre,
@@ -2465,6 +2468,7 @@ export const appRouter = router({
           priorYear1Qre: parseFloat(String(study.priorYear1Qre)) || 0,
           priorYear2Qre: parseFloat(String(study.priorYear2Qre)) || 0,
           priorYear3Qre: parseFloat(String(study.priorYear3Qre)) || 0,
+          elect280CReduction,
         });
 
         return {

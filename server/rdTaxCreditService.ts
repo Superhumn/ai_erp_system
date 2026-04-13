@@ -36,7 +36,8 @@ export interface CreditCalculationResult {
   section280CReduction: number;
   netCredit: number;
   averagePriorQre: number;
-  effectiveRate: number; // Credit as % of total QRE
+  currentYearGrossReceipts: number;
+  effectiveRate: number;
   breakdown: {
     wageQre: number;
     supplyQre: number;
@@ -82,6 +83,7 @@ function calculateRegularCredit(input: CreditCalculationInput): CreditCalculatio
     section280CReduction,
     netCredit,
     averagePriorQre: 0,
+    currentYearGrossReceipts: input.currentYearGrossReceipts || 0,
     effectiveRate: totalQre > 0 ? netCredit / totalQre : 0,
     breakdown: {
       wageQre: input.wageQre,
@@ -136,6 +138,7 @@ function calculateASCCredit(input: CreditCalculationInput): CreditCalculationRes
     section280CReduction,
     netCredit,
     averagePriorQre,
+    currentYearGrossReceipts: input.currentYearGrossReceipts || 0,
     effectiveRate: totalQre > 0 ? netCredit / totalQre : 0,
     breakdown: {
       wageQre: input.wageQre,
@@ -231,6 +234,9 @@ export function generateForm6765Data(study: RdTaxCreditStudy, result: CreditCalc
     priorYear2Qre: parseFloat(String(study.priorYear2Qre)) || 0,
     priorYear3Qre: parseFloat(String(study.priorYear3Qre)) || 0,
     averagePriorQre: result.averagePriorQre,
+    // Gross receipts (Regular Credit / Form 6765 reporting)
+    currentYearGrossReceipts: result.currentYearGrossReceipts,
+    averageBasePeriodGrossReceipts: parseFloat(String(study.averageBasePeriodGrossReceipts)) || 0,
     // Status
     studyStatus: study.status,
     filingDate: study.filingDate,

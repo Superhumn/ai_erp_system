@@ -74,3 +74,8 @@ CREATE TABLE `rd_expenses` (
   `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT `rd_expenses_id` PRIMARY KEY(`id`)
 );
+
+CREATE INDEX `idx_rd_studies_company_year` ON `rd_tax_credit_studies` (`companyId`, `taxYear`);
+CREATE INDEX `idx_rd_projects_study` ON `rd_projects` (`studyId`);
+CREATE INDEX `idx_rd_expenses_project` ON `rd_expenses` (`projectId`);
+CREATE INDEX `idx_rd_expenses_study` ON `rd_expenses` (`studyId`);
