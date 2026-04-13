@@ -104,42 +104,37 @@ function getMenuGroups(role: string = "user") {
     label: "_main",
     items: [
       { icon: LayoutDashboard, label: "Dashboard", path: "/" },
-      { icon: Target, label: "Projects & Tasks", path: "/projects" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: Mic, label: "Meetings", path: "/meetings" },
-      { icon: MessageSquare, label: "Messaging", path: "/messaging" },
     ],
   },
-  ...(hasOps || isAdmin ? [{
-    label: "_ops",
-    items: [
-      { icon: Warehouse, label: "Inventory", path: "/operations/inventory-hub" },
-      { icon: Users, label: "Vendors & Locations", path: "/operations/vendors" },
-      { icon: Truck, label: "Freight & Logistics", path: "/freight" },
-    ],
-  }] : []),
   ...(hasSales || isAdmin ? [{
     label: "_sell",
     items: [
       ...(hasOps || isAdmin ? [{ icon: ShoppingCart, label: "Orders", path: "/sales/orders" }] : []),
-      { icon: UserCircle, label: "Customers & CRM", path: "/crm/hub" },
-      ...(isAdmin ? [{ icon: TrendingUp, label: "Fundraising", path: "/crm/campaigns" }] : []),
+      { icon: UserCircle, label: "CRM", path: "/crm/hub" },
       ...(hasFinance || isAdmin ? [{ icon: BarChart3, label: "Financials", path: "/finance/reports" }] : []),
+      ...(isAdmin ? [{ icon: TrendingUp, label: "Fundraising", path: "/crm/campaigns" }] : []),
+    ],
+  }] : []),
+  ...(hasOps || isAdmin ? [{
+    label: "_ops",
+    items: [
+      { icon: Warehouse, label: "Inventory", path: "/operations/inventory-hub" },
+      { icon: Users, label: "Vendors", path: "/operations/vendors" },
+      { icon: Truck, label: "Freight", path: "/freight" },
     ],
   }] : []),
   {
     label: "_people",
     items: [
       ...(isAdmin ? [
-        // Admin: management views
         { icon: Users, label: "People", path: "/hr/employees" },
         { icon: FileBarChart, label: "Cap Table", path: "/hr/equity-reports" },
       ] : [
-        // Employee self-service
         { icon: Clock, label: "Time Tracking", path: "/hr/time-tracking" },
         { icon: LineChart, label: "Equity Portal", path: "/hr/equity-portal" },
       ]),
-      // Legal access — single hub with tabs
       ...(hasLegal || isAdmin ? [
         { icon: Scale, label: "Legal", path: "/legal" },
       ] : []),
@@ -148,16 +143,13 @@ function getMenuGroups(role: string = "user") {
   {
     label: "_tools",
     items: [
+      { icon: Target, label: "Projects", path: "/projects" },
       ...(isAdmin ? [
-        { icon: Upload, label: "Import Data", path: "/import" },
         { icon: FolderLock, label: "Data Room", path: "/dataroom/1" },
         { icon: Megaphone, label: "Investor Updates", path: "/investor-updates" },
-        { icon: BookOpen, label: "SOPs", path: "/sops" },
-        { icon: Award, label: "Grants", path: "/grants/submitter" },
+        { icon: Upload, label: "Import", path: "/import" },
         { icon: Network, label: "EDI", path: "/edi" },
-      ] : [
-        { icon: BookOpen, label: "SOPs", path: "/sops" },
-      ]),
+      ] : []),
       { icon: Settings, label: "Settings", path: "/settings" },
     ],
   },
@@ -471,16 +463,14 @@ function DashboardLayoutContent({
       </div>
 
       <SidebarInset className="flex flex-col bg-background">
-        {/* Autonomous Agent Status Bar */}
-        <AutonomousAgentBar />
-
-        {/* Lightfield-style top bar: clean, minimal, functional */}
-        <header className="flex h-12 items-center justify-between gap-4 border-b border-border bg-background px-4 sticky top-0 z-40">
+        {/* Top bar: AI search + agent status + notifications */}
+        <header className="flex h-12 items-center justify-between gap-3 border-b border-border bg-background px-4 sticky top-0 z-40">
           <div className="flex items-center gap-2 shrink-0">
             {isMobile && <SidebarTrigger className="h-8 w-8 rounded-md" />}
           </div>
           <AICommandBar />
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
+            <AutonomousAgentBar />
             <NotificationCenter />
           </div>
         </header>
