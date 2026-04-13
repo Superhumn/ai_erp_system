@@ -273,15 +273,15 @@
    Clean metrics, strong value hierarchy
    ============================================ */
 .kpi-card {
-  @apply p-7 rounded-3xl border border-border/40 bg-card shadow-[0_2px_12px_-2px_rgba(0,0,0,0.06)];
+  @apply p-3 rounded-2xl border border-border/40 bg-card shadow-[0_1px_6px_-2px_rgba(0,0,0,0.04)];
 }
 
 .kpi-card-title {
-  @apply text-xs font-medium text-muted-foreground uppercase tracking-wider;
+  @apply text-[11px] font-medium text-muted-foreground uppercase tracking-wider;
 }
 
 .kpi-card-value {
-  @apply text-4xl font-bold mt-2 tracking-[-0.03em];
+  @apply text-xl font-semibold mt-1.5 tracking-[-0.02em];
 }
 
 .kpi-card-change {
@@ -314,7 +314,7 @@
 
 /* Form sections */
 .form-section {
-  @apply space-y-5 p-7 rounded-3xl border border-border/40 bg-card shadow-[0_2px_12px_-2px_rgba(0,0,0,0.06)];
+  @apply space-y-3 p-4 rounded-2xl border border-border/40 bg-card shadow-[0_1px_6px_-2px_rgba(0,0,0,0.04)];
 }
 
 .form-section-title {
@@ -559,7 +559,7 @@
 }
 
 .lf-stat-value {
-  @apply text-4xl font-bold tracking-[-0.03em] tabular-nums;
+  @apply text-xl font-semibold tracking-[-0.02em] tabular-nums;
 }
 
 .lf-stat-label {

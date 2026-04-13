@@ -58,7 +58,7 @@ export default function FreightDashboard() {
               FDA Notice
             </Button>
           </Link>
-          <Link href="/freight/rfqs/new">
+          <Link href="/freight/rfqs">
             <Button>
               <Plus className="h-4 w-4 mr-2" />
               New RFQ
@@ -184,7 +184,7 @@ export default function FreightDashboard() {
                 ) : (
                   <TableRow>
                     <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
-                      No quote requests yet. <Link href="/freight/rfqs/new"><span className="text-primary hover:underline">Create one</span></Link>
+                      No quote requests yet. <Link href="/freight/rfqs"><span className="text-primary hover:underline">Create one</span></Link>
                     </TableCell>
                   </TableRow>
                 )}

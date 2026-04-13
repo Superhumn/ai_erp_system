@@ -4873,14 +4873,19 @@ export const fundraisingCampaigns = mysqlTable("fundraising_campaigns", {
   companyId: int("companyId"),
   name: varchar("name", { length: 255 }).notNull(),
   description: text("description"),
-  targetAmount: decimal("targetAmount", { precision: 18, scale: 2 }),
-  raisedAmount: decimal("raisedAmount", { precision: 18, scale: 2 }).default("0"),
-  minimumInvestment: decimal("minimumInvestment", { precision: 18, scale: 2 }),
-  valuation: decimal("valuation", { precision: 18, scale: 2 }),
+  targetAmount: decimal("targetAmount", { precision: 15, scale: 2 }),
+  raisedAmount: decimal("raisedAmount", { precision: 15, scale: 2 }).default("0"),
+  minimumInvestment: decimal("minimumInvestment", { precision: 15, scale: 2 }),
+  valuation: decimal("valuation", { precision: 15, scale: 2 }),
   roundType: mysqlEnum("roundType", ["pre_seed", "seed", "series_a", "series_b", "series_c", "bridge", "other"]).default("seed").notNull(),
   equityOffered: decimal("equityOffered", { precision: 5, scale: 2 }),
+  startDate: timestamp("startDate"),
+  targetCloseDate: timestamp("targetCloseDate"),
+  actualCloseDate: timestamp("actualCloseDate"),
   status: mysqlEnum("status", ["planning", "active", "paused", "closed", "cancelled"]).default("planning").notNull(),
+  dataRoomId: int("dataRoomId"),
   notes: text("notes"),
+  createdBy: int("createdBy"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -5938,3 +5943,60 @@ export const supplierPerformance = mysqlTable("supplierPerformance", {
 
 export type SupplierPerformanceRecord = typeof supplierPerformance.$inferSelect;
 export type InsertSupplierPerformanceRecord = typeof supplierPerformance.$inferInsert;
+
+// ============================================
+// CODE CAPABILITY (Claude Code Integration)
+// ============================================
+
+export const codeSnippets = mysqlTable("codeSnippets", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  language: varchar("language", { length: 64 }).notNull().default("typescript"),
+  code: text("code").notNull(),
+  tags: text("tags"), // JSON array of tag strings
+  isPublic: boolean("isPublic").default(false).notNull(),
+  folderId: int("folderId"),
+  version: int("version").default(1).notNull(),
+  parentSnippetId: int("parentSnippetId"), // for version history
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CodeSnippet = typeof codeSnippets.$inferSelect;
+export type InsertCodeSnippet = typeof codeSnippets.$inferInsert;
+
+export const codeExecutions = mysqlTable("codeExecutions", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id),
+  snippetId: int("snippetId").references(() => codeSnippets.id),
+  language: varchar("language", { length: 64 }).notNull(),
+  code: text("code").notNull(),
+  output: text("output"),
+  errorOutput: text("errorOutput"),
+  exitCode: int("exitCode"),
+  executionTimeMs: int("executionTimeMs"),
+  status: mysqlEnum("status", ["pending", "running", "completed", "failed", "timeout"]).default("pending").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CodeExecution = typeof codeExecutions.$inferSelect;
+export type InsertCodeExecution = typeof codeExecutions.$inferInsert;
+
+export const codeAiSessions = mysqlTable("codeAiSessions", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id),
+  snippetId: int("snippetId").references(() => codeSnippets.id),
+  action: mysqlEnum("action", ["generate", "explain", "debug", "refactor", "review", "test", "document", "optimize"]).notNull(),
+  prompt: text("prompt").notNull(),
+  inputCode: text("inputCode"),
+  outputCode: text("outputCode"),
+  explanation: text("explanation"),
+  model: varchar("model", { length: 128 }),
+  tokensUsed: int("tokensUsed"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CodeAiSession = typeof codeAiSessions.$inferSelect;
+export type InsertCodeAiSession = typeof codeAiSessions.$inferInsert;

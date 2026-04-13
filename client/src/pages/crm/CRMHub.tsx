@@ -368,6 +368,7 @@ export default function CRMHub() {
                       <SelectItem value="iphone_bump">iPhone Bump / AirDrop</SelectItem>
                       <SelectItem value="nfc">NFC Tag</SelectItem>
                       <SelectItem value="linkedin">LinkedIn Profile</SelectItem>
+                      <SelectItem value="linkedin_csv">LinkedIn CSV (Bulk)</SelectItem>
                       <SelectItem value="whatsapp">WhatsApp Contact</SelectItem>
                     </SelectContent>
                   </Select>
@@ -423,6 +424,54 @@ export default function CRMHub() {
                         onChange={(e) => setCaptureForm({ ...captureForm, linkedinCompany: e.target.value })}
                       />
                     </div>
+                  </div>
+                )}
+
+                {captureMethod === "linkedin_csv" && (
+                  <div className="space-y-3">
+                    <p className="text-xs text-muted-foreground">
+                      Export from LinkedIn: Settings → Data Privacy → Get a copy of your data → Connections → Download CSV
+                    </p>
+                    <Input
+                      type="file"
+                      accept=".csv"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const text = await file.text();
+                        const lines = text.split("\n");
+                        const headers = lines[0].split(",").map(h => h.trim().replace(/"/g, "").toLowerCase());
+                        const firstNameIdx = headers.findIndex(h => h.includes("first"));
+                        const lastNameIdx = headers.findIndex(h => h.includes("last"));
+                        const emailIdx = headers.findIndex(h => h.includes("email"));
+                        const companyIdx = headers.findIndex(h => h.includes("company"));
+                        const positionIdx = headers.findIndex(h => h.includes("position") || h.includes("title"));
+                        const urlIdx = headers.findIndex(h => h.includes("url") || h.includes("profile"));
+
+                        let imported = 0;
+                        for (let i = 1; i < lines.length; i++) {
+                          const cols = lines[i].split(",").map(c => c.trim().replace(/"/g, ""));
+                          const firstName = cols[firstNameIdx] || "";
+                          const lastName = cols[lastNameIdx] || "";
+                          if (!firstName && !lastName) continue;
+                          try {
+                            await createContact.mutateAsync({
+                              firstName,
+                              lastName: lastName || undefined,
+                              email: cols[emailIdx] || undefined,
+                              organization: cols[companyIdx] || undefined,
+                              jobTitle: cols[positionIdx] || undefined,
+                              linkedinUrl: cols[urlIdx] || undefined,
+                              source: "linkedin_csv",
+                            } as any);
+                            imported++;
+                          } catch { /* skip duplicates */ }
+                        }
+                        toast.success(`Imported ${imported} contacts from LinkedIn CSV`);
+                        refetchContacts();
+                        setIsCaptureDialogOpen(false);
+                      }}
+                    />
                   </div>
                 )}
 
@@ -993,20 +1042,25 @@ export default function CRMHub() {
           <div className="space-y-3">
             <div className="space-y-1">
               <Label className="text-xs">Contact *</Label>
-              {contacts && (contacts as any[]).length > 0 ? (
-                <Select value={dealForm.contactId?.toString() || "0"} onValueChange={(v) => setDealForm({ ...dealForm, contactId: parseInt(v) })}>
-                  <SelectTrigger><SelectValue placeholder="Select contact" /></SelectTrigger>
-                  <SelectContent>
-                    {(contacts as any[]).map((c: any) => (
-                      <SelectItem key={c.id} value={c.id.toString()}>{c.fullName || c.firstName || c.email}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <div className="space-y-2">
-                  <Input placeholder="Contact name" value={dealForm.contactName || ""} onChange={(e) => setDealForm({ ...dealForm, contactName: e.target.value })} />
+              <Select value={dealForm.contactId?.toString() || "0"} onValueChange={(v) => {
+                if (v === "new") {
+                  setDealForm({ ...dealForm, contactId: 0 });
+                } else {
+                  setDealForm({ ...dealForm, contactId: parseInt(v), contactName: "", contactEmail: "" });
+                }
+              }}>
+                <SelectTrigger><SelectValue placeholder="Select contact" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="new">+ Create new contact</SelectItem>
+                  {(contacts as any[] || []).map((c: any) => (
+                    <SelectItem key={c.id} value={c.id.toString()}>{c.fullName || c.firstName || c.email}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {(!dealForm.contactId || dealForm.contactId === 0) && (
+                <div className="space-y-2 mt-2">
+                  <Input placeholder="Contact name *" value={dealForm.contactName || ""} onChange={(e) => setDealForm({ ...dealForm, contactName: e.target.value })} />
                   <Input placeholder="Contact email" value={dealForm.contactEmail || ""} onChange={(e) => setDealForm({ ...dealForm, contactEmail: e.target.value })} />
-                  <p className="text-xs text-muted-foreground">No contacts yet — enter name and email to create one with the deal</p>
                 </div>
               )}
             </div>

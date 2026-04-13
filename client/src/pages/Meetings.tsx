@@ -41,10 +41,14 @@ export default function Meetings() {
   const [processCreateProject, setProcessCreateProject] = useState(false);
   const [processProjectName, setProcessProjectName] = useState("");
 
-  const { data: meetingsRaw, isLoading, refetch } = trpc.fireflies.meetings.list.useQuery({
+  const { data: meetingsRaw, isLoading, refetch, error: meetingsError } = trpc.fireflies.meetings.list.useQuery({
     status: statusFilter !== "all" ? statusFilter : undefined,
   });
   const meetings = (meetingsRaw as any[] | undefined) || [];
+
+  // Debug: log meetings data
+  if (meetingsError) console.error("[Meetings] Query error:", meetingsError.message);
+  if (meetingsRaw) console.log("[Meetings] Got", Array.isArray(meetingsRaw) ? meetingsRaw.length : "non-array", "meetings");
   const { data: statsRaw } = trpc.fireflies.meetings.getStats.useQuery();
   const stats = statsRaw as any;
 
@@ -238,6 +242,11 @@ export default function Meetings() {
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      ) : meetingsError ? (
+        <div className="text-center py-12 text-red-500">
+          <p className="font-medium">Error loading meetings</p>
+          <p className="text-sm mt-1">{meetingsError.message}</p>
         </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">

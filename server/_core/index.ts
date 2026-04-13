@@ -125,9 +125,113 @@ async function ensureTables() {
         createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )`,
+      // Orchestrator tables
+      `CREATE TABLE IF NOT EXISTS supplyChainWorkflows (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        companyId INT,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        workflowType ENUM('demand_forecasting','production_planning','material_requirements','procurement','inventory_reorder','inventory_transfer','inventory_optimization','work_order_generation','production_scheduling','freight_procurement','shipment_tracking','order_fulfillment','supplier_management','quality_inspection','invoice_matching','payment_processing','exception_handling','vendor_quote_procurement','vendor_quote_analysis','custom') NOT NULL,
+        triggerType ENUM('scheduled','event','threshold','manual','continuous') DEFAULT 'scheduled' NOT NULL,
+        cronSchedule VARCHAR(64),
+        triggerEvents TEXT,
+        thresholdConfig TEXT,
+        executionConfig TEXT,
+        maxConcurrentRuns INT DEFAULT 1,
+        timeoutMinutes INT DEFAULT 60,
+        retryAttempts INT DEFAULT 3,
+        retryDelayMinutes INT DEFAULT 5,
+        requiresApproval BOOLEAN DEFAULT FALSE,
+        autoApproveThreshold DECIMAL(14,2),
+        approvalRoles TEXT,
+        escalationMinutes INT DEFAULT 60,
+        escalationRoles TEXT,
+        dependsOnWorkflows TEXT,
+        isActive BOOLEAN DEFAULT TRUE NOT NULL,
+        lastRunAt TIMESTAMP NULL,
+        nextScheduledRun TIMESTAMP NULL,
+        successCount INT DEFAULT 0,
+        failureCount INT DEFAULT 0,
+        createdBy INT,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS workflowRuns (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        workflowId INT NOT NULL,
+        runNumber VARCHAR(64) NOT NULL,
+        status ENUM('queued','running','awaiting_approval','approved','rejected','completed','failed','cancelled','timed_out') DEFAULT 'queued' NOT NULL,
+        triggeredBy ENUM('schedule','event','threshold','manual','dependency') NOT NULL,
+        triggerData TEXT,
+        triggeredByUserId INT,
+        startedAt TIMESTAMP NULL,
+        completedAt TIMESTAMP NULL,
+        durationMs INT,
+        totalSteps INT DEFAULT 0,
+        completedSteps INT DEFAULT 0,
+        currentStepName VARCHAR(255),
+        progressPercent INT DEFAULT 0,
+        inputData TEXT,
+        outputData TEXT,
+        errorMessage TEXT,
+        errorDetails TEXT,
+        itemsProcessed INT DEFAULT 0,
+        itemsSucceeded INT DEFAULT 0,
+        itemsFailed INT DEFAULT 0,
+        totalValue DECIMAL(14,2),
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS approvalThresholds (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        companyId INT,
+        name VARCHAR(255) NOT NULL,
+        entityType ENUM('purchase_order','work_order','inventory_transfer','freight_booking','payment','vendor_rfq','price_override','exception') NOT NULL,
+        autoApproveMaxAmount DECIMAL(14,2),
+        level1MaxAmount DECIMAL(14,2),
+        level2MaxAmount DECIMAL(14,2),
+        level3MaxAmount DECIMAL(14,2),
+        level1Roles TEXT,
+        level2Roles TEXT,
+        level3Roles TEXT,
+        execRoles TEXT,
+        level1EscalationMinutes INT DEFAULT 60,
+        level2EscalationMinutes INT DEFAULT 120,
+        level3EscalationMinutes INT DEFAULT 240,
+        conditions TEXT,
+        isActive BOOLEAN DEFAULT TRUE NOT NULL,
+        createdBy INT,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS exceptionRules (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        companyId INT,
+        name VARCHAR(255) NOT NULL,
+        ruleType ENUM('price_variance','quantity_variance','delivery_delay','quality_issue','budget_exceeded','inventory_discrepancy','custom') NOT NULL,
+        conditions TEXT,
+        severity ENUM('low','medium','high','critical') DEFAULT 'medium' NOT NULL,
+        autoResolveAction TEXT,
+        notifyRoles TEXT,
+        isActive BOOLEAN DEFAULT TRUE NOT NULL,
+        createdBy INT,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
+      )`,
     ];
     for (const tableSQL of tables) {
       try { await database.execute(sql.raw(tableSQL)); } catch { /* already exists */ }
+    }
+    // Add missing columns to existing tables
+    const alterStatements = [
+      "ALTER TABLE fireflies_meetings ADD COLUMN videoUrl TEXT",
+      "ALTER TABLE fireflies_meetings ADD COLUMN audioUrl TEXT",
+      "ALTER TABLE fireflies_meetings ADD COLUMN crmContactId INT",
+      "ALTER TABLE fireflies_meetings ADD COLUMN linkedEntityType VARCHAR(64)",
+      "ALTER TABLE fireflies_meetings ADD COLUMN linkedEntityId INT",
+    ];
+    for (const sql of alterStatements) {
+      try { await database.execute(require('drizzle-orm/sql').sql.raw(sql)); } catch { /* column already exists */ }
     }
     console.log("[Startup] Ensured critical tables exist");
   } catch (e) {
@@ -492,7 +596,8 @@ async function startServer() {
   // Google OAuth callback — path used by gmail.getAuthUrl and googleWorkspace.getAuthUrl
   // (generated by getGoogleFullAccessAuthUrl in server/_core/googleDrive.ts)
   app.get('/api/oauth/google/callback', oauthCallbackLimiter, (req, res) => {
-    const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.APP_URL || 'http://localhost:3000'}/api/oauth/google/callback`;
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.VITE_APP_URL || process.env.APP_URL || 'http://localhost:3000'}/api/oauth/google/callback`;
+    console.log(`[Google OAuth] Token exchange with redirect_uri: ${redirectUri}`);
     return handleGoogleOAuthCallback(req, res, redirectUri);
   });
 
