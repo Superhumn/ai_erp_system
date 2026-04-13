@@ -43,6 +43,26 @@ import { collectERPData, autoPopulateFields, generateApplicationNarrative, revie
 import { runFormFillerAgent } from "./formFillerAgent";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
 import { purchaseOrderTextEndpoints, shipmentTextEndpoints, paymentTextEndpoints, workOrderTextEndpoints, inventoryTextEndpoints } from "./naturalLanguageRouterExtensions";
+import { encrypt, decrypt } from "./_core/crypto";
+import { createHash, createDecipheriv } from "crypto";
+
+// Decrypts a stored password supporting both the current AES-256-GCM format
+// (iv:authTag:ciphertext) and the legacy AES-256-CBC format (plain hex ciphertext).
+function decryptPassword(encryptedText: string): string {
+  if (encryptedText.split(":").length === 3) {
+    return decrypt(encryptedText);
+  }
+  // Legacy CBC fallback for passwords stored before the GCM migration
+  const key = process.env.JWT_SECRET || "default-key";
+  const decipher = createDecipheriv(
+    "aes-256-cbc",
+    createHash("sha256").update(key).digest().slice(0, 32),
+    Buffer.alloc(16, 0),
+  );
+  let decrypted = decipher.update(encryptedText, "hex", "utf8");
+  decrypted += decipher.final("utf8");
+  return decrypted;
+}
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -13800,14 +13820,7 @@ Ask if they received the original request and if they can provide a quote.`;
       }))
       .mutation(async ({ input, ctx }) => {
         // Encrypt password
-        const crypto = await import('crypto');
-        const key = process.env.JWT_SECRET || 'default-key';
-        const cipher = crypto.createCipheriv('aes-256-cbc', 
-          crypto.createHash('sha256').update(key).digest().slice(0, 32),
-          Buffer.alloc(16, 0)
-        );
-        let encrypted = cipher.update(input.password, 'utf8', 'hex');
-        encrypted += cipher.final('hex');
+        const encrypted = encrypt(input.password);
 
         const { id } = await db.createImapCredential({
           ...input,
@@ -13860,14 +13873,7 @@ Ask if they received the original request and if they can provide a quote.`;
         }
 
         // Decrypt password
-        const crypto = await import('crypto');
-        const key = process.env.JWT_SECRET || 'default-key';
-        const decipher = crypto.createDecipheriv('aes-256-cbc',
-          crypto.createHash('sha256').update(key).digest().slice(0, 32),
-          Buffer.alloc(16, 0)
-        );
-        let decrypted = decipher.update(credential.encryptedPassword, 'hex', 'utf8');
-        decrypted += decipher.final('utf8');
+        const decrypted = decryptPassword(credential.encryptedPassword);
 
         return {
           ...credential,
@@ -13915,14 +13921,7 @@ Ask if they received the original request and if they can provide a quote.`;
         // Encrypt password if provided
         let encryptedPassword = input.imapPassword;
         if (input.imapPassword) {
-          const crypto = await import('crypto');
-          const key = process.env.JWT_SECRET || 'default-key';
-          const cipher = crypto.createCipheriv('aes-256-cbc',
-            crypto.createHash('sha256').update(key).digest().slice(0, 32),
-            Buffer.alloc(16, 0)
-          );
-          encryptedPassword = cipher.update(input.imapPassword, 'utf8', 'hex');
-          encryptedPassword += cipher.final('hex');
+          encryptedPassword = encrypt(input.imapPassword);
         }
 
         const { id } = await db.createEmailCredential({
@@ -13960,15 +13959,7 @@ Ask if they received the original request and if they can provide a quote.`;
 
         // Encrypt new password if provided
         if (imapPassword) {
-          const crypto = await import('crypto');
-          const key = process.env.JWT_SECRET || 'default-key';
-          const cipher = crypto.createCipheriv('aes-256-cbc',
-            crypto.createHash('sha256').update(key).digest().slice(0, 32),
-            Buffer.alloc(16, 0)
-          );
-          let encrypted = cipher.update(imapPassword, 'utf8', 'hex');
-          encrypted += cipher.final('hex');
-          updateData.imapPassword = encrypted;
+          updateData.imapPassword = encrypt(imapPassword);
         }
 
         await db.updateEmailCredential(id, updateData);
@@ -14008,15 +13999,7 @@ Ask if they received the original request and if they can provide a quote.`;
 
           // Decrypt password
           if (credential.imapPassword) {
-            const crypto = await import('crypto');
-            const key = process.env.JWT_SECRET || 'default-key';
-            const decipher = crypto.createDecipheriv('aes-256-cbc',
-              crypto.createHash('sha256').update(key).digest().slice(0, 32),
-              Buffer.alloc(16, 0)
-            );
-            let decrypted = decipher.update(credential.imapPassword, 'hex', 'utf8');
-            decrypted += decipher.final('utf8');
-            config = { ...credential, imapPassword: decrypted };
+            config = { ...credential, imapPassword: decryptPassword(credential.imapPassword) };
           }
         }
 
