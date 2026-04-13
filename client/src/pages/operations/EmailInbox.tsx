@@ -704,34 +704,32 @@ export default function EmailInbox() {
                           <div className="text-sm whitespace-pre-wrap leading-relaxed max-h-[50vh] overflow-y-auto">
                             {cleanEmailBody(email.bodyText || "(No content)")}
                           </div>
-                          {/* Quick reply snippets */}
+                          {/* Reply box */}
                           <div className="mt-3 pt-3 border-t border-border/30">
-                            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Quick Reply</p>
-                            <div className="flex flex-wrap gap-1.5">
-                              {[
-                                "Got it, thanks.",
-                                "Yes that works.",
-                                "Can you send me the invoice?",
-                                "Please send updated pricing.",
-                                "What's the lead time on this?",
-                                "Confirmed. Please proceed.",
-                                "Not interested, thanks.",
-                                "Let me check and get back to you.",
-                                "Can we schedule a call?",
-                                "Please send the PO.",
-                              ].map((snippet) => (
-                                <button
-                                  key={snippet}
-                                  className="px-2.5 py-1 text-xs border rounded-lg hover:bg-accent transition-colors"
-                                  onClick={() => {
-                                    // Copy to clipboard for now — will send via Gmail when connected
-                                    navigator.clipboard.writeText(snippet);
-                                    toast.success("Copied to clipboard");
-                                  }}
-                                >
-                                  {snippet}
-                                </button>
-                              ))}
+                            <div className="flex gap-2">
+                              <Input
+                                placeholder="Write a reply..."
+                                className="flex-1 h-8 text-sm"
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" && (e.target as HTMLInputElement).value.trim()) {
+                                    const reply = (e.target as HTMLInputElement).value.trim();
+                                    // TODO: send via Gmail when OAuth connected
+                                    navigator.clipboard.writeText(reply);
+                                    toast.success("Reply copied — paste in Gmail to send");
+                                    (e.target as HTMLInputElement).value = "";
+                                  }
+                                }}
+                              />
+                              <Button size="sm" className="h-8 text-xs" onClick={(e) => {
+                                const input = (e.target as HTMLElement).parentElement?.querySelector("input") as HTMLInputElement;
+                                if (input?.value.trim()) {
+                                  navigator.clipboard.writeText(input.value.trim());
+                                  toast.success("Reply copied — paste in Gmail to send");
+                                  input.value = "";
+                                }
+                              }}>
+                                Send
+                              </Button>
                             </div>
                           </div>
                         </div>
