@@ -232,7 +232,7 @@ function verifyPassword(password: string, stored: string): boolean {
   const [salt, hash] = stored.split(':');
   if (!salt || !hash) return false;
   const verifyHash = crypto.scryptSync(password, salt, 64).toString('hex');
-  return verifyHash === hash;
+  return crypto.timingSafeEqual(Buffer.from(verifyHash, 'hex'), Buffer.from(hash, 'hex'));
 }
 
 
@@ -12644,7 +12644,12 @@ Ask if they received the original request and if they can provide a quote.`;
             }
             const matches = link.password.includes(':')
               ? verifyPassword(input.password, link.password)
-              : require('crypto').createHash('sha256').update(input.password).digest('hex') === link.password;
+              : (() => {
+                  const c = require('crypto');
+                  const computed = Buffer.from(c.createHash('sha256').update(input.password).digest('hex'));
+                  const stored = Buffer.from(link.password);
+                  return computed.length === stored.length && c.timingSafeEqual(computed, stored);
+                })();
             if (!matches) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid password' });
             }

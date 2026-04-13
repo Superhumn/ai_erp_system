@@ -1,5 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { randomBytes, scryptSync, timingSafeEqual, createHash } from "crypto";
 import { sendEmail, isEmailConfigured, formatEmailHtml } from "../_core/email";
 import * as db from "../db";
 import { storagePut } from "../storage";
@@ -7,6 +8,29 @@ import { nanoid } from "nanoid";
 import { syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType } from "../_core/googleDrive";
 import { router, publicProcedure, protectedProcedure, getValidGoogleToken } from "./middleware";
 import type { InsertDataRoomDriveSyncConfig } from "../../drizzle/schema";
+
+// Hash a data-room/link password using scrypt (salted KDF).
+function hashDataRoomPassword(password: string): string {
+  const salt = randomBytes(16).toString('hex');
+  const hash = scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+// Verify a data-room/link password against a stored hash.
+// Supports legacy unsalted SHA-256 hashes (stored as plain 64-char hex) for backward compatibility.
+function verifyDataRoomPassword(password: string, stored: string): boolean {
+  if (stored.includes(':')) {
+    // Current format: scrypt salt:hash
+    const [salt, hash] = stored.split(':');
+    if (!salt || !hash) return false;
+    const computed = scryptSync(password, salt, 64).toString('hex');
+    return timingSafeEqual(Buffer.from(computed, 'hex'), Buffer.from(hash, 'hex'));
+  }
+  // Legacy format: plain SHA-256 hex (no salt)
+  const computed = Buffer.from(createHash('sha256').update(password).digest('hex'));
+  const storedBuf = Buffer.from(stored);
+  return computed.length === storedBuf.length && timingSafeEqual(computed, storedBuf);
+}
 
 export const dataRoomRouter = router({
   // ============================================
@@ -59,8 +83,7 @@ export const dataRoomRouter = router({
         // Hash password if provided
         let hashedPassword = null;
         if (input.password) {
-          const crypto = await import('crypto');
-          hashedPassword = crypto.createHash('sha256').update(input.password).digest('hex');
+          hashedPassword = hashDataRoomPassword(input.password);
         }
 
         const { enableWatermark, ...rest } = input;
@@ -108,8 +131,7 @@ export const dataRoomRouter = router({
           if (password === null) {
             hashedPassword = null;
           } else {
-            const crypto = await import('crypto');
-            hashedPassword = crypto.createHash('sha256').update(password).digest('hex');
+            hashedPassword = hashDataRoomPassword(password);
           }
         }
 
@@ -298,8 +320,7 @@ export const dataRoomRouter = router({
           const linkCode = nanoid(12);
           let hashedPassword = null;
           if (input.password) {
-            const crypto = await import('crypto');
-            hashedPassword = crypto.createHash('sha256').update(input.password).digest('hex');
+            hashedPassword = hashDataRoomPassword(input.password);
           }
 
           const { id } = await db.createDataRoomLink({
@@ -723,9 +744,7 @@ export const dataRoomRouter = router({
             if (!input.password) {
               return { requiresPassword: true, dataRoomId: null, visitorId: null };
             }
-            const crypto = await import('crypto');
-            const hashedPassword = crypto.createHash('sha256').update(input.password).digest('hex');
-            if (hashedPassword !== link.password) {
+            if (!verifyDataRoomPassword(input.password, link.password)) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid password' });
             }
           }

@@ -2601,7 +2601,8 @@ export async function createTeamInvitation(data: Omit<InsertTeamInvitation, 'inv
   const db = await getDb();
   if (!db) return null;
   
-  const inviteCode = `INV-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+  const { randomBytes } = await import('crypto');
+  const inviteCode = `INV-${randomBytes(8).toString('hex').toUpperCase()}`;
   
   const result = await db.insert(teamInvitations).values({
     ...data,
