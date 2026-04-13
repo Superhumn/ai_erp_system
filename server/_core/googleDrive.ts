@@ -51,7 +51,7 @@ const GOOGLE_DOCS_EXPORT_TYPES: Record<string, { mimeType: string; extension: st
  */
 export function getGoogleDriveAuthUrl(userId: number): string {
   const clientId = ENV.googleClientId;
-  const redirectUri = ENV.googleRedirectUri || `${ENV.appUrl}/api/oauth/google/callback`;
+  const redirectUri = ENV.googleRedirectUri || `${process.env.VITE_APP_URL || ENV.appUrl}/api/oauth/google/callback`;
   
   // Request drive.readonly scope for reading files and folders
   const scope = encodeURIComponent(
@@ -69,7 +69,7 @@ export function getGoogleDriveAuthUrl(userId: number): string {
  */
 export function getGoogleFullAccessAuthUrl(userId: number, returnTo?: string): string {
   const clientId = ENV.googleClientId;
-  const redirectUri = ENV.googleRedirectUri || `${ENV.appUrl}/api/oauth/google/callback`;
+  const redirectUri = ENV.googleRedirectUri || `${process.env.VITE_APP_URL || ENV.appUrl}/api/oauth/google/callback`;
 
   // Request all necessary scopes for Drive, Gmail, Docs, Sheets, and Calendar
   // NOTE: You must enable the Google Calendar API in your Google Cloud Console:
