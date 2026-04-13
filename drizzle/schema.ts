@@ -5981,6 +5981,106 @@ export const codeExecutions = mysqlTable("codeExecutions", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
+export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
+export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
+
+// ============================================
+// R&D TAX CREDIT (IRC SECTION 41)
+// ============================================
+
+export const rdTaxCreditStudies = mysqlTable("rd_tax_credit_studies", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  taxYear: int("taxYear").notNull(),
+  studyName: varchar("studyName", { length: 255 }).notNull(),
+  status: mysqlEnum("status", ["draft", "in_progress", "under_review", "filed", "amended"]).default("draft").notNull(),
+  calculationMethod: mysqlEnum("calculationMethod", ["regular", "asc"]).default("asc").notNull(),
+  // Qualified Research Expenses (QREs)
+  totalWageQre: decimal("totalWageQre", { precision: 15, scale: 2 }).default("0"),
+  totalSupplyQre: decimal("totalSupplyQre", { precision: 15, scale: 2 }).default("0"),
+  totalContractQre: decimal("totalContractQre", { precision: 15, scale: 2 }).default("0"),
+  totalQre: decimal("totalQre", { precision: 15, scale: 2 }).default("0"),
+  // Base amount for Regular Credit method
+  baseAmount: decimal("baseAmount", { precision: 15, scale: 2 }).default("0"),
+  fixedBasePercentage: decimal("fixedBasePercentage", { precision: 10, scale: 6 }).default("0"),
+  // ASC method: average QREs for prior 3 years
+  priorYear1Qre: decimal("priorYear1Qre", { precision: 15, scale: 2 }).default("0"),
+  priorYear2Qre: decimal("priorYear2Qre", { precision: 15, scale: 2 }).default("0"),
+  priorYear3Qre: decimal("priorYear3Qre", { precision: 15, scale: 2 }).default("0"),
+  averagePriorQre: decimal("averagePriorQre", { precision: 15, scale: 2 }).default("0"),
+  // Calculated credit
+  grossCredit: decimal("grossCredit", { precision: 15, scale: 2 }).default("0"),
+  section280CReduction: decimal("section280CReduction", { precision: 15, scale: 2 }).default("0"),
+  netCredit: decimal("netCredit", { precision: 15, scale: 2 }).default("0"),
+  // Gross receipts for base period (Regular Credit)
+  currentYearGrossReceipts: decimal("currentYearGrossReceipts", { precision: 15, scale: 2 }).default("0"),
+  averageBasePeriodGrossReceipts: decimal("averageBasePeriodGrossReceipts", { precision: 15, scale: 2 }).default("0"),
+  // Filing info
+  filingDate: timestamp("filingDate"),
+  formNumber: varchar("formNumber", { length: 20 }).default("6765"),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type RdTaxCreditStudy = typeof rdTaxCreditStudies.$inferSelect;
+export type InsertRdTaxCreditStudy = typeof rdTaxCreditStudies.$inferInsert;
+
+export const rdProjects = mysqlTable("rd_projects", {
+  id: int("id").autoincrement().primaryKey(),
+  studyId: int("studyId").notNull(),
+  projectName: varchar("projectName", { length: 255 }).notNull(),
+  description: text("description"),
+  businessComponent: varchar("businessComponent", { length: 255 }),
+  // Four-Part Test documentation
+  technologicalInNature: boolean("technologicalInNature").default(false),
+  technologicalNatureNotes: text("technologicalNatureNotes"),
+  eliminationOfUncertainty: boolean("eliminationOfUncertainty").default(false),
+  eliminationOfUncertaintyNotes: text("eliminationOfUncertaintyNotes"),
+  processOfExperimentation: boolean("processOfExperimentation").default(false),
+  processOfExperimentationNotes: text("processOfExperimentationNotes"),
+  permittedPurpose: boolean("permittedPurpose").default(false),
+  permittedPurposeNotes: text("permittedPurposeNotes"),
+  qualifies: boolean("qualifies").default(false),
+  // Project financials
+  totalProjectQre: decimal("totalProjectQre", { precision: 15, scale: 2 }).default("0"),
+  startDate: timestamp("startDate"),
+  endDate: timestamp("endDate"),
+  status: mysqlEnum("status", ["active", "completed", "excluded"]).default("active").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type RdProject = typeof rdProjects.$inferSelect;
+export type InsertRdProject = typeof rdProjects.$inferInsert;
+
+export const rdExpenses = mysqlTable("rd_expenses", {
+  id: int("id").autoincrement().primaryKey(),
+  projectId: int("projectId").notNull(),
+  studyId: int("studyId").notNull(),
+  category: mysqlEnum("category", ["wages", "supplies", "contract_research", "cloud_computing"]).notNull(),
+  description: varchar("description", { length: 500 }),
+  // Employee info (for wage QREs)
+  employeeId: int("employeeId"),
+  employeeName: varchar("employeeName", { length: 255 }),
+  rdPercentage: decimal("rdPercentage", { precision: 5, scale: 2 }).default("100"),
+  // Amounts
+  grossAmount: decimal("grossAmount", { precision: 15, scale: 2 }).notNull(),
+  qualifiedAmount: decimal("qualifiedAmount", { precision: 15, scale: 2 }).notNull(),
+  // Contract research is 65% qualified
+  contractResearchRate: decimal("contractResearchRate", { precision: 5, scale: 2 }).default("65"),
+  vendorId: int("vendorId"),
+  vendorName: varchar("vendorName", { length: 255 }),
+  periodStart: timestamp("periodStart"),
+  periodEnd: timestamp("periodEnd"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type RdExpense = typeof rdExpenses.$inferSelect;
+export type InsertRdExpense = typeof rdExpenses.$inferInsert;
 export type CodeExecution = typeof codeExecutions.$inferSelect;
 export type InsertCodeExecution = typeof codeExecutions.$inferInsert;
 

@@ -27,6 +27,7 @@ const Payments = lazy(() => import("./pages/finance/Payments"));
 const Transactions = lazy(() => import("./pages/finance/Transactions"));
 const FinancialReports = lazy(() => import("./pages/finance/FinancialReports"));
 const Banking = lazy(() => import("./pages/finance/Banking"));
+const RdTaxCredit = lazy(() => import("./pages/finance/RdTaxCredit"));
 
 // Sales
 const Orders = lazy(() => import("./pages/sales/Orders"));
@@ -209,6 +210,7 @@ function Router() {
           <Route path="/finance/transactions" component={Transactions} />
           <Route path="/finance/reports" component={FinancialReports} />
           <Route path="/finance/banking" component={Banking} />
+          <Route path="/finance/rd-tax-credit" component={RdTaxCredit} />
           <Route path="/finance/ai" component={FinanceAI} />
 
           {/* Sales */}
