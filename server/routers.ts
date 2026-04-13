@@ -12646,8 +12646,8 @@ Ask if they received the original request and if they can provide a quote.`;
               ? verifyPassword(input.password, link.password)
               : (() => {
                   const c = require('crypto');
-                  const computed = Buffer.from(c.createHash('sha256').update(input.password).digest('hex'));
-                  const stored = Buffer.from(link.password);
+                  const computed = c.createHash('sha256').update(input.password).digest();
+                  const stored = Buffer.from(link.password, 'hex');
                   return computed.length === stored.length && c.timingSafeEqual(computed, stored);
                 })();
             if (!matches) {

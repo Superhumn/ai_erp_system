@@ -27,8 +27,8 @@ function verifyDataRoomPassword(password: string, stored: string): boolean {
     return timingSafeEqual(Buffer.from(computed, 'hex'), Buffer.from(hash, 'hex'));
   }
   // Legacy format: plain SHA-256 hex (no salt)
-  const computed = Buffer.from(createHash('sha256').update(password).digest('hex'));
-  const storedBuf = Buffer.from(stored);
+  const computed = createHash('sha256').update(password).digest();
+  const storedBuf = Buffer.from(stored, 'hex');
   return computed.length === storedBuf.length && timingSafeEqual(computed, storedBuf);
 }
 

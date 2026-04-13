@@ -733,8 +733,8 @@ export default function EmailInbox() {
                                 // Strip HTML if it contains tags
                                 if (raw.includes("<") && raw.includes(">")) {
                                   return raw
-                                    .replace(/<style[^>]*>[\s\S]*?<\/style\s*>/gi, "")
-                                    .replace(/<script[^>]*>[\s\S]*?<\/script\s*>/gi, "")
+                                    .replace(/<style[^>]*>[\s\S]*?<\/style[^>]*>/gi, "")
+                                    .replace(/<script[^>]*>[\s\S]*?<\/script[^>]*>/gi, "")
                                     .replace(/<br\s*\/?>/gi, "\n")
                                     .replace(/<\/p>/gi, "\n\n")
                                     .replace(/<\/div>/gi, "\n")
