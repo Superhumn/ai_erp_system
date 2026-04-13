@@ -20261,6 +20261,7 @@ Return JSON array only. No markdown.`;
         asks: z.string().optional(),
         callsToAction: z.string().optional(),
         status: z.enum(["draft", "review", "sent"]).optional(),
+        sentAt: z.date().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;

@@ -54,6 +54,12 @@ import {
 export default function AutonomousSettings() {
   const [activeTab, setActiveTab] = useState("workflows");
   const [isCreateWorkflowOpen, setIsCreateWorkflowOpen] = useState(false);
+  const [newWorkflow, setNewWorkflow] = useState({
+    name: "",
+    workflowType: "",
+    triggerType: "manual" as "scheduled" | "event" | "threshold" | "manual" | "continuous",
+    description: "",
+  });
 
   // Fetch workflows
   const workflowsQuery = trpc.autonomousWorkflows.workflows.list.useQuery();
@@ -77,6 +83,16 @@ export default function AutonomousSettings() {
     onSuccess: () => {
       workflowsQuery.refetch();
       toast.success("Default workflows initialized");
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const createWorkflowMutation = trpc.autonomousWorkflows.workflows.create.useMutation({
+    onSuccess: () => {
+      workflowsQuery.refetch();
+      setIsCreateWorkflowOpen(false);
+      setNewWorkflow({ name: "", workflowType: "", triggerType: "manual", description: "" });
+      toast.success("Workflow created");
     },
     onError: (err) => toast.error(err.message),
   });
@@ -220,11 +236,20 @@ export default function AutonomousSettings() {
                     <div className="grid gap-4 py-4">
                       <div className="grid grid-cols-4 items-center gap-4">
                         <Label htmlFor="name" className="text-right">Name</Label>
-                        <Input id="name" className="col-span-3" placeholder="Workflow name" />
+                        <Input
+                          id="name"
+                          className="col-span-3"
+                          placeholder="Workflow name"
+                          value={newWorkflow.name}
+                          onChange={(e) => setNewWorkflow({ ...newWorkflow, name: e.target.value })}
+                        />
                       </div>
                       <div className="grid grid-cols-4 items-center gap-4">
                         <Label htmlFor="type" className="text-right">Type</Label>
-                        <Select>
+                        <Select
+                          value={newWorkflow.workflowType}
+                          onValueChange={(v) => setNewWorkflow({ ...newWorkflow, workflowType: v })}
+                        >
                           <SelectTrigger className="col-span-3">
                             <SelectValue placeholder="Select workflow type" />
                           </SelectTrigger>
@@ -239,7 +264,10 @@ export default function AutonomousSettings() {
                       </div>
                       <div className="grid grid-cols-4 items-center gap-4">
                         <Label htmlFor="trigger" className="text-right">Trigger</Label>
-                        <Select>
+                        <Select
+                          value={newWorkflow.triggerType}
+                          onValueChange={(v: any) => setNewWorkflow({ ...newWorkflow, triggerType: v })}
+                        >
                           <SelectTrigger className="col-span-3">
                             <SelectValue placeholder="Select trigger type" />
                           </SelectTrigger>
@@ -253,14 +281,30 @@ export default function AutonomousSettings() {
                       </div>
                       <div className="grid grid-cols-4 items-center gap-4">
                         <Label htmlFor="description" className="text-right">Description</Label>
-                        <Textarea id="description" className="col-span-3" placeholder="Describe the workflow..." />
+                        <Textarea
+                          id="description"
+                          className="col-span-3"
+                          placeholder="Describe the workflow..."
+                          value={newWorkflow.description}
+                          onChange={(e) => setNewWorkflow({ ...newWorkflow, description: e.target.value })}
+                        />
                       </div>
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsCreateWorkflowOpen(false)}>
                         Cancel
                       </Button>
-                      <Button type="submit">Create Workflow</Button>
+                      <Button
+                        disabled={!newWorkflow.name || !newWorkflow.workflowType || createWorkflowMutation.isPending}
+                        onClick={() => createWorkflowMutation.mutate({
+                          name: newWorkflow.name,
+                          workflowType: newWorkflow.workflowType,
+                          triggerType: newWorkflow.triggerType,
+                          description: newWorkflow.description || undefined,
+                        })}
+                      >
+                        {createWorkflowMutation.isPending ? "Creating…" : "Create Workflow"}
+                      </Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
