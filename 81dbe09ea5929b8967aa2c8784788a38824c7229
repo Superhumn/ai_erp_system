@@ -1,0 +1,23 @@
+client/src/pages/operations/EmailInbox.tsx
+  a4537c253fc65a92 92-102,718-719,721-786,788
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "81dbe09ea5929b8967aa2c8784788a38824c7229",
+  "prompts": {
+    "a4537c253fc65a92": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "24d42b8f-d7fb-43ad-afe5-e3bce469a227",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Jade Cheng",
+      "messages": [],
+      "total_additions": 80,
+      "total_deletions": 20,
+      "accepted_lines": 80,
+      "overriden_lines": 0
+    }
+  }
+}
