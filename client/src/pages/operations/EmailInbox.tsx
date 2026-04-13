@@ -371,9 +371,16 @@ export default function EmailInbox() {
   const renderBody = (raw: string) => {
     if (!raw) return "(No content)";
     if (raw.includes("<") && raw.includes(">")) {
-      return raw
-        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+      let sanitized = raw;
+      let previous: string;
+      do {
+        previous = sanitized;
+        sanitized = sanitized
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "");
+      } while (sanitized !== previous);
+
+      return sanitized
         .replace(/<br\s*\/?>/gi, "\n")
         .replace(/<\/p>/gi, "\n\n")
         .replace(/<\/div>/gi, "\n")
