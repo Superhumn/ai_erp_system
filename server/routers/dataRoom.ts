@@ -23,9 +23,11 @@ function verifyDataRoomPassword(password: string, stored: string): { valid: bool
     // Current format: scrypt salt:hash
     const [salt, hash] = stored.split(':');
     if (!salt || !hash) return { valid: false, needsUpgrade: false };
-    const computed = scryptSync(password, salt, 64).toString('hex');
+    const computed = scryptSync(password, salt, 64);
+    const storedBuf = Buffer.from(hash, 'hex');
+    const valid = computed.length === storedBuf.length && timingSafeEqual(computed, storedBuf);
     return {
-      valid: timingSafeEqual(Buffer.from(computed, 'hex'), Buffer.from(hash, 'hex')),
+      valid,
       needsUpgrade: false,
     };
   }
