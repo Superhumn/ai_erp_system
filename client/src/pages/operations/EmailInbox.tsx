@@ -89,6 +89,17 @@ function formatEmailDate(date: string | Date): string {
 export default function EmailInbox() {
   const [selectedEmailId, setSelectedEmailId] = useState<number | null>(null);
   const [expandedEmailId, setExpandedEmailId] = useState<number | null>(null);
+  const [replyText, setReplyText] = useState("");
+  const [showSnippetMenu, setShowSnippetMenu] = useState(false);
+  const [snippets, setSnippets] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem("email_snippets") || "[]"); } catch { return []; }
+  });
+  const [newSnippetText, setNewSnippetText] = useState("");
+
+  const saveSnippets = (updated: string[]) => {
+    setSnippets(updated);
+    localStorage.setItem("email_snippets", JSON.stringify(updated));
+  };
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [starredEmails, setStarredEmails] = useState<Set<number>>(new Set());
@@ -704,28 +715,77 @@ export default function EmailInbox() {
                           <div className="text-sm whitespace-pre-wrap leading-relaxed max-h-[50vh] overflow-y-auto">
                             {cleanEmailBody(email.bodyText || "(No content)")}
                           </div>
-                          {/* Reply box */}
-                          <div className="mt-3 pt-3 border-t border-border/30">
+                          {/* Reply box with snippet support */}
+                          <div className="mt-3 pt-3 border-t border-border/30 relative">
                             <div className="flex gap-2">
-                              <Input
-                                placeholder="Write a reply..."
-                                className="flex-1 h-8 text-sm"
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter" && (e.target as HTMLInputElement).value.trim()) {
-                                    const reply = (e.target as HTMLInputElement).value.trim();
-                                    // TODO: send via Gmail when OAuth connected
-                                    navigator.clipboard.writeText(reply);
-                                    toast.success("Reply copied — paste in Gmail to send");
-                                    (e.target as HTMLInputElement).value = "";
-                                  }
-                                }}
-                              />
-                              <Button size="sm" className="h-8 text-xs" onClick={(e) => {
-                                const input = (e.target as HTMLElement).parentElement?.querySelector("input") as HTMLInputElement;
-                                if (input?.value.trim()) {
-                                  navigator.clipboard.writeText(input.value.trim());
+                              <div className="flex-1 relative">
+                                <Input
+                                  placeholder="Write a reply... (type / for snippets)"
+                                  className="h-8 text-sm pr-8"
+                                  value={replyText}
+                                  onChange={(e) => {
+                                    setReplyText(e.target.value);
+                                    setShowSnippetMenu(e.target.value === "/");
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" && replyText.trim() && !showSnippetMenu) {
+                                      navigator.clipboard.writeText(replyText.trim());
+                                      toast.success("Reply copied — paste in Gmail to send");
+                                      setReplyText("");
+                                    }
+                                    if (e.key === "Escape") setShowSnippetMenu(false);
+                                  }}
+                                />
+                                {/* Save as snippet button */}
+                                {replyText.trim() && !showSnippetMenu && (
+                                  <button
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-primary text-xs"
+                                    title="Save as snippet"
+                                    onClick={() => {
+                                      if (replyText.trim() && !snippets.includes(replyText.trim())) {
+                                        saveSnippets([...snippets, replyText.trim()]);
+                                        toast.success("Snippet saved — type / to use it");
+                                      }
+                                    }}
+                                  >
+                                    💾
+                                  </button>
+                                )}
+                                {/* Snippet dropdown */}
+                                {showSnippetMenu && (
+                                  <div className="absolute bottom-full left-0 mb-1 w-full bg-popover border rounded-xl shadow-lg z-50 max-h-48 overflow-y-auto">
+                                    {snippets.length > 0 ? (
+                                      <div className="py-1">
+                                        {snippets.map((s, i) => (
+                                          <div key={i} className="flex items-center justify-between px-3 py-1.5 hover:bg-accent cursor-pointer group">
+                                            <button
+                                              className="flex-1 text-left text-sm truncate"
+                                              onClick={() => { setReplyText(s); setShowSnippetMenu(false); }}
+                                            >
+                                              {s}
+                                            </button>
+                                            <button
+                                              className="text-xs text-destructive opacity-0 group-hover:opacity-100 ml-2 shrink-0"
+                                              onClick={(e) => { e.stopPropagation(); saveSnippets(snippets.filter((_, j) => j !== i)); }}
+                                            >
+                                              ✕
+                                            </button>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <div className="px-3 py-3 text-xs text-muted-foreground text-center">
+                                        No snippets yet. Write a reply and click 💾 to save it.
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                              <Button size="sm" className="h-8 text-xs" onClick={() => {
+                                if (replyText.trim()) {
+                                  navigator.clipboard.writeText(replyText.trim());
                                   toast.success("Reply copied — paste in Gmail to send");
-                                  input.value = "";
+                                  setReplyText("");
                                 }
                               }}>
                                 Send
