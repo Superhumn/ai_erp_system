@@ -1,0 +1,25 @@
+server/_core/index.ts
+  a4537c253fc65a92 239-242,247-249,251,261-264
+server/routers.ts
+  a4537c253fc65a92 16995
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "3364e750483d1b5d76596519b07b7f5b60c778b4",
+  "prompts": {
+    "a4537c253fc65a92": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "24d42b8f-d7fb-43ad-afe5-e3bce469a227",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Jade Cheng",
+      "messages": [],
+      "total_additions": 13,
+      "total_deletions": 5,
+      "accepted_lines": 13,
+      "overriden_lines": 0
+    }
+  }
+}
