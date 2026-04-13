@@ -18,18 +18,23 @@ function hashDataRoomPassword(password: string): string {
 
 // Verify a data-room/link password against a stored hash.
 // Supports legacy unsalted SHA-256 hashes (stored as plain 64-char hex) for backward compatibility.
-function verifyDataRoomPassword(password: string, stored: string): boolean {
+function verifyDataRoomPassword(password: string, stored: string): { valid: boolean; needsUpgrade: boolean } {
   if (stored.includes(':')) {
     // Current format: scrypt salt:hash
     const [salt, hash] = stored.split(':');
-    if (!salt || !hash) return false;
+    if (!salt || !hash) return { valid: false, needsUpgrade: false };
     const computed = scryptSync(password, salt, 64).toString('hex');
-    return timingSafeEqual(Buffer.from(computed, 'hex'), Buffer.from(hash, 'hex'));
+    return {
+      valid: timingSafeEqual(Buffer.from(computed, 'hex'), Buffer.from(hash, 'hex')),
+      needsUpgrade: false,
+    };
   }
+
   // Legacy format: plain SHA-256 hex (no salt)
   const computed = createHash('sha256').update(password).digest();
   const storedBuf = Buffer.from(stored, 'hex');
-  return computed.length === storedBuf.length && timingSafeEqual(computed, storedBuf);
+  const valid = computed.length === storedBuf.length && timingSafeEqual(computed, storedBuf);
+  return { valid, needsUpgrade: valid };
 }
 
 export const dataRoomRouter = router({
@@ -744,8 +749,15 @@ export const dataRoomRouter = router({
             if (!input.password) {
               return { requiresPassword: true, dataRoomId: null, visitorId: null };
             }
-            if (!verifyDataRoomPassword(input.password, link.password)) {
+            const passwordCheck = verifyDataRoomPassword(input.password, link.password);
+            if (!passwordCheck.valid) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid password' });
+            }
+
+            // Seamlessly upgrade legacy SHA-256 hashes to salted scrypt after successful verification.
+            if (passwordCheck.needsUpgrade) {
+              const upgradedHash = hashDataRoomPassword(input.password);
+              await db.updateShareLink(link.id, { password: upgradedHash });
             }
           }
 
