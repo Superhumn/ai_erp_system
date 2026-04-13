@@ -173,7 +173,6 @@ export default function EquityReports() {
           name: file.name,
           type: "report" as const,
           referenceType: "valuation",
-          ...(currentValuation?.id ? { referenceId: currentValuation.id } : {}),
           fileData: base64,
           mimeType: file.type || "application/pdf",
           description: `409A Valuation Report - ${file.name}`,

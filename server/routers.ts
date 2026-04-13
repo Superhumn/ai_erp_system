@@ -2532,7 +2532,8 @@ ONLY return the JSON array, no other text.`;
         await createAuditLog(ctx.user.id, 'create', 'document', result.id, input.name);
 
         // If this is a 409A valuation report, parse it for FMV value
-        if (input.referenceType === "valuation" && (mimeType.includes("pdf") || mimeType.includes("image"))) {
+        const isSpreadsheet = mimeType.includes("spreadsheet") || mimeType.includes("excel") || mimeType.includes("sheet") || input.name.match(/\.(xlsx|xls)$/i) !== null;
+        if (input.referenceType === "valuation" && (mimeType.includes("pdf") || mimeType.includes("image") || isSpreadsheet)) {
           try {
             const { invokeLLM } = await import("./_core/llm");
             let userContent: any;
@@ -2567,6 +2568,26 @@ ONLY return the JSON array, no other text.`;
               userContent = pdfText
                 ? `Document: ${input.name}\n\nEXTRACTED TEXT:\n${pdfText}`
                 : `Document: ${input.name} (PDF content could not be extracted)`;
+            } else if (isSpreadsheet) {
+              // Extract text from Excel/spreadsheet using xlsx library
+              let sheetText: string | null = null;
+              try {
+                const xlsxMod = await import("xlsx");
+                const XLSX = (xlsxMod as any).default ?? xlsxMod;
+                const workbook = XLSX.read(buffer, { type: "buffer" });
+                let text = "";
+                for (const sheetName of workbook.SheetNames) {
+                  text += `Sheet: ${sheetName}\n`;
+                  text += XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]).substring(0, 10000);
+                  text += "\n";
+                }
+                if (text.trim().length > 0) sheetText = text.substring(0, 30000);
+              } catch (xlsxErr) {
+                console.warn("[409A] XLSX parse failed:", xlsxErr);
+              }
+              userContent = sheetText
+                ? `Document: ${input.name}\n\nSPREADSHEET CONTENT:\n${sheetText}`
+                : `Document: ${input.name} (Spreadsheet content could not be extracted)`;
             } else {
               // Image: pass directly as image_url
               userContent = [
@@ -2585,28 +2606,20 @@ ONLY return the JSON array, no other text.`;
             try {
               const fmvData = JSON.parse(fmvText.replace(/```json\n?|\n?```/g, "").trim());
               if (fmvData.fmvPerShare) {
-                if (input.referenceId) {
-                  // Update the existing valuation record with parsed FMV
-                  await db.updateValuation409a(input.referenceId, {
-                    fairMarketValue: String(fmvData.fmvPerShare),
-                    ...(fmvData.totalValuation ? { totalValuation: String(fmvData.totalValuation) } : {}),
-                    ...(fmvData.provider ? { provider: fmvData.provider } : {}),
-                  });
-                  console.log(`[409A] Updated valuation ${input.referenceId} FMV from ${input.name}: $${fmvData.fmvPerShare}/share`);
-                } else {
-                  // No existing valuation record — create one from the extracted data
-                  const valuationDate = fmvData.valuationDate ? new Date(fmvData.valuationDate) : new Date();
-                  const newValuation = await db.createValuation409a({
-                    fairMarketValue: String(fmvData.fmvPerShare),
-                    valuationDate,
-                    ...(fmvData.totalValuation ? { totalValuation: String(fmvData.totalValuation) } : {}),
-                    ...(fmvData.provider ? { provider: fmvData.provider } : {}),
-                    ...(input.companyId ? { companyId: input.companyId } : {}),
-                    reportUrl: url,
-                    status: "approved",
-                  });
-                  console.log(`[409A] Created new valuation from ${input.name}: $${fmvData.fmvPerShare}/share (id=${newValuation.id})`);
-                }
+                // Always create a new valuation record to preserve history
+                const valuationDate = fmvData.valuationDate ? new Date(fmvData.valuationDate) : new Date();
+                const newValuation = await db.createValuation409a({
+                  fairMarketValue: String(fmvData.fmvPerShare),
+                  valuationDate,
+                  ...(fmvData.totalValuation ? { totalValuation: String(fmvData.totalValuation) } : {}),
+                  ...(fmvData.provider ? { provider: fmvData.provider } : {}),
+                  ...(input.companyId ? { companyId: input.companyId } : {}),
+                  reportUrl: url,
+                  status: "approved",
+                });
+                // Link the document to the newly created valuation record
+                await db.updateDocument(result.id, { referenceId: newValuation.id });
+                console.log(`[409A] Created new valuation from ${input.name}: $${fmvData.fmvPerShare}/share (id=${newValuation.id})`);
               }
             } catch { /* FMV parse failed, that's ok */ }
           } catch (e) {
