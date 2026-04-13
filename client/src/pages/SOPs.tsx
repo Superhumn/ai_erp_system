@@ -805,33 +805,19 @@ function SOPCard({
   const Icon = sop.icon;
 
   return (
-    <Card className={`transition-all duration-200 ${isExpanded ? "ring-1 ring-primary/20" : "hover:border-border/80"}`}>
+    <Card className={`transition-all duration-200 py-0 ${isExpanded ? "ring-1 ring-primary/20" : "hover:border-border/80"}`}>
       <button
         onClick={onToggle}
         className="w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-t-lg"
       >
-        <CardHeader className="pb-3">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${isExpanded ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"}`}>
-                <Icon className="h-5 w-5" />
-              </div>
+        <CardHeader className="py-2.5 px-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <Icon className={`h-4 w-4 shrink-0 ${isExpanded ? "text-primary" : "text-muted-foreground"}`} />
               <div>
-                <CardTitle className="text-base font-semibold">
-                  SOP {index + 1}: {sop.title}
+                <CardTitle className="text-sm font-medium">
+                  {sop.title}
                 </CardTitle>
-                <p className="text-sm text-muted-foreground mt-1">{sop.purpose}</p>
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {sop.audience.map((a) => (
-                    <Badge
-                      key={a}
-                      variant="secondary"
-                      className={`text-[11px] font-medium ${audienceColors[a] || "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300"}`}
-                    >
-                      {a}
-                    </Badge>
-                  ))}
-                </div>
               </div>
             </div>
             <ChevronDown

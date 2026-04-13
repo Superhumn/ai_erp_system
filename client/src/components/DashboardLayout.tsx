@@ -104,6 +104,7 @@ function getMenuGroups(role: string = "user") {
     label: "_main",
     items: [
       { icon: LayoutDashboard, label: "Dashboard", path: "/" },
+      { icon: Target, label: "Projects", path: "/projects" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: Mic, label: "Meetings", path: "/meetings" },
       { icon: MessageSquare, label: "Messaging", path: "/messaging" },
@@ -122,8 +123,8 @@ function getMenuGroups(role: string = "user") {
     label: "_ops",
     items: [
       { icon: Warehouse, label: "Inventory", path: "/operations/inventory-hub" },
-      { icon: Users, label: "Vendors", path: "/operations/vendors" },
       { icon: Truck, label: "Freight", path: "/freight" },
+      { icon: Users, label: "Vendors", path: "/operations/vendors" },
     ],
   }] : []),
   {
@@ -131,7 +132,7 @@ function getMenuGroups(role: string = "user") {
     items: [
       ...(isAdmin ? [
         { icon: Users, label: "People", path: "/hr/employees" },
-        { icon: FileBarChart, label: "Cap Table", path: "/hr/equity-reports" },
+        { icon: FileBarChart, label: "Investors", path: "/hr/investors" },
       ] : [
         { icon: Clock, label: "Time Tracking", path: "/hr/time-tracking" },
         { icon: LineChart, label: "Equity Portal", path: "/hr/equity-portal" },
@@ -144,11 +145,9 @@ function getMenuGroups(role: string = "user") {
   {
     label: "_tools",
     items: [
-      { icon: Target, label: "Projects", path: "/projects" },
       { icon: BookOpen, label: "SOPs", path: "/sops" },
       ...(isAdmin ? [
         { icon: FolderLock, label: "Data Room", path: "/dataroom/1" },
-        { icon: Megaphone, label: "Investor Updates", path: "/investor-updates" },
         { icon: Award, label: "Grants", path: "/grants/submitter" },
         { icon: Upload, label: "Import", path: "/import" },
         { icon: Network, label: "EDI", path: "/edi" },

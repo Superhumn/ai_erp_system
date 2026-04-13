@@ -96,6 +96,7 @@ const Employees = lazy(() => import("./pages/hr/Employees"));
 const Payroll = lazy(() => import("./pages/hr/Payroll"));
 const EquityPortal = lazy(() => import("./pages/hr/EquityPortal"));
 const EquityReports = lazy(() => import("./pages/hr/EquityReports"));
+const InvestorsHub = lazy(() => import("./pages/hr/InvestorsHub"));
 const TimeTracking = lazy(() => import("./pages/hr/TimeTracking"));
 
 // Legal
@@ -273,6 +274,7 @@ function Router() {
           <Route path="/freight/customs/:id" component={CustomsDetail} />
 
           {/* HR */}
+          <Route path="/hr/investors" component={InvestorsHub} />
           <Route path="/hr/employees" component={Employees} />
           <Route path="/hr/payroll" component={Payroll} />
           <Route path="/hr/ai" component={HRAIInsights} />

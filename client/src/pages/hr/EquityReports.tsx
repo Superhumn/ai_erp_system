@@ -442,8 +442,7 @@ export default function EquityReports() {
   }
 
   return (
-    <div className="p-4 space-y-4">
-      <h1 className="text-lg font-semibold">Cap Table</h1>
+    <div className="space-y-3">
 
       {/* ── 409A Valuation Section ─────────────────────────────── */}
       <Card>
