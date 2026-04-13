@@ -78,6 +78,14 @@ export default function RFQs() {
     incoterms: "FOB",
     insuranceRequired: false,
     customsClearanceRequired: true,
+    containerSize: "" as string,
+    readyDate: "",
+    targetDeliveryDate: "",
+    dimensions: "",
+    stackable: true,
+    temperatureRange: "",
+    pickupRequired: false,
+    deliveryRequired: false,
     notes: "",
   });
 
@@ -405,6 +413,59 @@ export default function RFQs() {
                         onCheckedChange={(checked) => setFormData({ ...formData, customsClearanceRequired: checked })}
                       />
                       <Label htmlFor="customsClearanceRequired">Customs Clearance Required</Label>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Dates & Logistics */}
+                <div className="space-y-4">
+                  <h3 className="font-semibold">Schedule & Logistics</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Cargo Ready Date *</Label>
+                      <Input type="date" value={formData.readyDate} onChange={(e) => setFormData({ ...formData, readyDate: e.target.value })} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Target Delivery Date</Label>
+                      <Input type="date" value={formData.targetDeliveryDate} onChange={(e) => setFormData({ ...formData, targetDeliveryDate: e.target.value })} />
+                    </div>
+                    {(formData.preferredMode === "ocean_fcl" || formData.preferredMode === "any") && (
+                      <div className="space-y-2">
+                        <Label>Container Size</Label>
+                        <Select value={formData.containerSize} onValueChange={(v) => setFormData({ ...formData, containerSize: v })}>
+                          <SelectTrigger><SelectValue placeholder="Select size" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="20GP">20' Standard</SelectItem>
+                            <SelectItem value="40GP">40' Standard</SelectItem>
+                            <SelectItem value="40HC">40' High Cube</SelectItem>
+                            <SelectItem value="20RF">20' Reefer</SelectItem>
+                            <SelectItem value="40RF">40' Reefer</SelectItem>
+                            <SelectItem value="45HC">45' High Cube</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    <div className="space-y-2">
+                      <Label>Package Dimensions (L×W×H cm)</Label>
+                      <Input placeholder="e.g., 120×100×150" value={formData.dimensions} onChange={(e) => setFormData({ ...formData, dimensions: e.target.value })} />
+                    </div>
+                    {formData.cargoType === "refrigerated" && (
+                      <div className="space-y-2">
+                        <Label>Temperature Range (°C)</Label>
+                        <Input placeholder="e.g., -18 to -22" value={formData.temperatureRange} onChange={(e) => setFormData({ ...formData, temperatureRange: e.target.value })} />
+                      </div>
+                    )}
+                    <div className="flex items-center space-x-2">
+                      <Switch id="stackable" checked={formData.stackable} onCheckedChange={(c) => setFormData({ ...formData, stackable: c })} />
+                      <Label htmlFor="stackable">Stackable</Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Switch id="pickupRequired" checked={formData.pickupRequired} onCheckedChange={(c) => setFormData({ ...formData, pickupRequired: c })} />
+                      <Label htmlFor="pickupRequired">Pickup from Origin</Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Switch id="deliveryRequired" checked={formData.deliveryRequired} onCheckedChange={(c) => setFormData({ ...formData, deliveryRequired: c })} />
+                      <Label htmlFor="deliveryRequired">Delivery to Door</Label>
                     </div>
                   </div>
                 </div>
