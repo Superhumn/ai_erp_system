@@ -218,6 +218,24 @@ async function ensureTables() {
         createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
         updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
       )`,
+      `CREATE TABLE IF NOT EXISTS fundraising_campaigns (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        companyId INT,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        targetAmount DECIMAL(18,2),
+        raisedAmount DECIMAL(18,2) DEFAULT 0,
+        minimumInvestment DECIMAL(18,2),
+        valuation DECIMAL(18,2),
+        roundType ENUM('pre_seed','seed','series_a','series_b','series_c','bridge','other') DEFAULT 'seed' NOT NULL,
+        equityOffered DECIMAL(5,2),
+        status ENUM('planning','active','paused','closed','cancelled') DEFAULT 'planning' NOT NULL,
+        startDate TIMESTAMP NULL,
+        targetCloseDate TIMESTAMP NULL,
+        notes TEXT,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
+      )`,
     ];
     for (const tableSQL of tables) {
       try { await database.execute(sql.raw(tableSQL)); } catch { /* already exists */ }
