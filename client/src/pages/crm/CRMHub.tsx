@@ -993,20 +993,25 @@ export default function CRMHub() {
           <div className="space-y-3">
             <div className="space-y-1">
               <Label className="text-xs">Contact *</Label>
-              {contacts && (contacts as any[]).length > 0 ? (
-                <Select value={dealForm.contactId?.toString() || "0"} onValueChange={(v) => setDealForm({ ...dealForm, contactId: parseInt(v) })}>
-                  <SelectTrigger><SelectValue placeholder="Select contact" /></SelectTrigger>
-                  <SelectContent>
-                    {(contacts as any[]).map((c: any) => (
-                      <SelectItem key={c.id} value={c.id.toString()}>{c.fullName || c.firstName || c.email}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <div className="space-y-2">
-                  <Input placeholder="Contact name" value={dealForm.contactName || ""} onChange={(e) => setDealForm({ ...dealForm, contactName: e.target.value })} />
+              <Select value={dealForm.contactId?.toString() || "0"} onValueChange={(v) => {
+                if (v === "new") {
+                  setDealForm({ ...dealForm, contactId: 0 });
+                } else {
+                  setDealForm({ ...dealForm, contactId: parseInt(v), contactName: "", contactEmail: "" });
+                }
+              }}>
+                <SelectTrigger><SelectValue placeholder="Select contact" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="new">+ Create new contact</SelectItem>
+                  {(contacts as any[] || []).map((c: any) => (
+                    <SelectItem key={c.id} value={c.id.toString()}>{c.fullName || c.firstName || c.email}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {(!dealForm.contactId || dealForm.contactId === 0) && (
+                <div className="space-y-2 mt-2">
+                  <Input placeholder="Contact name *" value={dealForm.contactName || ""} onChange={(e) => setDealForm({ ...dealForm, contactName: e.target.value })} />
                   <Input placeholder="Contact email" value={dealForm.contactEmail || ""} onChange={(e) => setDealForm({ ...dealForm, contactEmail: e.target.value })} />
-                  <p className="text-xs text-muted-foreground">No contacts yet — enter name and email to create one with the deal</p>
                 </div>
               )}
             </div>
