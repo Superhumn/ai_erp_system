@@ -1077,12 +1077,13 @@ export const dataRoomRouter = router({
           signerCompany: z.string().optional(),
           signatureType: z.enum(['typed', 'drawn']),
           signatureData: z.string(), // Base64 for drawn, typed name for typed
-          consentCheckbox: z.boolean(),
+          consentCheckbox: z.literal(true),
         }))
         .mutation(async ({ input, ctx }) => {
           // Get the NDA document
           const ndaDoc = await db.getNdaDocumentById(input.ndaDocumentId);
           if (!ndaDoc) throw new TRPCError({ code: 'NOT_FOUND', message: 'NDA document not found' });
+          if (ndaDoc.dataRoomId !== input.dataRoomId) throw new TRPCError({ code: 'BAD_REQUEST', message: 'NDA document does not belong to this data room' });
 
           // Get IP address from request
           const ipAddress = ctx.req.headers['x-forwarded-for'] as string || ctx.req.socket.remoteAddress || 'unknown';

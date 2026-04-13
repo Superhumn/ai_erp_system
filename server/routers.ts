@@ -14200,12 +14200,13 @@ Ask if they received the original request and if they can provide a quote.`;
           signerCompany: z.string().optional(),
           signatureType: z.enum(['typed', 'drawn']),
           signatureData: z.string(), // Base64 for drawn, typed name for typed
-          consentCheckbox: z.boolean(),
+          consentCheckbox: z.literal(true),
         }))
         .mutation(async ({ input, ctx }) => {
           // Get the NDA document
           const ndaDoc = await db.getNdaDocumentById(input.ndaDocumentId);
           if (!ndaDoc) throw new TRPCError({ code: 'NOT_FOUND', message: 'NDA document not found' });
+          if (ndaDoc.dataRoomId !== input.dataRoomId) throw new TRPCError({ code: 'BAD_REQUEST', message: 'NDA document does not belong to this data room' });
 
           // Get IP address from request
           const ipAddress = ctx.req.headers['x-forwarded-for'] as string || ctx.req.socket.remoteAddress || 'unknown';
@@ -15338,14 +15339,14 @@ Ask if they received the original request and if they can provide a quote.`;
       .input(z.object({ token: z.string() }))
       .query(async ({ input }) => {
         const session = await db.getSupplierPortalSession(input.token);
-        if (!session) return [];
+        if (!session || session.status !== 'active') return [];
         return db.getSupplierDocuments({ portalSessionId: session.id });
       }),
     getFreightInfo: publicProcedure
       .input(z.object({ token: z.string() }))
       .query(async ({ input }) => {
         const session = await db.getSupplierPortalSession(input.token);
-        if (!session) return null;
+        if (!session || session.status !== 'active') return null;
         return db.getSupplierFreightInfo(session.purchaseOrderId);
       }),
     uploadDocument: publicProcedure
