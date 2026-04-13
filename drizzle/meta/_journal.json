@@ -187,15 +187,29 @@
     {
       "idx": 26,
       "version": "5",
-      "when": 1772000000000,
+      "when": 1772376928000,
       "tag": "0026_board_approvals_investor_updates",
       "breakpoints": true
     },
     {
       "idx": 27,
       "version": "5",
-      "when": 1776081600000,
-      "tag": "0027_fix_fundraising_campaigns",
+      "when": 1773502601634,
+      "tag": "0027_fireflies_configs",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "5",
+      "when": 1773590400000,
+      "tag": "0028_fireflies_meeting_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "5",
+      "when": 1773676800000,
+      "tag": "0029_fix_fireflies_meetings_schema",
       "breakpoints": true
     }
   ]

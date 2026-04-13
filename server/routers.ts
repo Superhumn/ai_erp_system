@@ -17655,14 +17655,15 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         const participants = fullTranscript ? extractParticipants(fullTranscript) : [];
         await db.createFirefliesMeeting({
           firefliesId: t.id,
-          title: t.title,
+          title: t.title || 'Untitled Meeting',
           date: t.date ? new Date(t.date) : new Date(),
           duration: t.duration,
+          organizerEmail: fullTranscript?.organizer_email || t.organizer_email || null,
           participants: JSON.stringify(participants),
-          transcript: fullTranscript?.transcript_url || null,
+          transcriptUrl: fullTranscript?.transcript_url || null,
           summary: fullTranscript?.summary ? JSON.stringify(fullTranscript.summary) : null,
-          actionItemsRaw: fullTranscript ? JSON.stringify(parseActionItems(fullTranscript?.summary?.action_items || [])) : null,
-          status: 'pending',
+          actionItems: fullTranscript ? JSON.stringify(parseActionItems(fullTranscript?.summary?.action_items || [])) : null,
+          processingStatus: 'pending',
         });
         synced++;
 
@@ -17767,8 +17768,11 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         let projectId: number | undefined;
 
         // Create contacts from participants
-        if (input.createContacts && Array.isArray(meeting.participants)) {
-          for (const p of meeting.participants as Array<{ name: string; email: string }>) {
+        const parsedParticipants: Array<{ name: string; email: string }> =
+          typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
+          Array.isArray(meeting.participants) ? meeting.participants : [];
+        if (input.createContacts && parsedParticipants.length > 0) {
+          for (const p of parsedParticipants) {
             if (p.email) {
               try {
                 await db.createCrmContact({
@@ -17795,8 +17799,8 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         }
 
         // Create tasks from action items
-        if (input.createTasks && Array.isArray(meeting.actionItemsRaw)) {
-          for (const item of (meeting.actionItemsRaw ? JSON.parse(meeting.actionItemsRaw) : []) as Array<{ text: string }>) {
+        if (input.createTasks && meeting.actionItems) {
+          for (const item of (meeting.actionItems ? JSON.parse(meeting.actionItems) : []) as Array<{ text: string }>) {
             if (projectId) {
               await db.createProjectTask({
                 projectId,
@@ -17808,14 +17812,21 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           }
         }
 
-        const status = contactsCreated > 0 && tasksCreated > 0 ? 'fully_processed'
+        const status: 'fully_processed' | 'contacts_created' | 'tasks_created' | 'pending' =
+          contactsCreated > 0 && tasksCreated > 0 ? 'fully_processed'
           : contactsCreated > 0 ? 'contacts_created'
           : tasksCreated > 0 ? 'tasks_created'
           : 'pending';
 
         await db.updateFirefliesMeeting(input.meetingId, {
-          aiSummary: JSON.stringify({ status, contactsCreated, tasksCreated, projectId }),
-        } as any);
+          processingStatus: status,
+          processedAt: new Date(),
+          processedBy: ctx.user.id,
+          processingNotes: JSON.stringify({ contactsCreated, tasksCreated, projectId }),
+          autoCreatedContactCount: contactsCreated,
+          autoCreatedTaskCount: tasksCreated,
+          autoCreatedProjectId: projectId,
+        });
 
         return { contactsCreated, tasksCreated, projectId };
       }),
@@ -17825,16 +17836,22 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         createTasks: z.boolean().optional(),
         createProjects: z.boolean().optional(),
       }).optional())
-      .mutation(async ({ ctx }) => {
+      .mutation(async ({ input, ctx }) => {
       const meetings = await db.getFirefliesMeetings({ status: 'pending' });
       let processed = 0;
       let contactsCreated = 0;
       let tasksCreated = 0;
       let projectsCreated = 0;
+      const doContacts = input?.createContacts !== false;
+      const doTasks = input?.createTasks === true;
+      const doProjects = input?.createProjects === true;
       for (const meeting of meetings) {
-        // Auto-create contacts from participants
-        if (Array.isArray(meeting.participants)) {
-          for (const p of meeting.participants as Array<{ name: string; email: string }>) {
+        if (doContacts) {
+          // Auto-create contacts from participants
+          const parsedParticipants: Array<{ name: string; email: string }> =
+            typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
+            Array.isArray(meeting.participants) ? meeting.participants : [];
+          for (const p of parsedParticipants) {
             if (p.email) {
               try {
                 await db.createCrmContact({
@@ -17848,7 +17865,31 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             }
           }
         }
-        await db.updateFirefliesMeeting(meeting.id, { aiSummary: 'fully_processed' } as any);
+        if (doTasks && meeting.actionItems) {
+          const items = (meeting.actionItems ? JSON.parse(meeting.actionItems) : []) as Array<{ text: string }>;
+          let projectId: number | undefined;
+          if (doProjects) {
+            const project = await db.createProject({
+              projectNumber: `FF-${Date.now()}`,
+              name: meeting.title || 'Untitled Meeting Project',
+              status: 'planning',
+              createdBy: ctx.user.id,
+            } as any);
+            projectId = project.id;
+            projectsCreated++;
+          }
+          for (const item of items) {
+            if (projectId) {
+              await db.createProjectTask({
+                projectId,
+                name: item.text,
+                status: 'todo',
+              } as any);
+              tasksCreated++;
+            }
+          }
+        }
+        await db.updateFirefliesMeeting(meeting.id, { processingStatus: 'fully_processed' });
         processed++;
       }
       return { processed, contactsCreated, tasksCreated, projectsCreated };

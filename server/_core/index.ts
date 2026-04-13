@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
 import net from "net";
+import { sql } from "drizzle-orm";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import rateLimit from "express-rate-limit";
 import { registerOAuthRoutes } from "./oauth";
@@ -80,34 +81,49 @@ async function ensureTables() {
       )`,
       `CREATE TABLE IF NOT EXISTS fireflies_meetings (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        companyId INT,
-        firefliesId VARCHAR(128) NOT NULL,
-        title VARCHAR(500),
+        firefliesId VARCHAR(128) NOT NULL UNIQUE,
+        title VARCHAR(500) NOT NULL,
         date TIMESTAMP NULL,
         duration INT,
+        organizerEmail VARCHAR(320),
+        organizerName VARCHAR(255),
         participants TEXT,
-        transcript TEXT,
         summary TEXT,
-        aiSummary TEXT,
-        actionItemsRaw TEXT,
-        videoUrl TEXT,
-        audioUrl TEXT,
-        status ENUM('pending','contacts_created','tasks_created','fully_processed') DEFAULT 'pending',
-        crmContactId INT,
-        linkedEntityType VARCHAR(64),
-        linkedEntityId INT,
-        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
+        shortSummary TEXT,
+        keywords TEXT,
+        topics TEXT,
+        sentimentAnalysis TEXT,
+        transcriptUrl TEXT,
+        transcriptText TEXT,
+        actionItems TEXT,
+        processingStatus ENUM('pending','contacts_created','tasks_created','project_created','fully_processed','skipped','error') NOT NULL DEFAULT 'pending',
+        processedAt TIMESTAMP NULL,
+        processedBy INT,
+        processingNotes TEXT,
+        autoCreatedProjectId INT,
+        autoCreatedTaskCount INT DEFAULT 0,
+        autoCreatedContactCount INT DEFAULT 0,
+        meetingSource VARCHAR(64),
+        calendarEventId VARCHAR(255),
+        recordingUrl TEXT,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )`,
       `CREATE TABLE IF NOT EXISTS fireflies_action_items (
         id INT AUTO_INCREMENT PRIMARY KEY,
         meetingId INT NOT NULL,
-        text TEXT,
+        firefliesMeetingId VARCHAR(128) NOT NULL,
+        text TEXT NOT NULL,
         assignee VARCHAR(255),
+        assigneeEmail VARCHAR(320),
         dueDate TIMESTAMP NULL,
-        status ENUM('pending','completed','cancelled') DEFAULT 'pending',
-        linkedTaskId INT,
-        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+        projectTaskId INT,
+        crmContactId INT,
+        status ENUM('pending','converted_to_task','skipped','completed') NOT NULL DEFAULT 'pending',
+        convertedAt TIMESTAMP NULL,
+        convertedBy INT,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )`,
       // Orchestrator tables
       `CREATE TABLE IF NOT EXISTS supplyChainWorkflows (
@@ -203,8 +219,8 @@ async function ensureTables() {
         updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
       )`,
     ];
-    for (const sql of tables) {
-      try { await database.execute(require('drizzle-orm/sql').sql.raw(sql)); } catch { /* already exists */ }
+    for (const tableSQL of tables) {
+      try { await database.execute(sql.raw(tableSQL)); } catch { /* already exists */ }
     }
     // Add missing columns to existing tables
     const alterStatements = [
