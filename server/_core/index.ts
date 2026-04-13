@@ -212,7 +212,7 @@ async function startServer() {
               }
             }
 
-            await (db as any).createEmailEvent({
+            const eventData: Record<string, any> = {
               providerEventType,
               providerMessageId,
               providerTimestamp: timestamp,
@@ -221,8 +221,11 @@ async function startServer() {
               reason: event.reason || event.response || null,
               bounceType: event.type || null,
               processedAt: new Date(),
-              ...(emailMessageId !== undefined ? { emailMessageId } : {}),
-            });
+            };
+            if (emailMessageId !== undefined) {
+              eventData.emailMessageId = emailMessageId;
+            }
+            await (db as any).createEmailEvent(eventData);
           } catch (eventError) {
             console.error(
               "[SendGrid Webhook] Error processing event:",
@@ -323,8 +326,9 @@ async function startServer() {
   // Google OAuth callback
   app.get("/api/google/callback", oauthCallbackLimiter, async (req, res) => {
     const { code, state } = req.query;
-    if (!code || !state) return res.redirect("/import?error=missing_params");
-    const stateResult = verifySignedOAuthState(state as string);
+    if (!code || !state || typeof state !== "string")
+      return res.redirect("/import?error=missing_params");
+    const stateResult = verifySignedOAuthState(state);
     if (stateResult.error || !stateResult.userId)
       return res.redirect("/import?error=invalid_state");
     const userId = stateResult.userId;

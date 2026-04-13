@@ -33,12 +33,15 @@ export function verifySignedOAuthState(state: string): { userId?: number; error?
     const payload = state.slice(0, lastColon);
     const mac = state.slice(lastColon + 1);
 
+    // SHA-256 HMAC produces exactly 32 bytes = 64 lowercase hex characters.
+    // Reject anything else before touching crypto primitives.
+    if (!/^[0-9a-f]{64}$/.test(mac)) return { error: 'Invalid state format' };
+
     const expectedMac = crypto.createHmac('sha256', key).update(payload).digest('hex');
     const macBuf = Buffer.from(mac, 'hex');
     const expectedBuf = Buffer.from(expectedMac, 'hex');
 
-    // Reject if lengths differ (e.g. truncated / non-hex input) before timingSafeEqual
-    if (macBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(macBuf, expectedBuf)) {
+    if (!crypto.timingSafeEqual(macBuf, expectedBuf)) {
       return { error: 'Invalid state signature' };
     }
 
