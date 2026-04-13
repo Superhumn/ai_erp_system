@@ -68,11 +68,11 @@ function calculateRegularCredit(input: CreditCalculationInput): CreditCalculatio
 
   // Regular credit rate is 20%
   const creditRate = 0.20;
-  const grossCredit = excessQre * creditRate;
+  const grossCredit = Math.round(excessQre * creditRate * 100) / 100;
 
   // §280C election: reduce credit by maximum corporate tax rate (21%)
-  const section280CReduction = input.elect280CReduction ? grossCredit * 0.21 : 0;
-  const netCredit = grossCredit - section280CReduction;
+  const section280CReduction = input.elect280CReduction ? Math.round(grossCredit * 0.21 * 100) / 100 : 0;
+  const netCredit = Math.round((grossCredit - section280CReduction) * 100) / 100;
 
   return {
     totalQre,
@@ -123,11 +123,11 @@ function calculateASCCredit(input: CreditCalculationInput): CreditCalculationRes
     creditRate = 0.06;
   }
 
-  const grossCredit = excessQre * creditRate;
+  const grossCredit = Math.round(excessQre * creditRate * 100) / 100;
 
   // §280C election: reduce credit by maximum corporate tax rate (21%)
-  const section280CReduction = input.elect280CReduction ? grossCredit * 0.21 : 0;
-  const netCredit = grossCredit - section280CReduction;
+  const section280CReduction = input.elect280CReduction ? Math.round(grossCredit * 0.21 * 100) / 100 : 0;
+  const netCredit = Math.round((grossCredit - section280CReduction) * 100) / 100;
 
   return {
     totalQre,

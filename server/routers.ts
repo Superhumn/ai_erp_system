@@ -2235,15 +2235,6 @@ export const appRouter = router({
         fixedBasePercentage: z.string().optional(),
         currentYearGrossReceipts: z.string().optional(),
         averageBasePeriodGrossReceipts: z.string().optional(),
-        totalWageQre: z.string().optional(),
-        totalSupplyQre: z.string().optional(),
-        totalContractQre: z.string().optional(),
-        totalQre: z.string().optional(),
-        baseAmount: z.string().optional(),
-        averagePriorQre: z.string().optional(),
-        grossCredit: z.string().optional(),
-        section280CReduction: z.string().optional(),
-        netCredit: z.string().optional(),
         filingDate: z.date().optional(),
         notes: z.string().optional(),
       }))
@@ -2343,7 +2334,6 @@ export const appRouter = router({
         employeeName: z.string().optional(),
         rdPercentage: z.string().optional(),
         grossAmount: z.string(),
-        qualifiedAmount: z.string(),
         contractResearchRate: z.string().optional(),
         vendorId: z.number().optional(),
         vendorName: z.string().optional(),
@@ -2352,7 +2342,18 @@ export const appRouter = router({
         notes: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const result = await db.createRdExpense(input);
+        const { computeQualifiedAmount } = await import("./rdTaxCreditService");
+        // Verify project belongs to the provided study
+        const project = await db.getRdProjectById(input.projectId);
+        if (!project || project.studyId !== input.studyId) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Project does not belong to the specified study' });
+        }
+        // Compute qualified amount server-side
+        const gross = parseFloat(input.grossAmount) || 0;
+        const rdPct = parseFloat(input.rdPercentage || "100") || 100;
+        const contractRate = parseFloat(input.contractResearchRate || "65") || 65;
+        const qualifiedAmount = String(computeQualifiedAmount(input.category, gross, rdPct, contractRate).toFixed(2));
+        const result = await db.createRdExpense({ ...input, qualifiedAmount });
         await createAuditLog(ctx.user.id, 'create', 'rdExpense', result.id, input.description || input.category);
         return result;
       }),
@@ -2429,11 +2430,25 @@ export const appRouter = router({
           netCredit: String(result.netCredit),
         });
 
-        // Update project QRE totals
-        for (const project of study.projects) {
-          const projectExpenses = qualifyingExpenses.filter(e => e.projectId === project.id);
+        // Update project QRE totals concurrently in batches
+        const expensesByProjectId = new Map<number, typeof qualifyingExpenses>();
+        for (const expense of qualifyingExpenses) {
+          const existing = expensesByProjectId.get(expense.projectId) ?? [];
+          existing.push(expense);
+          expensesByProjectId.set(expense.projectId, existing);
+        }
+        const projectUpdates = study.projects.map((project) => {
+          const projectExpenses = expensesByProjectId.get(project.id) ?? [];
           const projectQre = aggregateExpensesByCategory(projectExpenses);
-          await db.updateRdProject(project.id, { totalProjectQre: String(projectQre.totalQre) });
+          return { projectId: project.id, totalProjectQre: String(projectQre.totalQre) };
+        });
+        const batchSize = 10;
+        for (let i = 0; i < projectUpdates.length; i += batchSize) {
+          await Promise.all(
+            projectUpdates.slice(i, i + batchSize).map(({ projectId, totalProjectQre }) =>
+              db.updateRdProject(projectId, { totalProjectQre })
+            )
+          );
         }
 
         await createAuditLog(ctx.user.id, 'update', 'rdTaxCreditStudy', input.studyId, 'Credit calculated');
@@ -2501,12 +2516,13 @@ export const appRouter = router({
           if (!token.refreshToken) throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'QuickBooks token expired' });
           const refreshResult = await refreshQuickBooksToken(token.refreshToken);
           if (refreshResult.error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: refreshResult.error });
-          accessToken = refreshResult.accessToken!;
-          await db.saveQuickBooksOAuthToken(ctx.user.id, {
-            accessToken: refreshResult.accessToken!,
-            refreshToken: refreshResult.refreshToken!,
+          accessToken = refreshResult.access_token!;
+          await db.upsertQuickBooksOAuthToken({
+            userId: ctx.user.id,
+            accessToken: refreshResult.access_token!,
+            refreshToken: refreshResult.refresh_token!,
             realmId: token.realmId,
-            expiresAt: new Date(Date.now() + (refreshResult.expiresIn || 3600) * 1000),
+            expiresAt: new Date(Date.now() + (refreshResult.expires_in || 3600) * 1000),
           });
         }
 
@@ -2515,8 +2531,8 @@ export const appRouter = router({
           endDate: input.endDate,
         });
 
-        const bills = billsResult?.QueryResponse?.Bill || [];
-        let imported = 0;
+        const bills: any[] = billsResult?.data?.QueryResponse?.Bill || [];
+        const expensesToCreate: Parameters<typeof db.createRdExpense>[0][] = [];
 
         for (const bill of bills) {
           const lines = bill.Line || [];
@@ -2526,28 +2542,30 @@ export const appRouter = router({
               if (grossAmount <= 0) continue;
               const rdPct = parseFloat(input.rdPercentage) || 100;
               const qualified = computeQualifiedAmount(input.category, grossAmount, rdPct);
-              const vendorName = bill.VendorRef?.name || '';
-              const description = line.Description || `QB Bill #${bill.DocNumber || bill.Id}`;
-
-              await db.createRdExpense({
+              expensesToCreate.push({
                 projectId: input.projectId,
                 studyId: input.studyId,
                 category: input.category,
-                description,
+                description: line.Description || `QB Bill #${bill.DocNumber || bill.Id}`,
                 grossAmount: String(grossAmount),
                 qualifiedAmount: String(qualified.toFixed(2)),
                 rdPercentage: String(rdPct),
-                vendorName,
+                vendorName: bill.VendorRef?.name || '',
                 periodStart: bill.TxnDate ? new Date(bill.TxnDate) : undefined,
                 periodEnd: bill.TxnDate ? new Date(bill.TxnDate) : undefined,
                 notes: `Imported from QuickBooks Bill ${bill.DocNumber || bill.Id}`,
               });
-              imported++;
             }
           }
         }
 
-        await createAuditLog(ctx.user.id, 'create', 'rdExpense', input.studyId, `Imported ${imported} expenses from QuickBooks`);
+        const batchSize = 20;
+        for (let i = 0; i < expensesToCreate.length; i += batchSize) {
+          await Promise.all(expensesToCreate.slice(i, i + batchSize).map(e => db.createRdExpense(e)));
+        }
+        const imported = expensesToCreate.length;
+
+        await createAuditLog(ctx.user.id, 'create', 'rdTaxCreditStudy', input.studyId, `Imported ${imported} expenses from QuickBooks`);
         return { imported, totalBills: bills.length };
       }),
   }),

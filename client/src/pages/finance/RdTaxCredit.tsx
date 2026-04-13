@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
@@ -21,6 +22,13 @@ import {
   DollarSign, FlaskConical, ClipboardCheck, Download, Beaker,
 } from "lucide-react";
 import { toast } from "sonner";
+import type { inferRouterOutputs } from "@trpc/server";
+import type { AppRouter } from "../../../../server/routers";
+
+type RouterOutput = inferRouterOutputs<AppRouter>;
+type StudyDetails = NonNullable<RouterOutput["rdTaxCredit"]["getStudy"]>;
+type RdProjectRow = StudyDetails["projects"][number];
+type RdExpenseRow = StudyDetails["expenses"][number];
 
 function fmt(value: string | number | null | undefined) {
   const num = parseFloat(String(value || "0"));
@@ -219,6 +227,7 @@ function NewStudyDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
 // ============================================
 function StudyDetail({ studyId, onBack }: { studyId: number; onBack: () => void }) {
   const utils = trpc.useUtils();
+  const [elect280C, setElect280C] = useState(false);
   const { data: study, isLoading, refetch } = trpc.rdTaxCredit.getStudy.useQuery({ id: studyId });
   const calculateCredit = trpc.rdTaxCredit.calculate.useMutation({
     onSuccess: (result) => {
@@ -238,7 +247,7 @@ function StudyDetail({ studyId, onBack }: { studyId: number; onBack: () => void 
 
   if (isLoading || !study) return <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin" /></div>;
 
-  const qualifyingProjects = study.projects?.filter((p: any) => p.qualifies && p.status !== "excluded") || [];
+  const qualifyingProjects = study.projects?.filter((p) => p.qualifies && p.status !== "excluded") || [];
 
   return (
     <div className="space-y-6">
@@ -252,8 +261,8 @@ function StudyDetail({ studyId, onBack }: { studyId: number; onBack: () => void 
           </div>
           <Badge className={statusColors[study.status] || ""}>{study.status.replace("_", " ")}</Badge>
         </div>
-        <div className="flex gap-2">
-          <Select value={study.status} onValueChange={(v) => updateStudy.mutate({ id: studyId, status: v as any })}>
+        <div className="flex items-center gap-3">
+          <Select value={study.status} onValueChange={(v) => updateStudy.mutate({ id: studyId, status: v as StudyDetails["status"] })}>
             <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="draft">Draft</SelectItem>
@@ -263,7 +272,11 @@ function StudyDetail({ studyId, onBack }: { studyId: number; onBack: () => void 
               <SelectItem value="amended">Amended</SelectItem>
             </SelectContent>
           </Select>
-          <Button onClick={() => calculateCredit.mutate({ studyId, elect280CReduction: false })} disabled={calculateCredit.isPending}>
+          <div className="flex items-center gap-2 text-sm">
+            <Switch id="elect280c" checked={elect280C} onCheckedChange={setElect280C} />
+            <Label htmlFor="elect280c" className="cursor-pointer whitespace-nowrap">§280C Election</Label>
+          </div>
+          <Button onClick={() => calculateCredit.mutate({ studyId, elect280CReduction: elect280C })} disabled={calculateCredit.isPending}>
             {calculateCredit.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Calculator className="h-4 w-4 mr-2" />}
             Calculate Credit
           </Button>
@@ -322,7 +335,7 @@ function StudyDetail({ studyId, onBack }: { studyId: number; onBack: () => void 
 // ============================================
 // PROJECTS TAB
 // ============================================
-function ProjectsTab({ studyId, projects, onRefresh }: { studyId: number; projects: any[]; onRefresh: () => void }) {
+function ProjectsTab({ studyId, projects, onRefresh }: { studyId: number; projects: RdProjectRow[]; onRefresh: () => void }) {
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({
     projectName: "",
@@ -370,7 +383,7 @@ function ProjectsTab({ studyId, projects, onRefresh }: { studyId: number; projec
         <Card><CardContent className="py-8 text-center text-muted-foreground">No projects yet. Add R&D projects that may qualify for the credit.</CardContent></Card>
       ) : (
         <div className="space-y-3">
-          {projects.map((project: any) => (
+          {projects.map((project) => (
             <Card key={project.id}>
               <CardContent className="py-4">
                 <div className="flex items-start justify-between">
@@ -461,7 +474,7 @@ function ProjectsTab({ studyId, projects, onRefresh }: { studyId: number; projec
                   <div className="flex items-start gap-3">
                     <input
                       type="checkbox"
-                      checked={(form as any)[key]}
+                      checked={(form as unknown as Record<string, boolean>)[key]}
                       onChange={e => setForm(f => ({ ...f, [key]: e.target.checked }))}
                       className="mt-1 h-4 w-4"
                     />
@@ -471,7 +484,7 @@ function ProjectsTab({ studyId, projects, onRefresh }: { studyId: number; projec
                       <Textarea
                         className="mt-1"
                         rows={2}
-                        value={(form as any)[notesKey]}
+                        value={(form as unknown as Record<string, string>)[notesKey]}
                         onChange={e => setForm(f => ({ ...f, [notesKey]: e.target.value }))}
                         placeholder="Documentation / evidence..."
                       />
@@ -507,7 +520,7 @@ function ProjectsTab({ studyId, projects, onRefresh }: { studyId: number; projec
 // ============================================
 // EXPENSES TAB
 // ============================================
-function ExpensesTab({ studyId, projects, expenses, onRefresh }: { studyId: number; projects: any[]; expenses: any[]; onRefresh: () => void }) {
+function ExpensesTab({ studyId, projects, expenses, onRefresh }: { studyId: number; projects: RdProjectRow[]; expenses: RdExpenseRow[]; onRefresh: () => void }) {
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({
     projectId: "",
@@ -543,9 +556,9 @@ function ExpensesTab({ studyId, projects, expenses, onRefresh }: { studyId: numb
   };
 
   // Group expenses by category
-  const wageTotal = expenses.filter((e: any) => e.category === "wages").reduce((s: number, e: any) => s + parseFloat(e.qualifiedAmount || "0"), 0);
-  const supplyTotal = expenses.filter((e: any) => e.category === "supplies" || e.category === "cloud_computing").reduce((s: number, e: any) => s + parseFloat(e.qualifiedAmount || "0"), 0);
-  const contractTotal = expenses.filter((e: any) => e.category === "contract_research").reduce((s: number, e: any) => s + parseFloat(e.qualifiedAmount || "0"), 0);
+  const wageTotal = expenses.filter(e => e.category === "wages").reduce((s, e) => s + parseFloat(String(e.qualifiedAmount || "0")), 0);
+  const supplyTotal = expenses.filter(e => e.category === "supplies" || e.category === "cloud_computing").reduce((s, e) => s + parseFloat(String(e.qualifiedAmount || "0")), 0);
+  const contractTotal = expenses.filter(e => e.category === "contract_research").reduce((s, e) => s + parseFloat(String(e.qualifiedAmount || "0")), 0);
 
   return (
     <div className="space-y-4">
@@ -577,7 +590,7 @@ function ExpensesTab({ studyId, projects, expenses, onRefresh }: { studyId: numb
             </TableRow>
           </TableHeader>
           <TableBody>
-            {expenses.map((exp: any) => (
+            {expenses.map((exp) => (
               <TableRow key={exp.id}>
                 <TableCell><Badge variant="outline">{categoryLabels[exp.category] || exp.category}</Badge></TableCell>
                 <TableCell className="max-w-xs truncate">{exp.description || "—"}</TableCell>
@@ -610,13 +623,13 @@ function ExpensesTab({ studyId, projects, expenses, onRefresh }: { studyId: numb
                 <Select value={form.projectId} onValueChange={v => setForm(f => ({ ...f, projectId: v }))}>
                   <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
                   <SelectContent>
-                    {projects.map((p: any) => <SelectItem key={p.id} value={String(p.id)}>{p.projectName}</SelectItem>)}
+                    {projects.map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.projectName}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div>
                 <Label>Category</Label>
-                <Select value={form.category} onValueChange={v => setForm(f => ({ ...f, category: v as any }))}>
+                <Select value={form.category} onValueChange={v => setForm(f => ({ ...f, category: v as RdExpenseRow["category"] }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="wages">Employee Wages</SelectItem>
@@ -654,7 +667,6 @@ function ExpensesTab({ studyId, projects, expenses, onRefresh }: { studyId: numb
                 employeeName: form.employeeName || undefined,
                 vendorName: form.vendorName || undefined,
                 grossAmount: form.grossAmount,
-                qualifiedAmount: computeQualified(),
                 rdPercentage: form.rdPercentage,
                 notes: form.notes || undefined,
               })}
@@ -724,7 +736,7 @@ function Form6765Tab({ studyId }: { studyId: number }) {
           <div className="border rounded-lg p-4 space-y-3">
             <h4 className="font-semibold">Qualifying Projects ({projects.length})</h4>
             <div className="space-y-1 text-sm">
-              {projects.map((p: any) => (
+              {projects.map((p) => (
                 <div key={p.id} className="flex justify-between">
                   <span>{p.projectName}</span>
                   <span className="font-mono">{fmt(p.totalProjectQre)}</span>
