@@ -53,6 +53,7 @@ type PipelineStage = "new" | "contacted" | "qualified" | "proposal" | "negotiati
 
 export default function CRMHub() {
   const [search, setSearch] = useState("");
+  const [dealsSearch, setDealsSearch] = useState("");
   const [isDealDialogOpen, setIsDealDialogOpen] = useState(false);
   const [dealForm, setDealForm] = useState({ name: "", contactId: 0, contactName: "", contactEmail: "", stage: "discovery", amount: "", source: "", notes: "" });
   const [isContactDialogOpen, setIsContactDialogOpen] = useState(false);
@@ -98,6 +99,7 @@ export default function CRMHub() {
   const { data: contactStats } = trpc.crm.contacts.getStats.useQuery();
   const { data: dealStats } = trpc.crm.deals.getStats.useQuery();
   const { data: deals, isLoading: dealsLoading, refetch: refetchDeals } = trpc.crm.deals.list.useQuery({ status: "open" });
+  const { data: pipelines } = trpc.crm.pipelines.list.useQuery();
 
   // AI Next Steps for expanded deal
   const { data: nextStepsData, isLoading: nextStepsLoading } = (trpc.crm as any).deals.getNextSteps.useQuery(
@@ -274,13 +276,12 @@ export default function CRMHub() {
   };
 
   const stageColors: Record<string, string> = {
-    new: "bg-gray-500/10 text-gray-600",
-    contacted: "bg-blue-500/10 text-blue-600",
+    discovery: "bg-gray-500/10 text-gray-600",
     qualified: "bg-purple-500/10 text-purple-600",
     proposal: "bg-yellow-500/10 text-yellow-700",
     negotiation: "bg-orange-500/10 text-orange-600",
-    won: "bg-green-500/10 text-green-600",
-    lost: "bg-red-500/10 text-red-600",
+    closed_won: "bg-green-500/10 text-green-600",
+    closed_lost: "bg-red-500/10 text-red-600",
   };
 
   // Build contact lookup
@@ -312,15 +313,15 @@ export default function CRMHub() {
 
   // Filter deals by search
   const filteredDeals = useMemo(() => {
-    if (!search) return enrichedDeals;
-    const q = search.toLowerCase();
+    if (!dealsSearch) return enrichedDeals;
+    const q = dealsSearch.toLowerCase();
     return enrichedDeals.filter((d: any) =>
       d.name?.toLowerCase().includes(q) ||
       d._contactName?.toLowerCase().includes(q) ||
       d._company?.toLowerCase().includes(q) ||
       d._email?.toLowerCase().includes(q)
     );
-  }, [enrichedDeals, search]);
+  }, [enrichedDeals, dealsSearch]);
 
   return (
     <div className="space-y-2 animate-fade-in">
@@ -723,8 +724,8 @@ export default function CRMHub() {
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Search deals..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  value={dealsSearch}
+                  onChange={(e) => setDealsSearch(e.target.value)}
                   className="pl-8 w-[250px]"
                 />
               </div>
@@ -1123,8 +1124,13 @@ export default function CRMHub() {
               // Auto-name deal from contact's company or name
               const selectedC = (contacts as any[])?.find((c: any) => c.id === contactId);
               const autoName = selectedC?.organization || selectedC?.fullName || dealForm.contactName || "New Deal";
+              const activePipelineId = pipelines?.[0]?.id;
+              if (!activePipelineId) {
+                toast.error("No sales pipeline found. Please set up a pipeline first.");
+                return;
+              }
               createDeal.mutate({
-                pipelineId: 1,
+                pipelineId: activePipelineId,
                 contactId: contactId,
                 name: autoName,
                 stage: dealForm.stage,

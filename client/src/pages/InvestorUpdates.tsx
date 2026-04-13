@@ -70,12 +70,13 @@ export default function InvestorUpdates() {
     setGenerating(true);
     try {
       const result = await generateReport.mutateAsync({ period: formPeriod || undefined });
-      setPreviewContent(result.content);
-      setPreviewTitle(result.title);
-      setPreviewPeriod(result.period);
-      setPreviewHighlights(JSON.parse(result.highlights));
-      setPreviewAsks(JSON.parse(result.asks));
-      setPreviewCTAs(JSON.parse(result.callsToAction));
+      const r = result as any;
+      setPreviewContent(r.content);
+      setPreviewTitle(r.title || formTitle || `Investor Update – ${formPeriod || new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })}`);
+      setPreviewPeriod(r.period || formPeriod || "");
+      try { setPreviewHighlights(JSON.parse(r.highlights)); } catch { setPreviewHighlights([]); }
+      try { setPreviewAsks(JSON.parse(r.asks)); } catch { setPreviewAsks([]); }
+      try { setPreviewCTAs(JSON.parse(r.callsToAction)); } catch { setPreviewCTAs([]); }
       setShowPreview(true);
       toast.success("Report generated successfully");
     } catch (error: any) {

@@ -381,10 +381,11 @@ export default function FinancialReports() {
 
   const runwayMonths = estimatedBurn > 0 ? Math.round((cashPosition / estimatedBurn) * 10) / 10 : 0;
 
-  const strategyMutation = (trpc as any).financialReports.aiAnalysis.useMutation({
-    onSuccess: (data: any) => {
-      if (expandedStrategy) {
-        setStrategyResults((prev) => ({ ...prev, [expandedStrategy]: data.analysis }));
+  const strategyMutation = trpc.financialReports.aiAnalysis.useMutation({
+    onSuccess: (data, variables) => {
+      const stratId = variables.strategyId;
+      if (stratId) {
+        setStrategyResults((prev) => ({ ...prev, [stratId]: data.analysis }));
       }
     },
   });
@@ -396,24 +397,24 @@ export default function FinancialReports() {
     }
     setExpandedStrategy(id);
     if (!strategyResults[id]) {
-      strategyMutation.mutate({ reportType: "cfo_strategy", reportData: prompt });
+      strategyMutation.mutate({ reportType: "cfo_strategy", reportData: prompt, strategyId: id });
     }
   };
 
-  const generateMutation = (trpc as any).financialReports.generate.useMutation({
-    onSuccess: (data: any) => {
+  const generateMutation = trpc.financialReports.generate.useMutation({
+    onSuccess: (data) => {
       setReportData(data as ReportData);
       setAiAnalysis(null);
     },
   });
 
-  const aiMutation = (trpc as any).financialReports.aiAnalysis.useMutation({
-    onSuccess: (data: any) => {
+  const aiMutation = trpc.financialReports.aiAnalysis.useMutation({
+    onSuccess: (data) => {
       setAiAnalysis(data.analysis);
     },
   });
 
-  const autoCategorize = (trpc as any).financialReports.autoCategorize.useMutation();
+  const autoCategorize = trpc.banking.autoCategorize.useMutation();
 
   // Financial Model vs Actual queries
   const financialModelQuery = trpc.financialModel.list.useQuery({
