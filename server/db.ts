@@ -126,6 +126,11 @@ import {
   // Investment grant checklists
   investmentGrantChecklists, investmentGrantItems,
   InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
+<<<<<<< claude/rd-tax-credit-feature-IEATs
+  // R&D Tax Credit
+  rdTaxCreditStudies, rdProjects, rdExpenses,
+  InsertRdTaxCreditStudy, InsertRdProject, InsertRdExpense,
+=======
   // Grant & Bid submitter
   grantBidTemplates, grantBidApplications, grantBidDocuments, grantBidFieldMappings, grantBidSubmissionLogs,
   grantBidOpportunities, grantBidWebFormMappings,
@@ -164,6 +169,7 @@ import {
   financialModel, InsertFinancialModel,
   // KPI Goals
   kpiGoals, InsertKpiGoal,
+>>>>>>> main
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -1394,6 +1400,12 @@ export async function createDocument(data: InsertDocument) {
   if (!db) throw new Error("Database not available");
   const result = await db.insert(documents).values(data);
   return { id: result[0].insertId };
+}
+
+export async function updateDocument(id: number, data: Partial<InsertDocument>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(documents).set(data as any).where(eq(documents.id, id));
 }
 
 export async function deleteDocument(id: number) {
@@ -5339,7 +5351,18 @@ export async function notifyUsersOfEvent(
 export async function createInboundEmail(input: InsertInboundEmail) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
+
+  // Deduplicate: skip if same subject + sender + date already exists
+  if (input.subject && input.fromEmail) {
+    const existing = await db.select({ id: inboundEmails.id }).from(inboundEmails)
+      .where(and(
+        eq(inboundEmails.subject, input.subject),
+        eq(inboundEmails.fromEmail, input.fromEmail),
+      ))
+      .limit(1);
+    if (existing.length > 0) return { id: existing[0].id };
+  }
+
   const result = await db.insert(inboundEmails).values(input);
   return { id: result[0].insertId };
 }
@@ -10011,6 +10034,18 @@ export async function getChecklistSummary(dataRoomId: number) {
 // ORDER ITEMS
 // ============================================
 
+export async function deleteOrder(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(orders).where(eq(orders.id, id));
+}
+
+export async function deleteOrderItems(orderId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(orderItems).where(eq(orderItems.orderId, orderId));
+}
+
 export async function getOrderItems(orderId: number) {
   const db = await getDb();
   if (!db) return [];
@@ -10090,7 +10125,7 @@ export async function getFirefliesMeetings(filters?: { status?: string }) {
   if (!db) return [];
   let query = db.select().from(firefliesMeetings);
   if (filters?.status) {
-    query = query.where(eq(firefliesMeetings.status, filters.status as any)) as any;
+    query = query.where(eq(firefliesMeetings.processingStatus, filters.status as any)) as any;
   }
   return query.orderBy(desc(firefliesMeetings.date));
 }
@@ -10126,8 +10161,8 @@ export async function getFirefliesMeetingStats() {
   const db = await getDb();
   if (!db) return { total: 0, pending: 0, processed: 0 };
   const all = await db.select({ count: count() }).from(firefliesMeetings);
-  const pending = await db.select({ count: count() }).from(firefliesMeetings).where(eq(firefliesMeetings.status, 'pending'));
-  const processed = await db.select({ count: count() }).from(firefliesMeetings).where(eq(firefliesMeetings.status, 'fully_processed'));
+  const pending = await db.select({ count: count() }).from(firefliesMeetings).where(eq(firefliesMeetings.processingStatus, 'pending'));
+  const processed = await db.select({ count: count() }).from(firefliesMeetings).where(eq(firefliesMeetings.processingStatus, 'fully_processed'));
   return {
     total: all[0]?.count || 0,
     pending: pending[0]?.count || 0,
@@ -10368,6 +10403,129 @@ export async function updateCogsPeriodSummaryRecord(id: number, data: Partial<In
   return { id };
 }
 
+<<<<<<< claude/rd-tax-credit-feature-IEATs
+// ============================================
+// R&D TAX CREDIT OPERATIONS
+// ============================================
+
+export async function getRdTaxCreditStudies(filters?: { companyId?: number; taxYear?: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.companyId) conditions.push(eq(rdTaxCreditStudies.companyId, filters.companyId));
+  if (filters?.taxYear) conditions.push(eq(rdTaxCreditStudies.taxYear, filters.taxYear));
+  if (filters?.status) conditions.push(eq(rdTaxCreditStudies.status, filters.status as any));
+  if (conditions.length > 0) {
+    return db.select().from(rdTaxCreditStudies).where(and(...conditions)).orderBy(desc(rdTaxCreditStudies.taxYear));
+  }
+  return db.select().from(rdTaxCreditStudies).orderBy(desc(rdTaxCreditStudies.taxYear));
+}
+
+export async function getRdTaxCreditStudyById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(rdTaxCreditStudies).where(eq(rdTaxCreditStudies.id, id));
+  return rows[0] || null;
+}
+
+export async function getRdStudyWithDetails(id: number) {
+  const study = await getRdTaxCreditStudyById(id);
+  if (!study) return null;
+  const projects = await getRdProjects(id);
+  const expenses = await getRdExpensesByStudy(id);
+  return { ...study, projects, expenses };
+}
+
+export async function createRdTaxCreditStudy(data: InsertRdTaxCreditStudy) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(rdTaxCreditStudies).values(data);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function updateRdTaxCreditStudy(id: number, data: Partial<InsertRdTaxCreditStudy>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(rdTaxCreditStudies).set(data).where(eq(rdTaxCreditStudies.id, id));
+  return { id };
+}
+
+export async function deleteRdTaxCreditStudy(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(rdExpenses).where(eq(rdExpenses.studyId, id));
+  await db.delete(rdProjects).where(eq(rdProjects.studyId, id));
+  await db.delete(rdTaxCreditStudies).where(eq(rdTaxCreditStudies.id, id));
+  return { success: true };
+}
+
+export async function getRdProjects(studyId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(rdProjects).where(eq(rdProjects.studyId, studyId)).orderBy(rdProjects.projectName);
+}
+
+export async function getRdProjectById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(rdProjects).where(eq(rdProjects.id, id));
+  return rows[0] || null;
+}
+
+export async function createRdProject(data: InsertRdProject) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(rdProjects).values(data);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function updateRdProject(id: number, data: Partial<InsertRdProject>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(rdProjects).set(data).where(eq(rdProjects.id, id));
+  return { id };
+}
+
+export async function deleteRdProject(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(rdExpenses).where(eq(rdExpenses.projectId, id));
+  await db.delete(rdProjects).where(eq(rdProjects.id, id));
+  return { success: true };
+}
+
+export async function getRdExpensesByProject(projectId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(rdExpenses).where(eq(rdExpenses.projectId, projectId)).orderBy(rdExpenses.category);
+}
+
+export async function getRdExpensesByStudy(studyId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(rdExpenses).where(eq(rdExpenses.studyId, studyId)).orderBy(rdExpenses.category);
+}
+
+export async function createRdExpense(data: InsertRdExpense) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(rdExpenses).values(data);
+  return { id: result[0].insertId, ...data };
+}
+
+export async function updateRdExpense(id: number, data: Partial<InsertRdExpense>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(rdExpenses).set(data).where(eq(rdExpenses.id, id));
+  return { id };
+}
+
+export async function deleteRdExpense(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(rdExpenses).where(eq(rdExpenses.id, id));
+  return { success: true };
+=======
 export async function getCogsSummary(filters?: { companyId?: number; productId?: number; periodType?: string; startDate?: Date; endDate?: Date }) {
   const db = await getDb();
   if (!db) return [];
@@ -11966,4 +12124,5 @@ export async function updateInvestmentCommitment(id: number, data: Partial<Inser
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(investmentCommitments).set({ ...data, updatedAt: new Date() } as any).where(eq(investmentCommitments.id, id));
+>>>>>>> main
 }

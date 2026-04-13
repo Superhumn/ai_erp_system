@@ -10,6 +10,7 @@
 
 import crypto from "crypto";
 import https from "https";
+import { encrypt, safeDecryptToken } from "./crypto";
 
 /**
  * Verify Shopify webhook signature
@@ -198,7 +199,7 @@ export async function refreshShopifyToken(storeId: number): Promise<string> {
   const expiresAt = new Date(Date.now() + expiresIn * 1000);
 
   await updateShopifyStore(storeId, {
-    accessToken: newToken,
+    accessToken: encrypt(newToken), // store encrypted, consistent with OAuth callback; returns plain text for immediate use by caller
     tokenExpiresAt: expiresAt,
   } as any);
 
@@ -215,15 +216,15 @@ export async function ensureValidToken(storeId: number): Promise<string> {
   const store = await getShopifyStoreById(storeId);
   if (!store) throw new Error(`Shopify store ${storeId} not found`);
 
-  if (!store.accessToken) throw new Error(`No access token for store ${store.storeDomain}`);
+  const now = Date.now();
+  const bufferMs = 10 * 60 * 1000; // 10 minute buffer
 
-  // Decrypt the stored token
-  try {
-    const { decrypt } = await import("./crypto");
-    const decrypted = decrypt(store.accessToken);
-    if (decrypted && decrypted.length > 10) return decrypted;
-  } catch {
-    // Token might not be encrypted (legacy), try using it raw
+  if (
+    store.accessToken &&
+    store.tokenExpiresAt &&
+    new Date(store.tokenExpiresAt).getTime() > now + bufferMs
+  ) {
+    return safeDecryptToken(store.accessToken);
   }
 
   // Fallback: return raw token (might work if stored unencrypted)
@@ -500,6 +501,11 @@ async function syncCustomers(
       const shopifyId = String(sc.id);
       const name = [sc.first_name, sc.last_name].filter(Boolean).join(" ") || sc.email || "Unknown";
       const email = sc.email || null;
+
+      // Skip junk entries (contact form submissions, empty records)
+      const lowerName = name.toLowerCase();
+      if (lowerName === "contact form" || lowerName === "unknown") continue;
+      if (!email && (!sc.first_name || sc.first_name === "Contact")) continue;
 
       // Check by shopify ID first, then by email
       let existing = await getCustomerByShopifyId(shopifyId);

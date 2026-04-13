@@ -173,7 +173,6 @@ export default function EquityReports() {
           name: file.name,
           type: "report" as const,
           referenceType: "valuation",
-          ...(currentValuation?.id ? { referenceId: currentValuation.id } : {}),
           fileData: base64,
           mimeType: file.type || "application/pdf",
           description: `409A Valuation Report - ${file.name}`,
@@ -442,8 +441,7 @@ export default function EquityReports() {
   }
 
   return (
-    <div className="p-4 space-y-4">
-      <h1 className="text-lg font-semibold">Cap Table</h1>
+    <div className="space-y-3">
 
       {/* ── 409A Valuation Section ─────────────────────────────── */}
       <Card>

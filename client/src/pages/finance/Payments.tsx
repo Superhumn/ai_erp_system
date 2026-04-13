@@ -255,7 +255,7 @@ export default function Payments() {
                         ? format(new Date(payment.paymentDate), "MMM d, yyyy")
                         : "-"}
                     </TableCell>
-                    <TableCell className="capitalize">{payment.paymentMethod?.replace("_", " ") || "-"}</TableCell>
+                    <TableCell className="capitalize">{payment.paymentMethod?.replace(/_/g, " ") || "-"}</TableCell>
                     <TableCell className="text-right font-mono">
                       {formatCurrency(payment.amount)}
                     </TableCell>

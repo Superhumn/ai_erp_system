@@ -624,7 +624,7 @@ export default function PeopleAndEquity() {
             </DialogContent>
           </Dialog>
 
-          {/* Manage Share Classes dialog */}
+          {/* Share Classes and Grant moved to Investors page */}
           <Dialog open={isShareClassOpen} onOpenChange={setIsShareClassOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" size="sm">
@@ -887,8 +887,8 @@ export default function PeopleAndEquity() {
         );
       })()}
 
-      {/* Cap Table Visual */}
-      {grants && grants.length > 0 && (
+      {/* Cap Table Visual — moved to Investors page */}
+      {false && grants && grants.length > 0 && (
         <Card>
           <CardContent className="py-4">
             <div className="flex items-center gap-8">

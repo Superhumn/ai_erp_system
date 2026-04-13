@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,6 +38,16 @@ export default function FirefliesPage() {
 
   const { data: configRaw, isLoading: configLoading, refetch: refetchConfig } = trpc.fireflies.getConfig.useQuery();
   const config = configRaw as any;
+
+  // Sync toggle state from the server config whenever it loads
+  useEffect(() => {
+    if (config) {
+      if (config.autoCreateContacts != null) setAutoCreateContacts(config.autoCreateContacts);
+      if (config.autoCreateTasks != null) setAutoCreateTasks(config.autoCreateTasks);
+      if (config.autoCreateProjects != null) setAutoCreateProjects(config.autoCreateProjects);
+    }
+  }, [configRaw]);
+
   const { data: meetingsRaw, isLoading: meetingsLoading, refetch: refetchMeetings } = trpc.fireflies.meetings.list.useQuery({});
   const meetings = meetingsRaw as any[] | undefined;
   const { data: statsRaw, refetch: refetchStats } = trpc.fireflies.meetings.getStats.useQuery();
@@ -97,13 +107,16 @@ export default function FirefliesPage() {
     }
     configureMutation.mutate({
       apiKey: apiKey.trim(),
+      autoCreateContacts,
+      autoCreateTasks,
+      autoCreateProjects,
     });
   };
 
   const handleProcessMeeting = () => {
     if (!selectedMeetingId) return;
     processMeetingMutation.mutate({
-      meetingId: selectedMeetingId.toString(),
+      meetingId: selectedMeetingId,
       createContacts: true,
       createTasks: true,
       createProject: processCreateProject,

@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { eq, and } from "drizzle-orm";
+import { safeDecryptToken } from "./_core/crypto";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
@@ -1253,6 +1254,29 @@ ONLY return the JSON array, no other text.`;
         }
 
         return { success: true };
+      }),
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        // Delete order items first
+        try { await db.deleteOrderItems(input.id); } catch { /* no items */ }
+        await db.deleteOrder(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'order', input.id);
+        return { success: true };
+      }),
+    bulkDelete: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()) }))
+      .mutation(async ({ input, ctx }) => {
+        let deleted = 0;
+        for (const id of input.ids) {
+          try {
+            try { await db.deleteOrderItems(id); } catch { /* no items */ }
+            await db.deleteOrder(id);
+            deleted++;
+          } catch { /* skip */ }
+        }
+        await createAuditLog(ctx.user.id, 'delete', 'order', 0, undefined, undefined, { bulkDeleted: deleted });
+        return { success: true, deleted };
       }),
   }),
 
@@ -2555,7 +2579,8 @@ ONLY return the JSON array, no other text.`;
         await createAuditLog(ctx.user.id, 'create', 'document', result.id, input.name);
 
         // If this is a 409A valuation report, parse it for FMV value
-        if (input.referenceType === "valuation" && (mimeType.includes("pdf") || mimeType.includes("image"))) {
+        const isSpreadsheet = mimeType.includes("spreadsheet") || mimeType.includes("excel") || mimeType.includes("sheet") || input.name.match(/\.(xlsx|xls)$/i) !== null;
+        if (input.referenceType === "valuation" && (mimeType.includes("pdf") || mimeType.includes("image") || isSpreadsheet)) {
           try {
             const { invokeLLM } = await import("./_core/llm");
             let userContent: any;
@@ -2590,6 +2615,29 @@ ONLY return the JSON array, no other text.`;
               userContent = pdfText
                 ? `Document: ${input.name}\n\nEXTRACTED TEXT:\n${pdfText}`
                 : `Document: ${input.name} (PDF content could not be extracted)`;
+            } else if (isSpreadsheet) {
+              // Extract text from Excel/spreadsheet using xlsx library
+              let sheetText: string | null = null;
+              try {
+                const xlsxMod = await import("xlsx");
+                // CJS modules via dynamic import may expose exports under .default
+                const xlsxLib = ('default' in xlsxMod && typeof (xlsxMod as any).default?.read === 'function')
+                  ? (xlsxMod as any).default as typeof xlsxMod
+                  : xlsxMod;
+                const workbook = xlsxLib.read(buffer, { type: "buffer" });
+                let text = "";
+                for (const sheetName of workbook.SheetNames) {
+                  text += `Sheet: ${sheetName}\n`;
+                  text += xlsxLib.utils.sheet_to_csv(workbook.Sheets[sheetName]).substring(0, 10000);
+                  text += "\n";
+                }
+                if (text.trim().length > 0) sheetText = text.substring(0, 30000);
+              } catch (xlsxErr) {
+                console.warn("[409A] XLSX parse failed:", xlsxErr);
+              }
+              userContent = sheetText
+                ? `Document: ${input.name}\n\nSPREADSHEET CONTENT:\n${sheetText}`
+                : `Document: ${input.name} (Spreadsheet content could not be extracted)`;
             } else {
               // Image: pass directly as image_url
               userContent = [
@@ -2608,28 +2656,20 @@ ONLY return the JSON array, no other text.`;
             try {
               const fmvData = JSON.parse(fmvText.replace(/```json\n?|\n?```/g, "").trim());
               if (fmvData.fmvPerShare) {
-                if (input.referenceId) {
-                  // Update the existing valuation record with parsed FMV
-                  await db.updateValuation409a(input.referenceId, {
-                    fairMarketValue: String(fmvData.fmvPerShare),
-                    ...(fmvData.totalValuation ? { totalValuation: String(fmvData.totalValuation) } : {}),
-                    ...(fmvData.provider ? { provider: fmvData.provider } : {}),
-                  });
-                  console.log(`[409A] Updated valuation ${input.referenceId} FMV from ${input.name}: $${fmvData.fmvPerShare}/share`);
-                } else {
-                  // No existing valuation record — create one from the extracted data
-                  const valuationDate = fmvData.valuationDate ? new Date(fmvData.valuationDate) : new Date();
-                  const newValuation = await db.createValuation409a({
-                    fairMarketValue: String(fmvData.fmvPerShare),
-                    valuationDate,
-                    ...(fmvData.totalValuation ? { totalValuation: String(fmvData.totalValuation) } : {}),
-                    ...(fmvData.provider ? { provider: fmvData.provider } : {}),
-                    ...(input.companyId ? { companyId: input.companyId } : {}),
-                    reportUrl: url,
-                    status: "approved",
-                  });
-                  console.log(`[409A] Created new valuation from ${input.name}: $${fmvData.fmvPerShare}/share (id=${newValuation.id})`);
-                }
+                // Always create a new valuation record to preserve history
+                const valuationDate = fmvData.valuationDate ? new Date(fmvData.valuationDate) : new Date();
+                const newValuation = await db.createValuation409a({
+                  fairMarketValue: String(fmvData.fmvPerShare),
+                  valuationDate,
+                  ...(fmvData.totalValuation ? { totalValuation: String(fmvData.totalValuation) } : {}),
+                  ...(fmvData.provider ? { provider: fmvData.provider } : {}),
+                  ...(input.companyId ? { companyId: input.companyId } : {}),
+                  reportUrl: url,
+                  status: "approved",
+                });
+                // Link the document to the newly created valuation record
+                await db.updateDocument(result.id, { referenceId: newValuation.id });
+                console.log(`[409A] Created new valuation from ${input.name}: $${fmvData.fmvPerShare}/share (id=${newValuation.id})`);
               }
             } catch { /* FMV parse failed, that's ok */ }
           } catch (e) {
@@ -2769,6 +2809,389 @@ ONLY return the JSON array, no other text.`;
     tasks: protectedProcedure
       .input(z.object({ projectId: z.number() }))
       .query(({ input }) => input.projectId === 0 ? db.getAllProjectTasks() : db.getProjectTasks(input.projectId)),
+    listAllTasks: protectedProcedure
+      .query(() => db.getAllProjectTasks()),
+  }),
+
+  // ============================================
+  // R&D TAX CREDIT (IRC SECTION 41)
+  // ============================================
+  rdTaxCredit: router({
+    // Study CRUD
+    listStudies: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        taxYear: z.number().optional(),
+        status: z.string().optional(),
+      }).optional())
+      .query(({ input }) => db.getRdTaxCreditStudies(input)),
+    getStudy: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getRdStudyWithDetails(input.id)),
+    createStudy: financeProcedure
+      .input(z.object({
+        companyId: z.number().optional(),
+        taxYear: z.number(),
+        studyName: z.string().min(1),
+        calculationMethod: z.enum(["regular", "asc"]).default("asc"),
+        priorYear1Qre: z.string().optional(),
+        priorYear2Qre: z.string().optional(),
+        priorYear3Qre: z.string().optional(),
+        fixedBasePercentage: z.string().optional(),
+        currentYearGrossReceipts: z.string().optional(),
+        averageBasePeriodGrossReceipts: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createRdTaxCreditStudy({ ...input, createdBy: ctx.user.id });
+        await createAuditLog(ctx.user.id, 'create', 'rdTaxCreditStudy', result.id, input.studyName);
+        return result;
+      }),
+    updateStudy: financeProcedure
+      .input(z.object({
+        id: z.number(),
+        studyName: z.string().optional(),
+        status: z.enum(["draft", "in_progress", "under_review", "filed", "amended"]).optional(),
+        calculationMethod: z.enum(["regular", "asc"]).optional(),
+        priorYear1Qre: z.string().optional(),
+        priorYear2Qre: z.string().optional(),
+        priorYear3Qre: z.string().optional(),
+        fixedBasePercentage: z.string().optional(),
+        currentYearGrossReceipts: z.string().optional(),
+        averageBasePeriodGrossReceipts: z.string().optional(),
+        filingDate: z.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateRdTaxCreditStudy(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'rdTaxCreditStudy', id);
+        return { success: true };
+      }),
+    deleteStudy: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteRdTaxCreditStudy(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'rdTaxCreditStudy', input.id);
+        return { success: true };
+      }),
+
+    // Project CRUD
+    listProjects: financeProcedure
+      .input(z.object({ studyId: z.number() }))
+      .query(({ input }) => db.getRdProjects(input.studyId)),
+    getProject: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => db.getRdProjectById(input.id)),
+    createProject: financeProcedure
+      .input(z.object({
+        studyId: z.number(),
+        projectName: z.string().min(1),
+        description: z.string().optional(),
+        businessComponent: z.string().optional(),
+        technologicalInNature: z.boolean().optional(),
+        technologicalNatureNotes: z.string().optional(),
+        eliminationOfUncertainty: z.boolean().optional(),
+        eliminationOfUncertaintyNotes: z.string().optional(),
+        processOfExperimentation: z.boolean().optional(),
+        processOfExperimentationNotes: z.string().optional(),
+        permittedPurpose: z.boolean().optional(),
+        permittedPurposeNotes: z.string().optional(),
+        qualifies: z.boolean().optional(),
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const result = await db.createRdProject(input);
+        await createAuditLog(ctx.user.id, 'create', 'rdProject', result.id, input.projectName);
+        return result;
+      }),
+    updateProject: financeProcedure
+      .input(z.object({
+        id: z.number(),
+        projectName: z.string().optional(),
+        description: z.string().optional(),
+        businessComponent: z.string().optional(),
+        technologicalInNature: z.boolean().optional(),
+        technologicalNatureNotes: z.string().optional(),
+        eliminationOfUncertainty: z.boolean().optional(),
+        eliminationOfUncertaintyNotes: z.string().optional(),
+        processOfExperimentation: z.boolean().optional(),
+        processOfExperimentationNotes: z.string().optional(),
+        permittedPurpose: z.boolean().optional(),
+        permittedPurposeNotes: z.string().optional(),
+        qualifies: z.boolean().optional(),
+        totalProjectQre: z.string().optional(),
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+        status: z.enum(["active", "completed", "excluded"]).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateRdProject(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'rdProject', id);
+        return { success: true };
+      }),
+    deleteProject: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteRdProject(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'rdProject', input.id);
+        return { success: true };
+      }),
+
+    // Expense CRUD
+    listExpenses: financeProcedure
+      .input(z.object({ studyId: z.number().optional(), projectId: z.number().optional() }))
+      .query(({ input }) => {
+        if (input.projectId) return db.getRdExpensesByProject(input.projectId);
+        if (input.studyId) return db.getRdExpensesByStudy(input.studyId);
+        return [];
+      }),
+    createExpense: financeProcedure
+      .input(z.object({
+        projectId: z.number(),
+        studyId: z.number(),
+        category: z.enum(["wages", "supplies", "contract_research", "cloud_computing"]),
+        description: z.string().optional(),
+        employeeId: z.number().optional(),
+        employeeName: z.string().optional(),
+        rdPercentage: z.string().optional(),
+        grossAmount: z.string(),
+        contractResearchRate: z.string().optional(),
+        vendorId: z.number().optional(),
+        vendorName: z.string().optional(),
+        periodStart: z.date().optional(),
+        periodEnd: z.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { computeQualifiedAmount } = await import("./rdTaxCreditService");
+        // Verify project belongs to the provided study
+        const project = await db.getRdProjectById(input.projectId);
+        if (!project || project.studyId !== input.studyId) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Project does not belong to the specified study' });
+        }
+        // Compute qualified amount server-side
+        const gross = parseFloat(input.grossAmount) || 0;
+        const rdPct = parseFloat(input.rdPercentage || "100") || 100;
+        const contractRate = parseFloat(input.contractResearchRate || "65") || 65;
+        const qualifiedAmount = String(computeQualifiedAmount(input.category, gross, rdPct, contractRate).toFixed(2));
+        const result = await db.createRdExpense({ ...input, qualifiedAmount });
+        await createAuditLog(ctx.user.id, 'create', 'rdExpense', result.id, input.description || input.category);
+        return result;
+      }),
+    updateExpense: financeProcedure
+      .input(z.object({
+        id: z.number(),
+        category: z.enum(["wages", "supplies", "contract_research", "cloud_computing"]).optional(),
+        description: z.string().optional(),
+        employeeId: z.number().optional(),
+        employeeName: z.string().optional(),
+        rdPercentage: z.string().optional(),
+        grossAmount: z.string().optional(),
+        qualifiedAmount: z.string().optional(),
+        contractResearchRate: z.string().optional(),
+        vendorId: z.number().optional(),
+        vendorName: z.string().optional(),
+        periodStart: z.date().optional(),
+        periodEnd: z.date().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id, ...data } = input;
+        await db.updateRdExpense(id, data);
+        await createAuditLog(ctx.user.id, 'update', 'rdExpense', id);
+        return { success: true };
+      }),
+    deleteExpense: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteRdExpense(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'rdExpense', input.id);
+        return { success: true };
+      }),
+
+    // Credit Calculation
+    calculate: financeProcedure
+      .input(z.object({ studyId: z.number(), elect280CReduction: z.boolean().optional() }))
+      .mutation(async ({ input, ctx }) => {
+        const { calculateRdTaxCredit, aggregateExpensesByCategory } = await import("./rdTaxCreditService");
+        const study = await db.getRdStudyWithDetails(input.studyId);
+        if (!study) throw new TRPCError({ code: 'NOT_FOUND', message: 'Study not found' });
+
+        // Only include expenses from qualifying projects
+        const qualifyingProjectIds = new Set(
+          study.projects.filter(p => p.qualifies && p.status !== 'excluded').map(p => p.id)
+        );
+        const qualifyingExpenses = study.expenses.filter(e => qualifyingProjectIds.has(e.projectId));
+        const qreTotals = aggregateExpensesByCategory(qualifyingExpenses);
+
+        const result = calculateRdTaxCredit({
+          calculationMethod: study.calculationMethod as "regular" | "asc",
+          wageQre: qreTotals.wageQre,
+          supplyQre: qreTotals.supplyQre,
+          contractQre: qreTotals.contractQre,
+          fixedBasePercentage: parseFloat(String(study.fixedBasePercentage)) || 0,
+          currentYearGrossReceipts: parseFloat(String(study.currentYearGrossReceipts)) || 0,
+          averageBasePeriodGrossReceipts: parseFloat(String(study.averageBasePeriodGrossReceipts)) || 0,
+          priorYear1Qre: parseFloat(String(study.priorYear1Qre)) || 0,
+          priorYear2Qre: parseFloat(String(study.priorYear2Qre)) || 0,
+          priorYear3Qre: parseFloat(String(study.priorYear3Qre)) || 0,
+          elect280CReduction: input.elect280CReduction,
+        });
+
+        // Save calculated values back to study
+        await db.updateRdTaxCreditStudy(input.studyId, {
+          totalWageQre: String(result.breakdown.wageQre),
+          totalSupplyQre: String(result.breakdown.supplyQre),
+          totalContractQre: String(result.breakdown.contractQre),
+          totalQre: String(result.totalQre),
+          baseAmount: String(result.baseAmount),
+          averagePriorQre: String(result.averagePriorQre),
+          grossCredit: String(result.grossCredit),
+          section280CReduction: String(result.section280CReduction),
+          netCredit: String(result.netCredit),
+        });
+
+        // Update project QRE totals concurrently in batches
+        const expensesByProjectId = new Map<number, typeof qualifyingExpenses>();
+        for (const expense of qualifyingExpenses) {
+          const existing = expensesByProjectId.get(expense.projectId) ?? [];
+          existing.push(expense);
+          expensesByProjectId.set(expense.projectId, existing);
+        }
+        const projectUpdates = study.projects.map((project) => {
+          const projectExpenses = expensesByProjectId.get(project.id) ?? [];
+          const projectQre = aggregateExpensesByCategory(projectExpenses);
+          return { projectId: project.id, totalProjectQre: String(projectQre.totalQre) };
+        });
+        const batchSize = 10;
+        for (let i = 0; i < projectUpdates.length; i += batchSize) {
+          await Promise.all(
+            projectUpdates.slice(i, i + batchSize).map(({ projectId, totalProjectQre }) =>
+              db.updateRdProject(projectId, { totalProjectQre })
+            )
+          );
+        }
+
+        await createAuditLog(ctx.user.id, 'update', 'rdTaxCreditStudy', input.studyId, 'Credit calculated');
+        return result;
+      }),
+
+    // Generate Form 6765 data
+    generateForm: financeProcedure
+      .input(z.object({ studyId: z.number() }))
+      .query(async ({ input }) => {
+        const { generateForm6765Data, calculateRdTaxCredit, aggregateExpensesByCategory } = await import("./rdTaxCreditService");
+        const study = await db.getRdStudyWithDetails(input.studyId);
+        if (!study) throw new TRPCError({ code: 'NOT_FOUND', message: 'Study not found' });
+
+        const qualifyingProjectIds = new Set(
+          study.projects.filter(p => p.qualifies && p.status !== 'excluded').map(p => p.id)
+        );
+        const qualifyingExpenses = study.expenses.filter(e => qualifyingProjectIds.has(e.projectId));
+        const qreTotals = aggregateExpensesByCategory(qualifyingExpenses);
+
+        const storedReduction = parseFloat(String(study.section280CReduction)) || 0;
+        const elect280CReduction = storedReduction > 0;
+
+        const result = calculateRdTaxCredit({
+          calculationMethod: study.calculationMethod as "regular" | "asc",
+          wageQre: qreTotals.wageQre,
+          supplyQre: qreTotals.supplyQre,
+          contractQre: qreTotals.contractQre,
+          fixedBasePercentage: parseFloat(String(study.fixedBasePercentage)) || 0,
+          currentYearGrossReceipts: parseFloat(String(study.currentYearGrossReceipts)) || 0,
+          averageBasePeriodGrossReceipts: parseFloat(String(study.averageBasePeriodGrossReceipts)) || 0,
+          priorYear1Qre: parseFloat(String(study.priorYear1Qre)) || 0,
+          priorYear2Qre: parseFloat(String(study.priorYear2Qre)) || 0,
+          priorYear3Qre: parseFloat(String(study.priorYear3Qre)) || 0,
+          elect280CReduction,
+        });
+
+        return {
+          form: generateForm6765Data(study, result),
+          projects: study.projects.filter(p => p.qualifies && p.status !== 'excluded'),
+          expenseCount: qualifyingExpenses.length,
+        };
+      }),
+
+    // Import expenses from QuickBooks bills
+    importFromQuickBooks: financeProcedure
+      .input(z.object({
+        studyId: z.number(),
+        projectId: z.number(),
+        startDate: z.string(),
+        endDate: z.string(),
+        category: z.enum(["wages", "supplies", "contract_research", "cloud_computing"]),
+        rdPercentage: z.string().default("100"),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { getQuickBooksBills, refreshQuickBooksToken } = await import("./_core/quickbooks");
+        const { computeQualifiedAmount } = await import("./rdTaxCreditService");
+        const token = await db.getQuickBooksOAuthToken(ctx.user.id);
+        if (!token || !token.accessToken || !token.realmId) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'QuickBooks not connected. Connect in Settings > Integrations.' });
+        }
+
+        let accessToken = token.accessToken;
+        if (token.expiresAt && new Date(token.expiresAt) <= new Date()) {
+          if (!token.refreshToken) throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'QuickBooks token expired' });
+          const refreshResult = await refreshQuickBooksToken(token.refreshToken);
+          if (refreshResult.error) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: refreshResult.error });
+          accessToken = refreshResult.access_token!;
+          await db.upsertQuickBooksOAuthToken({
+            userId: ctx.user.id,
+            accessToken: refreshResult.access_token!,
+            refreshToken: refreshResult.refresh_token!,
+            realmId: token.realmId,
+            expiresAt: new Date(Date.now() + (refreshResult.expires_in || 3600) * 1000),
+          });
+        }
+
+        const billsResult = await getQuickBooksBills(accessToken, token.realmId, {
+          startDate: input.startDate,
+          endDate: input.endDate,
+        });
+
+        const bills: any[] = billsResult?.data?.QueryResponse?.Bill || [];
+        const expensesToCreate: Parameters<typeof db.createRdExpense>[0][] = [];
+
+        for (const bill of bills) {
+          const lines = bill.Line || [];
+          for (const line of lines) {
+            if (line.DetailType === 'AccountBasedExpenseLineDetail' || line.DetailType === 'ItemBasedExpenseLineDetail') {
+              const grossAmount = parseFloat(line.Amount) || 0;
+              if (grossAmount <= 0) continue;
+              const rdPct = parseFloat(input.rdPercentage) || 100;
+              const qualified = computeQualifiedAmount(input.category, grossAmount, rdPct);
+              expensesToCreate.push({
+                projectId: input.projectId,
+                studyId: input.studyId,
+                category: input.category,
+                description: line.Description || `QB Bill #${bill.DocNumber || bill.Id}`,
+                grossAmount: String(grossAmount),
+                qualifiedAmount: String(qualified.toFixed(2)),
+                rdPercentage: String(rdPct),
+                vendorName: bill.VendorRef?.name || '',
+                periodStart: bill.TxnDate ? new Date(bill.TxnDate) : undefined,
+                periodEnd: bill.TxnDate ? new Date(bill.TxnDate) : undefined,
+                notes: `Imported from QuickBooks Bill ${bill.DocNumber || bill.Id}`,
+              });
+            }
+          }
+        }
+
+        const batchSize = 20;
+        for (let i = 0; i < expensesToCreate.length; i += batchSize) {
+          await Promise.all(expensesToCreate.slice(i, i + batchSize).map(e => db.createRdExpense(e)));
+        }
+        const imported = expensesToCreate.length;
+
+        await createAuditLog(ctx.user.id, 'create', 'rdTaxCreditStudy', input.studyId, `Imported ${imported} expenses from QuickBooks`);
+        return { imported, totalBills: bills.length };
+      }),
   }),
 
   // ============================================
@@ -3005,13 +3428,17 @@ ONLY return the JSON array, no other text.`;
       if (googleToken && !googleConnected && googleToken.refreshToken) {
         const refreshed = await refreshGoogleToken(googleToken.refreshToken);
         if (refreshed.accessToken && refreshed.expiresAt) {
-          await db.upsertGoogleOAuthToken({
-            userId: ctx.user.id,
-            accessToken: refreshed.accessToken,
-            refreshToken: googleToken.refreshToken,
-            expiresAt: refreshed.expiresAt,
-            googleEmail: googleToken.googleEmail,
-          });
+          try {
+            await db.upsertGoogleOAuthToken({
+              userId: ctx.user.id,
+              accessToken: refreshed.accessToken,
+              refreshToken: googleToken.refreshToken,
+              expiresAt: refreshed.expiresAt,
+              googleEmail: googleToken.googleEmail,
+            });
+          } catch (e) {
+            console.warn('[getStatus] Failed to save refreshed Google token:', e);
+          }
           googleConnected = true;
         }
       }
@@ -3154,8 +3581,9 @@ ONLY return the JSON array, no other text.`;
         .mutation(async ({ input }) => {
           const store = await db.getShopifyStoreById(input.storeId);
           if (!store || !store.accessToken) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Store not found or not connected' });
+          const accessToken = safeDecryptToken(store.accessToken);
           const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/shop.json`, {
-            headers: { 'X-Shopify-Access-Token': store.accessToken, 'Content-Type': 'application/json' },
+            headers: { 'X-Shopify-Access-Token': accessToken, 'Content-Type': 'application/json' },
           });
           if (!response.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: `Shopify API error: ${response.status}` });
           return { success: true, message: 'Connection is active' };
@@ -9948,7 +10376,7 @@ Ask if they received the original request and if they can provide a quote.`;
             try {
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/orders.json?status=any&limit=50`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': safeDecryptToken(store.accessToken!),
                   'Content-Type': 'application/json',
                 },
               });
@@ -10035,7 +10463,7 @@ Ask if they received the original request and if they can provide a quote.`;
             try {
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/products.json?limit=100`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': safeDecryptToken(store.accessToken!),
                   'Content-Type': 'application/json',
                 },
               });
@@ -10108,10 +10536,29 @@ Ask if they received the original request and if they can provide a quote.`;
           for (const store of activeStores) {
             if (!store) continue;
             try {
-              // Get inventory levels from Shopify
-              const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/inventory_levels.json?limit=100`, {
+              const token = safeDecryptToken(store.accessToken!);
+              const apiBase = `https://${store.storeDomain}/admin/api/2024-01`;
+
+              // Step 1: Fetch active locations (inventory_levels requires location_ids)
+              const locResp = await fetch(`${apiBase}/locations.json`, {
+                headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+              });
+              if (!locResp.ok) throw new Error(`Shopify locations API error: ${locResp.status}`);
+              const locData = await locResp.json();
+              const locationIds: number[] = (locData.locations || [])
+                .filter((l: any) => l.active)
+                .map((l: any) => l.id);
+
+              if (locationIds.length === 0) {
+                console.warn(`[Shopify Sync] No active locations for ${store.storeDomain}, skipping inventory sync`);
+                await db.updateShopifyStore(store.id, { lastSyncAt: new Date() });
+                continue;
+              }
+
+              // Step 2: Fetch inventory levels for those locations
+              const response = await fetch(`${apiBase}/inventory_levels.json?location_ids=${locationIds.join(',')}&limit=250`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': token,
                   'Content-Type': 'application/json',
                 },
               });
@@ -10181,7 +10628,7 @@ Ask if they received the original request and if they can provide a quote.`;
             try {
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/customers.json?limit=100`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': safeDecryptToken(store.accessToken!),
                   'Content-Type': 'application/json',
                 },
               });
@@ -11021,14 +11468,65 @@ Ask if they received the original request and if they can provide a quote.`;
     archiveEmail: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
+        const email = await db.getInboundEmailById(input.id);
+        // Archive in Gmail — mark as read and move out of inbox
+        if (email?.messageId) {
+          try {
+            const { getImapConfig } = await import("./_core/emailInboxScanner");
+            const { ImapFlow } = await import("imapflow");
+            const config = getImapConfig();
+            if (config) {
+              const client = new ImapFlow({ host: config.host, port: config.port, secure: config.secure, auth: config.auth, logger: false });
+              await client.connect();
+              await client.mailboxOpen("INBOX");
+              const uids = await client.search({ header: { "message-id": email.messageId } }, { uid: true });
+              if (uids && uids.length > 0) {
+                await client.messageFlagsAdd(uids.map(String), ["\\Seen"], { uid: true });
+              }
+              await client.logout();
+            }
+          } catch (e) {
+            console.warn(`[Email] Failed to archive in Gmail:`, e instanceof Error ? e.message : e);
+          }
+        }
         await db.updateInboundEmailStatus(input.id, "archived");
         return { success: true };
       }),
 
-    // Delete email permanently
+    // Delete email permanently — also deletes from Gmail via IMAP
     deleteEmail: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
+        // Get the email to find its messageId
+        const email = await db.getInboundEmailById(input.id);
+
+        // Try to delete from Gmail via IMAP
+        if (email?.messageId) {
+          try {
+            const { getImapConfig } = await import("./_core/emailInboxScanner");
+            const { ImapFlow } = await import("imapflow");
+            const config = getImapConfig();
+            if (config) {
+              const client = new ImapFlow({
+                host: config.host, port: config.port, secure: config.secure,
+                auth: config.auth, logger: false,
+              });
+              await client.connect();
+              await client.mailboxOpen("INBOX");
+              // Search by message ID header
+              const uids = await client.search({ header: { "message-id": email.messageId } }, { uid: true });
+              if (uids && uids.length > 0) {
+                await client.messageDelete(uids.map(String), { uid: true });
+                console.log(`[Email] Deleted message ${email.messageId} from Gmail`);
+              }
+              await client.logout();
+            }
+          } catch (e) {
+            console.warn(`[Email] Failed to delete from Gmail:`, e instanceof Error ? e.message : e);
+          }
+        }
+
+        // Delete from ERP DB
         await db.deleteInboundEmail(input.id);
         return { success: true };
       }),
@@ -16859,13 +17357,11 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         notes: z.string().optional(),
       }))
       .mutation(({ input, ctx }) => {
-        // Convert empty strings to undefined for optional fields
         const cleaned: Record<string, any> = {
-          companyId: (ctx.user as any).companyId,
           name: input.name,
           roundType: input.roundType,
           status: input.status,
-          raisedAmount: "0",
+          createdBy: ctx.user.id,
         };
         if (input.description) cleaned.description = input.description;
         if (input.targetAmount) cleaned.targetAmount = input.targetAmount;
@@ -17622,9 +18118,11 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       .mutation(async ({ ctx }) => {
       const config = await db.getFirefliesConfig(ctx.user.id);
       if (!config) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fireflies not configured' });
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fireflies not configured. Go to Settings → Fireflies to enter your API key.' });
       }
+      console.log(`[Fireflies Sync] Fetching transcripts for user ${ctx.user.id} with key ${config.apiKey.substring(0, 8)}...`);
       const transcripts = await listTranscripts(config.apiKey);
+      console.log(`[Fireflies Sync] Got ${transcripts.length} transcripts from API`);
       let synced = 0;
       let skipped = 0;
       let dealsCreated = 0;
@@ -17640,14 +18138,15 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         const participants = fullTranscript ? extractParticipants(fullTranscript) : [];
         await db.createFirefliesMeeting({
           firefliesId: t.id,
-          title: t.title,
+          title: t.title || 'Untitled Meeting',
           date: t.date ? new Date(t.date) : new Date(),
           duration: t.duration,
+          organizerEmail: fullTranscript?.organizer_email || t.organizer_email || null,
           participants: JSON.stringify(participants),
-          transcript: fullTranscript?.transcript_url || null,
+          transcriptUrl: fullTranscript?.transcript_url || null,
           summary: fullTranscript?.summary ? JSON.stringify(fullTranscript.summary) : null,
-          actionItemsRaw: fullTranscript ? JSON.stringify(parseActionItems(fullTranscript?.summary?.action_items || [])) : null,
-          status: 'pending',
+          actionItems: fullTranscript ? JSON.stringify(parseActionItems(fullTranscript?.summary?.action_items || [])) : null,
+          processingStatus: 'pending',
         });
         synced++;
 
@@ -17752,8 +18251,11 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         let projectId: number | undefined;
 
         // Create contacts from participants
-        if (input.createContacts && Array.isArray(meeting.participants)) {
-          for (const p of meeting.participants as Array<{ name: string; email: string }>) {
+        const parsedParticipants: Array<{ name: string; email: string }> =
+          typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
+          Array.isArray(meeting.participants) ? meeting.participants : [];
+        if (input.createContacts && parsedParticipants.length > 0) {
+          for (const p of parsedParticipants) {
             if (p.email) {
               try {
                 await db.createCrmContact({
@@ -17780,8 +18282,8 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         }
 
         // Create tasks from action items
-        if (input.createTasks && Array.isArray(meeting.actionItemsRaw)) {
-          for (const item of (meeting.actionItemsRaw ? JSON.parse(meeting.actionItemsRaw) : []) as Array<{ text: string }>) {
+        if (input.createTasks && meeting.actionItems) {
+          for (const item of (meeting.actionItems ? JSON.parse(meeting.actionItems) : []) as Array<{ text: string }>) {
             if (projectId) {
               await db.createProjectTask({
                 projectId,
@@ -17793,14 +18295,21 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           }
         }
 
-        const status = contactsCreated > 0 && tasksCreated > 0 ? 'fully_processed'
+        const status: 'fully_processed' | 'contacts_created' | 'tasks_created' | 'pending' =
+          contactsCreated > 0 && tasksCreated > 0 ? 'fully_processed'
           : contactsCreated > 0 ? 'contacts_created'
           : tasksCreated > 0 ? 'tasks_created'
           : 'pending';
 
         await db.updateFirefliesMeeting(input.meetingId, {
-          aiSummary: JSON.stringify({ status, contactsCreated, tasksCreated, projectId }),
-        } as any);
+          processingStatus: status,
+          processedAt: new Date(),
+          processedBy: ctx.user.id,
+          processingNotes: JSON.stringify({ contactsCreated, tasksCreated, projectId }),
+          autoCreatedContactCount: contactsCreated,
+          autoCreatedTaskCount: tasksCreated,
+          autoCreatedProjectId: projectId,
+        });
 
         return { contactsCreated, tasksCreated, projectId };
       }),
@@ -17810,16 +18319,22 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         createTasks: z.boolean().optional(),
         createProjects: z.boolean().optional(),
       }).optional())
-      .mutation(async ({ ctx }) => {
+      .mutation(async ({ input, ctx }) => {
       const meetings = await db.getFirefliesMeetings({ status: 'pending' });
       let processed = 0;
       let contactsCreated = 0;
       let tasksCreated = 0;
       let projectsCreated = 0;
+      const doContacts = input?.createContacts !== false;
+      const doTasks = input?.createTasks === true;
+      const doProjects = input?.createProjects === true;
       for (const meeting of meetings) {
-        // Auto-create contacts from participants
-        if (Array.isArray(meeting.participants)) {
-          for (const p of meeting.participants as Array<{ name: string; email: string }>) {
+        if (doContacts) {
+          // Auto-create contacts from participants
+          const parsedParticipants: Array<{ name: string; email: string }> =
+            typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
+            Array.isArray(meeting.participants) ? meeting.participants : [];
+          for (const p of parsedParticipants) {
             if (p.email) {
               try {
                 await db.createCrmContact({
@@ -17833,7 +18348,31 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             }
           }
         }
-        await db.updateFirefliesMeeting(meeting.id, { aiSummary: 'fully_processed' } as any);
+        if (doTasks && meeting.actionItems) {
+          const items = (meeting.actionItems ? JSON.parse(meeting.actionItems) : []) as Array<{ text: string }>;
+          let projectId: number | undefined;
+          if (doProjects) {
+            const project = await db.createProject({
+              projectNumber: `FF-${Date.now()}`,
+              name: meeting.title || 'Untitled Meeting Project',
+              status: 'planning',
+              createdBy: ctx.user.id,
+            } as any);
+            projectId = project.id;
+            projectsCreated++;
+          }
+          for (const item of items) {
+            if (projectId) {
+              await db.createProjectTask({
+                projectId,
+                name: item.text,
+                status: 'todo',
+              } as any);
+              tasksCreated++;
+            }
+          }
+        }
+        await db.updateFirefliesMeeting(meeting.id, { processingStatus: 'fully_processed' });
         processed++;
       }
       return { processed, contactsCreated, tasksCreated, projectsCreated };
@@ -20249,6 +20788,7 @@ Return JSON array only. No markdown.`;
         asks: z.string().optional(),
         callsToAction: z.string().optional(),
         status: z.enum(["draft", "review", "sent"]).optional(),
+        sentAt: z.date().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const { id, ...data } = input;
@@ -20460,6 +21000,210 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         const { kpiGoals: kg } = await import("../drizzle/schema");
         const rows = await database.selectDistinct({ category: kg.category }).from(kg);
         return rows.map(r => r.category).filter(Boolean);
+      }),
+  }),
+
+  // ============================================
+  // FINANCIAL REPORTS
+  // ============================================
+  financialReports: router({
+    generate: financeProcedure
+      .input(z.object({
+        reportType: z.string(),
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const safeQuery = async <T>(fn: () => Promise<T>, fallback: T): Promise<T> => {
+          try { return await fn(); } catch { return fallback; }
+        };
+
+        const now = new Date();
+        const startDate = input.startDate ? new Date(input.startDate) : new Date(now.getFullYear(), now.getMonth(), 1);
+        const endDate = input.endDate ? new Date(input.endDate) : now;
+
+        const [invoices, bills, accounts, orders, customers, vendors, inventory] = await Promise.all([
+          safeQuery(() => db.getInvoices(), []),
+          safeQuery(() => db.getBills(), []),
+          safeQuery(() => db.getAccounts(), []),
+          safeQuery(() => db.getOrders(), []),
+          safeQuery(() => db.getCustomers(), []),
+          safeQuery(() => db.getVendors(), []),
+          safeQuery(() => db.getInventory(), []),
+        ]);
+
+        const paidInvoices = (invoices as any[]).filter((i: any) => i.status === 'paid');
+        const totalRevenue = paidInvoices.reduce((s: number, i: any) => s + parseFloat(i.totalAmount || '0'), 0);
+        const totalExpenses = (bills as any[]).reduce((s: number, b: any) => s + parseFloat(b.totalAmount || '0'), 0);
+        const netIncome = totalRevenue - totalExpenses;
+
+        type ReportRow = {
+          label: string;
+          amount: number | string | null;
+          type: string;
+          pct?: string;
+          count?: number;
+          quantity?: number | null;
+          unitCost?: number | null;
+          revenue?: number;
+          expenses?: number;
+          cumulative?: number;
+        };
+
+        let title = 'Financial Report';
+        let headers: string[] = ['Item', 'Amount'];
+        let rows: ReportRow[] = [];
+        let summary = '';
+
+        switch (input.reportType) {
+          case 'profit_loss': {
+            title = 'Profit & Loss Statement';
+            headers = ['Item', 'Amount'];
+            rows = [
+              { label: 'Revenue', amount: totalRevenue, type: 'header' },
+              ...paidInvoices.slice(0, 10).map((i: any) => ({
+                label: `  Invoice #${i.invoiceNumber || i.id}`,
+                amount: parseFloat(i.totalAmount || '0'),
+                type: 'item',
+              })),
+              { label: 'Total Revenue', amount: totalRevenue, type: 'total' },
+              { label: 'Expenses', amount: null, type: 'header' },
+              ...(bills as any[]).slice(0, 10).map((b: any) => ({
+                label: `  Bill #${b.billNumber || b.id}`,
+                amount: parseFloat(b.totalAmount || '0'),
+                type: 'item',
+              })),
+              { label: 'Total Expenses', amount: totalExpenses, type: 'total' },
+              { label: 'Net Income', amount: netIncome, type: 'grand_total' },
+            ];
+            summary = `Net income: $${netIncome.toLocaleString()} on revenue of $${totalRevenue.toLocaleString()}`;
+            break;
+          }
+          case 'balance_sheet': {
+            title = 'Balance Sheet';
+            headers = ['Item', 'Amount'];
+            const assetAccounts = (accounts as any[]).filter((a: any) => a.type === 'asset');
+            const liabilityAccounts = (accounts as any[]).filter((a: any) => a.type === 'liability');
+            const equityAccounts = (accounts as any[]).filter((a: any) => a.type === 'equity');
+            const totalAssets = assetAccounts.reduce((s: number, a: any) => s + parseFloat(a.balance || '0'), 0);
+            const totalLiabilities = liabilityAccounts.reduce((s: number, a: any) => s + parseFloat(a.balance || '0'), 0);
+            const totalEquity = equityAccounts.reduce((s: number, a: any) => s + parseFloat(a.balance || '0'), 0);
+            rows = [
+              { label: 'Assets', amount: null, type: 'header' },
+              ...assetAccounts.map((a: any) => ({ label: `  ${a.name}`, amount: parseFloat(a.balance || '0'), type: 'item' })),
+              { label: 'Total Assets', amount: totalAssets, type: 'total' },
+              { label: 'Liabilities', amount: null, type: 'header' },
+              ...liabilityAccounts.map((a: any) => ({ label: `  ${a.name}`, amount: parseFloat(a.balance || '0'), type: 'item' })),
+              { label: 'Total Liabilities', amount: totalLiabilities, type: 'total' },
+              { label: 'Equity', amount: null, type: 'header' },
+              ...equityAccounts.map((a: any) => ({ label: `  ${a.name}`, amount: parseFloat(a.balance || '0'), type: 'item' })),
+              { label: 'Total Equity', amount: totalEquity, type: 'total' },
+              { label: "Total Liabilities & Equity", amount: totalLiabilities + totalEquity, type: 'grand_total' },
+            ];
+            summary = `Total assets: $${totalAssets.toLocaleString()}, liabilities: $${totalLiabilities.toLocaleString()}`;
+            break;
+          }
+          case 'accounts_receivable': {
+            title = 'Accounts Receivable Aging';
+            headers = ['Customer', 'Amount', 'Age (days)'];
+            const openInvoices = (invoices as any[]).filter((i: any) => ['sent', 'overdue', 'partial'].includes(i.status));
+            rows = openInvoices.map((i: any) => {
+              const daysOld = Math.floor((now.getTime() - new Date(i.createdAt || now).getTime()) / 86400000);
+              return { label: i.customerName || `Invoice #${i.invoiceNumber}`, amount: parseFloat(i.totalAmount || '0'), type: daysOld > 90 ? 'overdue' : 'item', count: daysOld };
+            });
+            summary = `${openInvoices.length} open invoices totalling $${openInvoices.reduce((s: number, i: any) => s + parseFloat(i.totalAmount || '0'), 0).toLocaleString()}`;
+            break;
+          }
+          case 'revenue_by_customer': {
+            title = 'Revenue by Customer';
+            headers = ['Customer', 'Revenue', '% of Total'];
+            const byCustomer: Record<string, number> = {};
+            for (const inv of paidInvoices) {
+              const name = inv.customerName || `Customer #${inv.customerId}`;
+              byCustomer[name] = (byCustomer[name] || 0) + parseFloat(inv.totalAmount || '0');
+            }
+            rows = Object.entries(byCustomer)
+              .sort(([, a], [, b]) => b - a)
+              .map(([name, amount]) => ({
+                label: name,
+                amount,
+                type: 'item',
+                pct: totalRevenue > 0 ? `${((amount / totalRevenue) * 100).toFixed(1)}%` : '0%',
+              }));
+            summary = `${Object.keys(byCustomer).length} customers, total revenue $${totalRevenue.toLocaleString()}`;
+            break;
+          }
+          case 'expense_by_vendor': {
+            title = 'Expenses by Vendor';
+            headers = ['Vendor', 'Amount', '% of Total'];
+            const byVendor: Record<string, number> = {};
+            for (const bill of bills as any[]) {
+              const name = bill.vendorName || `Vendor #${bill.vendorId}`;
+              byVendor[name] = (byVendor[name] || 0) + parseFloat(bill.totalAmount || '0');
+            }
+            rows = Object.entries(byVendor)
+              .sort(([, a], [, b]) => b - a)
+              .map(([name, amount]) => ({
+                label: name,
+                amount,
+                type: 'item',
+                pct: totalExpenses > 0 ? `${((amount / totalExpenses) * 100).toFixed(1)}%` : '0%',
+              }));
+            summary = `${Object.keys(byVendor).length} vendors, total spend $${totalExpenses.toLocaleString()}`;
+            break;
+          }
+          case 'tax_summary': {
+            title = 'Tax Summary';
+            headers = ['Item', 'Amount'];
+            const totalTax = paidInvoices.reduce((s: number, i: any) => s + parseFloat(i.taxAmount || '0'), 0);
+            rows = [
+              { label: 'Gross Revenue', amount: totalRevenue, type: 'item' },
+              { label: 'Total Tax Collected', amount: totalTax, type: 'item' },
+              { label: 'Net Revenue (ex-tax)', amount: totalRevenue - totalTax, type: 'total' },
+              { label: 'Deductible Expenses', amount: totalExpenses, type: 'item' },
+              { label: 'Estimated Taxable Income', amount: netIncome, type: 'grand_total' },
+            ];
+            summary = `Estimated taxable income: $${netIncome.toLocaleString()}`;
+            break;
+          }
+          default: {
+            title = 'Monthly Financial Summary';
+            headers = ['Metric', 'Value'];
+            rows = [
+              { label: 'Total Revenue', amount: totalRevenue, type: 'item' },
+              { label: 'Total Expenses', amount: totalExpenses, type: 'item' },
+              { label: 'Net Income', amount: netIncome, type: 'total' },
+              { label: 'Open Orders', amount: (orders as any[]).length, type: 'item' },
+              { label: 'Active Customers', amount: (customers as any[]).length, type: 'item' },
+              { label: 'Active Vendors', amount: (vendors as any[]).length, type: 'item' },
+              { label: 'Inventory SKUs', amount: (inventory as any[]).length, type: 'item' },
+            ];
+            summary = `Revenue $${totalRevenue.toLocaleString()}, expenses $${totalExpenses.toLocaleString()}, net $${netIncome.toLocaleString()}`;
+          }
+        }
+
+        return { title, headers, rows, generatedAt: new Date().toISOString(), summary };
+      }),
+
+    aiAnalysis: financeProcedure
+      .input(z.object({
+        reportType: z.string(),
+        reportData: z.string(),
+        strategyId: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const prompt = input.reportType === 'cfo_strategy'
+          ? `As a CFO advisor, analyze this financial strategy scenario and provide actionable recommendations:\n\n${input.reportData}`
+          : `As a financial analyst, review this ${input.reportType.replace(/_/g, ' ')} report and provide key insights, trends, risks, and recommendations:\n\n${input.reportData}`;
+
+        const response = await invokeLLM({
+          messages: [
+            { role: 'system', content: 'You are a senior CFO and financial analyst. Provide concise, data-driven financial insights and specific action items.' },
+            { role: 'user', content: prompt },
+          ],
+        });
+        const analysis = response.choices?.[0]?.message?.content;
+        return { analysis: typeof analysis === 'string' ? analysis : 'Analysis unavailable at this time.' };
       }),
   }),
 });

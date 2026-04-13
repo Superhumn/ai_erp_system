@@ -381,10 +381,11 @@ export default function FinancialReports() {
 
   const runwayMonths = estimatedBurn > 0 ? Math.round((cashPosition / estimatedBurn) * 10) / 10 : 0;
 
-  const strategyMutation = (trpc as any).financialReports.aiAnalysis.useMutation({
-    onSuccess: (data: any) => {
-      if (expandedStrategy) {
-        setStrategyResults((prev) => ({ ...prev, [expandedStrategy]: data.analysis }));
+  const strategyMutation = trpc.financialReports.aiAnalysis.useMutation({
+    onSuccess: (data, variables) => {
+      const stratId = variables.strategyId;
+      if (stratId) {
+        setStrategyResults((prev) => ({ ...prev, [stratId]: data.analysis }));
       }
     },
   });
@@ -396,24 +397,24 @@ export default function FinancialReports() {
     }
     setExpandedStrategy(id);
     if (!strategyResults[id]) {
-      strategyMutation.mutate({ reportType: "cfo_strategy", reportData: prompt });
+      strategyMutation.mutate({ reportType: "cfo_strategy", reportData: prompt, strategyId: id });
     }
   };
 
-  const generateMutation = (trpc as any).financialReports.generate.useMutation({
-    onSuccess: (data: any) => {
+  const generateMutation = trpc.financialReports.generate.useMutation({
+    onSuccess: (data) => {
       setReportData(data as ReportData);
       setAiAnalysis(null);
     },
   });
 
-  const aiMutation = (trpc as any).financialReports.aiAnalysis.useMutation({
-    onSuccess: (data: any) => {
+  const aiMutation = trpc.financialReports.aiAnalysis.useMutation({
+    onSuccess: (data) => {
       setAiAnalysis(data.analysis);
     },
   });
 
-  const autoCategorize = (trpc as any).financialReports.autoCategorize.useMutation();
+  const autoCategorize = trpc.banking.autoCategorize.useMutation();
 
   // Financial Model vs Actual queries
   const financialModelQuery = trpc.financialModel.list.useQuery({
@@ -678,57 +679,22 @@ export default function FinancialReports() {
   };
 
   return (
-    <div className="p-4 space-y-3">
+    <div className="space-y-3">
       {/* Header */}
       <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-lg font-semibold">Financials</h1>
-          <p className="text-muted-foreground text-sm">
-            CFO dashboard, reports, and financial strategy
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline" size="sm">
-                <FileText className="h-4 w-4 mr-2" />
-                Reports
-                <ChevronDown className="h-3 w-3 ml-1" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-72 p-1" align="end">
-              <div className="space-y-0.5 max-h-80 overflow-y-auto">
-                {reportTypes.map((report) => (
-                  <button
-                    key={report.id}
-                    className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-muted transition-colors"
-                    onClick={() => {
-                      handleGenerate(report.id);
-                      setExpandedReport(report.id);
-                    }}
-                  >
-                    <div className="font-medium">{report.name}</div>
-                    <div className="text-xs text-muted-foreground">{report.description}</div>
-                  </button>
-                ))}
-              </div>
-            </PopoverContent>
-          </Popover>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => autoCategorize.mutate()}
-            disabled={autoCategorize.isPending}
-          >
-            {autoCategorize.isPending ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Sparkles className="mr-2 h-4 w-4" />
-            )}
-            Auto-Categorize
-          </Button>
-        </div>
+        <h1 className="text-lg font-semibold">Financials</h1>
+        <Button variant="outline" size="sm" onClick={() => autoCategorize.mutate()} disabled={autoCategorize.isPending}>
+          {autoCategorize.isPending ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Sparkles className="mr-1 h-3 w-3" />}
+          Auto-Categorize
+        </Button>
       </div>
+
+      {/* 2-column layout: dashboard left, reports menu right */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-3">
+        {/* Left: Dashboard content (rendered below) */}
+        <div className="space-y-3">
+
+      {/* Reports side menu - rendered in right column via CSS order */}
 
       {/* Auto-Categorize result */}
       {autoCategorize.data && (
@@ -1181,20 +1147,12 @@ export default function FinancialReports() {
         </CardContent>
       </Card>
 
-      {/* ── Banking & Accounts ─────────────────────────────── */}
+      {/* ── Banking ─────────────────────────────── */}
       <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <DollarSign className="h-5 w-5 text-blue-600" />
-              <div>
-                <CardTitle className="text-base">Banking</CardTitle>
-                <CardDescription className="text-sm">
-                  Connected bank accounts and balances
-                </CardDescription>
-              </div>
-            </div>
-          </div>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <DollarSign className="h-4 w-4 text-blue-600" /> Banking
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1252,6 +1210,69 @@ export default function FinancialReports() {
           </div>
         </CardContent>
       </Card>
+
+        </div>{/* end left column */}
+
+        {/* Right sidebar: reports menu */}
+        <div className="space-y-2 hidden lg:block">
+          <Card className="py-2">
+            <CardHeader className="pb-1 px-3">
+              <CardTitle className="text-xs text-muted-foreground uppercase tracking-wider">Reports</CardTitle>
+            </CardHeader>
+            <CardContent className="px-2 py-0">
+              <div className="space-y-0.5">
+                {reportTypes.map((report) => (
+                  <button
+                    key={report.id}
+                    className={`w-full text-left px-2 py-1.5 text-xs rounded-lg hover:bg-muted transition-colors ${expandedReport === report.id ? "bg-primary/10 text-primary font-medium" : ""}`}
+                    onClick={() => {
+                      handleGenerate(report.id);
+                      setExpandedReport(report.id);
+                    }}
+                  >
+                    {report.name}
+                  </button>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="py-2">
+            <CardHeader className="pb-1 px-3">
+              <CardTitle className="text-xs text-muted-foreground uppercase tracking-wider">CFO Strategy</CardTitle>
+            </CardHeader>
+            <CardContent className="px-2 py-0 space-y-0.5">
+              {[
+                { id: "fundraising", label: "Fundraising Readiness" },
+                { id: "board_report", label: "Board Report" },
+                { id: "scenario", label: "Scenario Planning" },
+                { id: "tax", label: "Tax Planning" },
+                { id: "compliance", label: "Compliance Checklist" },
+                { id: "working_capital", label: "Working Capital" },
+              ].map(s => (
+                <button key={s.id} className={`w-full text-left px-2 py-1.5 text-xs rounded-lg hover:bg-muted transition-colors ${expandedStrategy === s.id ? "bg-primary/10 text-primary font-medium" : ""}`} onClick={() => handleStrategyClick(s.id, s.label)}>
+                  {s.label}
+                </button>
+              ))}
+            </CardContent>
+          </Card>
+          <Card className="py-2">
+            <CardHeader className="pb-1 px-3">
+              <CardTitle className="text-xs text-muted-foreground uppercase tracking-wider">Actions</CardTitle>
+            </CardHeader>
+            <CardContent className="px-2 py-0 space-y-0.5">
+              <button className="w-full text-left px-2 py-1.5 text-xs rounded-lg hover:bg-muted transition-colors" onClick={() => autoCategorize.mutate()}>
+                Auto-Categorize
+              </button>
+              <button className="w-full text-left px-2 py-1.5 text-xs rounded-lg hover:bg-muted transition-colors" onClick={() => window.location.href = "/import"}>
+                Import Data
+              </button>
+              <button className="w-full text-left px-2 py-1.5 text-xs rounded-lg hover:bg-muted transition-colors" onClick={() => window.location.href = "/settings/integrations"}>
+                QuickBooks
+              </button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>{/* end grid */}
     </div>
   );
 }

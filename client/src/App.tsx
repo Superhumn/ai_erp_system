@@ -27,6 +27,7 @@ const Payments = lazy(() => import("./pages/finance/Payments"));
 const Transactions = lazy(() => import("./pages/finance/Transactions"));
 const FinancialReports = lazy(() => import("./pages/finance/FinancialReports"));
 const Banking = lazy(() => import("./pages/finance/Banking"));
+const RdTaxCredit = lazy(() => import("./pages/finance/RdTaxCredit"));
 
 // Sales
 const Orders = lazy(() => import("./pages/sales/Orders"));
@@ -96,6 +97,7 @@ const Employees = lazy(() => import("./pages/hr/Employees"));
 const Payroll = lazy(() => import("./pages/hr/Payroll"));
 const EquityPortal = lazy(() => import("./pages/hr/EquityPortal"));
 const EquityReports = lazy(() => import("./pages/hr/EquityReports"));
+const InvestorsHub = lazy(() => import("./pages/hr/InvestorsHub"));
 const TimeTracking = lazy(() => import("./pages/hr/TimeTracking"));
 
 // Legal
@@ -146,6 +148,9 @@ const DataRoomPublic = lazy(() => import("./pages/DataRoomPublic"));
 
 // Component Showcase
 const ComponentShowcase = lazy(() => import("./pages/ComponentShowcase"));
+
+// Code
+const CodeEditor = lazy(() => import("./pages/Code"));
 
 // AI Agent
 const ApprovalQueue = lazy(() => import("./pages/ai/ApprovalQueue"));
@@ -205,6 +210,7 @@ function Router() {
           <Route path="/finance/transactions" component={Transactions} />
           <Route path="/finance/reports" component={FinancialReports} />
           <Route path="/finance/banking" component={Banking} />
+          <Route path="/finance/rd-tax-credit" component={RdTaxCredit} />
           <Route path="/finance/ai" component={FinanceAI} />
 
           {/* Sales */}
@@ -273,6 +279,7 @@ function Router() {
           <Route path="/freight/customs/:id" component={CustomsDetail} />
 
           {/* HR */}
+          <Route path="/hr/investors" component={InvestorsHub} />
           <Route path="/hr/employees" component={Employees} />
           <Route path="/hr/payroll" component={Payroll} />
           <Route path="/hr/ai" component={HRAIInsights} />
@@ -320,6 +327,9 @@ function Router() {
           {/* Data Room */}
           <Route path="/datarooms" component={DataRooms} />
           <Route path="/dataroom/:id" component={DataRoomDetail} />
+
+          {/* Code */}
+          <Route path="/code" component={CodeEditor} />
 
           {/* Component Showcase */}
           <Route path="/showcase" component={ComponentShowcase} />

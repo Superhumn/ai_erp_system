@@ -167,10 +167,10 @@ Return JSON with this structure:
       return getDefaultCategorization();
     }
 
-    let content = typeof messageContent === 'string' ? messageContent : JSON.stringify(messageContent);
-    // Strip markdown code fences if present
-    content = content.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
-    const parsed = JSON.parse(content);
+    const content = typeof messageContent === 'string' ? messageContent : JSON.stringify(messageContent);
+    // Strip markdown code fences that some LLMs add despite instructions
+    const cleaned = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
+    const parsed = JSON.parse(cleaned);
     
     return {
       category: validateCategory(parsed.category),
@@ -568,10 +568,10 @@ Only include fields that have actual values - omit null/empty fields.`;
       return { success: false, documents: [], categorization, error: "No response from AI" };
     }
 
-    let content = typeof messageContent === 'string' ? messageContent : JSON.stringify(messageContent);
-    // Strip markdown code fences if present
-    content = content.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
-    const parsed = JSON.parse(content);
+    const content = typeof messageContent === 'string' ? messageContent : JSON.stringify(messageContent);
+    // Strip markdown code fences that some LLMs add despite instructions
+    const cleaned = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
+    const parsed = JSON.parse(cleaned);
     return {
       success: true,
       documents: parsed.documents || [],
@@ -695,10 +695,10 @@ Return a JSON object with this exact structure:
       return { success: false, documents: [], error: "No response from AI" };
     }
 
-    let content = typeof messageContent === 'string' ? messageContent : JSON.stringify(messageContent);
-    // Strip markdown code fences if present
-    content = content.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
-    const parsed = JSON.parse(content);
+    const content = typeof messageContent === 'string' ? messageContent : JSON.stringify(messageContent);
+    // Strip markdown code fences that some LLMs add despite instructions
+    const cleaned = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
+    const parsed = JSON.parse(cleaned);
     return {
       success: true,
       documents: parsed.documents || []

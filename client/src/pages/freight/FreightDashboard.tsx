@@ -58,7 +58,7 @@ export default function FreightDashboard() {
               FDA Notice
             </Button>
           </Link>
-          <Link href="/freight/rfqs/new">
+          <Link href="/freight/rfqs">
             <Button>
               <Plus className="h-4 w-4 mr-2" />
               New RFQ
@@ -152,10 +152,10 @@ export default function FreightDashboard() {
                           <TableCell>{rfq.destinationCity || rfq.destinationPort || "-"}</TableCell>
                           <TableCell>
                             <Badge variant="outline">
-                              {rfq.mode === "ocean" ? <Ship className="h-3 w-3 mr-1 inline" /> :
-                               rfq.mode === "air" ? <Plane className="h-3 w-3 mr-1 inline" /> :
+                              {rfq.preferredMode?.startsWith("ocean") ? <Ship className="h-3 w-3 mr-1 inline" /> :
+                               rfq.preferredMode === "air" ? <Plane className="h-3 w-3 mr-1 inline" /> :
                                <Truck className="h-3 w-3 mr-1 inline" />}
-                              {rfq.mode || "—"}
+                              {rfq.preferredMode || "—"}
                             </Badge>
                           </TableCell>
                           <TableCell><Badge>{(rfq.status || "draft").replace(/_/g, " ")}</Badge></TableCell>
@@ -184,7 +184,7 @@ export default function FreightDashboard() {
                 ) : (
                   <TableRow>
                     <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
-                      No quote requests yet. <Link href="/freight/rfqs/new"><span className="text-primary hover:underline">Create one</span></Link>
+                      No quote requests yet. <Link href="/freight/rfqs"><span className="text-primary hover:underline">Create one</span></Link>
                     </TableCell>
                   </TableRow>
                 )}
@@ -337,7 +337,7 @@ export default function FreightDashboard() {
                       <React.Fragment key={c.id}>
                         <TableRow className="hover:bg-muted/50 cursor-pointer" onClick={() => setExpandedId(expandedId === c.id ? null : c.id)}>
                           <TableCell className="font-medium">{c.name}</TableCell>
-                          <TableCell><Badge variant="outline">{c.carrierType || c.mode || "-"}</Badge></TableCell>
+                          <TableCell><Badge variant="outline">{c.type || "-"}</Badge></TableCell>
                           <TableCell>{c.contactName || "-"}</TableCell>
                           <TableCell>{c.email || "-"}</TableCell>
                           <TableCell>

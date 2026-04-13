@@ -20,7 +20,7 @@ export default function Locations() {
   const [formData, setFormData] = useState({
     name: "",
     code: "",
-    type: "copacker" as "warehouse" | "store" | "distribution" | "copacker" | "3pl",
+    type: "copacker" as "warehouse" | "store" | "distribution" | "copacker" | "3pl" | "factory",
     address: "",
     city: "",
     state: "",

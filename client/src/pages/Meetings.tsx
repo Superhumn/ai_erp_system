@@ -25,7 +25,6 @@ import {
   Zap,
   FolderPlus,
   Video,
-  Headphones,
   Tag,
   ArrowRight,
   CheckCircle2,
@@ -42,10 +41,14 @@ export default function Meetings() {
   const [processCreateProject, setProcessCreateProject] = useState(false);
   const [processProjectName, setProcessProjectName] = useState("");
 
-  const { data: meetingsRaw, isLoading, refetch } = trpc.fireflies.meetings.list.useQuery({
+  const { data: meetingsRaw, isLoading, refetch, error: meetingsError } = trpc.fireflies.meetings.list.useQuery({
     status: statusFilter !== "all" ? statusFilter : undefined,
   });
   const meetings = (meetingsRaw as any[] | undefined) || [];
+
+  // Debug: log meetings data
+  if (meetingsError) console.error("[Meetings] Query error:", meetingsError.message);
+  if (meetingsRaw) console.log("[Meetings] Got", Array.isArray(meetingsRaw) ? meetingsRaw.length : "non-array", "meetings");
   const { data: statsRaw } = trpc.fireflies.meetings.getStats.useQuery();
   const stats = statsRaw as any;
 
@@ -123,7 +126,7 @@ export default function Meetings() {
   const handleProcessMeeting = () => {
     if (!selectedMeetingId) return;
     processMeetingMutation.mutate({
-      meetingId: selectedMeetingId.toString(),
+      meetingId: selectedMeetingId,
       createContacts: true,
       createTasks: true,
       createProject: processCreateProject,
@@ -240,6 +243,11 @@ export default function Meetings() {
         <div className="flex items-center justify-center py-12">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
+      ) : meetingsError ? (
+        <div className="text-center py-12 text-red-500">
+          <p className="font-medium">Error loading meetings</p>
+          <p className="text-sm mt-1">{meetingsError.message}</p>
+        </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">
           <Mic className="h-12 w-12 mx-auto mb-3 opacity-30" />
@@ -253,7 +261,7 @@ export default function Meetings() {
           {filtered.map((meeting: any) => {
             const participants = parseSafe(meeting.participants) || [];
             const summary = parseSafe(meeting.summary);
-            const actionItems = parseSafe(meeting.actionItemsRaw) || [];
+            const actionItems = parseSafe(meeting.actionItems) || [];
             const isExpanded = expandedId === meeting.id;
 
             return (
@@ -291,7 +299,7 @@ export default function Meetings() {
                       </div>
                     </div>
                     <div className="shrink-0 flex items-center gap-2">
-                      {statusBadge((meeting as any).processingStatus || meeting.status)}
+                      {statusBadge(meeting.processingStatus)}
                     </div>
                   </div>
                   {/* Summary excerpt */}
@@ -380,31 +388,23 @@ export default function Meetings() {
 
                     {/* Links & Actions */}
                     <div className="flex items-center gap-2 pt-2 border-t">
-                      {meeting.videoUrl && (
+                      {meeting.recordingUrl && (
                         <Button variant="outline" size="sm" asChild>
-                          <a href={meeting.videoUrl} target="_blank" rel="noopener noreferrer">
-                            <Video className="h-3 w-3 mr-1" /> Video
+                          <a href={meeting.recordingUrl} target="_blank" rel="noopener noreferrer">
+                            <Video className="h-3 w-3 mr-1" /> Recording
                             <ExternalLink className="h-3 w-3 ml-1" />
                           </a>
                         </Button>
                       )}
-                      {meeting.audioUrl && (
+                      {meeting.transcriptUrl && (
                         <Button variant="outline" size="sm" asChild>
-                          <a href={meeting.audioUrl} target="_blank" rel="noopener noreferrer">
-                            <Headphones className="h-3 w-3 mr-1" /> Audio
-                            <ExternalLink className="h-3 w-3 ml-1" />
-                          </a>
-                        </Button>
-                      )}
-                      {meeting.transcript && (
-                        <Button variant="outline" size="sm" asChild>
-                          <a href={meeting.transcript} target="_blank" rel="noopener noreferrer">
+                          <a href={meeting.transcriptUrl} target="_blank" rel="noopener noreferrer">
                             <Mic className="h-3 w-3 mr-1" /> Transcript
                             <ExternalLink className="h-3 w-3 ml-1" />
                           </a>
                         </Button>
                       )}
-                      {((meeting as any).processingStatus === 'pending' || meeting.status === 'pending') && (
+                      {(meeting.processingStatus === 'pending') && (
                         <Button
                           size="sm"
                           onClick={(e) => {

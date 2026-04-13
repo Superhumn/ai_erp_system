@@ -1385,9 +1385,14 @@ export function AICommandBar({ context }: AICommandBarProps) {
           {/* Draft Preview Panel */}
           {showDraftPreview && draftData && !isLoading && !taskCreated && (
             <div className="p-4 space-y-4">
-              <div className="flex items-center gap-2 mb-3">
-                <FileText className="h-5 w-5 text-blue-600" />
-                <h3 className="font-semibold text-lg">Review Draft {draftData.taskType === 'generate_po' ? 'Purchase Order' : draftData.taskType === 'send_rfq' ? 'RFQ' : 'Task'}</h3>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-blue-600" />
+                  <h3 className="font-semibold text-lg">Review Draft {draftData.taskType === 'generate_po' ? 'Purchase Order' : draftData.taskType === 'send_rfq' ? 'RFQ' : 'Task'}</h3>
+                </div>
+                <button onClick={() => { setShowDraftPreview(false); setDraftData(null); setShowSuggestions(true); }} className="text-muted-foreground hover:text-foreground">
+                  <X className="h-5 w-5" />
+                </button>
               </div>
               
               <div className="bg-slate-50 rounded-lg p-4 space-y-4">

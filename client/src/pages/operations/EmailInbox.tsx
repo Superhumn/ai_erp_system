@@ -2,7 +2,7 @@ import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -26,12 +26,12 @@ import {
   Reply,
   ClipboardList,
   Search,
-  ChevronDown,
-  ChevronUp,
   Users,
   Package,
   Factory,
   Truck,
+  ArrowLeft,
+  PenSquare,
 } from "lucide-react";
 
 // Category display configuration
@@ -47,6 +47,35 @@ const categoryConfig: Record<string, { label: string; dot: string }> = {
   general: { label: "General", dot: "bg-gray-400" },
 };
 
+function cleanEmailBody(raw: string): string {
+  let text = raw;
+  // Strip HTML tags
+  if (text.includes("<") && text.includes(">")) {
+    text = text
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/p>/gi, "\n\n")
+      .replace(/<\/div>/gi, "\n")
+      .replace(/<\/tr>/gi, "\n")
+      .replace(/<\/li>/gi, "\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"');
+  }
+  // Strip image/icon alt-text placeholders
+  text = text
+    .replace(/\[(?:icon|image|logo|img|button|banner|photo|avatar|badge)\]/gi, "")
+    .replace(/\[(?:GreenBridge|Trustpilot|BBB|Custom)[^\]]*\]/gi, "")
+    .replace(/\[(?:instagram|linkedin|twitter|facebook|youtube|tiktok)\]/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return text;
+}
+
 function formatEmailDate(date: string | Date): string {
   const d = new Date(date);
   const now = new Date();
@@ -58,7 +87,19 @@ function formatEmailDate(date: string | Date): string {
 }
 
 export default function EmailInbox() {
-  const [expandedEmail, setExpandedEmail] = useState<number | null>(null);
+  const [selectedEmailId, setSelectedEmailId] = useState<number | null>(null);
+  const [expandedEmailId, setExpandedEmailId] = useState<number | null>(null);
+  const [replyText, setReplyText] = useState("");
+  const [showSnippetMenu, setShowSnippetMenu] = useState(false);
+  const [snippets, setSnippets] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem("email_snippets") || "[]"); } catch { return []; }
+  });
+  const [newSnippetText, setNewSnippetText] = useState("");
+
+  const saveSnippets = (updated: string[]) => {
+    setSnippets(updated);
+    localStorage.setItem("email_snippets", JSON.stringify(updated));
+  };
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [starredEmails, setStarredEmails] = useState<Set<number>>(new Set());
@@ -105,16 +146,16 @@ export default function EmailInbox() {
     Object.keys(emailQueryParams).length > 0 ? emailQueryParams : undefined
   );
 
-  const { data: emailDetail, isLoading: emailDetailLoading } = trpc.emailScanning.getById.useQuery(
-    { id: expandedEmail! },
-    { enabled: !!expandedEmail }
+  const { data: emailDetail } = trpc.emailScanning.getById.useQuery(
+    { id: selectedEmailId! },
+    { enabled: !!selectedEmailId }
   );
 
   // Mutations
   const archiveEmailMutation = trpc.emailScanning.archiveEmail.useMutation({
     onSuccess: () => {
       toast.success("Email archived");
-      setExpandedEmail(null);
+      setSelectedEmailId(null);
       utils.emailScanning.list.invalidate();
     },
   });
@@ -122,7 +163,7 @@ export default function EmailInbox() {
   const deleteEmailMutation = trpc.emailScanning.deleteEmail.useMutation({
     onSuccess: () => {
       toast.success("Email deleted");
-      setExpandedEmail(null);
+      setSelectedEmailId(null);
       setShowDeleteConfirm(false);
       setDeleteTargetId(null);
       utils.emailScanning.list.invalidate();
@@ -333,12 +374,12 @@ export default function EmailInbox() {
     });
   };
 
-  const toggleExpand = (emailId: number) => {
-    setExpandedEmail(prev => prev === emailId ? null : emailId);
-  };
-
-  // Filter emails by search query
+  // Filter emails by search query and category
   const filteredEmails = emails?.filter((email: any) => {
+    if (categoryFilter === "starred") return starredEmails.has(email.id);
+    if (categoryFilter !== "all") {
+      if (email.category !== categoryFilter) return false;
+    }
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     return (
@@ -349,367 +390,327 @@ export default function EmailInbox() {
     );
   });
 
-  // Folder filter config
-  const folderFilters = [
-    { key: "all", label: "All", icon: Inbox },
-    { key: "purchase_order", label: "Sales", icon: Users },
-    { key: "invoice", label: "Raw Materials", icon: Package },
-    { key: "receipt", label: "Copackers", icon: Factory },
-    { key: "shipping_confirmation", label: "Freight", icon: Truck },
-    { key: "archived", label: "Archived", icon: Archive },
+  const selectedEmail = emails?.find((e: any) => e.id === selectedEmailId);
+
+  // Sidebar folder config
+  const sidebarFolders = [
+    { key: "all", label: "Inbox", icon: Inbox, count: emails?.filter((e: any) => e.parsingStatus !== "archived").length ?? 0 },
+    { key: "starred", label: "Starred", icon: Star, count: starredEmails.size },
+    { key: "archived", label: "Archive", icon: Archive, count: 0 },
+    { key: "trash", label: "Trash", icon: Trash2, count: 0 },
   ];
+
+  // Category label config for sidebar
+  const sidebarLabels = [
+    { key: "purchase_order", label: "Sales", icon: Users, dot: "bg-blue-500" },
+    { key: "invoice", label: "Invoices", icon: Package, dot: "bg-orange-500" },
+    { key: "receipt", label: "Receipts", icon: Factory, dot: "bg-emerald-500" },
+    { key: "shipping_confirmation", label: "Freight", icon: Truck, dot: "bg-violet-500" },
+  ];
+
+  // Render stripped body text
+  const renderBody = (raw: string) => {
+    if (!raw) return "(No content)";
+    if (raw.includes("<") && raw.includes(">")) {
+      let sanitized = raw;
+      let previous: string;
+      do {
+        previous = sanitized;
+        sanitized = sanitized
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "");
+      } while (sanitized !== previous);
+
+      return sanitized
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<\/p>/gi, "\n\n")
+        .replace(/<\/div>/gi, "\n")
+        .replace(/<\/tr>/gi, "\n")
+        .replace(/<\/li>/gi, "\n")
+        .replace(/<[^>]+>/g, "")
+        .replace(/&nbsp;/g, " ")
+        .replace(/&amp;/g, "&")
+        .replace(/&quot;/g, '"')
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+    }
+    return raw;
+  };
 
   return (
     <>
-      <div className="p-4 space-y-3">
-        {/* Header */}
-        <div className="flex items-center justify-between gap-4">
-          <h1 className="text-lg font-semibold shrink-0">Email Inbox</h1>
-          <div className="flex-1 max-w-md relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search emails..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 h-8 text-sm"
-            />
+      {/* Gmail-style two-panel layout */}
+      <div
+        className="-m-3 -mb-4 md:-m-6 lg:-m-8 flex overflow-hidden bg-background"
+        style={{ height: "calc(100vh - 5.25rem)" }}
+      >
+        {/* ── LEFT SIDEBAR ── */}
+        <div className="w-56 shrink-0 flex flex-col border-r bg-background">
+          {/* Compose / Connect button */}
+          <div className="p-3 pb-2">
+            <Button
+              variant="outline"
+              className="rounded-2xl shadow h-12 w-full gap-2 justify-start pl-5 text-sm font-medium"
+              onClick={() => setShowScanDialog(true)}
+            >
+              <PenSquare className="h-4 w-4" />
+              Connect Inbox
+            </Button>
           </div>
-          <div className="flex items-center gap-1.5 shrink-0">
+
+          {/* Folder nav */}
+          <nav className="flex-1 overflow-y-auto py-1 space-y-0.5">
+            {sidebarFolders.map(({ key, label, icon: Icon, count }) => (
+              <button
+                key={key}
+                className={`flex items-center gap-3 pl-4 pr-3 py-1.5 text-sm w-[calc(100%-8px)] rounded-r-full transition-colors hover:bg-accent/60 ${
+                  categoryFilter === key ? "bg-accent font-semibold" : "font-normal"
+                }`}
+                onClick={() => { setCategoryFilter(key); setSelectedEmailId(null); }}
+              >
+                <Icon className="h-4 w-4 shrink-0" />
+                <span className="flex-1 text-left">{label}</span>
+                {count > 0 && (
+                  <span className="text-xs font-semibold">{count}</span>
+                )}
+              </button>
+            ))}
+
+            {/* Labels section */}
+            <div className="pt-3 px-4 pb-1">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Labels</p>
+            </div>
+            {sidebarLabels.map(({ key, label, dot }) => (
+              <button
+                key={key}
+                className={`flex items-center gap-3 pl-4 pr-3 py-1.5 text-sm w-[calc(100%-8px)] rounded-r-full transition-colors hover:bg-accent/60 ${
+                  categoryFilter === key ? "bg-accent font-semibold" : "font-normal"
+                }`}
+                onClick={() => { setCategoryFilter(key); setSelectedEmailId(null); }}
+              >
+                <span className={`h-3 w-3 rounded-full shrink-0 ${dot}`} />
+                <span className="flex-1 text-left">{label}</span>
+              </button>
+            ))}
+          </nav>
+
+          {/* Bottom toolbar */}
+          <div className="px-2 py-2 border-t flex items-center gap-1">
             <Button
               variant="ghost"
-              size="sm"
-              className="h-8 w-8 p-0"
-              onClick={() => {
-                utils.emailScanning.list.invalidate();
-              }}
+              size="icon"
+              className="h-8 w-8"
+              title="Refresh"
+              onClick={() => utils.emailScanning.list.invalidate()}
             >
               <RefreshCw className="h-4 w-4" />
             </Button>
             <Button
               variant="ghost"
-              size="sm"
-              className="h-8 gap-1.5 text-xs"
+              size="icon"
+              className="h-8 w-8"
+              title="Categorize"
               onClick={() => bulkCategorizeMutation.mutate({ useAi: false, limit: 100 })}
               disabled={bulkCategorizeMutation.isPending}
             >
               {bulkCategorizeMutation.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <Zap className="h-3.5 w-3.5" />
+                <Zap className="h-4 w-4" />
               )}
-              Categorize
             </Button>
             <Button
-              variant="outline"
-              size="sm"
-              className="h-8 gap-1.5 text-xs"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              title="Scan Now"
               onClick={() => scanNowMutation.mutate({ folders: ["INBOX"], unseenOnly: false, limit: 200 })}
               disabled={scanNowMutation.isPending}
             >
-              {scanNowMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Inbox className="h-3.5 w-3.5" />}
-              {scanNowMutation.isPending ? "Scanning..." : "Scan All"}
+              {scanNowMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Inbox className="h-4 w-4" />
+              )}
             </Button>
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-green-500/10 text-green-500 text-xs">
+            <div className="ml-auto flex items-center gap-1 text-xs text-green-500 pr-1" title="Auto-syncing">
               <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
-              Auto-syncing
+              <span className="hidden sm:inline">Live</span>
             </div>
-            <Dialog open={showScanDialog} onOpenChange={setShowScanDialog}>
-              <DialogTrigger asChild className="hidden">
-                <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
-                  <Inbox className="h-3.5 w-3.5" />
-                  Scan
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-xl">
-                <DialogHeader>
-                  <DialogTitle>Scan Email Inbox</DialogTitle>
-                  <DialogDescription>
-                    Connect to your email inbox via IMAP to automatically import and categorize emails.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Email Provider</Label>
-                    <Select value={selectedPreset} onValueChange={handlePresetChange}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select provider or enter custom" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="gmail">Gmail</SelectItem>
-                        <SelectItem value="outlook">Outlook / Office 365</SelectItem>
-                        <SelectItem value="yahoo">Yahoo Mail</SelectItem>
-                        <SelectItem value="icloud">iCloud Mail</SelectItem>
-                        <SelectItem value="custom">Custom IMAP Server</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="imapHost">IMAP Host</Label>
-                      <Input
-                        id="imapHost"
-                        placeholder="imap.gmail.com"
-                        value={scanConfig.host}
-                        onChange={(e) => setScanConfig({ ...scanConfig, host: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="imapPort">Port</Label>
-                      <Input
-                        id="imapPort"
-                        type="number"
-                        value={scanConfig.port}
-                        onChange={(e) => setScanConfig({ ...scanConfig, port: parseInt(e.target.value) || 993 })}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="imapUser">Email / Username</Label>
-                      <Input
-                        id="imapUser"
-                        placeholder="you@gmail.com"
-                        value={scanConfig.user}
-                        onChange={(e) => setScanConfig({ ...scanConfig, user: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="imapPassword">Password / App Password</Label>
-                      <Input
-                        id="imapPassword"
-                        type="password"
-                        placeholder="••••••••"
-                        value={scanConfig.password}
-                        onChange={(e) => setScanConfig({ ...scanConfig, password: e.target.value })}
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-3 border-t pt-4">
-                    <Label className="text-sm font-medium">Scan Options</Label>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="folder">Folder</Label>
-                        <Input
-                          id="folder"
-                          value={scanConfig.folder}
-                          onChange={(e) => setScanConfig({ ...scanConfig, folder: e.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="limit">Max Emails</Label>
-                        <Input
-                          id="limit"
-                          type="number"
-                          value={scanConfig.limit}
-                          onChange={(e) => setScanConfig({ ...scanConfig, limit: parseInt(e.target.value) || 50 })}
-                        />
-                      </div>
-                    </div>
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center space-x-2">
-                        <Checkbox
-                          id="unseenOnly"
-                          checked={scanConfig.unseenOnly}
-                          onCheckedChange={(checked) => setScanConfig({ ...scanConfig, unseenOnly: !!checked })}
-                        />
-                        <Label htmlFor="unseenOnly" className="text-sm">Only unread emails</Label>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Checkbox
-                          id="markAsSeen"
-                          checked={scanConfig.markAsSeen}
-                          onCheckedChange={(checked) => setScanConfig({ ...scanConfig, markAsSeen: !!checked })}
-                        />
-                        <Label htmlFor="markAsSeen" className="text-sm">Mark as read after scanning</Label>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Checkbox
-                          id="fullAiParsing"
-                          checked={scanConfig.fullAiParsing}
-                          onCheckedChange={(checked) => setScanConfig({ ...scanConfig, fullAiParsing: !!checked })}
-                        />
-                        <Label htmlFor="fullAiParsing" className="text-sm">Full AI parsing (slower, more accurate)</Label>
-                      </div>
-                    </div>
-                  </div>
-                  {(selectedPreset === "gmail" || selectedPreset === "outlook") && (
-                    <div className="rounded-md bg-amber-50 dark:bg-amber-950 p-3 text-sm">
-                      <p className="font-medium text-amber-800 dark:text-amber-200">
-                        Note for {selectedPreset === "gmail" ? "Gmail" : "Outlook"}:
-                      </p>
-                      <p className="text-amber-700 dark:text-amber-300 mt-1">
-                        {selectedPreset === "gmail"
-                          ? "Use an App Password instead of your regular password. Go to Google Account > Security > 2-Step Verification > App passwords."
-                          : "You may need to enable IMAP access in Outlook settings and use an App Password if 2FA is enabled."}
-                      </p>
-                    </div>
-                  )}
-                </div>
-                <DialogFooter className="gap-2">
-                  <Button variant="outline" onClick={handleTestConnection} disabled={testConnectionMutation.isPending}>
-                    {testConnectionMutation.isPending ? (
-                      <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Testing...</>
-                    ) : (
-                      <><Settings className="h-4 w-4 mr-2" /> Test Connection</>
-                    )}
-                  </Button>
-                  <Button onClick={handleScanInbox} disabled={scanInboxMutation.isPending}>
-                    {scanInboxMutation.isPending ? (
-                      <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Scanning...</>
-                    ) : (
-                      <><Inbox className="h-4 w-4 mr-2" /> Scan Inbox</>
-                    )}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
           </div>
         </div>
 
-        {/* Filter pills */}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {folderFilters.map(({ key, label, icon: Icon }) => (
-            <Button
-              key={key}
-              variant={categoryFilter === (key === "all" ? "all" : key) && key !== "archived" ? "default" : "outline"}
-              size="sm"
-              className="h-7 text-xs px-2.5 gap-1"
-              onClick={() => setCategoryFilter(key === "all" ? "all" : key)}
-            >
-              <Icon className="h-3 w-3" />
-              {label}
-            </Button>
-          ))}
-        </div>
-
-        {/* Email list */}
-        <div className="border rounded-lg overflow-hidden bg-card">
-          {emailsLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        {/* ── MAIN CONTENT ── */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Search bar + bulk actions */}
+          <div className="border-b px-4 py-2 flex items-center gap-2 bg-background">
+            <div className="flex-1 relative max-w-2xl">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              <Input
+                placeholder="Search mail"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 h-9 rounded-full bg-accent/40 border-0 focus-visible:ring-1 text-sm"
+              />
             </div>
-          ) : !filteredEmails || filteredEmails.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <Mail className="h-8 w-8 mx-auto mb-3 opacity-40" />
-              <p className="text-sm">No emails found</p>
-            </div>
-          ) : (
-            <>
-            {/* Bulk action bar */}
             {selectedEmails.size > 0 && (
-              <div className="flex items-center gap-2 px-3 py-2 bg-primary/5 border-b">
-                <span className="text-xs font-medium">{selectedEmails.size} selected</span>
+              <div className="flex items-center gap-1 ml-2">
+                <span className="text-xs text-muted-foreground mr-1">{selectedEmails.size} selected</span>
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
-                  className="h-6 text-xs gap-1"
+                  className="h-7 text-xs gap-1"
                   onClick={() => {
                     selectedEmails.forEach((id) => archiveEmailMutation.mutate({ id }));
                     setSelectedEmails(new Set());
                   }}
                 >
-                  <Archive className="h-3 w-3" /> Archive
+                  <Archive className="h-3.5 w-3.5" /> Archive
                 </Button>
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
-                  className="h-6 text-xs gap-1 text-destructive hover:text-destructive"
+                  className="h-7 text-xs gap-1 text-destructive hover:text-destructive"
                   onClick={() => {
                     selectedEmails.forEach((id) => deleteEmailMutation.mutate({ id }));
                     setSelectedEmails(new Set());
                   }}
                 >
-                  <Trash2 className="h-3 w-3" /> Delete
+                  <Trash2 className="h-3.5 w-3.5" /> Delete
                 </Button>
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-6 text-xs"
+                  className="h-7 text-xs"
                   onClick={() => setSelectedEmails(new Set())}
                 >
                   Clear
                 </Button>
               </div>
             )}
-            <div className="divide-y divide-border/30">
-              {filteredEmails.map((email: any) => {
-                const isUnread = email.parsingStatus === "pending";
-                const isExpanded = expandedEmail === email.id;
-                const isStarred = starredEmails.has(email.id);
-                const isChecked = selectedEmails.has(email.id);
-                const catConfig = categoryConfig[email.category || "general"] || categoryConfig.general;
+          </div>
 
-                return (
-                  <div key={email.id}>
-                    {/* Compact row */}
-                    <div
-                      className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-accent/40 transition-colors text-xs ${
-                        isUnread ? 'bg-accent/20' : ''
-                      } ${isExpanded ? 'bg-accent/30' : ''}`}
-                      onClick={() => toggleExpand(email.id)}
-                    >
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 shrink-0 rounded border-muted-foreground/30 cursor-pointer accent-primary"
-                        checked={isChecked}
-                        onChange={() => {}}
-                        onClick={(e) => toggleCheckbox(e, email.id)}
-                      />
-                      <Star
-                        className={`h-4 w-4 shrink-0 cursor-pointer transition-colors ${
-                          isStarred
-                            ? 'text-yellow-400 fill-yellow-400'
-                            : 'text-muted-foreground/40 hover:text-yellow-400'
-                        }`}
-                        onClick={(e) => toggleStar(e, email.id)}
-                      />
-                      <span className={`w-[120px] truncate shrink-0 ${isUnread ? 'font-semibold' : ''}`}>
-                        {email.fromName || email.fromEmail}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <span className={`${isUnread ? 'font-semibold' : ''}`}>
-                          {email.subject || "(No subject)"}
+          {/* ── EMAIL LIST ── */}
+          {!selectedEmailId || !selectedEmail ? (
+            <div className="flex-1 overflow-y-auto">
+              {emailsLoading ? (
+                <div className="flex items-center justify-center py-16">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : !filteredEmails || filteredEmails.length === 0 ? (
+                <div className="text-center py-16 text-muted-foreground">
+                  <Mail className="h-10 w-10 mx-auto mb-3 opacity-30" />
+                  <p className="text-sm">No emails found</p>
+                  {searchQuery && (
+                    <p className="text-xs mt-1">No results for "{searchQuery}"</p>
+                  )}
+                </div>
+              ) : (
+                <div className="divide-y divide-border/30">
+                  {filteredEmails.map((email: any) => {
+                    const isUnread = email.parsingStatus === "pending";
+                    const isStarred = starredEmails.has(email.id);
+                    const isChecked = selectedEmails.has(email.id);
+                    const catConfig = categoryConfig[email.category || "general"] || categoryConfig.general;
+
+                    const isExpanded = expandedEmailId === email.id;
+
+                    return (
+                      <div key={email.id}>
+                      <div
+                        className={`group flex items-center gap-2 px-4 h-11 cursor-pointer select-none transition-colors hover:bg-accent/50 hover:shadow-[inset_3px_0_0] hover:shadow-primary/50 ${
+                          isUnread ? "font-semibold bg-accent/10" : ""
+                        } ${isChecked ? "bg-primary/5" : ""} ${isExpanded ? "bg-accent/30" : ""}`}
+                        onClick={() => setExpandedEmailId(isExpanded ? null : email.id)}
+                      >
+                        {/* Checkbox */}
+                        <div className={`h-4 w-4 shrink-0 transition-opacity ${!isChecked ? "opacity-0 group-hover:opacity-100" : "opacity-100"}`}>
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 cursor-pointer accent-primary rounded"
+                            checked={isChecked}
+                            onChange={() => {}}
+                            onClick={(e) => toggleCheckbox(e, email.id)}
+                          />
+                        </div>
+
+                        {/* Star */}
+                        <Star
+                          className={`h-4 w-4 shrink-0 cursor-pointer transition-all ${
+                            isStarred
+                              ? "text-yellow-400 fill-yellow-400"
+                              : "text-muted-foreground/30 hover:text-yellow-400 opacity-0 group-hover:opacity-100"
+                          }`}
+                          onClick={(e) => toggleStar(e, email.id)}
+                        />
+
+                        {/* Sender */}
+                        <span className={`w-36 shrink-0 truncate text-sm ${isUnread ? "font-semibold" : "text-muted-foreground"}`}>
+                          {email.fromName || email.fromEmail}
                         </span>
-                        <span className="text-muted-foreground">
-                          {email.bodyText ? ` — ${email.bodyText.substring(0, 60)}` : ""}
+
+                        {/* Subject + snippet */}
+                        <span className="flex-1 min-w-0 truncate text-sm">
+                          <span className={isUnread ? "font-semibold" : ""}>{email.subject || "(No subject)"}</span>
+                          {email.bodyText && (
+                            <span className="text-muted-foreground font-normal">
+                              {" — "}{email.bodyText.substring(0, 80)}
+                            </span>
+                          )}
+                        </span>
+
+                        {/* Category dot (hidden on hover) */}
+                        <div className="flex items-center gap-1 shrink-0 group-hover:invisible">
+                          <span className={`h-2 w-2 rounded-full ${catConfig.dot}`} title={catConfig.label} />
+                        </div>
+
+                        {/* Hover action icons */}
+                        <div
+                          className="hidden group-hover:flex items-center gap-0.5 shrink-0"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent transition-colors"
+                            title="Archive"
+                            onClick={(e) => { e.stopPropagation(); archiveEmailMutation.mutate({ id: email.id }); }}
+                          >
+                            <Archive className="h-3.5 w-3.5 text-muted-foreground" />
+                          </button>
+                          <button
+                            className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent transition-colors"
+                            title="Delete"
+                            onClick={(e) => { e.stopPropagation(); setDeleteTargetId(email.id); setShowDeleteConfirm(true); }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+                          </button>
+                        </div>
+
+                        {/* Date */}
+                        <span className="text-xs text-muted-foreground shrink-0 w-16 text-right">
+                          {formatEmailDate(email.receivedAt)}
                         </span>
                       </div>
-                      <div className="flex items-center gap-1 shrink-0" title={catConfig.label}>
-                        <span className={`h-2 w-2 rounded-full ${catConfig.dot}`} />
-                        <span className="text-[10px] text-muted-foreground hidden sm:inline">
-                          {catConfig.label}
-                        </span>
-                      </div>
-                      <span className="text-xs text-muted-foreground shrink-0 w-[70px] text-right">
-                        {formatEmailDate(email.receivedAt)}
-                      </span>
-                      {isExpanded ? (
-                        <ChevronUp className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                      ) : (
-                        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/30 shrink-0" />
-                      )}
-                    </div>
-
-                    {/* Expanded detail */}
-                    {isExpanded && (
-                      <div className="px-6 py-4 bg-muted/30 border-t border-border/20">
-                        <div className="space-y-3 max-w-3xl">
-                          {/* From / Subject / Date row */}
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="space-y-0.5">
-                              <p className="text-sm font-medium">
-                                {email.fromName ? `${email.fromName} <${email.fromEmail}>` : email.fromEmail}
-                              </p>
-                              <p className="text-sm text-muted-foreground">
-                                {email.subject || "(No subject)"}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {new Date(email.receivedAt).toLocaleString()}
-                              </p>
+                      {/* Inline expanded body */}
+                      {isExpanded && (
+                        <div className="px-6 py-3 bg-muted/20 border-t border-b border-border/30">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="text-xs text-muted-foreground">
+                              <span className="font-medium text-foreground">{email.fromName || email.fromEmail}</span>
+                              {email.fromName && <span className="ml-1">&lt;{email.fromEmail}&gt;</span>}
+                              <span className="mx-2">·</span>
+                              {new Date(email.receivedAt).toLocaleString()}
                             </div>
-                            <Badge variant="outline" className="text-xs shrink-0">
-                              {email.parsingStatus}
-                            </Badge>
+                            <div className="flex items-center gap-1">
+                              <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => reparseEmailMutation.mutate({ id: email.id })}>
+                                Reparse
+                              </Button>
+                              <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => archiveEmailMutation.mutate({ id: email.id })}>
+                                Archive
+                              </Button>
+                              <Button size="sm" variant="outline" className="h-6 text-xs text-destructive" onClick={() => { setDeleteTargetId(email.id); setShowDeleteConfirm(true); }}>
+                                Delete
+                              </Button>
+                            </div>
                           </div>
 
                           {/* Body — prefer HTML content (strip tags), fall back to plain text */}
@@ -753,102 +754,412 @@ export default function EmailInbox() {
                               })()
                             )}
                           </div>
-
-                          {/* Parsed documents (if any from detail) */}
-                          {emailDetail && emailDetail.id === email.id && emailDetail.documents && emailDetail.documents.length > 0 && (
-                            <div className="space-y-1.5">
-                              <p className="text-xs font-medium text-muted-foreground">
-                                Parsed Documents ({emailDetail.documents.length})
-                              </p>
-                              <div className="flex flex-wrap gap-2">
-                                {emailDetail.documents.map((doc: any) => (
-                                  <Badge key={doc.id} variant="secondary" className="text-xs gap-1">
-                                    <FileText className="h-3 w-3" />
-                                    {doc.documentType?.replace(/_/g, " ")}
-                                    {doc.totalAmount && ` - $${Number(doc.totalAmount).toFixed(2)}`}
-                                  </Badge>
-                                ))}
+                          {/* Reply box with snippet support */}
+                          <div className="mt-3 pt-3 border-t border-border/30 relative">
+                            <div className="flex gap-2">
+                              <div className="flex-1 relative">
+                                <Input
+                                  placeholder="Write a reply... (type / for snippets)"
+                                  className="h-8 text-sm pr-8"
+                                  value={replyText}
+                                  onChange={(e) => {
+                                    setReplyText(e.target.value);
+                                    setShowSnippetMenu(e.target.value === "/");
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" && replyText.trim() && !showSnippetMenu) {
+                                      navigator.clipboard.writeText(replyText.trim());
+                                      toast.success("Reply copied — paste in Gmail to send");
+                                      setReplyText("");
+                                    }
+                                    if (e.key === "Escape") setShowSnippetMenu(false);
+                                  }}
+                                />
+                                {/* Save as snippet button */}
+                                {replyText.trim() && !showSnippetMenu && (
+                                  <button
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-primary text-xs"
+                                    title="Save as snippet"
+                                    onClick={() => {
+                                      if (replyText.trim() && !snippets.includes(replyText.trim())) {
+                                        saveSnippets([...snippets, replyText.trim()]);
+                                        toast.success("Snippet saved — type / to use it");
+                                      }
+                                    }}
+                                  >
+                                    💾
+                                  </button>
+                                )}
+                                {/* Snippet dropdown */}
+                                {showSnippetMenu && (
+                                  <div className="absolute bottom-full left-0 mb-1 w-full bg-popover border rounded-xl shadow-lg z-50 max-h-48 overflow-y-auto">
+                                    {snippets.length > 0 ? (
+                                      <div className="py-1">
+                                        {snippets.map((s, i) => (
+                                          <div key={i} className="flex items-center justify-between px-3 py-1.5 hover:bg-accent cursor-pointer group">
+                                            <button
+                                              className="flex-1 text-left text-sm truncate"
+                                              onClick={() => { setReplyText(s); setShowSnippetMenu(false); }}
+                                            >
+                                              {s}
+                                            </button>
+                                            <button
+                                              className="text-xs text-destructive opacity-0 group-hover:opacity-100 ml-2 shrink-0"
+                                              onClick={(e) => { e.stopPropagation(); saveSnippets(snippets.filter((_, j) => j !== i)); }}
+                                            >
+                                              ✕
+                                            </button>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <div className="px-3 py-3 text-xs text-muted-foreground text-center">
+                                        No snippets yet. Write a reply and click 💾 to save it.
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                               </div>
+                              <Button size="sm" className="h-8 text-xs" onClick={() => {
+                                if (replyText.trim()) {
+                                  navigator.clipboard.writeText(replyText.trim());
+                                  toast.success("Reply copied — paste in Gmail to send");
+                                  setReplyText("");
+                                }
+                              }}>
+                                Send
+                              </Button>
                             </div>
-                          )}
-
-                          {/* Actions */}
-                          <div className="flex items-center gap-2 pt-1">
-                            <Button
-                              variant="default"
-                              size="sm"
-                              className="h-7 text-xs gap-1.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleGenerateAiReply(email);
-                              }}
-                              disabled={isGeneratingReply && aiReplyEmailId === email.id}
-                            >
-                              {isGeneratingReply && aiReplyEmailId === email.id ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <Reply className="h-3.5 w-3.5" />
-                              )}
-                              Reply
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-7 text-xs gap-1.5"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                reparseEmailMutation.mutate({ id: email.id });
-                              }}
-                              disabled={reparseEmailMutation.isPending}
-                            >
-                              <ClipboardList className="h-3.5 w-3.5" />
-                              Reparse
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-7 text-xs gap-1.5"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                archiveEmailMutation.mutate({ id: email.id });
-                              }}
-                            >
-                              <Archive className="h-3.5 w-3.5" />
-                              Archive
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-7 text-xs gap-1.5 text-destructive hover:text-destructive"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setDeleteTargetId(email.id);
-                                setShowDeleteConfirm(true);
-                              }}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                              Delete
-                            </Button>
                           </div>
                         </div>
+                      )}
                       </div>
-                    )}
-                  </div>
-                );
-              })}
+                    );
+                  })}
+                </div>
+              )}
+              {filteredEmails && filteredEmails.length > 0 && (
+                <p className="text-xs text-muted-foreground px-4 py-2 border-t">
+                  {filteredEmails.length} email{filteredEmails.length !== 1 ? "s" : ""}
+                  {searchQuery && ` matching "${searchQuery}"`}
+                </p>
+              )}
             </div>
-            </>
+          ) : (
+            /* ── READING PANE ── */
+            <div className="flex-1 overflow-y-auto">
+              {/* Sticky header */}
+              <div className="sticky top-0 bg-background border-b px-4 py-2.5 flex items-center gap-2 z-10">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 -ml-1 shrink-0"
+                  title="Back to inbox"
+                  onClick={() => setSelectedEmailId(null)}
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </Button>
+                <h2 className="font-semibold flex-1 truncate text-base">
+                  {selectedEmail.subject || "(No subject)"}
+                </h2>
+                <button
+                  className="h-8 w-8 flex items-center justify-center rounded hover:bg-accent transition-colors shrink-0"
+                  title={starredEmails.has(selectedEmail.id) ? "Unstar" : "Star"}
+                  onClick={(e) => toggleStar(e, selectedEmail.id)}
+                >
+                  <Star
+                    className={`h-4 w-4 ${
+                      starredEmails.has(selectedEmail.id)
+                        ? "text-yellow-400 fill-yellow-400"
+                        : "text-muted-foreground"
+                    }`}
+                  />
+                </button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0"
+                  title="Archive"
+                  onClick={() => archiveEmailMutation.mutate({ id: selectedEmail.id })}
+                  disabled={archiveEmailMutation.isPending}
+                >
+                  <Archive className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 text-destructive hover:text-destructive"
+                  title="Delete"
+                  onClick={() => { setDeleteTargetId(selectedEmail.id); setShowDeleteConfirm(true); }}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+
+              {/* Email content */}
+              <div className="max-w-3xl mx-auto px-6 py-6 space-y-6">
+                {/* Sender info row */}
+                <div className="flex items-start gap-4">
+                  {/* Avatar */}
+                  <div className="h-10 w-10 rounded-full bg-primary flex items-center justify-center text-primary-foreground font-semibold text-sm shrink-0 select-none">
+                    {(selectedEmail.fromName || selectedEmail.fromEmail || "?")[0].toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-sm">
+                        {selectedEmail.fromName
+                          ? `${selectedEmail.fromName} <${selectedEmail.fromEmail}>`
+                          : selectedEmail.fromEmail}
+                      </span>
+                      <Badge variant="outline" className="text-xs">
+                        {selectedEmail.parsingStatus}
+                      </Badge>
+                      {(categoryConfig[selectedEmail.category || "general"] || categoryConfig.general) && (
+                        <Badge variant="secondary" className="text-xs gap-1">
+                          <span className={`h-1.5 w-1.5 rounded-full ${(categoryConfig[selectedEmail.category || "general"] || categoryConfig.general).dot}`} />
+                          {(categoryConfig[selectedEmail.category || "general"] || categoryConfig.general).label}
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      {new Date(selectedEmail.receivedAt).toLocaleString()}
+                    </div>
+                  </div>
+                  {/* Quick actions */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs gap-1.5"
+                      onClick={() => reparseEmailMutation.mutate({ id: selectedEmail.id })}
+                      disabled={reparseEmailMutation.isPending}
+                    >
+                      {reparseEmailMutation.isPending ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <ClipboardList className="h-3.5 w-3.5" />
+                      )}
+                      Reparse
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Parsed documents */}
+                {emailDetail && emailDetail.id === selectedEmail.id && emailDetail.documents && emailDetail.documents.length > 0 && (
+                  <div className="flex flex-wrap gap-2 py-3 border-y">
+                    <span className="text-xs text-muted-foreground font-medium w-full">
+                      Parsed Documents ({emailDetail.documents.length})
+                    </span>
+                    {emailDetail.documents.map((doc: any) => (
+                      <Badge key={doc.id} variant="secondary" className="text-xs gap-1">
+                        <FileText className="h-3 w-3" />
+                        {doc.documentType?.replace(/_/g, " ")}
+                        {doc.totalAmount && ` — $${Number(doc.totalAmount).toFixed(2)}`}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+
+                {/* Email body */}
+                <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/90">
+                  {renderBody(
+                    (emailDetail && emailDetail.id === selectedEmail.id)
+                      ? (emailDetail.bodyText || emailDetail.bodyHtml || "")
+                      : (selectedEmail.bodyText || selectedEmail.bodyHtml || "")
+                  )}
+                </div>
+
+                {/* Inline reply box */}
+                <div className="border rounded-xl p-4 space-y-3 bg-background">
+                  <div className="flex items-center gap-2 text-sm">
+                    <Reply className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <span className="text-muted-foreground">
+                      Reply to{" "}
+                      <span className="font-medium text-foreground">
+                        {selectedEmail.fromName || selectedEmail.fromEmail}
+                      </span>
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="ml-auto h-7 gap-1.5 text-xs bg-gradient-to-r from-violet-600 to-indigo-600 text-white hover:from-violet-700 hover:to-indigo-700"
+                      onClick={() => handleGenerateAiReply(selectedEmail)}
+                      disabled={isGeneratingReply && aiReplyEmailId === selectedEmail.id}
+                    >
+                      {isGeneratingReply && aiReplyEmailId === selectedEmail.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-3.5 w-3.5" />
+                      )}
+                      AI Reply
+                    </Button>
+                  </div>
+                  <Textarea
+                    placeholder="Write a reply..."
+                    rows={4}
+                    className="text-sm resize-none border bg-accent/20"
+                  />
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" className="gap-1.5 h-8">
+                      <Send className="h-3.5 w-3.5" />
+                      Send
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground">
+                      Discard
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
         </div>
-
-        {/* Count footer */}
-        {filteredEmails && filteredEmails.length > 0 && (
-          <p className="text-xs text-muted-foreground">
-            {filteredEmails.length} email{filteredEmails.length !== 1 ? 's' : ''}
-            {searchQuery && ` matching "${searchQuery}"`}
-          </p>
-        )}
       </div>
+
+      {/* IMAP Scan / Connect Inbox Dialog */}
+      <Dialog open={showScanDialog} onOpenChange={setShowScanDialog}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Connect Email Inbox</DialogTitle>
+            <DialogDescription>
+              Connect to your email inbox via IMAP to automatically import and categorize emails.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Email Provider</Label>
+              <Select value={selectedPreset} onValueChange={handlePresetChange}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select provider or enter custom" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="gmail">Gmail</SelectItem>
+                  <SelectItem value="outlook">Outlook / Office 365</SelectItem>
+                  <SelectItem value="yahoo">Yahoo Mail</SelectItem>
+                  <SelectItem value="icloud">iCloud Mail</SelectItem>
+                  <SelectItem value="custom">Custom IMAP Server</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="imapHost">IMAP Host</Label>
+                <Input
+                  id="imapHost"
+                  placeholder="imap.gmail.com"
+                  value={scanConfig.host}
+                  onChange={(e) => setScanConfig({ ...scanConfig, host: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="imapPort">Port</Label>
+                <Input
+                  id="imapPort"
+                  type="number"
+                  value={scanConfig.port}
+                  onChange={(e) => setScanConfig({ ...scanConfig, port: parseInt(e.target.value) || 993 })}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="imapUser">Email / Username</Label>
+                <Input
+                  id="imapUser"
+                  placeholder="you@gmail.com"
+                  value={scanConfig.user}
+                  onChange={(e) => setScanConfig({ ...scanConfig, user: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="imapPassword">Password / App Password</Label>
+                <Input
+                  id="imapPassword"
+                  type="password"
+                  placeholder="••••••••"
+                  value={scanConfig.password}
+                  onChange={(e) => setScanConfig({ ...scanConfig, password: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="space-y-3 border-t pt-4">
+              <Label className="text-sm font-medium">Scan Options</Label>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="folder">Folder</Label>
+                  <Input
+                    id="folder"
+                    value={scanConfig.folder}
+                    onChange={(e) => setScanConfig({ ...scanConfig, folder: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="limit">Max Emails</Label>
+                  <Input
+                    id="limit"
+                    type="number"
+                    value={scanConfig.limit}
+                    onChange={(e) => setScanConfig({ ...scanConfig, limit: parseInt(e.target.value) || 50 })}
+                  />
+                </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="unseenOnly"
+                    checked={scanConfig.unseenOnly}
+                    onCheckedChange={(checked) => setScanConfig({ ...scanConfig, unseenOnly: !!checked })}
+                  />
+                  <Label htmlFor="unseenOnly" className="text-sm">Only unread emails</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="markAsSeen"
+                    checked={scanConfig.markAsSeen}
+                    onCheckedChange={(checked) => setScanConfig({ ...scanConfig, markAsSeen: !!checked })}
+                  />
+                  <Label htmlFor="markAsSeen" className="text-sm">Mark as read after scanning</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="fullAiParsing"
+                    checked={scanConfig.fullAiParsing}
+                    onCheckedChange={(checked) => setScanConfig({ ...scanConfig, fullAiParsing: !!checked })}
+                  />
+                  <Label htmlFor="fullAiParsing" className="text-sm">Full AI parsing (slower, more accurate)</Label>
+                </div>
+              </div>
+            </div>
+            {(selectedPreset === "gmail" || selectedPreset === "outlook") && (
+              <div className="rounded-md bg-amber-50 dark:bg-amber-950 p-3 text-sm">
+                <p className="font-medium text-amber-800 dark:text-amber-200">
+                  Note for {selectedPreset === "gmail" ? "Gmail" : "Outlook"}:
+                </p>
+                <p className="text-amber-700 dark:text-amber-300 mt-1">
+                  {selectedPreset === "gmail"
+                    ? "Use an App Password instead of your regular password. Go to Google Account > Security > 2-Step Verification > App passwords."
+                    : "You may need to enable IMAP access in Outlook settings and use an App Password if 2FA is enabled."}
+                </p>
+              </div>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={handleTestConnection} disabled={testConnectionMutation.isPending}>
+              {testConnectionMutation.isPending ? (
+                <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Testing...</>
+              ) : (
+                <><Settings className="h-4 w-4 mr-2" /> Test Connection</>
+              )}
+            </Button>
+            <Button onClick={handleScanInbox} disabled={scanInboxMutation.isPending}>
+              {scanInboxMutation.isPending ? (
+                <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Scanning...</>
+              ) : (
+                <><Inbox className="h-4 w-4 mr-2" /> Scan Inbox</>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* AI Reply Dialog */}
       <Dialog open={showAiReplyDialog} onOpenChange={setShowAiReplyDialog}>
