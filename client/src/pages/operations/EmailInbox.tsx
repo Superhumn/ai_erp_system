@@ -47,6 +47,35 @@ const categoryConfig: Record<string, { label: string; dot: string }> = {
   general: { label: "General", dot: "bg-gray-400" },
 };
 
+function cleanEmailBody(raw: string): string {
+  let text = raw;
+  // Strip HTML tags
+  if (text.includes("<") && text.includes(">")) {
+    text = text
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/p>/gi, "\n\n")
+      .replace(/<\/div>/gi, "\n")
+      .replace(/<\/tr>/gi, "\n")
+      .replace(/<\/li>/gi, "\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"');
+  }
+  // Strip image/icon alt-text placeholders
+  text = text
+    .replace(/\[(?:icon|image|logo|img|button|banner|photo|avatar|badge)\]/gi, "")
+    .replace(/\[(?:GreenBridge|Trustpilot|BBB|Custom)[^\]]*\]/gi, "")
+    .replace(/\[(?:instagram|linkedin|twitter|facebook|youtube|tiktok)\]/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return text;
+}
+
 function formatEmailDate(date: string | Date): string {
   const d = new Date(date);
   const now = new Date();
@@ -59,6 +88,7 @@ function formatEmailDate(date: string | Date): string {
 
 export default function EmailInbox() {
   const [selectedEmailId, setSelectedEmailId] = useState<number | null>(null);
+  const [expandedEmailId, setExpandedEmailId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [starredEmails, setStarredEmails] = useState<Set<number>>(new Set());
@@ -572,13 +602,15 @@ export default function EmailInbox() {
                     const isChecked = selectedEmails.has(email.id);
                     const catConfig = categoryConfig[email.category || "general"] || categoryConfig.general;
 
+                    const isExpanded = expandedEmailId === email.id;
+
                     return (
+                      <div key={email.id}>
                       <div
-                        key={email.id}
                         className={`group flex items-center gap-2 px-4 h-11 cursor-pointer select-none transition-colors hover:bg-accent/50 hover:shadow-[inset_3px_0_0] hover:shadow-primary/50 ${
                           isUnread ? "font-semibold bg-accent/10" : ""
-                        } ${isChecked ? "bg-primary/5" : ""}`}
-                        onClick={() => setSelectedEmailId(email.id)}
+                        } ${isChecked ? "bg-primary/5" : ""} ${isExpanded ? "bg-accent/30" : ""}`}
+                        onClick={() => setExpandedEmailId(isExpanded ? null : email.id)}
                       >
                         {/* Checkbox */}
                         <div className={`h-4 w-4 shrink-0 transition-opacity ${!isChecked ? "opacity-0 group-hover:opacity-100" : "opacity-100"}`}>
@@ -646,6 +678,34 @@ export default function EmailInbox() {
                         <span className="text-xs text-muted-foreground shrink-0 w-16 text-right">
                           {formatEmailDate(email.receivedAt)}
                         </span>
+                      </div>
+                      {/* Inline expanded body */}
+                      {isExpanded && (
+                        <div className="px-6 py-3 bg-muted/20 border-t border-b border-border/30">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="text-xs text-muted-foreground">
+                              <span className="font-medium text-foreground">{email.fromName || email.fromEmail}</span>
+                              {email.fromName && <span className="ml-1">&lt;{email.fromEmail}&gt;</span>}
+                              <span className="mx-2">·</span>
+                              {new Date(email.receivedAt).toLocaleString()}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => reparseEmailMutation.mutate({ id: email.id })}>
+                                Reparse
+                              </Button>
+                              <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => archiveEmailMutation.mutate({ id: email.id })}>
+                                Archive
+                              </Button>
+                              <Button size="sm" variant="outline" className="h-6 text-xs text-destructive" onClick={() => { setDeleteTargetId(email.id); setShowDeleteConfirm(true); }}>
+                                Delete
+                              </Button>
+                            </div>
+                          </div>
+                          <div className="text-sm whitespace-pre-wrap leading-relaxed max-h-[50vh] overflow-y-auto">
+                            {cleanEmailBody(email.bodyText || "(No content)")}
+                          </div>
+                        </div>
+                      )}
                       </div>
                     );
                   })}
