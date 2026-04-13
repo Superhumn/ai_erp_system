@@ -148,6 +148,9 @@ const DataRoomPublic = lazy(() => import("./pages/DataRoomPublic"));
 // Component Showcase
 const ComponentShowcase = lazy(() => import("./pages/ComponentShowcase"));
 
+// Code
+const CodeEditor = lazy(() => import("./pages/Code"));
+
 // AI Agent
 const ApprovalQueue = lazy(() => import("./pages/ai/ApprovalQueue"));
 
@@ -322,6 +325,9 @@ function Router() {
           {/* Data Room */}
           <Route path="/datarooms" component={DataRooms} />
           <Route path="/dataroom/:id" component={DataRoomDetail} />
+
+          {/* Code */}
+          <Route path="/code" component={CodeEditor} />
 
           {/* Component Showcase */}
           <Route path="/showcase" component={ComponentShowcase} />

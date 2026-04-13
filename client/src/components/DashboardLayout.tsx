@@ -73,6 +73,7 @@ import {
   DollarSign,
   Banknote,
   TrendingUp,
+  Code2,
 } from "lucide-react";
 import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -152,6 +153,7 @@ function getMenuGroups(role: string = "user") {
         { icon: Upload, label: "Import", path: "/import" },
         { icon: Network, label: "EDI", path: "/edi" },
       ] : []),
+      { icon: Code2, label: "Code", path: "/code" },
       { icon: Settings, label: "Settings", path: "/settings" },
     ],
   },
