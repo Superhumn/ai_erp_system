@@ -31,6 +31,7 @@ import { estimateEffort, optimizeResourceAllocation, predictProjectRisks, optimi
 import { detectEdiAnomalies, predictEdiErrors } from "./ediAiService";
 import { scoreSuppliers } from "./supplierScoringService";
 import * as db from "./db";
+import * as manufacturingDb from "./db/manufacturing";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
@@ -3436,9 +3437,29 @@ ONLY return the JSON array, no other text.`;
         } catch { /* best-effort email fetch */ }
       }
       
-      // Check QuickBooks OAuth connection
+      // Check QuickBooks OAuth connection and attempt refresh if expired
       const quickbooksToken = await db.getQuickBooksOAuthToken(ctx.user.id);
-      const quickbooksConnected = quickbooksToken && (!quickbooksToken.expiresAt || new Date(quickbooksToken.expiresAt) > new Date());
+      let quickbooksConnected = !!(quickbooksToken && (!quickbooksToken.expiresAt || new Date(quickbooksToken.expiresAt) > new Date()));
+      let quickbooksRealmId = quickbooksToken?.realmId;
+      if (quickbooksToken && !quickbooksConnected && quickbooksToken.refreshToken) {
+        try {
+          const refreshResult = await refreshQuickBooksToken(quickbooksToken.refreshToken);
+          if (refreshResult.access_token && refreshResult.expires_in) {
+            await db.upsertQuickBooksOAuthToken({
+              userId: ctx.user.id,
+              accessToken: refreshResult.access_token,
+              refreshToken: refreshResult.refresh_token || quickbooksToken.refreshToken,
+              expiresAt: new Date(Date.now() + (refreshResult.expires_in * 1000)),
+              realmId: quickbooksToken.realmId,
+              scope: quickbooksToken.scope || "com.intuit.quickbooks.accounting",
+            });
+            quickbooksConnected = true;
+            quickbooksRealmId = quickbooksToken.realmId;
+          }
+        } catch (e) {
+          console.warn("[getStatus] Failed to refresh QuickBooks token:", e);
+        }
+      }
       
       return {
         sendgrid: {
@@ -3469,7 +3490,7 @@ ONLY return the JSON array, no other text.`;
         quickbooks: {
           configured: quickbooksConnected,
           status: quickbooksConnected ? 'connected' : 'not_configured',
-          realmId: quickbooksToken?.realmId,
+          realmId: quickbooksRealmId,
         },
         syncHistory,
         fireflies: await (async () => {
@@ -5095,6 +5116,24 @@ ONLY return the JSON array, no other text.`;
         return { connected: false, realmId: null };
       }
       const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+      if (isExpired && token.refreshToken) {
+        const refreshResult = await refreshQuickBooksToken(token.refreshToken);
+        if (refreshResult.access_token && refreshResult.expires_in) {
+          await db.upsertQuickBooksOAuthToken({
+            userId: ctx.user.id,
+            accessToken: refreshResult.access_token,
+            refreshToken: refreshResult.refresh_token || token.refreshToken,
+            expiresAt: new Date(Date.now() + (refreshResult.expires_in * 1000)),
+            realmId: token.realmId,
+            scope: token.scope || "com.intuit.quickbooks.accounting",
+          });
+          return {
+            connected: true,
+            realmId: token.realmId,
+            needsRefresh: false,
+          };
+        }
+      }
       return { 
         connected: !isExpired, 
         realmId: token.realmId,
@@ -8804,6 +8843,127 @@ Provide a brief status summary, any missing documents, and next steps.`;
       }),
   }),
 
+  ingredients: router({
+    list: protectedProcedure
+      .input(z.object({ category: z.string().optional(), active: z.boolean().optional() }).optional())
+      .query(({ input }) => manufacturingDb.getIngredients(input)),
+    create: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        sku: z.string().min(1),
+        category: z.enum(["protein", "spice", "liquid", "produce", "packaging", "other"]).default("other"),
+        unitOfMeasure: z.enum(["g", "kg", "lb", "oz", "ml", "l", "each"]).default("g"),
+        costPerUnit: z.string().default("0"),
+        costUnit: z.enum(["per_lb", "per_kg", "per_oz", "per_each"]).default("per_kg"),
+        supplierId: z.number().optional(),
+        leadTimeDays: z.number().optional(),
+        moistureContent: z.string().optional(),
+        shelfLifeDays: z.number().optional(),
+        isAllergen: z.boolean().optional(),
+        allergenType: z.string().optional(),
+        notes: z.string().optional(),
+        isActive: z.boolean().optional(),
+      }))
+      .mutation(({ input }) => manufacturingDb.createIngredient(input)),
+    addCost: protectedProcedure
+      .input(z.object({
+        ingredientId: z.number(),
+        costPerUnit: z.string(),
+        costUnit: z.enum(["per_lb", "per_kg", "per_oz", "per_each"]),
+        effectiveDate: z.date().optional(),
+        supplierId: z.number().optional(),
+        source: z.string().optional(),
+      }))
+      .mutation(({ input }) => manufacturingDb.addIngredientCostEntry({
+        ...input,
+        effectiveDate: input.effectiveDate || new Date(),
+      })),
+  }),
+
+  recipes: router({
+    list: protectedProcedure
+      .input(z.object({
+        category: z.string().optional(),
+        status: z.string().optional(),
+        isSubRecipe: z.boolean().optional(),
+      }).optional())
+      .query(({ input }) => manufacturingDb.getRecipes(input)),
+    create: protectedProcedure
+      .input(z.object({
+        recipeId: z.string().min(1),
+        name: z.string().min(1),
+        category: z.enum(["beef", "pork", "chicken", "seafood", "dairy", "blend", "other"]).default("other"),
+        status: z.enum(["development", "production", "discontinued"]).default("development"),
+        version: z.number().default(1),
+        isSubRecipe: z.boolean().optional(),
+        baseBatchGrams: z.string().default("0"),
+        expectedYieldPct: z.string().default("1.0000"),
+        hasMoistureVariants: z.boolean().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(({ input, ctx }) => manufacturingDb.createRecipe({ ...input, createdBy: ctx.user?.id })),
+    batchCost: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        formulation: z.enum(["wet", "dry"]).default("wet"),
+        batchGrams: z.number().optional(),
+        scaleFactor: z.number().optional(),
+        targetLbs: z.number().optional(),
+      }))
+      .query(({ input }) => manufacturingDb.calculateRecipeBatchCost({
+        recipeId: input.id,
+        formulation: input.formulation,
+        batchGrams: input.batchGrams,
+        scaleFactor: input.scaleFactor,
+        targetLbs: input.targetLbs,
+      })),
+    saveBatchSnapshot: protectedProcedure
+      .input(z.object({
+        recipeId: z.number(),
+        formulationType: z.enum(["wet", "dry"]),
+      }))
+      .mutation(async ({ input }) => {
+        const cost = await manufacturingDb.calculateRecipeBatchCost({
+          recipeId: input.recipeId,
+          formulation: input.formulationType,
+        });
+        if (!cost) throw new Error("Unable to calculate recipe cost");
+        return manufacturingDb.saveBatchCostSnapshot({
+          recipeId: input.recipeId,
+          formulationType: input.formulationType,
+          totalBatchGrams: String(cost.totalBatchGrams),
+          totalBatchCost: String(cost.totalCost),
+          costPerGram: String(cost.costPerGram),
+          costPerLb: String(cost.costPerLb),
+          costPerKg: String(cost.costPerKg),
+          yieldAdjustedCostPerLb: String(cost.yieldAdjustedCostPerLb),
+          ingredientCosts: cost.lines,
+          snapshotDate: new Date(),
+        });
+      }),
+  }),
+
+  moisture: router({
+    calculate: protectedProcedure
+      .input(z.object({ wetWeight: z.number(), dryWeight: z.number() }))
+      .mutation(({ input }) => {
+        const moisturePct = input.wetWeight > 0 ? (input.wetWeight - input.dryWeight) / input.wetWeight : 0;
+        return { moisturePct, solidsPct: 1 - moisturePct };
+      }),
+    convert: protectedProcedure
+      .input(z.object({
+        sourceWeight: z.number(),
+        sourceMoisture: z.number(),
+        targetMoisture: z.number(),
+      }))
+      .mutation(({ input }) => {
+        const solids = input.sourceWeight * (1 - input.sourceMoisture);
+        const targetWeight = solids / (1 - input.targetMoisture);
+        const waterDelta = (targetWeight * input.targetMoisture) - (input.sourceWeight * input.sourceMoisture);
+        return { targetWeight, solids, waterDelta };
+      }),
+  }),
+
   // Work Orders
   workOrders: router({
     list: protectedProcedure.query(async () => {
@@ -10180,7 +10340,9 @@ Ask if they received the original request and if they can provide a quote.`;
         .input(z.object({
           id: z.number(),
           storeName: z.string().optional(),
-          isActive: z.boolean().optional(),
+          isEnabled: z.boolean().optional(),
+          syncOrders: z.boolean().optional(),
+          syncInventory: z.boolean().optional(),
           lastSyncAt: z.date().optional(),
         }))
         .mutation(async ({ input }) => {
@@ -11458,7 +11620,7 @@ Ask if they received the original request and if they can provide a quote.`;
               await client.mailboxOpen("INBOX");
               const uids = await client.search({ header: { "message-id": email.messageId } }, { uid: true });
               if (uids && uids.length > 0) {
-                await client.messageFlagsAdd(uids.map(String), ["\\Seen"], { uid: true });
+                await client.messageFlagsAdd(uids, ["\\Seen"], { uid: true });
               }
               await client.logout();
             }
@@ -11493,7 +11655,7 @@ Ask if they received the original request and if they can provide a quote.`;
               // Search by message ID header
               const uids = await client.search({ header: { "message-id": email.messageId } }, { uid: true });
               if (uids && uids.length > 0) {
-                await client.messageDelete(uids.map(String), { uid: true });
+                await client.messageDelete(uids, { uid: true });
                 console.log(`[Email] Deleted message ${email.messageId} from Gmail`);
               }
               await client.logout();
@@ -17381,6 +17543,34 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         if (input.notes) cleaned.notes = input.notes;
         return db.createFundraisingCampaign(cleaned as any);
       }),
+    updateCampaign: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().min(1),
+        description: z.string().optional(),
+        targetAmount: z.string().optional(),
+        minimumInvestment: z.string().optional(),
+        valuation: z.string().optional(),
+        roundType: z.enum(["pre_seed", "seed", "series_a", "series_b", "series_c", "bridge", "other"]).default("seed"),
+        equityOffered: z.string().optional(),
+        status: z.enum(["planning", "active", "paused", "closed", "cancelled"]).default("planning"),
+        notes: z.string().optional(),
+      }))
+      .mutation(({ input }) => {
+        const { id, ...values } = input;
+        const cleaned: Record<string, any> = {
+          name: values.name,
+          roundType: values.roundType,
+          status: values.status,
+        };
+        cleaned.description = values.description || null;
+        cleaned.targetAmount = values.targetAmount || null;
+        cleaned.minimumInvestment = values.minimumInvestment || null;
+        cleaned.valuation = values.valuation || null;
+        cleaned.equityOffered = values.equityOffered || null;
+        cleaned.notes = values.notes || null;
+        return db.updateFundraisingCampaign(id, cleaned);
+      }),
     listInvestments: protectedProcedure
       .input(z.object({ investorId: z.number().optional() }).optional())
       .query(({ input }) => db.getInvestorInvestments(input?.investorId)),
@@ -18105,19 +18295,32 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
     }),
     configure: protectedProcedure
       .input(z.object({
-        apiKey: z.string().min(1),
+        apiKey: z.string().min(1).optional(),
         autoCreateContacts: z.boolean().optional(),
         autoCreateTasks: z.boolean().optional(),
         autoCreateProjects: z.boolean().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        // Validate the API key
-        const validation = await validateFirefliesApiKey(input.apiKey);
-        if (!validation.valid) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: validation.error || 'Invalid Fireflies API key' });
+        const existingConfig = await db.getFirefliesConfig(ctx.user.id);
+        const apiKeyToStore = input.apiKey?.trim() || existingConfig?.apiKey;
+        if (!apiKeyToStore) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Please provide a Fireflies API key' });
+        }
+
+        // Validate only when a new API key is provided
+        if (input.apiKey) {
+          const validation = await validateFirefliesApiKey(input.apiKey);
+          if (!validation.valid) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: validation.error || 'Invalid Fireflies API key' });
+          }
         }
         console.log(`[Fireflies] API key validated for user ${ctx.user.id}, saving config...`);
-        return db.upsertFirefliesConfig(ctx.user.id, input);
+        return db.upsertFirefliesConfig(ctx.user.id, {
+          apiKey: apiKeyToStore,
+          autoCreateContacts: input.autoCreateContacts,
+          autoCreateTasks: input.autoCreateTasks,
+          autoCreateProjects: input.autoCreateProjects,
+        });
       }),
     disconnect: protectedProcedure.mutation(async ({ ctx }) => {
       await db.deleteFirefliesConfig(ctx.user.id);

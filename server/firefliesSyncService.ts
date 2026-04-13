@@ -68,16 +68,15 @@ export async function syncFirefliesMeetingsForUser(
           date: t.date ? new Date(t.date) : new Date(),
           duration: t.duration,
           participants: JSON.stringify(participants),
-          transcript: fullTranscript?.transcript_url || null,
+          transcriptUrl: fullTranscript?.transcript_url || null,
           summary: fullTranscript?.summary
             ? JSON.stringify(fullTranscript.summary)
             : null,
-          actionItemsRaw: fullTranscript
+          actionItems: fullTranscript
             ? JSON.stringify(
                 parseActionItems(fullTranscript?.summary?.action_items || [])
               )
             : null,
-          status: "pending",
         });
         result.totalSynced++;
 

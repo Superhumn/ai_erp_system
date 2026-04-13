@@ -382,8 +382,8 @@ export default function FinancialReports() {
   const runwayMonths = estimatedBurn > 0 ? Math.round((cashPosition / estimatedBurn) * 10) / 10 : 0;
 
   const strategyMutation = trpc.financialReports.aiAnalysis.useMutation({
-    onSuccess: (data, variables) => {
-      const stratId = variables.strategyId;
+    onSuccess: (data, variables: any) => {
+      const stratId = variables?.strategyId;
       if (stratId) {
         setStrategyResults((prev) => ({ ...prev, [stratId]: data.analysis }));
       }

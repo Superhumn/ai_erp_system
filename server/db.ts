@@ -11482,8 +11482,14 @@ export async function createInvestor(data: InsertInvestor) {
 export async function getFundraisingCampaigns(companyId?: number) {
   const db = await getDb();
   if (!db) return [];
-  if (companyId) return db.select().from(fundraisingCampaigns).where(eq(fundraisingCampaigns.companyId, companyId));
-  return db.select().from(fundraisingCampaigns);
+  if (companyId) {
+    return db
+      .select()
+      .from(fundraisingCampaigns)
+      .where(eq(fundraisingCampaigns.companyId, companyId))
+      .orderBy(desc(fundraisingCampaigns.createdAt));
+  }
+  return db.select().from(fundraisingCampaigns).orderBy(desc(fundraisingCampaigns.createdAt));
 }
 
 export async function createFundraisingCampaign(data: InsertFundraisingCampaign) {
@@ -11491,6 +11497,13 @@ export async function createFundraisingCampaign(data: InsertFundraisingCampaign)
   if (!db) throw new Error("Database not available");
   const result = await db.insert(fundraisingCampaigns).values(data);
   return { id: result[0].insertId };
+}
+
+export async function updateFundraisingCampaign(id: number, data: Partial<InsertFundraisingCampaign>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(fundraisingCampaigns).set(data).where(eq(fundraisingCampaigns.id, id));
+  return { success: true };
 }
 
 export async function getInvestorInvestments(investorId?: number) {
@@ -11507,6 +11520,10 @@ export async function getFundraisingReminders(filters?: { status?: string; inves
   if (filters?.investorId) conditions.push(eq(fundraisingReminders.investorId, filters.investorId));
   if (conditions.length > 0) return db.select().from(fundraisingReminders).where(and(...conditions));
   return db.select().from(fundraisingReminders);
+}
+
+export async function getBills() {
+  return getPurchaseOrders();
 }
 
 // ============================================

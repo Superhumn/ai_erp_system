@@ -211,6 +211,13 @@
       "when": 1773676800000,
       "tag": "0029_fix_fireflies_meetings_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "5",
+      "when": 1776110400000,
+      "tag": "0030_recipe_costing_module",
+      "breakpoints": true
     }
   ]
 }

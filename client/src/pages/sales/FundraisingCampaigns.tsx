@@ -1,33 +1,42 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  Dialog, DialogContent, DialogDescription, DialogFooter,
+  DialogHeader, DialogTitle, DialogTrigger,
+} from "@/components/ui/dialog";
+import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Plus, Loader2, Target, Edit, X } from "lucide-react";
+import { Plus, Loader2, Target, DollarSign, Calendar, TrendingUp, Edit } from "lucide-react";
 import { toast } from "sonner";
 
-const emptyForm = {
-  name: "", description: "", targetAmount: "", minimumInvestment: "",
-  valuation: "", roundType: "seed" as string, equityOffered: "",
-  status: "planning" as string, notes: "",
-};
-
 export default function FundraisingCampaigns() {
-  const [editing, setEditing] = useState(false);
-  const [formData, setFormData] = useState(emptyForm);
+  const [isOpen, setIsOpen] = useState(false);
+  const [formData, setFormData] = useState({
+    name: "", description: "", targetAmount: "", minimumInvestment: "",
+    valuation: "", roundType: "seed" as string, equityOffered: "",
+    status: "planning" as string, notes: "",
+  });
 
   const { data: campaigns, isLoading, refetch } = (trpc.crm as any).listCampaigns.useQuery();
   const createCampaign = (trpc.crm as any).createCampaign.useMutation({
     onSuccess: () => {
       toast.success("Round created");
-      setEditing(false);
-      setFormData(emptyForm);
+      setIsOpen(false);
+      refetch();
+    },
+    onError: (error: any) => toast.error(error.message),
+  });
+  const updateCampaign = (trpc.crm as any).updateCampaign.useMutation({
+    onSuccess: () => {
+      toast.success("Round updated");
+      setIsOpen(false);
       refetch();
     },
     onError: (error: any) => toast.error(error.message),
@@ -35,18 +44,11 @@ export default function FundraisingCampaigns() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const payload: Record<string, any> = {
-      name: formData.name,
-      roundType: formData.roundType,
-      status: formData.status,
-    };
-    if (formData.description) payload.description = formData.description;
-    if (formData.targetAmount) payload.targetAmount = formData.targetAmount;
-    if (formData.minimumInvestment) payload.minimumInvestment = formData.minimumInvestment;
-    if (formData.valuation) payload.valuation = formData.valuation;
-    if (formData.equityOffered) payload.equityOffered = formData.equityOffered;
-    if (formData.notes) payload.notes = formData.notes;
-    createCampaign.mutate(payload);
+    if (round) {
+      updateCampaign.mutate({ id: round.id, ...formData });
+      return;
+    }
+    createCampaign.mutate(formData);
   };
 
   if (isLoading) {
@@ -56,6 +58,21 @@ export default function FundraisingCampaigns() {
   // Single round — use the first (most recent) campaign
   const round = campaigns?.[0] || null;
 
+  useEffect(() => {
+    if (!isOpen || !round) return;
+    setFormData({
+      name: round.name || "",
+      description: round.description || "",
+      targetAmount: round.targetAmount || "",
+      minimumInvestment: round.minimumInvestment || "",
+      valuation: round.valuation || "",
+      roundType: round.roundType || "seed",
+      equityOffered: round.equityOffered || "",
+      status: round.status || "planning",
+      notes: round.notes || "",
+    });
+  }, [isOpen, round]);
+
   const statusColors: Record<string, string> = {
     planning: "bg-gray-500/10 text-gray-600",
     active: "bg-emerald-500/10 text-emerald-600",
@@ -64,10 +81,17 @@ export default function FundraisingCampaigns() {
     cancelled: "bg-red-500/10 text-red-600",
   };
 
-  // Inline create/edit form
-  const roundForm = (
-    <Card>
-      <CardContent className="pt-6">
+  // Create dialog (shared)
+  const createDialog = (
+    <Dialog open={isOpen} onOpenChange={setIsOpen}>
+      <DialogTrigger asChild>
+        <Button><Plus className="h-4 w-4 mr-2" />{round ? "Edit Round" : "Create Round"}</Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{round ? "Edit Round" : "Create Fundraising Round"}</DialogTitle>
+          <DialogDescription>Configure your current fundraising round</DialogDescription>
+        </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label>Round Name *</Label>
@@ -103,8 +127,8 @@ export default function FundraisingCampaigns() {
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>Target Amount ($)</Label>
-              <Input type="number" step="0.01" value={formData.targetAmount} onChange={(e) => setFormData({ ...formData, targetAmount: e.target.value })} placeholder="1000000" />
+              <Label>Target Amount ($) *</Label>
+              <Input type="number" step="0.01" value={formData.targetAmount} onChange={(e) => setFormData({ ...formData, targetAmount: e.target.value })} placeholder="1000000" required />
             </div>
             <div className="space-y-2">
               <Label>Valuation ($)</Label>
@@ -122,38 +146,42 @@ export default function FundraisingCampaigns() {
             </div>
           </div>
           <div className="space-y-2">
-            <Label>Description</Label>
-            <Textarea value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} rows={2} placeholder="Optional round description" />
-          </div>
-          <div className="space-y-2">
             <Label>Notes</Label>
             <Textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={2} />
           </div>
-          <div className="flex gap-2 justify-end pt-1">
-            {round && (
-              <Button type="button" variant="outline" onClick={() => { setEditing(false); setFormData(emptyForm); }}>
-                <X className="h-4 w-4 mr-2" />Cancel
-              </Button>
-            )}
-            <Button type="submit" disabled={createCampaign.isPending}>
-              {createCampaign.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              <Plus className="h-4 w-4 mr-2" />Create Round
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setIsOpen(false)}>Cancel</Button>
+            <Button type="submit" disabled={createCampaign.isPending || updateCampaign.isPending}>
+              {(createCampaign.isPending || updateCampaign.isPending) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {round ? "Save" : "Create Round"}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
-      </CardContent>
-    </Card>
+      </DialogContent>
+    </Dialog>
   );
 
-  // No round yet — show inline create form directly
+  // No round yet — show create prompt
   if (!round) {
     return (
       <div className="space-y-6 animate-fade-in">
-        <div>
-          <h1 className="text-[1.875rem] font-bold tracking-[-0.03em]">Fundraising</h1>
-          <p className="text-muted-foreground">Set up your current fundraising round</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-[1.875rem] font-bold tracking-[-0.03em]">Fundraising</h1>
+            <p className="text-muted-foreground">Set up your current fundraising round</p>
+          </div>
+          {createDialog}
         </div>
-        {roundForm}
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <Target className="h-12 w-12 text-muted-foreground/30 mb-4" />
+            <h3 className="text-lg font-semibold mb-2">No fundraising round</h3>
+            <p className="text-muted-foreground mb-4 text-sm">Create your round to start tracking progress</p>
+            <Button onClick={() => setIsOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />Create Round
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -177,16 +205,9 @@ export default function FundraisingCampaigns() {
             {round.status}
           </Badge>
           <Badge variant="outline" className="capitalize">{(round.roundType || "seed").replace(/_/g, " ")}</Badge>
-          {!editing && (
-            <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
-              <Edit className="h-4 w-4 mr-2" />Edit Round
-            </Button>
-          )}
+          {createDialog}
         </div>
       </div>
-
-      {/* Inline edit form */}
-      {editing && roundForm}
 
       {/* KPI bar */}
       <div className="flex items-center gap-5 flex-wrap text-sm border rounded-xl px-4 py-3 bg-card">

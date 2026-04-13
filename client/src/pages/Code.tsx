@@ -93,6 +93,7 @@ const AI_ACTIONS = [
 type AIAction = typeof AI_ACTIONS[number]["value"];
 
 export default function CodePage() {
+  const codeApi = (trpc as any).code;
   const [code, setCode] = useState("// Start coding here...\nconsole.log('Hello, World!');\n");
   const [language, setLanguage] = useState("typescript");
   const [activeTab, setActiveTab] = useState("editor");
@@ -114,15 +115,15 @@ export default function CodePage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Queries
-  const snippetsQuery = trpc.code.snippets.useQuery();
-  const searchResults = trpc.code.searchSnippets.useQuery(
+  const snippetsQuery = codeApi.snippets.useQuery();
+  const searchResults = codeApi.searchSnippets.useQuery(
     { query: searchQuery },
     { enabled: searchQuery.length > 0 }
   );
-  const executionsQuery = trpc.code.executions.useQuery({});
+  const executionsQuery = codeApi.executions.useQuery({});
 
   // Mutations
-  const executeMutation = trpc.code.execute.useMutation({
+  const executeMutation = codeApi.execute.useMutation({
     onSuccess: (data) => {
       setExecutionOutput(data);
       setActiveTab("output");
@@ -135,7 +136,7 @@ export default function CodePage() {
     onError: (err) => toast.error(err.message),
   });
 
-  const aiMutation = trpc.code.aiAction.useMutation({
+  const aiMutation = codeApi.aiAction.useMutation({
     onSuccess: (data) => {
       setAiResult(data);
       setActiveTab("ai-result");
@@ -144,7 +145,7 @@ export default function CodePage() {
     onError: (err) => toast.error(err.message),
   });
 
-  const createSnippetMutation = trpc.code.createSnippet.useMutation({
+  const createSnippetMutation = codeApi.createSnippet.useMutation({
     onSuccess: () => {
       toast.success("Snippet saved");
       setShowSaveDialog(false);
@@ -153,7 +154,7 @@ export default function CodePage() {
     onError: (err) => toast.error(err.message),
   });
 
-  const updateSnippetMutation = trpc.code.updateSnippet.useMutation({
+  const updateSnippetMutation = codeApi.updateSnippet.useMutation({
     onSuccess: () => {
       toast.success("Snippet updated");
       snippetsQuery.refetch();
@@ -161,7 +162,7 @@ export default function CodePage() {
     onError: (err) => toast.error(err.message),
   });
 
-  const deleteSnippetMutation = trpc.code.deleteSnippet.useMutation({
+  const deleteSnippetMutation = codeApi.deleteSnippet.useMutation({
     onSuccess: () => {
       toast.success("Snippet deleted");
       snippetsQuery.refetch();

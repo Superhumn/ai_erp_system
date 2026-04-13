@@ -126,7 +126,7 @@ export default function CRMHub() {
     onSuccess: () => {
       toast.success("Deal created");
       setIsDealDialogOpen(false);
-      setDealForm({ name: "", contactId: 0, contactName: "", contactEmail: "", stage: "discovery", amount: "", source: "", notes: "" });
+      setDealForm({ name: "", contactId: 0, contactName: "", contactEmail: "", contactCompany: "", stage: "discovery", amount: "", source: "", notes: "" });
       refetchDeals();
     },
     onError: (e: any) => toast.error(e.message),
@@ -1051,7 +1051,7 @@ export default function CRMHub() {
                 if (v === "new") {
                   setDealForm({ ...dealForm, contactId: 0 });
                 } else {
-                  setDealForm({ ...dealForm, contactId: parseInt(v), contactName: "", contactEmail: "" });
+                  setDealForm({ ...dealForm, contactId: parseInt(v), contactName: "", contactEmail: "", contactCompany: "" });
                 }
               }}>
                 <SelectTrigger><SelectValue placeholder="Select contact" /></SelectTrigger>
@@ -1116,7 +1116,6 @@ export default function CRMHub() {
                     phone: "",
                     contactType: "lead" as ContactType,
                     source: "manual" as ContactSource,
-                    organization: "",
                     jobTitle: "",
                     notes: "",
                   });

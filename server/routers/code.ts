@@ -1,5 +1,5 @@
 import { z } from "zod";
-import * as db from "../db";
+import * as db from "../db/code";
 import { router, protectedProcedure } from "./middleware";
 import { processCodeAIRequest, executeCodeSandboxed, type CodeAction } from "../codeService";
 
