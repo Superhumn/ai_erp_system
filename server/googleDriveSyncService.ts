@@ -124,14 +124,15 @@ export async function syncGoogleDriveFolder(options: SyncOptions): Promise<SyncR
           }
 
           // Create the folder in the data room
-          const folderId = await db.createDataRoomFolder({
+          const folderResult = await db.createDataRoomFolder({
             dataRoomId: options.dataRoomId,
             parentId,
             name: driveFolder.name,
             googleDriveFolderId: driveFolder.id,
-          });
+          } as any);
+          const folderId = typeof folderResult === 'number' ? folderResult : (folderResult as any).id;
 
-          folderMapping.set(driveFolder.id, folderId);
+          folderMapping.set(driveFolder.id, folderResult.id);
           foldersCreated++;
         } else {
           folderMapping.set(driveFolder.id, existingFolder.id);

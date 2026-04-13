@@ -155,7 +155,7 @@ export default function TransactionalEmailsPage() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Transactional Emails</h1>
+          <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em]">Transactional Emails</h1>
           <p className="text-muted-foreground mt-1">
             Manage SendGrid templates, view email logs, and monitor delivery
           </p>
@@ -195,7 +195,7 @@ export default function TransactionalEmailsPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Delivered</CardDescription>
-            <CardTitle className="text-2xl text-green-500">{stats?.delivered || 0}</CardTitle>
+            <CardTitle className="text-2xl text-green-500">{((stats as any)?.delivered) || 0}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
@@ -207,7 +207,7 @@ export default function TransactionalEmailsPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Bounced</CardDescription>
-            <CardTitle className="text-2xl text-orange-500">{stats?.bounced || 0}</CardTitle>
+            <CardTitle className="text-2xl text-orange-500">{((stats as any)?.bounced) || 0}</CardTitle>
           </CardHeader>
         </Card>
       </div>
@@ -375,7 +375,7 @@ export default function TransactionalEmailsPage() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  templates?.map((template) => (
+                  templates?.map((template: any) => (
                     <TableRow key={template.id}>
                       <TableCell className="font-medium">
                         {TEMPLATE_NAMES.find(t => t.value === template.name)?.label || template.name}
@@ -483,19 +483,19 @@ export default function TransactionalEmailsPage() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  messages?.map((message) => (
+                  messages?.map((message: any) => (
                     <TableRow key={message.id}>
                       <TableCell className="font-mono text-sm">{message.id}</TableCell>
                       <TableCell>
                         <div>
-                          <div className="font-medium">{message.toName || message.toEmail}</div>
-                          {message.toName && <div className="text-xs text-muted-foreground">{message.toEmail}</div>}
+                          <div className="font-medium">{message.toName || message.toEmail || message.to}</div>
+                          {message.toName && <div className="text-xs text-muted-foreground">{message.toEmail || message.to}</div>}
                         </div>
                       </TableCell>
                       <TableCell className="max-w-xs truncate">{message.subject}</TableCell>
                       <TableCell>
                         <Badge variant="outline">
-                          {TEMPLATE_NAMES.find(t => t.value === message.templateName)?.label || message.templateName}
+                          {TEMPLATE_NAMES.find(t => t.value === message.templateName)?.label || message.templateName || "-"}
                         </Badge>
                       </TableCell>
                       <TableCell>{getStatusBadge(message.status)}</TableCell>
@@ -558,16 +558,16 @@ export default function TransactionalEmailsPage() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    events?.map((event) => (
+                    events?.map((event: any) => (
                       <TableRow key={event.id}>
                         <TableCell>
-                          <Badge variant="outline">{event.providerEventType}</Badge>
+                          <Badge variant="outline">{event.providerEventType || event.eventType}</Badge>
                         </TableCell>
-                        <TableCell>{event.email}</TableCell>
+                        <TableCell>{event.email || "-"}</TableCell>
                         <TableCell className="font-mono text-xs">{event.providerMessageId}</TableCell>
-                        <TableCell className="max-w-xs truncate text-sm">{event.reason || "-"}</TableCell>
+                        <TableCell className="max-w-xs truncate text-sm">{(event.metadata as any)?.reason || "-"}</TableCell>
                         <TableCell className="text-sm">
-                          {event.providerTimestamp ? new Date(event.providerTimestamp).toLocaleString() : "-"}
+                          {event.providerTimestamp ? new Date(event.providerTimestamp).toLocaleString() : (event.createdAt ? new Date(event.createdAt).toLocaleString() : "-")}
                         </TableCell>
                       </TableRow>
                     ))

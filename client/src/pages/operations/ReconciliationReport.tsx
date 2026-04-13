@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, ReactNode } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -52,7 +52,7 @@ export default function ReconciliationReport() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+          <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
             <ClipboardCheck className="h-8 w-8" />
             Inventory Reconciliation
           </h1>
@@ -148,7 +148,7 @@ export default function ReconciliationReport() {
   );
 }
 
-function ReconciliationRunRow({ run, getStatusBadge }: { run: any; getStatusBadge: (s: string) => JSX.Element }) {
+function ReconciliationRunRow({ run, getStatusBadge }: { run: any; getStatusBadge: (s: string) => ReactNode }) {
   const [expanded, setExpanded] = useState(false);
   const { data: detail } = trpc.reconciliation.getById.useQuery(
     { id: run.id },

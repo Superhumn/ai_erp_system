@@ -89,7 +89,7 @@ export default function AutonomousDashboard() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
+          <h1 className="text-xl font-semibold tracking-[-0.02em] flex items-center gap-2">
             <Bot className="h-6 w-6" />
             Autonomous Supply Chain
           </h1>
@@ -136,7 +136,7 @@ export default function AutonomousDashboard() {
             <div className={`h-3 w-3 rounded-full ${isRunning ? "bg-green-500 animate-pulse" : "bg-red-500"}`} />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{isRunning ? "Running" : "Stopped"}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{isRunning ? "Running" : "Stopped"}</div>
             <p className="text-xs text-muted-foreground">
               {statusQuery.data?.activeWorkflows || 0} active workflows
             </p>
@@ -149,7 +149,7 @@ export default function AutonomousDashboard() {
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{statusQuery.data?.todayMetrics?.totalRuns || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{statusQuery.data?.todayMetrics?.totalRuns || 0}</div>
             <p className="text-xs text-muted-foreground">
               {statusQuery.data?.todayMetrics?.completed || 0} completed, {statusQuery.data?.todayMetrics?.failed || 0} failed
             </p>
@@ -162,7 +162,7 @@ export default function AutonomousDashboard() {
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{statusQuery.data?.pendingApprovals || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{statusQuery.data?.pendingApprovals || 0}</div>
             <p className="text-xs text-muted-foreground">Waiting for review</p>
           </CardContent>
         </Card>
@@ -173,7 +173,7 @@ export default function AutonomousDashboard() {
             <AlertTriangle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{statusQuery.data?.openExceptions || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{statusQuery.data?.openExceptions || 0}</div>
             <p className="text-xs text-muted-foreground">Requires attention</p>
           </CardContent>
         </Card>
@@ -188,23 +188,23 @@ export default function AutonomousDashboard() {
           <CardContent>
             <div className="grid gap-4 md:grid-cols-5">
               <div className="text-center p-4 rounded-lg bg-muted/50">
-                <div className="text-3xl font-bold text-blue-600">{metricsQuery.data.totalRuns || 0}</div>
+                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-blue-600">{metricsQuery.data.totalRuns || 0}</div>
                 <div className="text-sm text-muted-foreground">Total Runs</div>
               </div>
               <div className="text-center p-4 rounded-lg bg-muted/50">
-                <div className="text-3xl font-bold text-green-600">{metricsQuery.data.successfulRuns || 0}</div>
+                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-green-600">{metricsQuery.data.successfulRuns || 0}</div>
                 <div className="text-sm text-muted-foreground">Successful</div>
               </div>
               <div className="text-center p-4 rounded-lg bg-muted/50">
-                <div className="text-3xl font-bold text-purple-600">{metricsQuery.data.aiDecisions || 0}</div>
+                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-purple-600">{metricsQuery.data.aiDecisions || 0}</div>
                 <div className="text-sm text-muted-foreground">AI Decisions</div>
               </div>
               <div className="text-center p-4 rounded-lg bg-muted/50">
-                <div className="text-3xl font-bold text-amber-600">{metricsQuery.data.itemsProcessed || 0}</div>
+                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-amber-600">{metricsQuery.data.itemsProcessed || 0}</div>
                 <div className="text-sm text-muted-foreground">Items Processed</div>
               </div>
               <div className="text-center p-4 rounded-lg bg-muted/50">
-                <div className="text-3xl font-bold text-emerald-600">
+                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-emerald-600">
                   ${((metricsQuery.data.totalValue || 0) / 1000).toFixed(0)}k
                 </div>
                 <div className="text-sm text-muted-foreground">Value Processed</div>

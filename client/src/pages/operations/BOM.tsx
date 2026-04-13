@@ -18,17 +18,17 @@ export default function BOM() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   
-  const { data: boms, isLoading, refetch } = trpc.bom.list.useQuery(
+  const utils = trpc.useUtils();
+  const { data: boms, isLoading } = trpc.bom.list.useQuery(
     statusFilter !== "all" ? { status: statusFilter } : undefined
   );
   const { data: products } = trpc.products.list.useQuery();
-  const utils = trpc.useUtils();
-  
+
   const createBom = trpc.bom.create.useMutation({
     onSuccess: (result) => {
       toast.success("BOM created successfully");
       setIsCreateOpen(false);
-      refetch();
+      utils.bom.list.invalidate();
       navigate(`/operations/bom/${result.id}`);
     },
     onError: (error) => {
@@ -39,7 +39,7 @@ export default function BOM() {
   const deleteBom = trpc.bom.delete.useMutation({
     onSuccess: () => {
       toast.success("BOM deleted");
-      refetch();
+      utils.bom.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -66,11 +66,11 @@ export default function BOM() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "active":
-        return <Badge className="bg-green-100 text-green-800">Active</Badge>;
+        return <Badge className="bg-emerald-500/8 text-emerald-600 dark:text-emerald-400">Active</Badge>;
       case "draft":
-        return <Badge className="bg-yellow-100 text-yellow-800">Draft</Badge>;
+        return <Badge className="bg-amber-500/8 text-amber-600 dark:text-amber-400">Draft</Badge>;
       case "obsolete":
-        return <Badge className="bg-gray-100 text-gray-800">Obsolete</Badge>;
+        return <Badge className="bg-gray-500/8 text-gray-600 dark:text-gray-400">Obsolete</Badge>;
       default:
         return <Badge>{status}</Badge>;
     }
@@ -85,7 +85,7 @@ export default function BOM() {
     <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold">Bill of Materials</h1>
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">Bill of Materials</h1>
             <p className="text-muted-foreground">Manage product recipes and component lists</p>
           </div>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
@@ -189,7 +189,7 @@ export default function BOM() {
             <CardContent>
               <div className="flex items-center gap-2">
                 <FileText className="h-5 w-5 text-blue-500" />
-                <span className="text-2xl font-bold">{totalBoms}</span>
+                <span className="text-xl font-semibold tracking-[-0.02em]">{totalBoms}</span>
               </div>
             </CardContent>
           </Card>
@@ -200,7 +200,7 @@ export default function BOM() {
             <CardContent>
               <div className="flex items-center gap-2">
                 <Package className="h-5 w-5 text-green-500" />
-                <span className="text-2xl font-bold">{activeBoms}</span>
+                <span className="text-xl font-semibold tracking-[-0.02em]">{activeBoms}</span>
               </div>
             </CardContent>
           </Card>
@@ -211,7 +211,7 @@ export default function BOM() {
             <CardContent>
               <div className="flex items-center gap-2">
                 <Calculator className="h-5 w-5 text-yellow-500" />
-                <span className="text-2xl font-bold">{draftBoms}</span>
+                <span className="text-xl font-semibold tracking-[-0.02em]">{draftBoms}</span>
               </div>
             </CardContent>
           </Card>

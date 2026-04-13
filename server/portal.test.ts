@@ -261,8 +261,8 @@ describe("copackerPortal", () => {
       ]);
 
       vi.spyOn(db, "getShipments").mockResolvedValue([
-        { id: 1 } as any,
-        { id: 2 } as any,
+        { id: 1, type: "inbound", purchaseOrderId: 101 } as any,
+        { id: 2, type: "inbound", purchaseOrderId: 102 } as any,
       ]);
 
       const result = await caller.copackerPortal.getCustomsClearances();

@@ -40,15 +40,15 @@ const txnSetLabels: Record<string, string> = {
 };
 
 const statusColors: Record<string, string> = {
-  received: "bg-blue-100 text-blue-800",
-  parsing: "bg-yellow-100 text-yellow-800",
-  parsed: "bg-indigo-100 text-indigo-800",
-  validated: "bg-purple-100 text-purple-800",
-  processing: "bg-orange-100 text-orange-800",
-  processed: "bg-green-100 text-green-800",
-  error: "bg-red-100 text-red-800",
-  rejected: "bg-red-100 text-red-800",
-  acknowledged: "bg-emerald-100 text-emerald-800",
+  received: "bg-blue-500/8 text-blue-600 dark:text-blue-400",
+  parsing: "bg-amber-500/8 text-amber-600 dark:text-amber-400",
+  parsed: "bg-indigo-500/8 text-indigo-600 dark:text-indigo-400",
+  validated: "bg-violet-500/8 text-violet-600 dark:text-violet-400",
+  processing: "bg-orange-500/8 text-orange-600 dark:text-orange-400",
+  processed: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
+  error: "bg-red-500/8 text-red-600 dark:text-red-400",
+  rejected: "bg-red-500/8 text-red-600 dark:text-red-400",
+  acknowledged: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
 };
 
 export default function EDITransactions() {
@@ -123,7 +123,10 @@ export default function EDITransactions() {
 
   // Detail view
   if (selectedTxnId && selectedTxn) {
-    const parsedData = selectedTxn.parsedData ? JSON.parse(selectedTxn.parsedData) : null;
+    const txnAny = selectedTxn as any;
+    const parsedData = (() => {
+      try { return selectedTxn.parsedData ? JSON.parse(selectedTxn.parsedData) : null; } catch { return null; }
+    })();
 
     return (
       <div className="p-6 space-y-6">
@@ -133,12 +136,12 @@ export default function EDITransactions() {
             Back
           </Button>
           <div>
-            <h1 className="text-2xl font-bold">
-              {txnSetLabels[selectedTxn.transactionSetCode] || selectedTxn.transactionSetCode}
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">
+              {txnSetLabels[txnAny.transactionSetCode] || txnAny.transactionSetCode}
             </h1>
             <p className="text-muted-foreground">
-              Control #: {selectedTxn.interchangeControlNumber} &middot;
-              {selectedTxn.purchaseOrderNumber && ` PO: ${selectedTxn.purchaseOrderNumber} ·`}
+              Control #: {txnAny.interchangeControlNumber} &middot;
+              {txnAny.purchaseOrderNumber && ` PO: ${txnAny.purchaseOrderNumber} ·`}
               {" "}{selectedTxn.direction}
             </p>
           </div>
@@ -156,19 +159,19 @@ export default function EDITransactions() {
             <CardContent className="space-y-2">
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <span className="text-muted-foreground">Transaction Set:</span>
-                <span className="font-mono">{selectedTxn.transactionSetCode} - {txnSetLabels[selectedTxn.transactionSetCode] || "Unknown"}</span>
+                <span className="font-mono">{txnAny.transactionSetCode} - {txnSetLabels[txnAny.transactionSetCode] || "Unknown"}</span>
                 <span className="text-muted-foreground">Direction:</span>
                 <span className="capitalize">{selectedTxn.direction}</span>
                 <span className="text-muted-foreground">ISA Control #:</span>
-                <span className="font-mono">{selectedTxn.interchangeControlNumber || "-"}</span>
+                <span className="font-mono">{txnAny.interchangeControlNumber || "-"}</span>
                 <span className="text-muted-foreground">GS Control #:</span>
-                <span className="font-mono">{selectedTxn.groupControlNumber || "-"}</span>
+                <span className="font-mono">{txnAny.groupControlNumber || "-"}</span>
                 <span className="text-muted-foreground">ST Control #:</span>
-                <span className="font-mono">{selectedTxn.transactionSetControlNumber || "-"}</span>
+                <span className="font-mono">{txnAny.transactionSetControlNumber || "-"}</span>
                 <span className="text-muted-foreground">PO Number:</span>
-                <span className="font-mono">{selectedTxn.purchaseOrderNumber || "-"}</span>
+                <span className="font-mono">{txnAny.purchaseOrderNumber || "-"}</span>
                 <span className="text-muted-foreground">Linked Order:</span>
-                <span>{selectedTxn.orderId ? <Link href={`/sales/orders/${selectedTxn.orderId}`} className="text-blue-600 underline">Order #{selectedTxn.orderId}</Link> : "-"}</span>
+                <span>{txnAny.orderId ? <Link href={`/sales/orders/${txnAny.orderId}`} className="text-blue-600 underline">Order #{txnAny.orderId}</Link> : "-"}</span>
                 <span className="text-muted-foreground">Created:</span>
                 <span>{new Date(selectedTxn.createdAt).toLocaleString()}</span>
                 <span className="text-muted-foreground">Processed:</span>
@@ -177,7 +180,7 @@ export default function EDITransactions() {
 
               {/* Actions */}
               <div className="flex gap-2 pt-4">
-                {selectedTxn.transactionSetCode === "850" && selectedTxn.status === "validated" && !selectedTxn.orderId && (
+                {txnAny.transactionSetCode === "850" && selectedTxn.status === "validated" && !txnAny.orderId && (
                   <Button
                     size="sm"
                     onClick={() => convertToOrder.mutate({ transactionId: selectedTxn.id })}
@@ -203,13 +206,13 @@ export default function EDITransactions() {
               </div>
 
               {/* Error info */}
-              {selectedTxn.errorMessage && (
+              {txnAny.errorMessage && (
                 <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded text-sm">
                   <div className="flex items-center gap-2 font-medium text-red-800 mb-1">
                     <AlertTriangle className="h-4 w-4" />
                     Error
                   </div>
-                  <p className="text-red-700">{selectedTxn.errorMessage}</p>
+                  <p className="text-red-700">{txnAny.errorMessage}</p>
                 </div>
               )}
             </CardContent>
@@ -256,12 +259,12 @@ export default function EDITransactions() {
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {selectedTxn.items.map((item) => (
+                    {selectedTxn.items.map((item: any) => (
                       <tr key={item.id} className="hover:bg-muted/50">
                         <td className="py-2 text-sm">{item.lineNumber}</td>
                         <td className="py-2 text-sm font-mono">{item.buyerPartNumber || "-"}</td>
                         <td className="py-2 text-sm font-mono">{item.vendorPartNumber || "-"}</td>
-                        <td className="py-2 text-sm font-mono">{item.upc || "-"}</td>
+                        <td className="py-2 text-sm font-mono">{item.upc || item.upcCode || "-"}</td>
                         <td className="py-2 text-sm max-w-[200px] truncate">{item.description || "-"}</td>
                         <td className="py-2 text-sm">{item.quantity}</td>
                         <td className="py-2 text-sm">{item.unitOfMeasure}</td>
@@ -284,14 +287,14 @@ export default function EDITransactions() {
         )}
 
         {/* Raw EDI Content */}
-        {selectedTxn.rawContent && (
+        {txnAny.rawContent && (
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Raw EDI Content</CardTitle>
             </CardHeader>
             <CardContent>
               <pre className="text-xs bg-muted p-3 rounded overflow-auto max-h-64 font-mono whitespace-pre-wrap break-all">
-                {selectedTxn.rawContent}
+                {txnAny.rawContent}
               </pre>
             </CardContent>
           </Card>
@@ -312,7 +315,7 @@ export default function EDITransactions() {
             </Button>
           </Link>
           <div>
-            <h1 className="text-2xl font-bold">EDI Transactions</h1>
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">EDI Transactions</h1>
             <p className="text-muted-foreground">Document exchange history and processing</p>
           </div>
         </div>
@@ -336,7 +339,7 @@ export default function EDITransactions() {
                     <SelectValue placeholder="Select trading partner" />
                   </SelectTrigger>
                   <SelectContent>
-                    {partners?.map((p) => (
+                    {partners?.map((p: any) => (
                       <SelectItem key={p.id} value={p.id.toString()}>{p.name} ({p.isaId})</SelectItem>
                     ))}
                   </SelectContent>
@@ -426,7 +429,7 @@ export default function EDITransactions() {
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {transactions.map((txn) => (
+                  {transactions.map((txn: any) => (
                     <tr key={txn.id} className="hover:bg-muted/50 cursor-pointer" onClick={() => setSelectedTxnId(txn.id)}>
                       <td className="py-3">
                         <div className="flex items-center gap-2">
@@ -448,7 +451,7 @@ export default function EDITransactions() {
                       <td className="py-3 text-sm font-mono">{txn.purchaseOrderNumber || "-"}</td>
                       <td className="py-3 text-sm font-mono text-muted-foreground">{txn.interchangeControlNumber || "-"}</td>
                       <td className="py-3">
-                        <Badge className={statusColors[txn.status] || "bg-gray-100 text-gray-800"} variant="outline">
+                        <Badge className={statusColors[txn.status] || "bg-gray-500/8 text-gray-600 dark:text-gray-400"} variant="outline">
                           {txn.status}
                         </Badge>
                       </td>

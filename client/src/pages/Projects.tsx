@@ -28,8 +28,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
-import { 
-  FolderKanban, 
+import {
+  FolderKanban,
   LayoutGrid,
   List,
   Plus,
@@ -44,16 +44,19 @@ import {
   AlertCircle,
   X,
   GripVertical,
+  ChevronDown,
+  ChevronRight,
+  AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 const taskStatusOptions = [
-  { value: "backlog", label: "Backlog", color: "bg-gray-100 text-gray-800" },
-  { value: "todo", label: "To Do", color: "bg-blue-100 text-blue-800" },
-  { value: "in_progress", label: "In Progress", color: "bg-yellow-100 text-yellow-800" },
-  { value: "review", label: "Review", color: "bg-purple-100 text-purple-800" },
-  { value: "done", label: "Done", color: "bg-green-100 text-green-800" },
+  { value: "todo", label: "To Do", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
+  { value: "in_progress", label: "In Progress", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
+  { value: "review", label: "Review", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
+  { value: "completed", label: "Done", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+  { value: "cancelled", label: "Cancelled", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
 ];
 
 const priorityOptions = [
@@ -69,41 +72,97 @@ function formatDate(value: string | Date | null | undefined) {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-// Kanban Column Component
-function KanbanColumn({ 
-  title, 
-  status, 
-  tasks, 
+/** Returns suggested number of days from now based on priority */
+function getSuggestedDeadlineDays(priority: string): number {
+  switch (priority) {
+    case "urgent": return 1;
+    case "high": return 3;
+    case "medium": return 7;
+    case "low": return 14;
+    default: return 7;
+  }
+}
+
+function formatSuggestedDate(priority: string): string {
+  const days = getSuggestedDeadlineDays(priority);
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString().split("T")[0];
+}
+
+type DeadlineStatus = "overdue" | "approaching" | "normal" | "none";
+
+/** Returns deadline urgency: overdue, approaching (within 2 days), or normal */
+function getDeadlineStatus(dueDate: string | Date | null | undefined, status: string): DeadlineStatus {
+  if (!dueDate || status === "completed" || status === "cancelled") return "none";
+  const due = typeof dueDate === "string" ? new Date(dueDate) : dueDate;
+  const now = new Date();
+  const diffMs = due.getTime() - now.getTime();
+  const diffDays = diffMs / (1000 * 60 * 60 * 24);
+  if (diffDays < 0) return "overdue";
+  if (diffDays <= 2) return "approaching";
+  return "normal";
+}
+
+function deadlineIndicatorClass(dlStatus: DeadlineStatus): string {
+  switch (dlStatus) {
+    case "overdue": return "text-red-600 border-red-300 bg-red-50";
+    case "approaching": return "text-amber-600 border-amber-300 bg-amber-50";
+    default: return "";
+  }
+}
+
+function getInitials(name: string | undefined): string {
+  if (!name) return "?";
+  return name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
+}
+
+function avatarColor(name: string | undefined): string {
+  if (!name) return "bg-gray-300";
+  const colors = [
+    "bg-blue-500", "bg-green-500", "bg-purple-500", "bg-pink-500",
+    "bg-indigo-500", "bg-teal-500", "bg-orange-500", "bg-cyan-500",
+  ];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return colors[Math.abs(hash) % colors.length];
+}
+
+// Kanban Column Component (used inside project swimlanes)
+function KanbanColumn({
+  title,
+  status,
+  tasks,
   onTaskClick,
   onStatusChange,
-  color 
-}: { 
-  title: string; 
-  status: string; 
-  tasks: any[]; 
+  color,
+  projects,
+  onProjectChange,
+}: {
+  title: string;
+  status: string;
+  tasks: any[];
   onTaskClick: (task: any) => void;
   onStatusChange: (taskId: number, newStatus: string) => void;
   color: string;
+  projects?: any[];
+  onProjectChange?: (taskId: number, projectId: number) => void;
 }) {
-  const columnTasks = tasks.filter(t => t.status === status);
-
   return (
-    <div className="p-6 flex-1 min-w-[280px] max-w-[320px]">
-      <div className={cn("flex items-center gap-2 mb-3 pb-2 border-b-2", color)}>
-        <h3 className="font-semibold text-sm">{title}</h3>
-        <Badge variant="secondary" className="text-xs">{columnTasks.length}</Badge>
-      </div>
-      <div className="space-y-2 min-h-[400px]">
-        {columnTasks.map((task) => (
-          <KanbanCard 
-            key={task.id} 
-            task={task} 
+    <div className="flex-1 min-w-[220px] max-w-[280px]">
+      <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1 custom-scrollbar">
+        {tasks.map((task) => (
+          <KanbanCard
+            key={task.id}
+            task={task}
             onClick={() => onTaskClick(task)}
             onStatusChange={onStatusChange}
+            projects={projects}
+            onProjectChange={onProjectChange}
           />
         ))}
-        {columnTasks.length === 0 && (
-          <div className="text-center py-8 text-muted-foreground text-sm">
+        {tasks.length === 0 && (
+          <div className="text-center py-6 text-muted-foreground text-xs border border-dashed rounded-lg">
             No tasks
           </div>
         )}
@@ -112,79 +171,267 @@ function KanbanColumn({
   );
 }
 
-// Kanban Card Component
-function KanbanCard({ 
-  task, 
-  onClick,
-  onStatusChange 
-}: { 
-  task: any; 
-  onClick: () => void;
+// Project Swimlane for the board view
+function ProjectSwimlane({
+  project,
+  tasks,
+  onTaskClick,
+  onStatusChange,
+}: {
+  project: { id: number; name: string; status?: string };
+  tasks: any[];
+  onTaskClick: (task: any) => void;
   onStatusChange: (taskId: number, newStatus: string) => void;
 }) {
-  const priority = priorityOptions.find(p => p.value === task.priority);
-  const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && task.status !== "done";
+  const [collapsed, setCollapsed] = useState(false);
+  const projectTasks = tasks.filter((t: any) => t.projectId === project.id);
+  const tasksByStatus: Record<string, any[]> = {};
+  for (const s of taskStatusOptions) {
+    tasksByStatus[s.value] = projectTasks.filter((t: any) => t.status === s.value);
+  }
+  const totalTasks = projectTasks.length;
+  const completedTasks = (tasksByStatus["completed"]?.length ?? 0);
+  const progressPct = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
   return (
-    <Card 
+    <div className="border rounded-xl bg-card shadow-sm">
+      {/* Swimlane Header */}
+      <button
+        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors rounded-t-xl text-left"
+        onClick={() => setCollapsed(!collapsed)}
+      >
+        {collapsed ? (
+          <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+        ) : (
+          <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+        )}
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <FolderKanban className="h-4 w-4 text-primary shrink-0" />
+          <span className="font-semibold text-sm truncate">{project.name}</span>
+          <Badge variant="secondary" className="text-xs shrink-0">{totalTasks} tasks</Badge>
+          {totalTasks > 0 && (
+            <div className="flex items-center gap-2 ml-auto shrink-0">
+              <div className="w-24 h-1.5 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-emerald-500 rounded-full transition-all"
+                  style={{ width: `${progressPct}%` }}
+                />
+              </div>
+              <span className="text-xs text-muted-foreground">{progressPct}%</span>
+            </div>
+          )}
+        </div>
+      </button>
+
+      {/* Swimlane Content: status columns */}
+      {!collapsed && (
+        <div className="flex gap-3 px-4 pb-4 overflow-x-auto">
+          {taskStatusOptions
+            .filter((s) => s.value !== "cancelled")
+            .map((s) => (
+              <div key={s.value} className="flex-1 min-w-[220px] max-w-[280px]">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <div className={cn("w-2 h-2 rounded-full", s.color.split(" ")[0].replace("/8", ""))} />
+                  <span className="text-xs font-medium text-muted-foreground">{s.label}</span>
+                  <span className="text-xs text-muted-foreground ml-auto">{tasksByStatus[s.value]?.length ?? 0}</span>
+                </div>
+                <KanbanColumn
+                  title={s.label}
+                  status={s.value}
+                  tasks={tasksByStatus[s.value] || []}
+                  onTaskClick={onTaskClick}
+                  onStatusChange={onStatusChange}
+                  color=""
+                />
+              </div>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Unassigned tasks swimlane
+function UnassignedSwimlane({
+  tasks,
+  onTaskClick,
+  onStatusChange,
+}: {
+  tasks: any[];
+  onTaskClick: (task: any) => void;
+  onStatusChange: (taskId: number, newStatus: string) => void;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const unassignedTasks = tasks.filter((t: any) => !t.projectId || t.projectId === 0);
+  const tasksByStatus: Record<string, any[]> = {};
+  for (const s of taskStatusOptions) {
+    tasksByStatus[s.value] = unassignedTasks.filter((t: any) => t.status === s.value);
+  }
+
+  if (unassignedTasks.length === 0) return null;
+
+  return (
+    <div className="border rounded-xl bg-card shadow-sm border-dashed">
+      <button
+        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors rounded-t-xl text-left"
+        onClick={() => setCollapsed(!collapsed)}
+      >
+        {collapsed ? (
+          <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+        ) : (
+          <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+        )}
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <Circle className="h-4 w-4 text-muted-foreground shrink-0" />
+          <span className="font-semibold text-sm text-muted-foreground truncate">Unassigned to Project</span>
+          <Badge variant="outline" className="text-xs shrink-0">{unassignedTasks.length} tasks</Badge>
+        </div>
+      </button>
+
+      {!collapsed && (
+        <div className="flex gap-3 px-4 pb-4 overflow-x-auto">
+          {taskStatusOptions
+            .filter((s) => s.value !== "cancelled")
+            .map((s) => (
+              <div key={s.value} className="flex-1 min-w-[220px] max-w-[280px]">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <div className={cn("w-2 h-2 rounded-full", s.color.split(" ")[0].replace("/8", ""))} />
+                  <span className="text-xs font-medium text-muted-foreground">{s.label}</span>
+                  <span className="text-xs text-muted-foreground ml-auto">{tasksByStatus[s.value]?.length ?? 0}</span>
+                </div>
+                <KanbanColumn
+                  title={s.label}
+                  status={s.value}
+                  tasks={tasksByStatus[s.value] || []}
+                  onTaskClick={onTaskClick}
+                  onStatusChange={onStatusChange}
+                  color=""
+                />
+              </div>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Kanban Card Component -- enhanced with deadline indicators & assignee avatars
+function KanbanCard({
+  task,
+  onClick,
+  onStatusChange,
+  projects,
+  onProjectChange,
+}: {
+  task: any;
+  onClick: () => void;
+  onStatusChange: (taskId: number, newStatus: string) => void;
+  projects?: any[];
+  onProjectChange?: (taskId: number, projectId: number) => void;
+}) {
+  const priority = priorityOptions.find((p) => p.value === task.priority);
+  const dlStatus = getDeadlineStatus(task.dueDate, task.status);
+  const dlClass = deadlineIndicatorClass(dlStatus);
+
+  return (
+    <Card
       className={cn(
-        "cursor-pointer hover:shadow-md transition-shadow",
-        isOverdue && "border-red-300 bg-red-50/50"
+        "cursor-pointer hover:shadow-md transition-all border",
+        dlStatus === "overdue" && "border-red-300 bg-red-50/50 dark:bg-red-950/20",
+        dlStatus === "approaching" && "border-amber-300 bg-amber-50/30 dark:bg-amber-950/20",
       )}
       onClick={onClick}
     >
       <CardContent className="p-3">
-        <div className="flex items-start justify-between gap-2">
-          <h4 className="font-medium text-sm line-clamp-2">{task.title}</h4>
+        {/* Title row with status menu */}
+        <div className="flex items-start justify-between gap-1.5">
+          <h4 className="font-medium text-sm line-clamp-2 flex-1">{task.title}</h4>
           <DropdownMenu>
             <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-              <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-                <MoreHorizontal className="h-4 w-4" />
+              <Button variant="ghost" size="sm" className="h-6 w-6 p-0 shrink-0 opacity-0 group-hover:opacity-100 hover:opacity-100 focus:opacity-100 transition-opacity">
+                <MoreHorizontal className="h-3.5 w-3.5" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               {taskStatusOptions.map((s) => (
-                <DropdownMenuItem 
+                <DropdownMenuItem
                   key={s.value}
                   onClick={(e) => {
                     e.stopPropagation();
                     onStatusChange(task.id, s.value);
                   }}
                 >
-                  Move to {s.label}
+                  {s.label}
                 </DropdownMenuItem>
               ))}
+              {projects && projects.length > 0 && onProjectChange && (
+                <>
+                  <div className="border-t my-1" />
+                  <div className="px-2 py-1 text-[10px] text-muted-foreground font-medium">Move to project</div>
+                  {projects.filter((p: any) => p.id !== task.projectId).map((p: any) => (
+                    <DropdownMenuItem
+                      key={p.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onProjectChange(task.id, p.id);
+                      }}
+                    >
+                      <FolderKanban className="h-3 w-3 mr-1.5" />
+                      {p.name}
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        
+
         {task.description && (
           <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
             {task.description}
           </p>
         )}
 
-        <div className="flex items-center gap-2 mt-3 flex-wrap">
-          {priority && (
-            <Badge variant="outline" className={cn("text-xs", priority.color)}>
-              <Flag className="h-3 w-3 mr-1" />
-              {priority.label}
-            </Badge>
-          )}
-          {task.dueDate && (
-            <Badge 
-              variant="outline" 
-              className={cn("text-xs", isOverdue && "text-red-600 border-red-300")}
+        {/* Bottom row: metadata + assignee avatar */}
+        <div className="flex items-center justify-between mt-3">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {priority && (
+              <Badge variant="outline" className={cn("text-[10px] px-1.5 py-0", priority.color)}>
+                <Flag className="h-2.5 w-2.5 mr-0.5" />
+                {priority.label}
+              </Badge>
+            )}
+            {task.dueDate && (
+              <Badge
+                variant="outline"
+                className={cn("text-[10px] px-1.5 py-0", dlClass)}
+              >
+                {dlStatus === "overdue" && <AlertCircle className="h-2.5 w-2.5 mr-0.5" />}
+                {dlStatus === "approaching" && <AlertTriangle className="h-2.5 w-2.5 mr-0.5" />}
+                {dlStatus === "normal" && <Calendar className="h-2.5 w-2.5 mr-0.5" />}
+                {formatDate(task.dueDate)}
+              </Badge>
+            )}
+          </div>
+
+          {/* Assignee avatar */}
+          {task.assignee ? (
+            <div
+              className={cn(
+                "h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0",
+                avatarColor(task.assignee.name),
+              )}
+              title={task.assignee.name || "Assigned"}
             >
-              <Calendar className="h-3 w-3 mr-1" />
-              {formatDate(task.dueDate)}
-            </Badge>
-          )}
-          {task.assignee && (
-            <Badge variant="outline" className="text-xs">
-              <User className="h-3 w-3 mr-1" />
-              {task.assignee.name?.split(" ")[0] || "Assigned"}
-            </Badge>
+              {getInitials(task.assignee.name)}
+            </div>
+          ) : (
+            <div
+              className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] border border-dashed border-muted-foreground/40 text-muted-foreground shrink-0"
+              title="Unassigned"
+            >
+              ?
+            </div>
           )}
         </div>
       </CardContent>
@@ -193,14 +440,16 @@ function KanbanCard({
 }
 
 // Task Detail Panel (for spreadsheet view)
-function TaskDetailPanel({ task, onClose, onStatusChange }: { 
-  task: any; 
+function TaskDetailPanel({ task, onClose, onStatusChange, projects, onProjectChange }: {
+  task: any;
   onClose: () => void;
   onStatusChange: (taskId: number, status: string) => void;
+  projects?: any[];
+  onProjectChange?: (taskId: number, projectId: number) => void;
 }) {
   const statusOption = taskStatusOptions.find(s => s.value === task.status);
   const priority = priorityOptions.find(p => p.value === task.priority);
-  const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && task.status !== "done";
+  const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && task.status !== "completed";
 
   return (
     <div className="p-6 space-y-4">
@@ -216,13 +465,27 @@ function TaskDetailPanel({ task, onClose, onStatusChange }: {
               </Badge>
             )}
           </h3>
-          <p className="text-sm text-muted-foreground">
-            {task.project?.name || "No project"}
-          </p>
+          {/* Project selector */}
+          {projects && projects.length > 0 && onProjectChange && (
+            <Select
+              value={String(task.projectId || "")}
+              onValueChange={(v) => onProjectChange(task.id, Number(v))}
+            >
+              <SelectTrigger className="w-[180px] h-7 text-xs">
+                <FolderKanban className="h-3 w-3 mr-1 shrink-0" />
+                <SelectValue placeholder="Move to project..." />
+              </SelectTrigger>
+              <SelectContent>
+                {projects.map((p: any) => (
+                  <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
         <div className="flex items-center gap-2">
-          <Select 
-            value={task.status} 
+          <Select
+            value={task.status}
             onValueChange={(v) => onStatusChange(task.id, v)}
           >
             <SelectTrigger className="w-[140px] h-8">
@@ -355,9 +618,14 @@ export default function Projects() {
     { key: "priority", header: "Priority", type: "badge", options: priorityOptions, editable: true, filterable: true },
     { key: "assignee", header: "Assignee", type: "text", render: (row) => row.assignee?.name || "-" },
     { key: "dueDate", header: "Due", type: "date", sortable: true, editable: true, render: (row) => {
-      const isOverdue = row.dueDate && new Date(row.dueDate) < new Date() && row.status !== "done";
+      const dlStatus = getDeadlineStatus(row.dueDate, row.status);
       return (
-        <span className={cn(isOverdue && "text-red-600 font-medium")}>
+        <span className={cn(
+          dlStatus === "overdue" && "text-red-600 font-medium",
+          dlStatus === "approaching" && "text-amber-600 font-medium",
+        )}>
+          {dlStatus === "overdue" && "!! "}
+          {dlStatus === "approaching" && "! "}
           {formatDate(row.dueDate)}
         </span>
       );
@@ -368,14 +636,13 @@ export default function Projects() {
   // Stats
   const stats = {
     total: filteredTasks.length,
-    backlog: filteredTasks.filter((t: any) => t.status === "backlog").length,
     todo: filteredTasks.filter((t: any) => t.status === "todo").length,
     inProgress: filteredTasks.filter((t: any) => t.status === "in_progress").length,
     review: filteredTasks.filter((t: any) => t.status === "review").length,
-    done: filteredTasks.filter((t: any) => t.status === "done").length,
-    overdue: filteredTasks.filter((t: any) => 
-      t.dueDate && new Date(t.dueDate) < new Date() && t.status !== "done"
-    ).length,
+    completed: filteredTasks.filter((t: any) => t.status === "completed").length,
+    cancelled: filteredTasks.filter((t: any) => t.status === "cancelled").length,
+    overdue: filteredTasks.filter((t: any) => getDeadlineStatus(t.dueDate, t.status) === "overdue").length,
+    approaching: filteredTasks.filter((t: any) => getDeadlineStatus(t.dueDate, t.status) === "approaching").length,
   };
 
   const handleCreateTask = () => {
@@ -397,12 +664,16 @@ export default function Projects() {
     updateTaskStatus.mutate({ id: taskId, status: newStatus as any });
   };
 
+  const handleProjectChange = (taskId: number, projectId: number) => {
+    updateTaskStatus.mutate({ id: taskId, projectId } as any);
+  };
+
   return (
     <div className="p-6 space-y-6 animate-fade-in">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+            <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
               <FolderKanban className="h-8 w-8" />
               Projects & Tasks
             </h1>
@@ -469,98 +740,106 @@ export default function Projects() {
             {stats.overdue > 0 && (
               <span className="text-red-600 font-medium">{stats.overdue} overdue</span>
             )}
+            {stats.approaching > 0 && (
+              <span className="text-amber-600 font-medium">{stats.approaching} due soon</span>
+            )}
           </div>
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-6 gap-4">
-          <Card className="p-3">
-            <div className="flex items-center gap-2">
-              <Circle className="h-4 w-4 text-gray-400" />
-              <span className="text-sm text-muted-foreground">Backlog</span>
-            </div>
-            <div className="text-2xl font-bold mt-1">{stats.backlog}</div>
-          </Card>
+        <div className="grid grid-cols-5 gap-4">
           <Card className="p-3">
             <div className="flex items-center gap-2">
               <Circle className="h-4 w-4 text-blue-500" />
               <span className="text-sm text-muted-foreground">To Do</span>
             </div>
-            <div className="text-2xl font-bold mt-1">{stats.todo}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-1">{stats.todo}</div>
           </Card>
           <Card className="p-3">
             <div className="flex items-center gap-2">
               <Clock className="h-4 w-4 text-yellow-500" />
               <span className="text-sm text-muted-foreground">In Progress</span>
             </div>
-            <div className="text-2xl font-bold mt-1">{stats.inProgress}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-1">{stats.inProgress}</div>
           </Card>
           <Card className="p-3">
             <div className="flex items-center gap-2">
               <AlertCircle className="h-4 w-4 text-purple-500" />
               <span className="text-sm text-muted-foreground">Review</span>
             </div>
-            <div className="text-2xl font-bold mt-1">{stats.review}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-1">{stats.review}</div>
           </Card>
           <Card className="p-3">
             <div className="flex items-center gap-2">
               <CheckCircle className="h-4 w-4 text-green-500" />
               <span className="text-sm text-muted-foreground">Done</span>
             </div>
-            <div className="text-2xl font-bold mt-1">{stats.done}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-1">{stats.completed}</div>
           </Card>
-          <Card className="p-3 border-red-200 bg-red-50/50">
+          <Card className={cn("p-3", stats.overdue > 0 ? "border-red-200 bg-red-50/50" : stats.approaching > 0 ? "border-amber-200 bg-amber-50/50" : "")}>
             <div className="flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 text-red-500" />
-              <span className="text-sm text-red-600">Overdue</span>
+              <AlertCircle className={cn("h-4 w-4", stats.overdue > 0 ? "text-red-500" : "text-amber-500")} />
+              <span className={cn("text-sm", stats.overdue > 0 ? "text-red-600" : "text-amber-600")}>At Risk</span>
             </div>
-            <div className="text-2xl font-bold mt-1 text-red-600">{stats.overdue}</div>
+            <div className="flex items-baseline gap-2 mt-1">
+              <div className={cn("text-xl font-semibold tracking-[-0.02em]", stats.overdue > 0 ? "text-red-600" : "text-muted-foreground")}>{stats.overdue}</div>
+              <span className="text-xs text-red-500">overdue</span>
+              <div className={cn("text-xl font-semibold tracking-[-0.02em]", stats.approaching > 0 ? "text-amber-600" : "text-muted-foreground")}>{stats.approaching}</div>
+              <span className="text-xs text-amber-500">due soon</span>
+            </div>
           </Card>
         </div>
 
         {/* Main Content */}
         {viewMode === "kanban" ? (
-          <div className="flex gap-4 overflow-x-auto pb-4">
-            <KanbanColumn
-              title="Backlog"
-              status="backlog"
+          <div className="space-y-4">
+            {/* Column headers -- sticky at top */}
+            <div className="flex gap-3 px-4">
+              <div className="w-[52px] shrink-0" /> {/* spacer for collapse button */}
+              {taskStatusOptions
+                .filter((s) => s.value !== "cancelled")
+                .map((s) => {
+                  const count = filteredTasks.filter((t: any) => t.status === s.value).length;
+                  return (
+                    <div key={s.value} className="flex-1 min-w-[220px] max-w-[280px]">
+                      <div className={cn("flex items-center gap-2 pb-2 border-b-2", {
+                        "border-blue-400": s.value === "todo",
+                        "border-amber-400": s.value === "in_progress",
+                        "border-violet-400": s.value === "review",
+                        "border-emerald-400": s.value === "completed",
+                      })}>
+                        <h3 className="font-semibold text-sm">{s.label}</h3>
+                        <Badge variant="secondary" className="text-xs">{count}</Badge>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+
+            {/* Project swimlanes */}
+            {(projects || []).map((project: any) => (
+              <ProjectSwimlane
+                key={project.id}
+                project={project}
+                tasks={filteredTasks}
+                onTaskClick={setSelectedTask}
+                onStatusChange={handleStatusChange}
+              />
+            ))}
+
+            {/* Unassigned tasks */}
+            <UnassignedSwimlane
               tasks={filteredTasks}
               onTaskClick={setSelectedTask}
               onStatusChange={handleStatusChange}
-              color="border-gray-400"
             />
-            <KanbanColumn
-              title="To Do"
-              status="todo"
-              tasks={filteredTasks}
-              onTaskClick={setSelectedTask}
-              onStatusChange={handleStatusChange}
-              color="border-blue-400"
-            />
-            <KanbanColumn
-              title="In Progress"
-              status="in_progress"
-              tasks={filteredTasks}
-              onTaskClick={setSelectedTask}
-              onStatusChange={handleStatusChange}
-              color="border-yellow-400"
-            />
-            <KanbanColumn
-              title="Review"
-              status="review"
-              tasks={filteredTasks}
-              onTaskClick={setSelectedTask}
-              onStatusChange={handleStatusChange}
-              color="border-purple-400"
-            />
-            <KanbanColumn
-              title="Done"
-              status="done"
-              tasks={filteredTasks}
-              onTaskClick={setSelectedTask}
-              onStatusChange={handleStatusChange}
-              color="border-green-400"
-            />
+
+            {(projects || []).length === 0 && filteredTasks.length === 0 && (
+              <div className="text-center py-12 text-muted-foreground">
+                <FolderKanban className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                <p className="text-sm">No projects or tasks yet. Create a task to get started.</p>
+              </div>
+            )}
           </div>
         ) : (
           <Card>
@@ -615,9 +894,14 @@ export default function Projects() {
         <Dialog open={!!selectedTask} onOpenChange={() => setSelectedTask(null)}>
           <DialogContent className="max-w-2xl">
             {selectedTask && (
-              <TaskDetailPanel 
-                task={selectedTask} 
+              <TaskDetailPanel
+                task={selectedTask}
                 onClose={() => setSelectedTask(null)}
+                projects={projects}
+                onProjectChange={(id, projectId) => {
+                  handleProjectChange(id, projectId);
+                  setSelectedTask(null);
+                }}
                 onStatusChange={(id, status) => {
                   handleStatusChange(id, status);
                   setSelectedTask(null);
@@ -696,7 +980,12 @@ export default function Projects() {
                 </div>
                 <div>
                   <Label>Priority</Label>
-                  <Select value={taskForm.priority} onValueChange={(v) => setTaskForm({ ...taskForm, priority: v })}>
+                  <Select
+                    value={taskForm.priority}
+                    onValueChange={(v) => {
+                      setTaskForm({ ...taskForm, priority: v });
+                    }}
+                  >
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -709,11 +998,23 @@ export default function Projects() {
                 </div>
                 <div>
                   <Label>Due Date</Label>
-                  <Input 
-                    type="date" 
-                    value={taskForm.dueDate} 
+                  <Input
+                    type="date"
+                    value={taskForm.dueDate}
                     onChange={(e) => setTaskForm({ ...taskForm, dueDate: e.target.value })}
                   />
+                  {!taskForm.dueDate && (
+                    <button
+                      type="button"
+                      className="mt-1 text-xs text-primary hover:underline flex items-center gap-1"
+                      onClick={() =>
+                        setTaskForm({ ...taskForm, dueDate: formatSuggestedDate(taskForm.priority) })
+                      }
+                    >
+                      <Clock className="h-3 w-3" />
+                      Suggest: {formatDate(formatSuggestedDate(taskForm.priority))} ({getSuggestedDeadlineDays(taskForm.priority)}d for {taskForm.priority})
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

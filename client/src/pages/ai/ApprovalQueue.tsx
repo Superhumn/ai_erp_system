@@ -43,6 +43,7 @@ import {
 } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
+import { formatCurrency } from "@/lib/format";
 
 function formatDate(value: string | Date | null | undefined) {
   if (!value) return "-";
@@ -54,12 +55,6 @@ function formatDate(value: string | Date | null | undefined) {
     hour: "2-digit",
     minute: "2-digit"
   });
-}
-
-function formatCurrency(value: string | number | null | undefined) {
-  const num = typeof value === "string" ? parseFloat(value) : value;
-  if (!num) return "-";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(num);
 }
 
 const taskTypeIcons: Record<string, any> = {
@@ -465,7 +460,7 @@ export default function ApprovalQueue() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">AI Approval Queue</h1>
+          <h1 className="text-xl font-semibold tracking-[-0.02em]">AI Approval Queue</h1>
           <p className="text-muted-foreground">Review and approve AI-generated actions</p>
         </div>
         <Button variant="outline" onClick={() => utils.aiAgent.tasks.invalidate()}>
@@ -483,7 +478,7 @@ export default function ApprovalQueue() {
                 <Clock className="h-6 w-6 text-yellow-600" />
               </div>
               <div>
-                <p className="text-2xl font-bold">{pendingCount}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em]">{pendingCount}</p>
                 <p className="text-sm text-muted-foreground">Pending Approval</p>
               </div>
             </div>
@@ -497,7 +492,7 @@ export default function ApprovalQueue() {
                 <CheckCircle className="h-6 w-6 text-green-600" />
               </div>
               <div>
-                <p className="text-2xl font-bold">{approvedCount}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em]">{approvedCount}</p>
                 <p className="text-sm text-muted-foreground">Approved</p>
               </div>
             </div>
@@ -511,7 +506,7 @@ export default function ApprovalQueue() {
                 <Play className="h-6 w-6 text-blue-600" />
               </div>
               <div>
-                <p className="text-2xl font-bold">{completedCount}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em]">{completedCount}</p>
                 <p className="text-sm text-muted-foreground">Completed</p>
               </div>
             </div>
@@ -525,7 +520,7 @@ export default function ApprovalQueue() {
                 <Bot className="h-6 w-6 text-primary" />
               </div>
               <div>
-                <p className="text-2xl font-bold">{allTasks?.length || 0}</p>
+                <p className="text-xl font-semibold tracking-[-0.02em]">{allTasks?.length || 0}</p>
                 <p className="text-sm text-muted-foreground">Total Tasks</p>
               </div>
             </div>

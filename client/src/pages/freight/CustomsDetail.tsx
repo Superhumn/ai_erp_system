@@ -191,7 +191,7 @@ export default function CustomsDetail() {
           </Link>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold">{clearance.clearanceNumber}</h1>
+              <h1 className="text-xl font-semibold tracking-[-0.02em]">{clearance.clearanceNumber}</h1>
               <Badge variant={clearance.type === 'import' ? 'default' : 'secondary'}>
                 {clearance.type}
               </Badge>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,10 +11,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { 
-  Plus, FolderOpen, Link2, Users, BarChart3, Settings, 
+import {
+  Plus, FolderOpen, Link2, Users, BarChart3, Settings,
   Eye, Download, Clock, Trash2, Copy, ExternalLink,
-  FileText, Lock, Globe, Archive
+  FileText, Lock, Globe, Archive, HardDrive, RefreshCw
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -30,9 +30,22 @@ export default function DataRooms() {
     requiresNda: false,
     allowDownload: true,
     allowPrint: true,
+    requiresEmail: false,
+    enableWatermark: false,
+    brandingCompanyName: "",
+    brandingColor: "",
+    googleDriveFolderId: "",
   });
 
-  const { data: dataRooms, isLoading, refetch } = trpc.dataRoom.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: dataRooms, isLoading } = trpc.dataRoom.list.useQuery();
+
+  // Auto-redirect to the data room if there's only one
+  React.useEffect(() => {
+    if (!isLoading && dataRooms?.length === 1) {
+      setLocation(`/dataroom/${dataRooms[0].id}`);
+    }
+  }, [isLoading, dataRooms, setLocation]);
   const createMutation = trpc.dataRoom.create.useMutation({
     onSuccess: (data) => {
       toast.success("Data room created successfully");
@@ -46,8 +59,13 @@ export default function DataRooms() {
         requiresNda: false,
         allowDownload: true,
         allowPrint: true,
+        requiresEmail: false,
+        enableWatermark: false,
+        brandingCompanyName: "",
+        brandingColor: "",
+        googleDriveFolderId: "",
       });
-      refetch();
+      utils.dataRoom.list.invalidate();
       // Navigate to the new data room
       setLocation(`/dataroom/${data.id}`);
     },
@@ -59,10 +77,23 @@ export default function DataRooms() {
   const deleteMutation = trpc.dataRoom.delete.useMutation({
     onSuccess: () => {
       toast.success("Data room deleted");
-      refetch();
+      utils.dataRoom.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
+    },
+  });
+
+  const [syncingRoomId, setSyncingRoomId] = useState<number | null>(null);
+  const syncFromDriveMutation = trpc.dataRoom.syncFromDrive.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Synced ${data.filesCreated} files and ${data.foldersCreated} folders from Google Drive`);
+      setSyncingRoomId(null);
+      utils.dataRoom.list.invalidate();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+      setSyncingRoomId(null);
     },
   });
 
@@ -74,6 +105,9 @@ export default function DataRooms() {
     createMutation.mutate({
       ...newRoom,
       password: newRoom.password || undefined,
+      brandingCompanyName: newRoom.brandingCompanyName || undefined,
+      brandingColor: newRoom.brandingColor || undefined,
+      googleDriveFolderId: newRoom.googleDriveFolderId || undefined,
     });
   };
 
@@ -95,7 +129,7 @@ export default function DataRooms() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Data Rooms</h1>
+            <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em]">Data Rooms</h1>
             <p className="text-muted-foreground mt-1">
               Securely share documents with granular permissions and analytics
             </p>
@@ -184,6 +218,57 @@ export default function DataRooms() {
                     onCheckedChange={(checked) => setNewRoom({ ...newRoom, allowDownload: checked })}
                   />
                 </div>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>Require Email</Label>
+                    <p className="text-sm text-muted-foreground">Visitors must enter email to view</p>
+                  </div>
+                  <Switch
+                    checked={newRoom.requiresEmail}
+                    onCheckedChange={(checked) => setNewRoom({ ...newRoom, requiresEmail: checked })}
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>Enable Watermark</Label>
+                    <p className="text-sm text-muted-foreground">Overlay visitor email on documents</p>
+                  </div>
+                  <Switch
+                    checked={newRoom.enableWatermark}
+                    onCheckedChange={(checked) => setNewRoom({ ...newRoom, enableWatermark: checked })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Company Name (optional)</Label>
+                  <Input
+                    placeholder="Your Company"
+                    value={newRoom.brandingCompanyName}
+                    onChange={(e) => setNewRoom({ ...newRoom, brandingCompanyName: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Brand Color (optional)</Label>
+                  <Input
+                    type="color"
+                    className="w-20 h-8"
+                    value={newRoom.brandingColor || "#000000"}
+                    onChange={(e) => setNewRoom({ ...newRoom, brandingColor: e.target.value })}
+                  />
+                </div>
+                <div className="border-t pt-4 mt-2">
+                  <div className="flex items-center gap-2 mb-2">
+                    <HardDrive className="h-4 w-4 text-muted-foreground" />
+                    <Label>Sync from Google Drive (optional)</Label>
+                  </div>
+                  <Input
+                    placeholder="Google Drive folder ID"
+                    value={newRoom.googleDriveFolderId}
+                    onChange={(e) => setNewRoom({ ...newRoom, googleDriveFolderId: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Paste a Google Drive folder ID to auto-sync files after creation. Find it in the folder URL after /folders/.
+                  </p>
+                </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
@@ -204,7 +289,7 @@ export default function DataRooms() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Total Rooms</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{dataRooms?.length || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em]">{dataRooms?.length || 0}</div>
             </CardContent>
           </Card>
           <Card>
@@ -212,7 +297,7 @@ export default function DataRooms() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Active</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-green-600">
+              <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">
                 {dataRooms?.filter(r => r.status === 'active').length || 0}
               </div>
             </CardContent>
@@ -222,7 +307,7 @@ export default function DataRooms() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Password Protected</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
+              <div className="text-xl font-semibold tracking-[-0.02em]">
                 {dataRooms?.filter(r => r.password).length || 0}
               </div>
             </CardContent>
@@ -232,7 +317,7 @@ export default function DataRooms() {
               <CardTitle className="text-sm font-medium text-muted-foreground">NDA Required</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
+              <div className="text-xl font-semibold tracking-[-0.02em]">
                 {dataRooms?.filter(r => r.requiresNda).length || 0}
               </div>
             </CardContent>
@@ -333,6 +418,22 @@ export default function DataRooms() {
                             title="Open in new tab"
                           >
                             <ExternalLink className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              setSyncingRoomId(room.id);
+                              syncFromDriveMutation.mutate({ dataRoomId: room.id });
+                            }}
+                            disabled={syncFromDriveMutation.isPending && syncingRoomId === room.id}
+                            title="Sync from Google Drive"
+                          >
+                            {syncFromDriveMutation.isPending && syncingRoomId === room.id ? (
+                              <RefreshCw className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <HardDrive className="h-4 w-4" />
+                            )}
                           </Button>
                           <Button
                             variant="ghost"

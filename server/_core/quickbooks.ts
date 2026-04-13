@@ -17,7 +17,7 @@ const oauthStates = new Map<string, { userId: number; timestamp: number }>();
 setInterval(() => {
   const now = Date.now();
   const tenMinutesAgo = now - 10 * 60 * 1000;
-  for (const [state, data] of oauthStates.entries()) {
+  for (const [state, data] of Array.from(oauthStates.entries())) {
     if (data.timestamp < tenMinutesAgo) {
       oauthStates.delete(state);
     }

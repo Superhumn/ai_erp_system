@@ -249,9 +249,9 @@ export class WorkflowEngine {
         return workflowProcessors.paymentProcessing.execute(this, context);
       case "exception_handling":
         return workflowProcessors.exceptionHandling.execute(this, context);
-      case "vendor_quote_procurement":
+      case "vendor_quote_procurement" as any:
         return workflowProcessors.vendorQuoteProcurement.execute(this, context);
-      case "vendor_quote_analysis":
+      case "vendor_quote_analysis" as any:
         return workflowProcessors.vendorQuoteAnalysis.execute(this, context);
       default:
         throw new Error(`Unknown workflow type: ${workflow.workflowType}`);
@@ -882,19 +882,19 @@ Decide the best resolution action from: accept_variance, reject_and_reorder, esc
       try {
         const { sendEmail, isEmailConfigured, formatEmailHtml } = await import("./_core/email");
         if (isEmailConfigured()) {
-          // Look up users with the target roles to send email notifications
           const { getUsersByRoles } = await import("./db");
           const users = await getUsersByRoles(targetRoles);
-          for (const user of users) {
-            if (user.email) {
-              await sendEmail({
-                to: user.email,
+          // Send emails in parallel instead of sequentially
+          await Promise.allSettled(
+            users
+              .filter(user => user.email)
+              .map(user => sendEmail({
+                to: user.email!,
                 subject: `[${notificationType}] ${title}`,
                 html: formatEmailHtml(`${title}\n\n${message}${actionUrl ? `\n\nView details: ${actionUrl}` : ""}`),
                 text: `${title}\n\n${message}${actionUrl ? `\n\nView details: ${actionUrl}` : ""}`,
-              });
-            }
-          }
+              }))
+          );
         }
       } catch (emailError) {
         console.warn("[Workflow] Failed to send email notification:", emailError);

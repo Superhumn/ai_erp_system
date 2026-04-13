@@ -1,0 +1,62 @@
+CREATE TABLE IF NOT EXISTS `fireflies_meetings` (
+  `id` int AUTO_INCREMENT NOT NULL,
+  `firefliesId` varchar(128) NOT NULL,
+  `title` varchar(500) NOT NULL,
+  `date` timestamp,
+  `duration` int,
+  `organizerEmail` varchar(320),
+  `organizerName` varchar(255),
+  `participants` text,
+  `summary` text,
+  `shortSummary` text,
+  `keywords` text,
+  `topics` text,
+  `sentimentAnalysis` text,
+  `transcriptUrl` text,
+  `transcriptText` text,
+  `actionItems` text,
+  `processingStatus` enum('pending','contacts_created','tasks_created','project_created','fully_processed','skipped','error') NOT NULL DEFAULT 'pending',
+  `processedAt` timestamp,
+  `processedBy` int,
+  `processingNotes` text,
+  `autoCreatedProjectId` int,
+  `autoCreatedTaskCount` int DEFAULT 0,
+  `autoCreatedContactCount` int DEFAULT 0,
+  `meetingSource` varchar(64),
+  `calendarEventId` varchar(255),
+  `recordingUrl` text,
+  `createdAt` timestamp NOT NULL DEFAULT (now()),
+  `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `fireflies_meetings_id` PRIMARY KEY(`id`),
+  CONSTRAINT `fireflies_meetings_firefliesId_unique` UNIQUE(`firefliesId`)
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `fireflies_action_items` (
+  `id` int AUTO_INCREMENT NOT NULL,
+  `meetingId` int NOT NULL,
+  `firefliesMeetingId` varchar(128) NOT NULL,
+  `text` text NOT NULL,
+  `assignee` varchar(255),
+  `assigneeEmail` varchar(320),
+  `dueDate` timestamp,
+  `projectTaskId` int,
+  `crmContactId` int,
+  `status` enum('pending','converted_to_task','skipped','completed') NOT NULL DEFAULT 'pending',
+  `convertedAt` timestamp,
+  `convertedBy` int,
+  `createdAt` timestamp NOT NULL DEFAULT (now()),
+  `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `fireflies_action_items_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `fireflies_contact_mappings` (
+  `id` int AUTO_INCREMENT NOT NULL,
+  `meetingId` int NOT NULL,
+  `participantEmail` varchar(320) NOT NULL,
+  `participantName` varchar(255),
+  `crmContactId` int,
+  `isNewContact` boolean DEFAULT false,
+  `wasAutoCreated` boolean DEFAULT false,
+  `createdAt` timestamp NOT NULL DEFAULT (now()),
+  CONSTRAINT `fireflies_contact_mappings_id` PRIMARY KEY(`id`)
+);

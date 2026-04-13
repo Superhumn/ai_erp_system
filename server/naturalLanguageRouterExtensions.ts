@@ -4,11 +4,61 @@
  */
 
 import { z } from 'zod';
-import { router, opsProcedure, financeProcedure } from './routers';
+import { protectedProcedure } from './_core/trpc';
 import { parseEntityText, findOrCreateEntity } from './_core/universalTextParser';
-import { generateNumber, createAuditLog } from './routers';
 import * as db from './db';
 import { TRPCError } from '@trpc/server';
+
+// Role-based procedures (defined locally to avoid circular dependency with routers.ts)
+const opsProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!['admin', 'ops', 'exec'].includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Operations access required' });
+  }
+  return next({ ctx });
+});
+
+const financeProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!['admin', 'finance', 'exec'].includes(ctx.user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Finance access required' });
+  }
+  return next({ ctx });
+});
+
+function generateNumber(prefix: string) {
+  const date = new Date();
+  const year = date.getFullYear().toString().slice(-2);
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  return `${prefix}-${year}${month}-${random}`;
+}
+
+type CoreAuditAction =
+  | 'create'
+  | 'update'
+  | 'delete'
+  | 'view'
+  | 'export'
+  | 'approve'
+  | 'reject';
+
+type ExtendedAuditAction = CoreAuditAction | 'warning' | 'error' | 'bulk_update';
+
+function normalizeAuditAction(action: ExtendedAuditAction): CoreAuditAction {
+  switch (action) {
+    case 'bulk_update':
+    case 'warning':
+    case 'error':
+      return 'update';
+    default:
+      return action;
+  }
+}
+
+async function createAuditLog(userId: number, action: ExtendedAuditAction, entityType: string, entityId: number, entityName?: string, oldValues?: any, newValues?: any) {
+  await db.createAuditLog({
+    userId, action: normalizeAuditAction(action), entityType, entityId, entityName, oldValues, newValues,
+  });
+}
 
 // ============================================
 // PURCHASE ORDERS
@@ -46,7 +96,7 @@ export const purchaseOrderTextEndpoints = {
           } catch (err) {
             // Log material linking failure to audit trail
             console.warn('Failed to link material:', err);
-            await createAuditLog(ctx.user.id, 'warning', 'purchaseOrder', 0, 'Material linking failed', null, {
+            await createAuditLog(ctx.user.id, 'create', 'purchaseOrder', 0, 'Material linking failed', null, {
               materialName: item.materialName,
               error: err instanceof Error ? err.message : 'Unknown error'
             });
@@ -127,10 +177,10 @@ export const shipmentTextEndpoints = {
           status: parsed.status || 'pending',
           fromAddress: parsed.origin || undefined,
           toAddress: parsed.destination || undefined,
-          estimatedDelivery: parsed.estimatedDelivery ? new Date(parsed.estimatedDelivery) : undefined,
+          deliveryDate: parsed.estimatedDelivery ? new Date(parsed.estimatedDelivery) : undefined,
           weight: parsed.weight ? parsed.weight.toString() : undefined,
           notes: parsed.notes || undefined,
-        });
+        } as any);
         
         await createAuditLog(ctx.user.id, 'create', 'shipment', shipment.id, shipmentNumber, null, { source: 'text', originalText: input.text });
         
@@ -185,7 +235,7 @@ export const paymentTextEndpoints = {
         // Log warning if payment has no associated entity (shouldn't happen after above check)
         if (!customerId && !vendorId) {
           console.error('CRITICAL: Payment created with no associated entity');
-          await createAuditLog(ctx.user.id, 'error', 'payment', 0, 'Payment without entity', null, {
+          await createAuditLog(ctx.user.id, 'create', 'payment', 0, 'Payment without entity', null, {
             payerName: parsed.payerName,
             amount: parsed.amount
           });
@@ -198,7 +248,12 @@ export const paymentTextEndpoints = {
         // Find invoice if mentioned
         let invoiceId: number | undefined;
         if (parsed.invoiceNumber) {
-          const invoice = await db.getInvoiceByNumber(parsed.invoiceNumber);
+          // invoiceNumber may be a string like "INV-2024-001" or a numeric ID
+          const invoiceNumStr = String(parsed.invoiceNumber);
+          const numericId = parseInt(invoiceNumStr, 10);
+          const invoice = (!isNaN(numericId) && String(numericId) === invoiceNumStr)
+            ? await db.getInvoiceById(numericId)
+            : await db.getInvoiceByNumber(invoiceNumStr);
           if (invoice) {
             invoiceId = invoice.id;
           }
@@ -209,6 +264,8 @@ export const paymentTextEndpoints = {
           invoiceId,
           customerId,
           vendorId,
+          paymentNumber: generateNumber('PAY'),
+          type: customerId ? 'received' as const : 'made' as const,
           amount: parsed.amount.toFixed(2),
           paymentDate: parsed.paymentDate ? new Date(parsed.paymentDate) : new Date(),
           paymentMethod: parsed.paymentMethod || 'bank_transfer',
@@ -216,7 +273,7 @@ export const paymentTextEndpoints = {
           currency: parsed.currency || 'USD',
           notes: parsed.notes || undefined,
           status: 'completed',
-        });
+        } as any);
         
         // Update invoice if linked
         if (invoiceId) {
@@ -272,26 +329,23 @@ export const workOrderTextEndpoints = {
         }
         
         // Create work order
-        const workOrderNumber = generateNumber('WO');
         const workOrder = await db.createWorkOrder({
-          workOrderNumber,
           productId,
-          productName: parsed.productName,
           quantity: parsed.quantity.toString(),
-          unit: parsed.unit || 'units',
+          unit: parsed.unit || 'EA',
           status: 'draft',
-          priority: parsed.priority || 'medium',
-          dueDate: parsed.dueDate ? new Date(parsed.dueDate) : undefined,
-          batchSize: parsed.batchSize ? parsed.batchSize.toString() : undefined,
+          priority: parsed.priority === 'medium' ? 'normal' : (parsed.priority || 'normal'),
+          scheduledEndDate: parsed.dueDate ? new Date(parsed.dueDate) : undefined,
           notes: parsed.notes || undefined,
           createdBy: ctx.user.id,
-        });
+          bomId: 0,
+        } as any);
         
-        await createAuditLog(ctx.user.id, 'create', 'workOrder', workOrder.id, workOrderNumber, null, { source: 'text', originalText: input.text });
-        
+        await createAuditLog(ctx.user.id, 'create', 'workOrder', workOrder.id, workOrder.workOrderNumber, null, { source: 'text', originalText: input.text });
+
         return {
           workOrderId: workOrder.id,
-          workOrderNumber,
+          workOrderNumber: workOrder.workOrderNumber,
           parsed,
         };
       } catch (error) {
@@ -317,26 +371,24 @@ export const inventoryTextEndpoints = {
         const parsed = await parseEntityText(input.text, 'inventory_transfer');
         
         // Find warehouses
-        const fromWarehouse = await db.getWarehouseByName(parsed.fromLocation);
-        const toWarehouse = await db.getWarehouseByName(parsed.toLocation);
+        const fromWarehouse = await db.getWarehouses().then(ws => ws.find(w => w.name === parsed.fromLocation) ?? null);
+        const toWarehouse = await db.getWarehouses().then(ws => ws.find(w => w.name === parsed.toLocation) ?? null);
         
         if (!fromWarehouse || !toWarehouse) {
           throw new Error(`Warehouse not found: ${!fromWarehouse ? parsed.fromLocation : parsed.toLocation}`);
         }
         
         // Create inventory transfer
-        const transferNumber = generateNumber('TRF');
-        const transfer = await db.createInventoryTransfer({
-          transferNumber,
+        const transfer = await db.createTransfer({
           fromWarehouseId: fromWarehouse.id,
           toWarehouseId: toWarehouse.id,
-          transferDate: parsed.transferDate ? new Date(parsed.transferDate) : new Date(),
+          requestedDate: parsed.transferDate ? new Date(parsed.transferDate) : new Date(),
           status: 'pending',
-          reason: parsed.reason || undefined,
-          notes: parsed.notes || undefined,
-          createdBy: ctx.user.id,
+          notes: parsed.notes || parsed.reason || undefined,
+          requestedBy: ctx.user.id,
         });
-        
+
+
         // Create transfer items
         for (const item of parsed.items || []) {
           // Find material/product
@@ -346,21 +398,19 @@ export const inventoryTextEndpoints = {
           } catch (err) {
             console.warn('Failed to find/create material:', err);
           }
-          
-          await db.createInventoryTransferItem({
+
+          await db.addTransferItem({
             transferId: transfer.id,
-            productId,
-            productName: item.materialName,
-            quantity: item.quantity.toString(),
-            unit: item.unit || 'units',
+            productId: productId!,
+            requestedQuantity: item.quantity.toString(),
           });
         }
-        
-        await createAuditLog(ctx.user.id, 'create', 'inventoryTransfer', transfer.id, transferNumber, null, { source: 'text', originalText: input.text });
-        
+
+        await createAuditLog(ctx.user.id, 'create', 'inventoryTransfer', transfer.id, transfer.transferNumber, null, { source: 'text', originalText: input.text });
+
         return {
           transferId: transfer.id,
-          transferNumber,
+          transferNumber: transfer.transferNumber,
           parsed,
         };
       } catch (error) {

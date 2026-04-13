@@ -7,14 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ArrowLeft, User, Mail, Phone, Building2, MapPin, Calendar } from "lucide-react";
 import { Link, useParams } from "wouter";
 import { format } from "date-fns";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
 
 export default function CustomerDetail() {
   const params = useParams<{ id: string }>();
@@ -37,35 +30,35 @@ export default function CustomerDetail() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "active": return "bg-green-100 text-green-800";
-      case "inactive": return "bg-gray-100 text-gray-800";
-      case "suspended": return "bg-red-100 text-red-800";
-      case "pending": return "bg-yellow-100 text-yellow-800";
-      default: return "bg-gray-100 text-gray-800";
+      case "active": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
+      case "inactive": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "suspended": return "bg-red-500/8 text-red-600 dark:text-red-400";
+      case "pending": return "bg-amber-500/8 text-amber-600 dark:text-amber-400";
+      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
     }
   };
 
   const getOrderStatusColor = (status: string) => {
     switch (status) {
-      case "draft": return "bg-gray-100 text-gray-800";
-      case "pending": return "bg-yellow-100 text-yellow-800";
-      case "confirmed": return "bg-blue-100 text-blue-800";
-      case "processing": return "bg-purple-100 text-purple-800";
-      case "shipped": return "bg-indigo-100 text-indigo-800";
-      case "delivered": return "bg-green-100 text-green-800";
-      case "cancelled": return "bg-red-100 text-red-800";
-      default: return "bg-gray-100 text-gray-800";
+      case "draft": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "pending": return "bg-amber-500/8 text-amber-600 dark:text-amber-400";
+      case "confirmed": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
+      case "processing": return "bg-violet-500/8 text-violet-600 dark:text-violet-400";
+      case "shipped": return "bg-indigo-500/8 text-indigo-600 dark:text-indigo-400";
+      case "delivered": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
+      case "cancelled": return "bg-red-500/8 text-red-600 dark:text-red-400";
+      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
     }
   };
 
   const getSourceBadge = (customer: any) => {
     if (!customer.syncSource) return null;
     const colors: Record<string, string> = {
-      quickbooks: "bg-green-100 text-green-800",
-      shopify: "bg-teal-100 text-teal-800",
+      quickbooks: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
+      shopify: "bg-teal-500/8 text-teal-600 dark:text-teal-400",
     };
     return (
-      <Badge className={colors[customer.syncSource] || "bg-gray-100 text-gray-800"}>
+      <Badge className={colors[customer.syncSource] || "bg-gray-500/8 text-gray-600 dark:text-gray-400"}>
         {customer.syncSource}
       </Badge>
     );
@@ -83,7 +76,7 @@ export default function CustomerDetail() {
           </Button>
         </Link>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold">{customer.name}</h1>
+          <h1 className="text-xl font-semibold tracking-[-0.02em]">{customer.name}</h1>
           <p className="text-muted-foreground">{customer.email || "No email"}</p>
         </div>
         <Badge className={getStatusColor(customer.status)}>{customer.status}</Badge>

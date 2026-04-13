@@ -20,7 +20,7 @@ export default function Locations() {
   const [formData, setFormData] = useState({
     name: "",
     code: "",
-    type: "copacker" as "warehouse" | "store" | "distribution" | "copacker" | "3pl",
+    type: "copacker" as "warehouse" | "store" | "distribution" | "copacker" | "3pl" | "factory",
     address: "",
     city: "",
     state: "",
@@ -33,17 +33,18 @@ export default function Locations() {
     notes: "",
   });
 
-  const { data: warehouses, isLoading, refetch } = trpc.warehouses.list.useQuery(
+  const utils = trpc.useUtils();
+  const { data: warehouses, isLoading } = trpc.warehouses.list.useQuery(
     typeFilter !== "all" ? { type: typeFilter } : undefined
   );
   const { data: summary } = trpc.warehouses.summary.useQuery();
-  
+
   const createMutation = trpc.warehouses.create.useMutation({
     onSuccess: () => {
       toast.success("Location created successfully");
       setIsOpen(false);
       resetForm();
-      refetch();
+      utils.warehouses.list.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -54,7 +55,7 @@ export default function Locations() {
       setIsOpen(false);
       setEditingId(null);
       resetForm();
-      refetch();
+      utils.warehouses.list.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -62,7 +63,7 @@ export default function Locations() {
   const deleteMutation = trpc.warehouses.delete.useMutation({
     onSuccess: () => {
       toast.success("Location deleted successfully");
-      refetch();
+      utils.warehouses.list.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -120,12 +121,12 @@ export default function Locations() {
 
   const getTypeColor = (type: string) => {
     switch (type) {
-      case "copacker": return "bg-purple-100 text-purple-800";
-      case "warehouse": return "bg-blue-100 text-blue-800";
-      case "3pl": return "bg-green-100 text-green-800";
-      case "distribution": return "bg-orange-100 text-orange-800";
-      case "store": return "bg-pink-100 text-pink-800";
-      default: return "bg-gray-100 text-gray-800";
+      case "copacker": return "bg-violet-500/8 text-violet-600 dark:text-violet-400";
+      case "warehouse": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
+      case "3pl": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
+      case "distribution": return "bg-orange-500/8 text-orange-600 dark:text-orange-400";
+      case "store": return "bg-pink-500/8 text-pink-600 dark:text-pink-400";
+      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
     }
   };
 
@@ -141,7 +142,7 @@ export default function Locations() {
     <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold">Locations & Facilities</h1>
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">Locations & Facilities</h1>
             <p className="text-muted-foreground">Manage warehouses, co-packers, and distribution centers</p>
           </div>
           <Dialog open={isOpen} onOpenChange={(open) => {
@@ -191,6 +192,7 @@ export default function Locations() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="factory">Factory</SelectItem>
                         <SelectItem value="copacker">Co-Packer</SelectItem>
                         <SelectItem value="warehouse">Warehouse</SelectItem>
                         <SelectItem value="3pl">3PL Provider</SelectItem>
@@ -312,11 +314,11 @@ export default function Locations() {
                 <CardContent>
                   <div className="flex items-center gap-4">
                     <div>
-                      <p className="text-2xl font-bold">{loc.totalProducts}</p>
+                      <p className="text-xl font-semibold tracking-[-0.02em]">{loc.totalProducts}</p>
                       <p className="text-xs text-muted-foreground">Products</p>
                     </div>
                     <div>
-                      <p className="text-2xl font-bold">{Math.round(loc.totalQuantity)}</p>
+                      <p className="text-xl font-semibold tracking-[-0.02em]">{Math.round(loc.totalQuantity)}</p>
                       <p className="text-xs text-muted-foreground">Total Units</p>
                     </div>
                   </div>

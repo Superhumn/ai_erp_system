@@ -111,7 +111,7 @@ export default function POReceiving() {
   return (
     <div className="p-6 space-y-6">
         <div>
-          <h1 className="text-2xl font-bold">PO Receiving</h1>
+          <h1 className="text-xl font-semibold tracking-[-0.02em]">PO Receiving</h1>
           <p className="text-muted-foreground">Receive shipments and update raw material inventory</p>
         </div>
 
@@ -151,8 +151,8 @@ export default function POReceiving() {
                       <TableCell>-</TableCell>
                       <TableCell>
                         <Badge className={
-                          po.status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
-                          'bg-blue-100 text-blue-800'
+                          po.status === 'partial' ? 'bg-amber-500/8 text-amber-600 dark:text-amber-400' :
+                          'bg-blue-500/8 text-blue-600 dark:text-blue-400'
                         }>
                           {po.status}
                         </Badge>
@@ -221,13 +221,13 @@ export default function POReceiving() {
                         </TableCell>
                         <TableCell>
                           {remaining === 0 ? (
-                            <Badge className="bg-green-100 text-green-800">
+                            <Badge className="bg-emerald-500/8 text-emerald-600 dark:text-emerald-400">
                               <CheckCircle className="w-3 h-3 mr-1" /> Complete
                             </Badge>
                           ) : received > 0 ? (
-                            <Badge className="bg-yellow-100 text-yellow-800">Partial</Badge>
+                            <Badge className="bg-amber-500/8 text-amber-600 dark:text-amber-400">Partial</Badge>
                           ) : (
-                            <Badge className="bg-gray-100 text-gray-800">Pending</Badge>
+                            <Badge className="bg-gray-500/8 text-gray-600 dark:text-gray-400">Pending</Badge>
                           )}
                         </TableCell>
                       </TableRow>

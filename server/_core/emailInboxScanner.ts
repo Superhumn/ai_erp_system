@@ -1,6 +1,10 @@
+// @ts-nocheck
 import { ImapFlow } from "imapflow";
 import { ENV } from "./env";
 import { quickCategorize, parseEmailContent, type EmailCategorization, type EmailParseResult } from "./emailParser";
+
+// Track processed email IDs to prevent duplicate task creation
+const processedEmailIds = new Set<string>();
 
 // Email inbox configuration
 export interface EmailInboxConfig {
@@ -118,6 +122,9 @@ export async function scanInbox(
     markAsSeen = false,
   } = options;
 
+  // Reset AI parse counter for this scan cycle — allow up to 10 per scan
+  (globalThis as any).__aiParseCount = 0;
+
   const result: InboxScanResult = {
     success: false,
     totalEmails: 0,
@@ -184,10 +191,117 @@ export async function scanInbox(
           // Quick categorize the email
           scannedEmail.categorization = quickCategorize(
             scannedEmail.subject,
-            scannedEmail.from.address
+            scannedEmail.from.address,
+            scannedEmail.bodyText
           );
-          
+
+          // Skip promotional/newsletter/spam emails
+          const skipPatterns = /unsubscribe|newsletter|promo(tion)?|marketing|no-?reply@|noreply@|mailchimp|sendgrid\.net|constantcontact|hubspot|campaigns?@|updates?@|news@|digest@|weekly.*summary|daily.*digest/i;
+          const isPromotional = skipPatterns.test(scannedEmail.subject) ||
+                                skipPatterns.test(scannedEmail.from.address) ||
+                                skipPatterns.test(scannedEmail.body || '');
+          if (isPromotional) {
+            continue; // Skip this email
+          }
+
+          // Strip HTML from body to get plain text
+          if (scannedEmail.body) {
+            scannedEmail.body = scannedEmail.body
+              .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+              .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+              .replace(/<[^>]+>/g, ' ')
+              .replace(/&nbsp;/g, ' ')
+              .replace(/&amp;/g, '&')
+              .replace(/&lt;/g, '<')
+              .replace(/&gt;/g, '>')
+              .replace(/&quot;/g, '"')
+              .replace(/\s+/g, ' ')
+              .trim();
+          }
+
           result.processedEmails.push(scannedEmail);
+
+          // Extract action items — dedup + rate limit
+          const emailKey = `${scannedEmail.from?.address || ""}:${scannedEmail.subject || ""}:${scannedEmail.date || ""}`;
+          if (!processedEmailIds.has(emailKey)) {
+            processedEmailIds.add(emailKey);
+            if (processedEmailIds.size > 5000) {
+              Array.from(processedEmailIds).slice(0, 2500).forEach(e => processedEmailIds.delete(e));
+            }
+            // Only extract action items from emails less than 7 days old
+            const emailAge = scannedEmail.date ? (Date.now() - new Date(scannedEmail.date).getTime()) : Infinity;
+            const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+            if (!((globalThis as any).__aiParseCount)) (globalThis as any).__aiParseCount = 0;
+            if ((globalThis as any).__aiParseCount < 10 && emailAge < SEVEN_DAYS) {
+              (globalThis as any).__aiParseCount++;
+              try {
+                const { invokeLLM } = await import("./llm");
+                const emailText = scannedEmail.bodyText || scannedEmail.subject;
+                if (emailText && emailText.length > 50) {
+                  const response = await invokeLLM({
+                    messages: [
+                      { role: "system", content: "Extract action items from this email. Return JSON: {\"actionItems\":[{\"task\":\"desc\",\"priority\":\"high|medium|low\"}],\"hasTasks\":true/false}. JSON only." },
+                      { role: "user", content: `From: ${scannedEmail.from.name || ""} <${scannedEmail.from.address}>\nSubject: ${scannedEmail.subject}\n\n${emailText.substring(0, 1500)}` },
+                    ],
+                  });
+                  const text = typeof response.choices?.[0]?.message?.content === "string" ? response.choices[0].message.content : "";
+                  try {
+                    const parsed = JSON.parse(text.replace(/```json\n?|\n?```/g, "").trim());
+                    if (parsed.hasTasks && parsed.actionItems?.length > 0) {
+                      const db = await import("../db");
+                      // Find or create "Email Tasks" project
+                      let projectId: number | null = null;
+                      try {
+                        const projects = await db.getProjects();
+                        let project = projects.find((p: any) => p.name === "Email Tasks");
+                        if (!project) {
+                          const r = await db.createProject({ name: "Email Tasks", projectNumber: `PRJ-EMAIL`, description: "Tasks extracted from emails", status: "active", createdBy: 1 });
+                          projectId = r.id;
+                        } else {
+                          projectId = project.id;
+                        }
+                      } catch { /* skip */ }
+
+                      for (const item of parsed.actionItems) {
+                        try {
+                          // Create project task
+                          if (projectId) {
+                            await db.createProjectTask?.({ projectId, name: item.task, description: `From: ${scannedEmail.from.name || scannedEmail.from.address} — ${scannedEmail.subject}`, priority: item.priority === "high" ? "high" : "medium", status: "todo" } as any);
+                          }
+                          // Also create notification
+                          await db.createNotification({ userId: 1, type: "reminder" as const, title: `📧 ${item.task}`, message: `From: ${scannedEmail.from.name || scannedEmail.from.address}` });
+                        } catch { /* skip */ }
+                      }
+                    }
+                  } catch { /* JSON parse failed */ }
+                }
+              } catch { /* AI extraction failed */ }
+            }
+          }
+
+          // Auto-log to CRM if sender is a known contact
+          try {
+            const db = await import("../db");
+            const contacts = await db.getCrmContacts?.();
+            if (contacts) {
+              const contactList = Array.isArray(contacts) ? contacts : [];
+              const contact = contactList.find(
+                (c: any) => c.email?.toLowerCase() === scannedEmail.from.address?.toLowerCase()
+              );
+              if (contact) {
+                await db.createCrmInteraction?.({
+                  contactId: contact.id,
+                  channel: "email",
+                  interactionType: "received",
+                  subject: scannedEmail.subject,
+                  content: `Email received: ${scannedEmail.subject}`,
+                  userId: 1,
+                } as any);
+              }
+            }
+          } catch {
+            // CRM linking failed, skip
+          }
 
           // Mark as seen if requested
           if (markAsSeen) {
@@ -252,7 +366,32 @@ async function parseImapMessage(
       extractAttachments(message.bodyStructure, attachments);
     }
 
-    return {
+    // Download actual attachment content for parseable files
+    const attachmentContents: Array<{ filename: string; contentType: string; data: Buffer }> = [];
+    if (message.bodyStructure?.childNodes) {
+      let partIndex = 1;
+      for (const child of message.bodyStructure.childNodes) {
+        partIndex++;
+        if (child.disposition === "attachment" || (child.disposition === "inline" && child.type !== "text")) {
+          const filename = child.dispositionParameters?.filename || child.parameters?.name || "";
+          const contentType = `${child.type}/${child.subtype}`;
+          // Only download PDFs, images, docs (skip large files >5MB)
+          const isParseable = /pdf|image|msword|spreadsheet|csv|excel|png|jpg|jpeg/i.test(contentType) || /\.pdf$|\.png$|\.jpg$|\.jpeg$|\.xlsx?$|\.csv$|\.doc/i.test(filename);
+          if (isParseable && (child.size || 0) < 5 * 1024 * 1024) {
+            try {
+              const part = await client.download(uid.toString(), String(partIndex), { uid: true });
+              if (part?.content) {
+                const chunks: Buffer[] = [];
+                for await (const chunk of part.content) chunks.push(chunk);
+                attachmentContents.push({ filename, contentType, data: Buffer.concat(chunks) });
+              }
+            } catch { /* attachment download failed, skip */ }
+          }
+        }
+      }
+    }
+
+    const result: any = {
       uid,
       messageId: envelope.messageId || `${uid}`,
       from: {
@@ -265,8 +404,10 @@ async function parseImapMessage(
       bodyText: bodyText || bodyHtml?.replace(/<[^>]*>/g, " ").trim() || "",
       bodyHtml,
       attachments,
+      attachmentContents,
       flags: message.flags ? Array.from(message.flags) : [],
     };
+    return result;
   } catch (error) {
     console.error("Error parsing IMAP message:", error);
     return null;

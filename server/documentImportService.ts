@@ -11,6 +11,7 @@ import { randomBytes } from "crypto";
 
 // Configuration constants
 const MIN_TEXT_LENGTH_FOR_SCANNED_DETECTION = 100; // Minimum text length to consider PDF as text-based
+const MAX_SCANNED_PDF_PAGES = 10; // Maximum pages to OCR for scanned PDFs (balances cost vs completeness)
 
 // Types for document import
 export interface ImportedLineItem {
@@ -361,15 +362,16 @@ If document type is unknown, return all as null.`;
         // Check if we got sufficient text (less than threshold suggests scanned/image PDF)
         if (fullText.trim().length < MIN_TEXT_LENGTH_FOR_SCANNED_DETECTION) {
           console.log("[DocumentImport] Insufficient text extracted, PDF appears to be scanned. Falling back to OCR...");
-          
-          // Log warning for multi-page PDFs
-          if (pdf.numPages > 1) {
-            console.warn(`[DocumentImport] PDF has ${pdf.numPages} pages, but only processing first page for OCR. Additional pages will be ignored.`);
+
+          const pagesToProcess = Math.min(pdf.numPages, MAX_SCANNED_PDF_PAGES);
+          if (pdf.numPages > MAX_SCANNED_PDF_PAGES) {
+            console.warn(`[DocumentImport] PDF has ${pdf.numPages} pages, capping OCR at first ${MAX_SCANNED_PDF_PAGES} pages.`);
           }
-          
+          console.log(`[DocumentImport] Processing ${pagesToProcess} page(s) for OCR`);
+
           // Create buffer for pdf2pic (only needed for scanned PDFs)
           const buffer = Buffer.from(arrayBuffer);
-          
+
           // Convert PDF to images using pdf2pic for OCR
           // Use crypto.randomBytes for unique directory name to avoid collisions
           const uniqueId = randomBytes(8).toString('hex');
@@ -377,7 +379,7 @@ If document type is unknown, return all as null.`;
           if (!existsSync(tempDir)) {
             mkdirSync(tempDir, { recursive: true });
           }
-          
+
           try {
             const options = {
               density: 200, // DPI for image conversion
@@ -387,29 +389,37 @@ If document type is unknown, return all as null.`;
               width: 2000,
               height: 2800
             };
-            
+
             console.log("[DocumentImport] Converting PDF to images for OCR...");
             const convert = fromBuffer(buffer, options);
-            
+
             // Configure to use ImageMagick (not GraphicsMagick)
             convert.setGMClass(true); // true = use ImageMagick
-            
-            // Convert first page to base64 for vision OCR (limiting to first page for efficiency)
-            const pageResult = await convert(1, { responseType: "base64" });
-            
-            if (!pageResult || !pageResult.base64) {
-              throw new Error("PDF to image conversion failed");
+
+            // Convert all pages to base64 for vision OCR
+            const imageContents: any[] = [];
+            for (let pageNum = 1; pageNum <= pagesToProcess; pageNum++) {
+              const pageResult = await convert(pageNum, { responseType: "base64" });
+              if (!pageResult || !pageResult.base64) {
+                console.warn(`[DocumentImport] Failed to convert page ${pageNum}, skipping`);
+                continue;
+              }
+              const dataUrl = `data:image/png;base64,${pageResult.base64}`;
+              imageContents.push({ type: "image_url", image_url: { url: dataUrl, detail: "high" } });
             }
-            
-            console.log("[DocumentImport] PDF converted to image, using vision OCR");
-            const dataUrl = `data:image/png;base64,${pageResult.base64}`;
-            
-            // Use vision-based OCR (similar to image processing)
+
+            if (imageContents.length === 0) {
+              throw new Error("PDF to image conversion failed for all pages");
+            }
+
+            console.log(`[DocumentImport] Converted ${imageContents.length} page(s) to images, using vision OCR`);
+
+            // Use vision-based OCR with all pages
             messageContent = [
               { type: "text", text: prompt },
-              { type: "image_url", image_url: { url: dataUrl, detail: "high" } }
+              ...imageContents
             ];
-            
+
             // Clean up temp directory using safe fs.rmSync
             try {
               rmSync(tempDir, { recursive: true, force: true });
@@ -802,10 +812,14 @@ export async function importPurchaseOrder(
 
     // 6. If marking as received, update inventory
     if (markAsReceived) {
+      // Batch load all raw materials instead of N+1
+      const rmIds = matchedItems.map(i => i.rawMaterialId).filter((id): id is number => id != null);
+      const materialsToUpdate = rmIds.length > 0 ? await Promise.all(rmIds.map(id => db.getRawMaterialById(id))) : [];
+      const materialMap = new Map(materialsToUpdate.filter(Boolean).map(m => [m!.id, m!]));
+
       for (const item of matchedItems) {
         if (item.rawMaterialId) {
-          // Get current stock and add received quantity
-          const material = await db.getRawMaterialById(item.rawMaterialId);
+          const material = materialMap.get(item.rawMaterialId);
           if (material) {
             const currentReceived = parseFloat(material.quantityReceived || '0');
             const newReceived = currentReceived + item.quantity;
@@ -1017,9 +1031,14 @@ export async function importVendorInvoice(
 
     // 7. If marking as received, update inventory
     if (markAsReceived) {
+      // Batch load all raw materials instead of N+1
+      const rmIds = matchedItems.map(i => i.rawMaterialId).filter((id): id is number => id != null);
+      const materialsToUpdate = rmIds.length > 0 ? await Promise.all(rmIds.map(id => db.getRawMaterialById(id))) : [];
+      const materialMap = new Map(materialsToUpdate.filter(Boolean).map(m => [m!.id, m!]));
+
       for (const item of matchedItems) {
         if (item.rawMaterialId) {
-          const material = await db.getRawMaterialById(item.rawMaterialId);
+          const material = materialMap.get(item.rawMaterialId);
           if (material) {
             const currentReceived = parseFloat(material.quantityReceived || '0');
             const newReceived = currentReceived + item.quantity;
@@ -1132,10 +1151,9 @@ export async function importCustomsDocument(
     createdRecords.push({ type: "customs_document", id: freightId, name: doc.documentNumber });
 
     // 5. Create or update raw materials for line items with HS codes
+    let materials = await db.getRawMaterials();
     for (const item of doc.lineItems) {
       if (item.hsCode) {
-        // Try to find existing material by HS code or description
-        const materials = await db.getAllRawMaterials();
         const existingMaterial = materials.find(m =>
           m.sku === item.hsCode ||
           m.name.toLowerCase().includes(item.description.toLowerCase().substring(0, 20))
@@ -1165,6 +1183,7 @@ export async function importCustomsDocument(
             preferredVendorId: shipper!.id
           });
           createdRecords.push({ type: "raw_material", id: materialResult.id, name: item.description });
+          materials = await db.getRawMaterials();
         }
       }
     }
@@ -1219,7 +1238,7 @@ export async function bulkImportDocuments(
   let failed = 0;
 
   for (const doc of documents) {
-    const parseResult = await parseUploadedDocument(doc.content, doc.filename, doc.hint);
+    const parseResult = await parseUploadedDocument(doc.content, doc.filename, doc.hint as "purchase_order" | "freight_invoice" | undefined);
 
     if (!parseResult.success) {
       results.push({

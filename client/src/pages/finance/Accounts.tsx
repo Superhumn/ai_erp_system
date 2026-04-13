@@ -31,14 +31,7 @@ import {
 } from "@/components/ui/table";
 import { DollarSign, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
 
 export default function Accounts() {
   const [search, setSearch] = useState("");
@@ -51,13 +44,14 @@ export default function Accounts() {
     description: "",
   });
 
-  const { data: accounts, isLoading, refetch } = trpc.accounts.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: accounts, isLoading } = trpc.accounts.list.useQuery();
   const createAccount = trpc.accounts.create.useMutation({
     onSuccess: () => {
       toast.success("Account created successfully");
       setIsOpen(false);
       setFormData({ code: "", name: "", type: "asset", subtype: "", description: "" });
-      refetch();
+      utils.accounts.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -87,7 +81,7 @@ export default function Accounts() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+          <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
             <DollarSign className="h-8 w-8" />
             Chart of Accounts
           </h1>

@@ -22,7 +22,7 @@ import { Wallet, Search, Loader2, DollarSign, Users, TrendingUp } from "lucide-r
 import { format } from "date-fns";
 
 type Employee = {
-  id: number;
+  id?: number;
   firstName: string;
   lastName: string;
   email: string | null;
@@ -48,7 +48,7 @@ export default function Payroll() {
 
   const { data: employees, isLoading } = trpc.employees.list.useQuery();
 
-  const filteredEmployees = employees?.filter((emp: Employee) => {
+  const filteredEmployees = (employees as unknown as Employee[])?.filter((emp: Employee) => {
     const fullName = `${emp.firstName} ${emp.lastName}`.toLowerCase();
     const matchesSearch = fullName.includes(search.toLowerCase()) || emp.email?.toLowerCase().includes(search.toLowerCase());
     const matchesType = typeFilter === "all" || emp.employmentType === typeFilter;
@@ -63,7 +63,7 @@ export default function Payroll() {
   };
 
   // Calculate summary stats
-  const activeEmployees = employees?.filter((e: Employee) => e.status === "active") || [];
+  const activeEmployees = (employees as unknown as Employee[])?.filter((e: Employee) => e.status === "active") || [];
   const totalSalary = activeEmployees.reduce((sum: number, e: Employee) => {
     if (e.salaryFrequency === "annual") {
       return sum + parseFloat(e.salary || "0");
@@ -72,12 +72,12 @@ export default function Payroll() {
     }
     return sum;
   }, 0);
-  const avgSalary = activeEmployees.length > 0 ? totalSalary / activeEmployees.length : 0;
+  const avgSalary = activeEmployees.length > 0 ? Number(totalSalary) / activeEmployees.length : 0;
 
   return (
     <div className="space-y-6 animate-fade-in">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+        <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
           <Wallet className="h-8 w-8" />
           Payroll & Compensation
         </h1>
@@ -94,7 +94,7 @@ export default function Payroll() {
               <Users className="h-4 w-4 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Active Employees</span>
             </div>
-            <div className="text-2xl font-bold mt-2">{activeEmployees.length}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-2">{activeEmployees.length}</div>
           </CardContent>
         </Card>
         <Card>
@@ -103,7 +103,7 @@ export default function Payroll() {
               <DollarSign className="h-4 w-4 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Annual Payroll</span>
             </div>
-            <div className="text-2xl font-bold mt-2">{formatCurrency(totalSalary.toString())}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-2">{formatCurrency(totalSalary.toString())}</div>
           </CardContent>
         </Card>
         <Card>
@@ -112,7 +112,7 @@ export default function Payroll() {
               <TrendingUp className="h-4 w-4 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Avg. Salary</span>
             </div>
-            <div className="text-2xl font-bold mt-2">{formatCurrency(avgSalary.toString())}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-2">{formatCurrency(avgSalary.toString())}</div>
           </CardContent>
         </Card>
         <Card>
@@ -121,7 +121,7 @@ export default function Payroll() {
               <Wallet className="h-4 w-4 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Monthly Payroll</span>
             </div>
-            <div className="text-2xl font-bold mt-2">{formatCurrency((totalSalary / 12).toString())}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] mt-2">{formatCurrency((Number(totalSalary) / 12).toString())}</div>
           </CardContent>
         </Card>
       </div>
@@ -176,7 +176,7 @@ export default function Payroll() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredEmployees.map((emp: Employee) => (
+                {filteredEmployees?.map((emp: Employee) => (
                   <TableRow key={emp.id}>
                     <TableCell className="font-medium">
                       {emp.firstName} {emp.lastName}

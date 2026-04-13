@@ -19,17 +19,17 @@ export default function RawMaterials() {
   const [editingMaterial, setEditingMaterial] = useState<any>(null);
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   
-  const { data: materials, isLoading, refetch } = trpc.rawMaterials.list.useQuery(
+  const utils = trpc.useUtils();
+  const { data: materials, isLoading } = trpc.rawMaterials.list.useQuery(
     categoryFilter !== "all" ? { category: categoryFilter } : undefined
   );
   const { data: vendors } = trpc.vendors.list.useQuery();
-  const utils = trpc.useUtils();
-  
+
   const createMaterial = trpc.rawMaterials.create.useMutation({
     onSuccess: () => {
       toast.success("Raw material created");
       setIsCreateOpen(false);
-      refetch();
+      utils.rawMaterials.list.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -38,7 +38,7 @@ export default function RawMaterials() {
     onSuccess: () => {
       toast.success("Raw material updated");
       setEditingMaterial(null);
-      refetch();
+      utils.rawMaterials.list.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -46,7 +46,7 @@ export default function RawMaterials() {
   const deleteMaterial = trpc.rawMaterials.delete.useMutation({
     onSuccess: () => {
       toast.success("Raw material deleted");
-      refetch();
+      utils.rawMaterials.list.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -87,7 +87,7 @@ export default function RawMaterials() {
     <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold">Raw Materials</h1>
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">Raw Materials</h1>
             <p className="text-muted-foreground">Manage ingredients and packaging materials for BOMs</p>
           </div>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
@@ -291,10 +291,10 @@ export default function RawMaterials() {
                         <Badge
                           className={
                             mat.status === "active"
-                              ? "bg-green-100 text-green-800"
+                              ? "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400"
                               : mat.status === "inactive"
-                              ? "bg-yellow-100 text-yellow-800"
-                              : "bg-red-100 text-red-800"
+                              ? "bg-amber-500/8 text-amber-600 dark:text-amber-400"
+                              : "bg-red-500/8 text-red-600 dark:text-red-400"
                           }
                         >
                           {mat.status}

@@ -5,21 +5,16 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { ArrowLeft, Package, Tag, DollarSign, Barcode, Layers } from "lucide-react";
 import { Link, useParams } from "wouter";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
 
 export default function ProductDetail() {
   const params = useParams<{ id: string }>();
   const productId = parseInt(params.id || "0");
 
-  const { data: product, isLoading } = trpc.products.get.useQuery({ id: productId });
-  const { data: inventory } = trpc.inventory.list.useQuery({ productId });
+  const { data: productRaw, isLoading } = trpc.products.get.useQuery({ id: productId });
+  const product = productRaw as any;
+  const { data: inventoryRaw } = trpc.inventory.list.useQuery({ productId });
+  const inventory = inventoryRaw as any[] | undefined;
 
   if (isLoading) {
     return (
@@ -35,20 +30,20 @@ export default function ProductDetail() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "active": return "bg-green-100 text-green-800";
-      case "inactive": return "bg-gray-100 text-gray-800";
-      case "discontinued": return "bg-red-100 text-red-800";
-      default: return "bg-gray-100 text-gray-800";
+      case "active": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
+      case "inactive": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "discontinued": return "bg-red-500/8 text-red-600 dark:text-red-400";
+      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
     }
   };
 
   const getTypeColor = (type: string) => {
     switch (type) {
-      case "finished_good": return "bg-blue-100 text-blue-800";
-      case "raw_material": return "bg-purple-100 text-purple-800";
-      case "component": return "bg-yellow-100 text-yellow-800";
-      case "service": return "bg-green-100 text-green-800";
-      default: return "bg-gray-100 text-gray-800";
+      case "finished_good": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
+      case "raw_material": return "bg-violet-500/8 text-violet-600 dark:text-violet-400";
+      case "component": return "bg-amber-500/8 text-amber-600 dark:text-amber-400";
+      case "service": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
+      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
     }
   };
 
@@ -64,7 +59,7 @@ export default function ProductDetail() {
           </Button>
         </Link>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold">{product.name}</h1>
+          <h1 className="text-xl font-semibold tracking-[-0.02em]">{product.name}</h1>
           <p className="text-muted-foreground font-mono">{product.sku}</p>
         </div>
         <Badge className={getStatusColor(product.status)}>{product.status}</Badge>
@@ -127,19 +122,19 @@ export default function ProductDetail() {
           <CardContent className="space-y-4">
             <div>
               <Label className="text-muted-foreground">Unit Price</Label>
-              <p className="text-2xl font-bold font-mono">{formatCurrency(product.unitPrice)}</p>
+              <p className="text-xl font-semibold tracking-[-0.02em] font-mono">{formatCurrency(product.unitPrice)}</p>
             </div>
             <div>
               <Label className="text-muted-foreground">Cost</Label>
-              <p className="font-mono">{formatCurrency(product.cost)}</p>
+              <p className="font-mono">{formatCurrency((product as any).cost)}</p>
             </div>
             <div>
               <Label className="text-muted-foreground">Total Inventory</Label>
-              <p className="text-xl font-semibold">{totalInventory} {product.unit || 'units'}</p>
+              <p className="text-xl font-semibold">{totalInventory} {(product as any).unit || 'units'}</p>
             </div>
             <div>
               <Label className="text-muted-foreground">Unit</Label>
-              <p>{product.unit || "-"}</p>
+              <p>{(product as any).unit || "-"}</p>
             </div>
           </CardContent>
         </Card>
@@ -172,10 +167,10 @@ export default function ProductDetail() {
                 <div key={inv.id} className="flex justify-between items-center p-3 border rounded-lg">
                   <div>
                     <p className="font-medium">Warehouse #{inv.warehouseId}</p>
-                    <p className="text-sm text-muted-foreground">Location: {inv.location || "-"}</p>
+                    <p className="text-sm text-muted-foreground">Location: {(inv as any).location || "-"}</p>
                   </div>
                   <div className="text-right">
-                    <p className="font-mono font-bold">{inv.quantity} {product.unit || 'units'}</p>
+                    <p className="font-mono font-bold">{inv.quantity} {(product as any).unit || 'units'}</p>
                     {inv.reservedQuantity && parseFloat(inv.reservedQuantity.toString()) > 0 && (
                       <p className="text-sm text-muted-foreground">
                         Reserved: {inv.reservedQuantity}

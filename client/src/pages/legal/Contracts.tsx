@@ -33,14 +33,8 @@ import {
 import { FileText, Plus, Search, Loader2, Calendar } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
+import { getStatusColor } from "@/lib/statusColors";
 
 export default function Contracts() {
   const [search, setSearch] = useState("");
@@ -56,7 +50,8 @@ export default function Contracts() {
     description: "",
   });
 
-  const { data: contracts, isLoading, refetch } = trpc.contracts.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: contracts, isLoading } = trpc.contracts.list.useQuery();
   const createContract = trpc.contracts.create.useMutation({
     onSuccess: () => {
       toast.success("Contract created successfully");
@@ -65,7 +60,7 @@ export default function Contracts() {
         title: "", type: "customer", partyName: "",
         startDate: "", endDate: "", value: "", description: "",
       });
-      refetch();
+      utils.contracts.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -80,15 +75,6 @@ export default function Contracts() {
     const matchesStatus = statusFilter === "all" || contract.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-
-  const statusColors: Record<string, string> = {
-    draft: "bg-gray-500/10 text-gray-600",
-    pending_review: "bg-amber-500/10 text-amber-600",
-    active: "bg-green-500/10 text-green-600",
-    expired: "bg-red-500/10 text-red-600",
-    terminated: "bg-red-500/10 text-red-600",
-    renewed: "bg-blue-500/10 text-blue-600",
-  };
 
   const typeColors: Record<string, string> = {
     customer: "bg-blue-500/10 text-blue-600",
@@ -116,7 +102,7 @@ export default function Contracts() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+          <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
             <FileText className="h-8 w-8" />
             Contracts
           </h1>
@@ -314,7 +300,7 @@ export default function Contracts() {
                       {contract.value ? formatCurrency(contract.value) : "-"}
                     </TableCell>
                     <TableCell>
-                      <Badge className={statusColors[contract.status]}>{contract.status.replace("_", " ")}</Badge>
+                      <Badge className={getStatusColor(contract.status)}>{contract.status.replace("_", " ")}</Badge>
                     </TableCell>
                   </TableRow>
                 ))}
