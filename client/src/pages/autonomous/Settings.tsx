@@ -266,7 +266,7 @@ export default function AutonomousSettings() {
                         <Label htmlFor="trigger" className="text-right">Trigger</Label>
                         <Select
                           value={newWorkflow.triggerType}
-                          onValueChange={(v: any) => setNewWorkflow({ ...newWorkflow, triggerType: v })}
+                          onValueChange={(v: "scheduled" | "event" | "threshold" | "manual" | "continuous") => setNewWorkflow({ ...newWorkflow, triggerType: v })}
                         >
                           <SelectTrigger className="col-span-3">
                             <SelectValue placeholder="Select trigger type" />

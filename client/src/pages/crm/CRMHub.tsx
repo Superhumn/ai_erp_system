@@ -1070,8 +1070,13 @@ export default function CRMHub() {
               // Auto-name deal from contact's company or name
               const selectedC = (contacts as any[])?.find((c: any) => c.id === contactId);
               const autoName = selectedC?.organization || selectedC?.fullName || dealForm.contactName || "New Deal";
+              const activePipelineId = pipelines?.[0]?.id;
+              if (!activePipelineId) {
+                toast.error("No sales pipeline found. Please set up a pipeline first.");
+                return;
+              }
               createDeal.mutate({
-                pipelineId: pipelines?.[0]?.id ?? 1,
+                pipelineId: activePipelineId,
                 contactId: contactId,
                 name: autoName,
                 stage: dealForm.stage,
