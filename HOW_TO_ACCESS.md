@@ -1,6 +1,6 @@
 # 🎯 Accessing Your Deployment - Quick Visual Guide
 
-## After Deploying to Vercel
+## After Deploying to Railway
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -8,30 +8,25 @@
 └─────────────────────────────────────────────────────────────┘
 
 1️⃣ DEPLOY
-   ┌──────────────────┐
-   │  Run: vercel     │
-   └────────┬─────────┘
-            │
-            ▼
+   ┌──────────────────────────────────────┐
+   │  Connect GitHub repo on Railway.app  │
+   └────────────────┬─────────────────────┘
+                    │
+                    ▼
    ┌──────────────────────────────────────┐
    │ ✅ Deployment URL Generated          │
-   │ https://your-project.vercel.app      │
+   │ https://your-app.railway.app         │
    └──────────────────────────────────────┘
 
 
 2️⃣ FIND YOUR URL
 
-   Option A: In Terminal
+   Option A: In Railway Dashboard
    ┌────────────────────────────────────────────┐
-   │ ✅ Production:                             │
-   │ https://ai-erp-system.vercel.app          │
-   └────────────────────────────────────────────┘
-
-   Option B: Vercel Dashboard
-   ┌────────────────────────────────────────────┐
-   │ 1. Go to vercel.com                        │
+   │ 1. Go to railway.app                       │
    │ 2. Click your project                      │
-   │ 3. See URL at top ⬆️                       │
+   │ 3. Click your service                      │
+   │ 4. See "Deployments" tab → domain URL      │
    └────────────────────────────────────────────┘
 
 
@@ -39,7 +34,7 @@
 
    Open in browser:
    ┌────────────────────────────────────────────┐
-   │ 🌐 https://your-project.vercel.app        │
+   │ 🌐 https://your-app.railway.app           │
    └─────────────────┬──────────────────────────┘
                      │
                      ▼
@@ -110,23 +105,22 @@
 
 ## 🎯 The Answer You're Looking For
 
-### Q: "After Vercel deployment, how do I access it?"
+### Q: "After Railway deployment, how do I access it?"
 
-**A: Your app is at `https://[your-project].vercel.app`**
+**A: Your app is at `https://[your-app].railway.app`**
 
-1. Copy the URL from deployment output or Vercel dashboard
-2. Open in browser
-3. Click "Sign up" on login page
-4. Enter your details
-5. Done! You're logged in as admin
+1. Open your project on [railway.app](https://railway.app)
+2. Click your service → find the public domain URL
+3. Open in browser
+4. Click "Sign up" on login page
+5. Enter your details
+6. Done! You're logged in as admin
 
 ## 🔗 Quick Links
 
-**Just deployed?** → [QUICK_START_VERCEL.md](./QUICK_START_VERCEL.md)
-
-**Having issues?** → [docs/VERCEL_ACCESS_GUIDE.md](./docs/VERCEL_ACCESS_GUIDE.md)
-
 **Need full guide?** → [docs/STANDALONE_DEPLOYMENT.md](./docs/STANDALONE_DEPLOYMENT.md)
+
+**Common questions?** → [ACCESS_FAQ.md](./ACCESS_FAQ.md)
 
 ## ⚡ Common Issues & Quick Fixes
 
@@ -135,13 +129,13 @@
 │ ISSUE                          │ QUICK FIX                │
 ├───────────────────────────────────────────────────────────┤
 │ "Database connection failed"   │ Set DATABASE_URL in      │
-│                                │ Vercel env vars          │
+│                                │ Railway env vars          │
 ├───────────────────────────────────────────────────────────┤
 │ "Invalid session cookie"       │ Set JWT_SECRET (32+      │
 │                                │ chars) in env vars       │
 ├───────────────────────────────────────────────────────────┤
 │ "404 Not Found"                │ Check build succeeded    │
-│                                │ in Vercel dashboard      │
+│                                │ in Railway dashboard      │
 ├───────────────────────────────────────────────────────────┤
 │ "Logged out immediately"       │ Verify JWT_SECRET is set │
 │                                │ and redeploy             │
@@ -152,7 +146,7 @@
 
 Before accessing your app, ensure:
 
-- [ ] Deployed to Vercel ✓
+- [ ] Deployed to Railway ✓
 - [ ] Set `DATABASE_URL` in environment variables
 - [ ] Set `JWT_SECRET` (32+ chars) in environment variables
 - [ ] Ran `npm run db:push` to create database tables
@@ -170,27 +164,20 @@ You know it's working when:
 
 ## 🆘 Still Stuck?
 
-1. **Check Vercel logs:**
-   ```bash
-   vercel logs --follow
-   ```
+1. **Check Railway logs:**
+   - Go to Railway dashboard → your service → "Deployments" tab → view logs
 
 2. **Verify environment variables:**
-   ```bash
-   vercel env ls
-   ```
+   - Railway dashboard → your service → "Variables" tab
 
 3. **Redeploy:**
-   ```bash
-   vercel --prod
-   ```
+   - Railway dashboard → your service → "Deployments" → "Redeploy"
 
 4. **Read detailed guide:**
-   - [Vercel Access Guide](./docs/VERCEL_ACCESS_GUIDE.md) - Complete troubleshooting
-   - [Quick Start](./QUICK_START_VERCEL.md) - Step-by-step commands
+   - [Standalone Deployment Guide](./docs/STANDALONE_DEPLOYMENT.md) - Complete instructions
 
 ---
 
-**Your deployment URL:** `https://[your-project-name].vercel.app`
+**Your deployment URL:** `https://[your-app].railway.app`
 
 **First login:** Sign up → Auto-admin → Start using!

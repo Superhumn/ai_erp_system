@@ -133,7 +133,6 @@ OIDC has become the standard for authenticating GitHub Actions to cloud provider
 | **Azure** | `azure/login` (Workload Identity Federation) | App Service, AKS, Functions, Container Instances |
 | **GCP** | `google-github-actions/auth` | Cloud Run, GKE, Cloud Functions, App Engine |
 | **Railway** | `railwayapp/github-action` | Direct deploy |
-| **Vercel** | Built-in Git integration | Auto-deploy on push |
 | **Fly.io** | `superfly/flyctl-actions` | Fly.io machines |
 
 ### Infrastructure as Code

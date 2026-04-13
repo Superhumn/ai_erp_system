@@ -4,37 +4,12 @@ Common questions and answers about accessing your AI ERP System after deployment
 
 ## General Access Questions
 
-### Q0: I see code/source files instead of the app - how do I fix this?
-
-**Answer:** This happens when Vercel doesn't have proper configuration for the full-stack app.
-
-**Quick Fix:**
-1. Ensure `vercel.json` exists in your repository (it should be there now)
-2. Redeploy: `vercel --prod`
-3. The app should now display correctly
-
-**Why it happens:**
-- Without `vercel.json`, Vercel may serve source files instead of built application
-- The build process might not run correctly
-- Routing configuration is missing
-
-**Detailed solution:** See [docs/FIX_VERCEL_CODE_DISPLAY.md](./docs/FIX_VERCEL_CODE_DISPLAY.md)
-
-**Verification:**
-- ✅ Should see login page, not code files
-- ✅ Browser should load bundled JS/CSS, not source files
-- ✅ Check Vercel build logs for "Build successful"
-
 ### Q1: Where is my deployed application?
 
 **Answer:** Your application URL depends on the platform:
 
-- **Vercel:** `https://[your-project-name].vercel.app`
-  - Find it: Vercel Dashboard → Your Project → URL at top
-  - Or: Check CLI output after running `vercel`
-
 - **Railway:** `https://[your-app-name].railway.app`
-  - Find it: Railway Dashboard → Your Project → Deployments → Click deployment
+  - Find it: Railway Dashboard → Your Project → your service → domain URL
 
 - **Custom Domain:** If you configured one, use that (e.g., `https://erp.yourcompany.com`)
 
@@ -87,14 +62,7 @@ Common questions and answers about accessing your AI ERP System after deployment
 - Database not accessible from your hosting platform
 
 **Fix:**
-1. Verify DATABASE_URL is set:
-   ```bash
-   # Vercel
-   vercel env ls
-   
-   # Railway
-   railway variables
-   ```
+1. Verify DATABASE_URL is set in Railway Variables tab
 
 2. Check the format:
    ```
@@ -106,10 +74,7 @@ Common questions and answers about accessing your AI ERP System after deployment
    npm run db:push
    ```
 
-4. Redeploy after fixing:
-   ```bash
-   vercel --prod  # or railway up
-   ```
+4. Redeploy after fixing via Railway dashboard.
 
 ### Q7: "Invalid session cookie" / Immediately logged out
 
@@ -138,7 +103,7 @@ Common questions and answers about accessing your AI ERP System after deployment
 - Wrong URL
 
 **Fix:**
-1. Check deployment status in dashboard
+1. Check deployment status in Railway dashboard
 2. Review build logs for errors
 3. Verify URL is correct
 4. Ensure build command is: `npm run build`
@@ -172,12 +137,8 @@ Common questions and answers about accessing your AI ERP System after deployment
 
 ### Q11: Where do I set environment variables?
 
-**Vercel:**
-1. Dashboard → Your Project → Settings → Environment Variables
-2. Or via CLI: `vercel env add VARIABLE_NAME`
-
 **Railway:**
-1. Dashboard → Your Project → Variables
+1. Dashboard → Your Project → your service → Variables tab
 2. Or via CLI: `railway variables set VARIABLE_NAME=value`
 
 **Required variables:**
@@ -191,15 +152,7 @@ Common questions and answers about accessing your AI ERP System after deployment
 
 **Answer:** YES! ✅
 
-Environment variables are loaded at build/startup time. After changing them:
-
-```bash
-# Vercel
-vercel --prod
-
-# Railway
-railway up
-```
+Environment variables are loaded at build/startup time. After changing them, trigger a new deployment in the Railway dashboard.
 
 ### Q13: How do I generate a secure JWT_SECRET?
 
@@ -210,9 +163,6 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 # Method 2: OpenSSL
 openssl rand -hex 32
-
-# Method 3: Online (use trusted sites only)
-# Visit: https://www.grc.com/passwords.htm
 ```
 
 **Important:** 
@@ -245,14 +195,10 @@ npm run db:push
 
 **Recommendations:**
 
-**For Vercel:**
-- **PlanetScale** (recommended) - Free tier, automatic scaling
-- **Railway MySQL** - Simple setup
-- **AWS RDS** - Full control, production-grade
-
 **For Railway:**
-- **Railway MySQL** (built-in) - Easiest option
+- **Railway MySQL** (built-in) - Easiest option, add a MySQL service to your project
 - **PlanetScale** - Also works great
+- **AWS RDS** - Full control, production-grade
 
 **Requirements:**
 - MySQL 8.0+
@@ -275,7 +221,6 @@ Switching to PostgreSQL would require:
 ### Q17: Why is the first visit slow?
 
 **Causes:**
-- Cold start (serverless functions warming up)
 - Database connection initialization
 - Asset loading
 
@@ -286,13 +231,12 @@ Switching to PostgreSQL would require:
 - Check database connection limits
 - Review server logs for errors
 
-### Q18: How can I speed up cold starts?
+### Q18: How can I speed up the app?
 
 **Options:**
-1. **Upgrade to paid tier** (some platforms reduce cold starts)
-2. **Keep warm:** Regular health check pings
-3. **Database location:** Same region as app
-4. **Optimize:** Review slow queries in logs
+1. **Database location:** Use the same region as your Railway service
+2. **Optimize:** Review slow queries in logs
+3. **Upgrade Railway plan** for more resources
 
 ## User Management
 
@@ -369,23 +313,7 @@ Admins can:
 
 ## Deployment Platforms
 
-### Q25: Vercel vs Railway - which is better?
-
-**Vercel:**
-- ✅ Great for frontend-heavy apps
-- ✅ Excellent CI/CD
-- ✅ Free tier generous
-- ⚠️ Serverless (cold starts)
-
-**Railway:**
-- ✅ Always-on servers (no cold starts)
-- ✅ Built-in databases
-- ✅ Simple setup
-- ⚠️ Paid after free credits
-
-**Recommendation:** Try Vercel first (free), switch if needed.
-
-### Q26: Can I deploy to AWS/GCP/Azure?
+### Q25: Can I deploy to AWS/GCP/Azure?
 
 **Answer:** Yes! The app runs anywhere Node.js runs.
 
@@ -397,37 +325,26 @@ See [docs/STANDALONE_DEPLOYMENT.md](./docs/STANDALONE_DEPLOYMENT.md) for:
 
 ## Getting More Help
 
-### Q27: Where can I find detailed documentation?
+### Q26: Where can I find detailed documentation?
 
 **Quick Answers:**
 - [HOW_TO_ACCESS.md](./HOW_TO_ACCESS.md) - Visual quick guide
-- [QUICK_START_VERCEL.md](./QUICK_START_VERCEL.md) - 5-minute deployment
 
 **Detailed Guides:**
-- [docs/VERCEL_ACCESS_GUIDE.md](./docs/VERCEL_ACCESS_GUIDE.md) - Complete Vercel guide
 - [docs/STANDALONE_DEPLOYMENT.md](./docs/STANDALONE_DEPLOYMENT.md) - All platforms
 - [README.md](./README.md) - Full system documentation
 
 **Troubleshooting:**
-- [SECURITY_SUMMARY_AUTH.md](./SECURITY_SUMMARY_AUTH.md) - Security details
-- Platform docs: [Vercel](https://vercel.com/docs), [Railway](https://docs.railway.app)
+- Platform docs: [Railway](https://docs.railway.app)
 
-### Q28: How do I check logs?
-
-**Vercel:**
-```bash
-# Real-time logs
-vercel logs --follow
-
-# Or in dashboard: Your Project → Logs
-```
+### Q27: How do I check logs?
 
 **Railway:**
 ```bash
 # Real-time logs
 railway logs
 
-# Or in dashboard: Your Project → Deployments → View Logs
+# Or in dashboard: Your Project → your service → Deployments → View Logs
 ```
 
 **What to look for:**
@@ -436,14 +353,13 @@ railway logs
 - Build/startup errors
 - 404 or 500 errors
 
-### Q29: My question isn't answered here
+### Q28: My question isn't answered here
 
 **Resources:**
-1. Check [docs/VERCEL_ACCESS_GUIDE.md](./docs/VERCEL_ACCESS_GUIDE.md) troubleshooting section
-2. Review deployment platform docs
+1. Review [docs/STANDALONE_DEPLOYMENT.md](./docs/STANDALONE_DEPLOYMENT.md) troubleshooting section
+2. Review [Railway documentation](https://docs.railway.app)
 3. Check application logs
 4. Open GitHub issue with:
-   - Platform (Vercel/Railway/etc.)
    - Error message (if any)
    - Steps to reproduce
    - Deployment logs
@@ -453,30 +369,27 @@ railway logs
 ## Quick Command Reference
 
 ```bash
-# Deploy to Vercel
-vercel
-
-# Check environment variables
-vercel env ls
-
-# View logs
-vercel logs --follow
-
-# Redeploy
-vercel --prod
-
 # Generate JWT secret
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 # Run database migrations
 npm run db:push
+
+# Build locally
+npm run build
+
+# Railway CLI - view logs
+railway logs
+
+# Railway CLI - set variable
+railway variables set VARIABLE_NAME=value
 ```
 
 ## Success Checklist
 
 After deployment, you should have:
 
-- [ ] Deployment URL (e.g., `https://your-app.vercel.app`)
+- [ ] Deployment URL (e.g., `https://your-app.railway.app`)
 - [ ] DATABASE_URL set in environment variables
 - [ ] JWT_SECRET (32+ chars) set in environment variables
 - [ ] Database tables created (ran `npm run db:push`)
@@ -487,7 +400,3 @@ After deployment, you should have:
 - [ ] Can navigate to different pages
 
 **All checked?** 🎉 You're ready to use the system!
-
----
-
-**Still having issues?** See the [complete troubleshooting guide](./docs/VERCEL_ACCESS_GUIDE.md#troubleshooting-common-issues).

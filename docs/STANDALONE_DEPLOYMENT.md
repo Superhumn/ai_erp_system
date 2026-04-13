@@ -44,49 +44,6 @@ Railway is the easiest deployment option with automatic builds and deployments.
    - Sign up with your email and password
    - The first user automatically gets admin access
 
-### Vercel + PlanetScale
-
-1. **Deploy to Vercel:**
-   ```bash
-   npm install -g vercel
-   vercel
-   ```
-
-2. **Set up PlanetScale Database:**
-   - Create a database at [planetscale.com](https://planetscale.com)
-   - Get your connection string
-   - Add to Vercel environment variables:
-     ```
-     DATABASE_URL=mysql://...@...planetscale.com/ai_erp_system?sslaccept=strict
-     JWT_SECRET=your-very-secure-random-string-min-32-chars
-     NODE_ENV=production
-     ```
-
-3. **Run Database Migrations:**
-   ```bash
-   # Set DATABASE_URL in local .env
-   echo "DATABASE_URL=your-mysql-connection-string" > .env
-   
-   # Run migrations to create all tables
-   npm run db:push
-   ```
-
-4. **Accessing Your Deployment:**
-   - Your app will be at: `https://[your-project].vercel.app`
-   - Visit the URL in your browser
-   - You'll be redirected to `/login`
-   - Click "Sign up" to create your first user
-   - **The first user automatically gets admin role**
-   - You're now logged in and ready to use the system!
-
-   **Need detailed help?** See the [Vercel Access Guide](./VERCEL_ACCESS_GUIDE.md) for:
-   - Finding your deployment URL
-   - Troubleshooting common issues
-   - Setting up custom domains
-   - Database configuration
-   
-   **Want the quick version?** See [QUICK_START_VERCEL.md](../QUICK_START_VERCEL.md)
-
 ### AWS/DigitalOcean/Heroku
 
 For traditional hosting platforms:
@@ -240,7 +197,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 ### 2. HTTPS in Production
 
-Always use HTTPS in production. Most platforms (Railway, Vercel) provide this automatically.
+Always use HTTPS in production. Most platforms (Railway, etc.) provide this automatically.
 
 ### 3. Database Security
 

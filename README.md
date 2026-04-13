@@ -866,14 +866,12 @@ While the system works completely standalone with email/password authentication,
 
 **Just deployed? Start here:**
 - 🎯 **[HOW TO ACCESS](./HOW_TO_ACCESS.md)** - Visual quick guide with diagrams
-- ⚡ **[Vercel Quick Start](./QUICK_START_VERCEL.md)** - Deploy in 5 minutes
-- ❓ **[Access FAQ](./ACCESS_FAQ.md)** - 29 common questions answered
+- ❓ **[Access FAQ](./ACCESS_FAQ.md)** - Common questions answered
 
 **Detailed guides:**
-- 📘 [Vercel Access Guide](./docs/VERCEL_ACCESS_GUIDE.md) - Complete troubleshooting
 - 📗 [Standalone Deployment](./docs/STANDALONE_DEPLOYMENT.md) - All platforms
 
-**TL;DR:** Visit `https://[your-project].vercel.app` → Click "Sign up" → First user = Admin
+**TL;DR:** Visit `https://[your-app].railway.app` → Click "Sign up" → First user = Admin
 
 ---
 
@@ -890,20 +888,13 @@ Detailed setup documentation for each integration:
 
 ## Deployment
 
-### 🚨 Common Issue: Seeing Code Instead of App?
-If your Vercel deployment shows raw code or source files instead of the application:
-- **Quick Fix:** A `vercel.json` file has been added. Just run `vercel --prod` to redeploy.
-- **Details:** See [VERCEL_CODE_FIX.md](./VERCEL_CODE_FIX.md)
-
 ### Quick Start Options
 
 **Want to deploy in 5 minutes?**
-- **Vercel:** See [QUICK_START_VERCEL.md](./QUICK_START_VERCEL.md) for the fastest path
 - **Railway:** See detailed guide below
 
 **Need help accessing after deployment?**
-- [How to Access Your Vercel Deployment](./docs/VERCEL_ACCESS_GUIDE.md) - Complete guide with troubleshooting
-- Your app will be at `https://[your-project].vercel.app` or `https://[your-app].railway.app`
+- Your app will be at `https://[your-app].railway.app`
 - First visit redirects to `/login` - click "Sign up" to create admin account
 
 ### Railway (Recommended)
@@ -913,15 +904,6 @@ If your Vercel deployment shows raw code or source files instead of the applicat
 3. Set all required environment variables in the Railway dashboard.
 4. Railway auto-detects configuration from `package.json`.
 5. **Access:** Visit `https://[your-app].railway.app`, click "Sign up", create first user (auto-admin)
-
-### Vercel (Popular Alternative)
-
-1. **Deploy:** Run `vercel` or connect GitHub repo
-2. **Environment Variables:** Set `DATABASE_URL` and `JWT_SECRET` in Vercel dashboard
-3. **Database Migrations:** Run `npm run db:push` locally after setting DATABASE_URL
-4. **Access:** Visit `https://[your-project].vercel.app`, sign up as first user (auto-admin)
-
-**Detailed instructions:** [docs/VERCEL_ACCESS_GUIDE.md](./docs/VERCEL_ACCESS_GUIDE.md)
 
 ### Production Build (Manual)
 

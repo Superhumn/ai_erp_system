@@ -170,7 +170,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 In production, always use HTTPS:
 - Prevents session token interception
 - Required for Secure cookie attribute
-- Most platforms (Railway, Vercel) provide automatic HTTPS
+- Most platforms (Railway, etc.) provide automatic HTTPS
 
 ### Database Migration
 
