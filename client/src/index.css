@@ -273,7 +273,7 @@
    Clean metrics, strong value hierarchy
    ============================================ */
 .kpi-card {
-  @apply p-7 rounded-3xl border border-border/40 bg-card shadow-[0_2px_12px_-2px_rgba(0,0,0,0.06)];
+  @apply p-4 rounded-2xl border border-border/40 bg-card shadow-[0_1px_8px_-2px_rgba(0,0,0,0.05)];
 }
 
 .kpi-card-title {
@@ -314,7 +314,7 @@
 
 /* Form sections */
 .form-section {
-  @apply space-y-5 p-7 rounded-3xl border border-border/40 bg-card shadow-[0_2px_12px_-2px_rgba(0,0,0,0.06)];
+  @apply space-y-4 p-5 rounded-2xl border border-border/40 bg-card shadow-[0_1px_8px_-2px_rgba(0,0,0,0.05)];
 }
 
 .form-section-title {

@@ -501,6 +501,11 @@ async function syncCustomers(
       const name = [sc.first_name, sc.last_name].filter(Boolean).join(" ") || sc.email || "Unknown";
       const email = sc.email || null;
 
+      // Skip junk entries (contact form submissions, empty records)
+      const lowerName = name.toLowerCase();
+      if (lowerName === "contact form" || lowerName === "unknown") continue;
+      if (!email && (!sc.first_name || sc.first_name === "Contact")) continue;
+
       // Check by shopify ID first, then by email
       let existing = await getCustomerByShopifyId(shopifyId);
       if (!existing && email) {
