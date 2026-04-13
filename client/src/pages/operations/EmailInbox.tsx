@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
+import sanitizeHtml from "sanitize-html";
 import {
   Mail,
   FileText,
@@ -733,27 +734,13 @@ export default function EmailInbox() {
                                   "(No content)";
                                 // Strip HTML if it contains tags
                                 if (raw.includes("<") && raw.includes(">")) {
-                                  let sanitized = raw;
-                                  let previous: string;
-                                  do {
-                                    previous = sanitized;
-                                    sanitized = sanitized
-                                      .replace(/<style[^>]*>[\s\S]*?<\/style[^>]*>/gi, "")
-                                      .replace(/<script[^>]*>[\s\S]*?<\/script[^>]*>/gi, "")
-                                      .replace(/<br\s*\/?>/gi, "\n")
-                                      .replace(/<\/p>/gi, "\n\n")
-                                      .replace(/<\/div>/gi, "\n")
-                                      .replace(/<\/tr>/gi, "\n")
-                                      .replace(/<\/li>/gi, "\n")
-                                      .replace(/<[^>]+>/g, "")
-                                      .replace(/&nbsp;/g, " ")
-                                      .replace(/&lt;/g, "<")
-                                      .replace(/&gt;/g, ">")
-                                      .replace(/&quot;/g, '"')
-                                      .replace(/&amp;/g, "&")
-                                      .replace(/\n{3,}/g, "\n\n")
-                                      .trim();
-                                  } while (sanitized !== previous);
+                                  const sanitized = sanitizeHtml(raw, {
+                                    allowedTags: [],
+                                    allowedAttributes: {},
+                                  })
+                                    .replace(/&nbsp;/g, " ")
+                                    .replace(/\n{3,}/g, "\n\n")
+                                    .trim();
                                   return sanitized;
                                 }
                                 return raw;
