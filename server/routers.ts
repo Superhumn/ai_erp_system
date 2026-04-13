@@ -17653,6 +17653,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           title: t.title || 'Untitled Meeting',
           date: t.date ? new Date(t.date) : new Date(),
           duration: t.duration,
+          organizerEmail: fullTranscript?.organizer_email || t.organizer_email || null,
           participants: JSON.stringify(participants),
           transcriptUrl: fullTranscript?.transcript_url || null,
           summary: fullTranscript?.summary ? JSON.stringify(fullTranscript.summary) : null,
@@ -17830,28 +17831,57 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         createTasks: z.boolean().optional(),
         createProjects: z.boolean().optional(),
       }).optional())
-      .mutation(async ({ ctx }) => {
+      .mutation(async ({ input, ctx }) => {
       const meetings = await db.getFirefliesMeetings({ status: 'pending' });
       let processed = 0;
       let contactsCreated = 0;
       let tasksCreated = 0;
       let projectsCreated = 0;
+      const doContacts = input?.createContacts !== false;
+      const doTasks = input?.createTasks === true;
+      const doProjects = input?.createProjects === true;
       for (const meeting of meetings) {
-        // Auto-create contacts from participants
-        const parsedParticipants: Array<{ name: string; email: string }> =
-          typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
-          Array.isArray(meeting.participants) ? meeting.participants : [];
-        for (const p of parsedParticipants) {
-          if (p.email) {
-            try {
-              await db.createCrmContact({
-                firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
-                fullName: p.name || p.email.split('@')[0],
-                email: p.email,
-                source: 'manual' as const,
+        if (doContacts) {
+          // Auto-create contacts from participants
+          const parsedParticipants: Array<{ name: string; email: string }> =
+            typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
+            Array.isArray(meeting.participants) ? meeting.participants : [];
+          for (const p of parsedParticipants) {
+            if (p.email) {
+              try {
+                await db.createCrmContact({
+                  firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
+                  fullName: p.name || p.email.split('@')[0],
+                  email: p.email,
+                  source: 'manual' as const,
+                } as any);
+                contactsCreated++;
+              } catch { /* duplicate */ }
+            }
+          }
+        }
+        if (doTasks && meeting.actionItems) {
+          const items = (meeting.actionItems ? JSON.parse(meeting.actionItems) : []) as Array<{ text: string }>;
+          let projectId: number | undefined;
+          if (doProjects) {
+            const project = await db.createProject({
+              projectNumber: `FF-${Date.now()}`,
+              name: meeting.title || 'Untitled Meeting Project',
+              status: 'planning',
+              createdBy: ctx.user.id,
+            } as any);
+            projectId = project.id;
+            projectsCreated++;
+          }
+          for (const item of items) {
+            if (projectId) {
+              await db.createProjectTask({
+                projectId,
+                name: item.text,
+                status: 'todo',
               } as any);
-              contactsCreated++;
-            } catch { /* duplicate */ }
+              tasksCreated++;
+            }
           }
         }
         await db.updateFirefliesMeeting(meeting.id, { processingStatus: 'fully_processed' });
