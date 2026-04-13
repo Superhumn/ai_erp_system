@@ -204,6 +204,13 @@
       "when": 1773590400000,
       "tag": "0028_fireflies_meeting_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "5",
+      "when": 1773676800000,
+      "tag": "0029_fix_fireflies_meetings_schema",
+      "breakpoints": true
     }
   ]
 }
