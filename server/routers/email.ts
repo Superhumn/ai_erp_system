@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { createHash, createDecipheriv } from "crypto";
 import { encrypt, decrypt } from "../_core/crypto";
+import { ENV } from "../_core/env";
 import { sendEmail } from "../_core/email";
 import * as emailService from "../_core/emailService";
 import * as db from "../db";
@@ -16,8 +17,10 @@ function decryptPassword(encryptedText: string): string {
   if (encryptedText.split(":").length === 3) {
     return decrypt(encryptedText);
   }
-  // Legacy CBC fallback for passwords stored before the GCM migration
-  const key = process.env.JWT_SECRET || "default-key";
+  // Legacy CBC fallback for passwords stored before the GCM migration.
+  // Uses ENV.cookieSecret (JWT_SECRET) which is validated at startup; consistent with
+  // the original code that used `process.env.JWT_SECRET || 'default-key'`.
+  const key = ENV.cookieSecret;
   const decipher = createDecipheriv(
     "aes-256-cbc",
     createHash("sha256").update(key).digest().slice(0, 32),

@@ -44,6 +44,7 @@ import { runFormFillerAgent } from "./formFillerAgent";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
 import { purchaseOrderTextEndpoints, shipmentTextEndpoints, paymentTextEndpoints, workOrderTextEndpoints, inventoryTextEndpoints } from "./naturalLanguageRouterExtensions";
 import { encrypt, decrypt } from "./_core/crypto";
+import { ENV } from "./_core/env";
 import { createHash, createDecipheriv } from "crypto";
 
 // Decrypts a stored password supporting both the current AES-256-GCM format
@@ -52,8 +53,10 @@ function decryptPassword(encryptedText: string): string {
   if (encryptedText.split(":").length === 3) {
     return decrypt(encryptedText);
   }
-  // Legacy CBC fallback for passwords stored before the GCM migration
-  const key = process.env.JWT_SECRET || "default-key";
+  // Legacy CBC fallback for passwords stored before the GCM migration.
+  // Uses ENV.cookieSecret (JWT_SECRET) which is validated at startup; consistent with
+  // the original code that used `process.env.JWT_SECRET || 'default-key'`.
+  const key = ENV.cookieSecret;
   const decipher = createDecipheriv(
     "aes-256-cbc",
     createHash("sha256").update(key).digest().slice(0, 32),
