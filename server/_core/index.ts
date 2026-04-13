@@ -20,8 +20,21 @@ function serveStatic(app: import("express").Express) {
   if (!fs.existsSync(distPath)) {
     console.error(`Could not find the build directory: ${distPath}, make sure to build the client first`);
   }
-  app.use(express.static(distPath));
+  // Hashed assets (JS/CSS) — cache forever (filename changes on rebuild)
+  app.use("/assets", express.static(path.join(distPath, "assets"), {
+    maxAge: "1y",
+    immutable: true,
+  }));
+  // Everything else — no cache (index.html must always be fresh)
+  app.use(express.static(distPath, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith(".html")) {
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      }
+    },
+  }));
   app.use("*", (_req: any, res: any) => {
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }
