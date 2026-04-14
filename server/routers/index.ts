@@ -22,6 +22,25 @@ import { aiRouter } from "./ai";
 import { boardRouter } from "./board";
 import { investorUpdatesRouter } from "./investorUpdates";
 import { codeRouter } from "./code";
+import {
+  bankingRouter,
+  capTableRouter,
+  exerciseRequestsRouter,
+  financeAiRouter,
+  financialModelRouter,
+  firefliesRouter,
+  grantBidRouter,
+  hrAiRouter,
+  kpiGoalsRouter,
+  legalAiRouter,
+  manufacturingAiRouter,
+  orderItemsRouter,
+  projectsAiRouter,
+  rdTaxCreditRouter,
+  supplierScoringRouter,
+  teamInvitesRouter,
+  timeTrackingRouter,
+} from "./stubs";
 
 const baseRouter = router({
   system: systemRouter,
@@ -54,6 +73,24 @@ export const appRouter = mergeRouters(
   boardRouter,
   investorUpdatesRouter,
   codeRouter,
+  // Feature stubs (wired to DB where available)
+  bankingRouter,
+  capTableRouter,
+  exerciseRequestsRouter,
+  financeAiRouter,
+  financialModelRouter,
+  firefliesRouter,
+  grantBidRouter,
+  hrAiRouter,
+  kpiGoalsRouter,
+  legalAiRouter,
+  manufacturingAiRouter,
+  orderItemsRouter,
+  projectsAiRouter,
+  rdTaxCreditRouter,
+  supplierScoringRouter,
+  teamInvitesRouter,
+  timeTrackingRouter,
 );
 
 export type AppRouter = typeof appRouter;

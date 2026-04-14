@@ -2150,4 +2150,40 @@ export const dataRoomRouter = router({
 
       return { filesCreated, foldersCreated };
     }),
+
+  // ============================================
+  // SUBMIT INVESTMENT (Public)
+  // ============================================
+
+  submitInvestment: publicProcedure
+    .input(z.object({
+      dataRoomId: z.number(),
+      investorName: z.string().min(1),
+      investorEmail: z.string().email(),
+      investorCompany: z.string().optional(),
+      investorTitle: z.string().optional(),
+      investmentAmount: z.string().min(1),
+      instrumentType: z.enum(["equity", "safe", "convertible_note", "warrant"]).default("safe"),
+      valuationCap: z.string().optional(),
+      notes: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const room = await db.getDataRoomById(input.dataRoomId);
+      if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+
+      const result = await db.createInvestmentCommitment({
+        dataRoomId: input.dataRoomId,
+        investorName: input.investorName,
+        investorEmail: input.investorEmail,
+        investorCompany: input.investorCompany,
+        investorTitle: input.investorTitle,
+        investmentAmount: input.investmentAmount,
+        instrumentType: input.instrumentType,
+        valuationCap: input.valuationCap,
+        notes: input.notes,
+        status: "interested",
+      } as any);
+
+      return { success: true, id: result.id };
+    }),
 });
