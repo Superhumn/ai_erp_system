@@ -229,18 +229,12 @@ function hashPassword(password: string): string {
 
 function verifyPassword(password: string, stored: string): { valid: boolean; needsUpgrade: boolean } {
   const crypto = require('crypto');
-  if (stored.includes(':')) {
-    const [salt, hash] = stored.split(':');
-    if (!salt || !hash) return { valid: false, needsUpgrade: false };
-    const computed = crypto.scryptSync(password, salt, 64);
-    const storedBuf = Buffer.from(hash, 'hex');
-    const valid = computed.length === storedBuf.length && crypto.timingSafeEqual(computed, storedBuf);
-    return { valid, needsUpgrade: false };
-  }
-  const computed = crypto.createHash('sha256').update(password).digest();
-  const storedBuf = Buffer.from(stored, 'hex');
+  const [salt, hash] = stored.split(':');
+  if (!salt || !hash) return { valid: false, needsUpgrade: false };
+  const computed = crypto.scryptSync(password, salt, 64);
+  const storedBuf = Buffer.from(hash, 'hex');
   const valid = computed.length === storedBuf.length && crypto.timingSafeEqual(computed, storedBuf);
-  return { valid, needsUpgrade: valid };
+  return { valid, needsUpgrade: false };
 }
 
 
