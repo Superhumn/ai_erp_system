@@ -1,4 +1,5 @@
 import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json, bigint, uniqueIndex, serial } from "drizzle-orm/mysql-core";
+import type { AnyMySqlColumn } from "drizzle-orm/mysql-core/columns/common";
 import { relations } from "drizzle-orm";
 
 // ============================================
@@ -297,7 +298,7 @@ export const accounts = mysqlTable("accounts", {
   balance: decimal("balance", { precision: 15, scale: 2 }).default("0"),
   currency: varchar("currency", { length: 3 }).default("USD"),
   isActive: boolean("isActive").default(true),
-  parentAccountId: int("parentAccountId").references(() => accounts.id),
+  parentAccountId: int("parentAccountId").references((): AnyMySqlColumn => accounts.id),
   quickbooksAccountId: varchar("quickbooksAccountId", { length: 64 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
