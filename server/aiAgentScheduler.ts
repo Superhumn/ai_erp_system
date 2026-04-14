@@ -14,6 +14,8 @@ import {
 } from "../drizzle/schema";
 import { eq, and, lt, gte, desc, sql, isNull, or } from "drizzle-orm";
 import { sendEmail } from "./_core/email";
+import * as ingredientQuoteService from "./ingredientQuoteService";
+import * as manufacturingDb from "./db/manufacturing";
 
 // ============================================
 // AI AGENT SCHEDULER - Autonomous Task System
@@ -136,6 +138,10 @@ async function evaluateRuleCondition(rule: typeof aiAgentRules.$inferSelect): Pr
       return await checkPaymentReminderCondition(condition);
     case "shipment_tracking":
       return await checkShipmentTrackingCondition(condition);
+    case "ingredient_requote":
+      return await checkIngredientRequoteCondition(condition);
+    case "invoice_price_check":
+      return await checkIngredientRequoteCondition(condition);
     default:
       return false;
   }
@@ -213,6 +219,14 @@ async function checkShipmentTrackingCondition(condition: RuleCondition): Promise
   return false;
 }
 
+async function checkIngredientRequoteCondition(condition: RuleCondition): Promise<boolean> {
+  const thresholdPct = typeof condition.value === "number" ? condition.value : 15;
+  const spiked = await manufacturingDb.getIngredientsAboveCostThreshold(thresholdPct);
+  if (spiked.length > 0) return true;
+  const expiring = await manufacturingDb.getIngredientsWithExpiringContracts(30);
+  return expiring.length > 0;
+}
+
 // ============================================
 // TASK CREATION FROM RULES
 // ============================================
@@ -228,6 +242,9 @@ async function createTaskFromRule(rule: typeof aiAgentRules.$inferSelect): Promi
       return await createRFQTask(rule, actionConfig);
     case "vendor_followup":
       return await createVendorFollowupTask(rule, actionConfig);
+    case "ingredient_requote":
+    case "invoice_price_check":
+      return await createIngredientRequoteTask(rule, actionConfig);
     default:
       return null;
   }
@@ -491,6 +508,51 @@ Respond with JSON: { "subject": "email subject", "body": "email body text" }`,
   return createdTask;
 }
 
+async function createIngredientRequoteTask(
+  rule: typeof aiAgentRules.$inferSelect,
+  actionConfig: RuleAction,
+): Promise<typeof aiAgentTasks.$inferSelect | null> {
+  const db = await getDb();
+  if (!db) return null;
+
+  const thresholdPct = actionConfig.params?.thresholdPct || 15;
+  const spiked = await manufacturingDb.getIngredientsAboveCostThreshold(thresholdPct);
+  const expiring = await manufacturingDb.getIngredientsWithExpiringContracts(actionConfig.params?.expiryDays || 30);
+
+  if (spiked.length === 0 && expiring.length === 0) return null;
+
+  const [task] = await db
+    .insert(aiAgentTasks)
+    .values({
+      taskType: "ingredient_rfq",
+      status: "pending_approval",
+      priority: spiked.some(s => s.pctAbove > 30) ? "high" : "medium",
+      taskData: JSON.stringify({
+        title: `Ingredient re-quote: ${spiked.length} price spike(s), ${expiring.length} expiring contract(s)`,
+        spikedIngredients: spiked,
+        expiringContracts: expiring.map(e => ({
+          ingredientId: e.ingredientVendor.ingredientId,
+          ingredientName: e.ingredientName,
+          vendorName: e.vendorName,
+          contractEndDate: e.ingredientVendor.contractEndDate,
+        })),
+        thresholdPct,
+      }),
+      aiReasoning: `Detected ${spiked.length} ingredient(s) with costs >${thresholdPct}% above average and ${expiring.length} expiring vendor contract(s). Automated re-quoting recommended.`,
+      aiConfidence: "0.85",
+      relatedEntityType: "ingredient",
+      requiresApproval: true,
+    })
+    .$returningId();
+
+  const [createdTask] = await db
+    .select()
+    .from(aiAgentTasks)
+    .where(eq(aiAgentTasks.id, task.id));
+
+  return createdTask;
+}
+
 // ============================================
 // TASK EXECUTION ENGINE
 // ============================================
@@ -584,8 +646,44 @@ async function executeTask(task: typeof aiAgentTasks.$inferSelect): Promise<{
       return await executeVendorFollowup(task);
     case "reply_email":
       return await executeEmailReply(task);
+    case "ingredient_rfq":
+      return await executeIngredientRfq(task);
+    case "invoice_price_review":
+      return await executeIngredientRfq(task);
     default:
       return { success: false, error: `Unknown task type: ${task.taskType}` };
+  }
+}
+
+async function executeIngredientRfq(task: typeof aiAgentTasks.$inferSelect): Promise<{
+  success: boolean;
+  data?: any;
+  error?: string;
+}> {
+  try {
+    const inputData = JSON.parse(task.taskData || "{}");
+    const result = await ingredientQuoteService.monitorIngredientCosts({
+      priceSpikePct: inputData.thresholdPct || 15,
+    });
+
+    // For each created quote request, send the RFQ
+    const requests = await manufacturingDb.getIngredientQuoteRequests({ status: "pending" });
+    let rfqsSent = 0;
+    for (const qr of requests) {
+      try {
+        await ingredientQuoteService.sendIngredientRfqToVendors(qr.id);
+        rfqsSent++;
+      } catch {
+        // Individual RFQ failures are non-fatal
+      }
+    }
+
+    return {
+      success: true,
+      data: { ...result, rfqsSent },
+    };
+  } catch (err) {
+    return { success: false, error: `Failed to execute ingredient RFQ: ${err}` };
   }
 }
 

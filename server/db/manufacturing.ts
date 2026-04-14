@@ -13,6 +13,10 @@ import {
   suggestedPurchaseOrders, InsertSuggestedPurchaseOrder, suggestedPoItems, InsertSuggestedPoItem,
   forecastAccuracy, InsertForecastAccuracy,
   purchaseOrderItems, purchaseOrders, products,
+  ingredientVendors, InsertIngredientVendor,
+  ingredientQuoteRequests, InsertIngredientQuoteRequest,
+  ingredientCostAlerts, InsertIngredientCostAlert,
+  vendors,
 } from "../../drizzle/schema";
 import { getDb } from "./connection";
 
@@ -1173,4 +1177,224 @@ export async function getRecipeCostHistory(recipeId: number) {
   return db.select().from(batchCostSnapshots)
     .where(eq(batchCostSnapshots.recipeId, recipeId))
     .orderBy(desc(batchCostSnapshots.snapshotDate));
+}
+
+// ============================================
+// INGREDIENT VENDOR MANAGEMENT
+// ============================================
+
+export async function getIngredientVendors(ingredientId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    id: ingredientVendors.id,
+    ingredientId: ingredientVendors.ingredientId,
+    vendorId: ingredientVendors.vendorId,
+    isPrimary: ingredientVendors.isPrimary,
+    unitPrice: ingredientVendors.unitPrice,
+    costUnit: ingredientVendors.costUnit,
+    contractStartDate: ingredientVendors.contractStartDate,
+    contractEndDate: ingredientVendors.contractEndDate,
+    minimumOrderQty: ingredientVendors.minimumOrderQty,
+    leadTimeDays: ingredientVendors.leadTimeDays,
+    paymentTerms: ingredientVendors.paymentTerms,
+    lastQuotedAt: ingredientVendors.lastQuotedAt,
+    lastQuotedPrice: ingredientVendors.lastQuotedPrice,
+    quoteValidUntil: ingredientVendors.quoteValidUntil,
+    status: ingredientVendors.status,
+    notes: ingredientVendors.notes,
+    createdAt: ingredientVendors.createdAt,
+    updatedAt: ingredientVendors.updatedAt,
+    vendorName: vendors.name,
+    vendorEmail: vendors.email,
+  })
+    .from(ingredientVendors)
+    .leftJoin(vendors, eq(ingredientVendors.vendorId, vendors.id))
+    .where(eq(ingredientVendors.ingredientId, ingredientId))
+    .orderBy(desc(ingredientVendors.isPrimary));
+}
+
+export async function createIngredientVendor(data: Omit<InsertIngredientVendor, "id" | "createdAt" | "updatedAt">) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ingredientVendors).values(data).$returningId();
+  return { id: result[0].id };
+}
+
+export async function updateIngredientVendor(id: number, data: Partial<InsertIngredientVendor>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(ingredientVendors).set({ ...data, updatedAt: new Date() }).where(eq(ingredientVendors.id, id));
+}
+
+export async function deleteIngredientVendor(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(ingredientVendors).where(eq(ingredientVendors.id, id));
+}
+
+export async function setPrimaryVendor(ingredientId: number, vendorId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.update(ingredientVendors)
+      .set({ isPrimary: false })
+      .where(eq(ingredientVendors.ingredientId, ingredientId));
+    await tx.update(ingredientVendors)
+      .set({ isPrimary: true })
+      .where(and(eq(ingredientVendors.ingredientId, ingredientId), eq(ingredientVendors.vendorId, vendorId)));
+    await tx.update(recipeIngredients)
+      .set({ supplierId: vendorId, updatedAt: new Date() })
+      .where(eq(recipeIngredients.id, ingredientId));
+  });
+}
+
+// ============================================
+// INGREDIENT QUOTE REQUESTS
+// ============================================
+
+export async function createIngredientQuoteRequest(data: Omit<InsertIngredientQuoteRequest, "id" | "createdAt" | "updatedAt">) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ingredientQuoteRequests).values(data).$returningId();
+  return { id: result[0].id };
+}
+
+export async function getIngredientQuoteRequests(filters?: { ingredientId?: number; status?: string; triggerType?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.ingredientId) conditions.push(eq(ingredientQuoteRequests.ingredientId, filters.ingredientId));
+  if (filters?.status) conditions.push(eq(ingredientQuoteRequests.status, filters.status as any));
+  if (filters?.triggerType) conditions.push(eq(ingredientQuoteRequests.triggerType, filters.triggerType as any));
+  const query = db.select().from(ingredientQuoteRequests).orderBy(desc(ingredientQuoteRequests.createdAt));
+  return conditions.length > 0 ? query.where(and(...conditions)) : query;
+}
+
+export async function getIngredientQuoteRequestById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(ingredientQuoteRequests).where(eq(ingredientQuoteRequests.id, id)).limit(1);
+  return result[0];
+}
+
+export async function updateIngredientQuoteRequest(id: number, data: Partial<InsertIngredientQuoteRequest>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(ingredientQuoteRequests).set({ ...data, updatedAt: new Date() }).where(eq(ingredientQuoteRequests.id, id));
+}
+
+// ============================================
+// INGREDIENT COST ALERTS
+// ============================================
+
+export async function createIngredientCostAlert(data: Omit<InsertIngredientCostAlert, "id" | "createdAt">) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ingredientCostAlerts).values(data).$returningId();
+  return { id: result[0].id };
+}
+
+export async function getIngredientCostAlerts(filters?: { ingredientId?: number; alertType?: string; isRead?: boolean; severity?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.ingredientId) conditions.push(eq(ingredientCostAlerts.ingredientId, filters.ingredientId));
+  if (filters?.alertType) conditions.push(eq(ingredientCostAlerts.alertType, filters.alertType as any));
+  if (typeof filters?.isRead === "boolean") conditions.push(eq(ingredientCostAlerts.isRead, filters.isRead));
+  if (filters?.severity) conditions.push(eq(ingredientCostAlerts.severity, filters.severity as any));
+  const query = db.select().from(ingredientCostAlerts).orderBy(desc(ingredientCostAlerts.createdAt));
+  return conditions.length > 0 ? query.where(and(...conditions)) : query;
+}
+
+export async function markAlertRead(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(ingredientCostAlerts).set({ isRead: true }).where(eq(ingredientCostAlerts.id, id));
+}
+
+export async function dismissAlert(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(ingredientCostAlerts).set({ isDismissed: true }).where(eq(ingredientCostAlerts.id, id));
+}
+
+// ============================================
+// INGREDIENT COST ANALYSIS
+// ============================================
+
+export async function getIngredientCostStats(ingredientId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const ingredient = await getIngredientById(ingredientId);
+  if (!ingredient) return null;
+
+  const currentCost = parseFloat(ingredient.costPerUnit?.toString() || "0");
+  const history = await db.select({
+    costPerUnit: ingredientCostHistory.costPerUnit,
+    effectiveDate: ingredientCostHistory.effectiveDate,
+  })
+    .from(ingredientCostHistory)
+    .where(eq(ingredientCostHistory.ingredientId, ingredientId))
+    .orderBy(desc(ingredientCostHistory.effectiveDate))
+    .limit(100);
+
+  const costs = history.map(h => parseFloat(h.costPerUnit?.toString() || "0"));
+  const avg = costs.length > 0 ? costs.reduce((s, c) => s + c, 0) / costs.length : currentCost;
+  const min = costs.length > 0 ? Math.min(...costs) : currentCost;
+  const max = costs.length > 0 ? Math.max(...costs) : currentCost;
+  const pctFromAvg = avg > 0 ? ((currentCost - avg) / avg) * 100 : 0;
+
+  return {
+    ingredientId,
+    ingredientName: ingredient.name,
+    currentCost,
+    costUnit: ingredient.costUnit,
+    historicalAvg: avg,
+    historicalMin: min,
+    historicalMax: max,
+    pctFromAvg,
+    dataPoints: costs.length,
+    latestDate: history[0]?.effectiveDate || null,
+  };
+}
+
+export async function getIngredientsWithExpiringContracts(daysUntilExpiry: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() + daysUntilExpiry);
+  return db.select({
+    ingredientVendor: ingredientVendors,
+    ingredientName: recipeIngredients.name,
+    vendorName: vendors.name,
+  })
+    .from(ingredientVendors)
+    .leftJoin(recipeIngredients, eq(ingredientVendors.ingredientId, recipeIngredients.id))
+    .leftJoin(vendors, eq(ingredientVendors.vendorId, vendors.id))
+    .where(and(
+      eq(ingredientVendors.status, "active"),
+      sql`${ingredientVendors.contractEndDate} IS NOT NULL AND ${ingredientVendors.contractEndDate} <= ${cutoff}`,
+    ));
+}
+
+export async function getIngredientsAboveCostThreshold(thresholdPct: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const allIngredients = await db.select().from(recipeIngredients).where(eq(recipeIngredients.isActive, true));
+  const results: Array<{ ingredientId: number; name: string; currentCost: number; avgCost: number; pctAbove: number }> = [];
+
+  for (const ing of allIngredients) {
+    const stats = await getIngredientCostStats(ing.id);
+    if (stats && stats.dataPoints > 0 && stats.pctFromAvg > thresholdPct) {
+      results.push({
+        ingredientId: ing.id,
+        name: ing.name,
+        currentCost: stats.currentCost,
+        avgCost: stats.historicalAvg,
+        pctAbove: stats.pctFromAvg,
+      });
+    }
+  }
+  return results;
 }
