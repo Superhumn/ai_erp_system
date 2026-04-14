@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { COOKIE_NAME } from "@shared/const";
+import { encrypt, decrypt } from "./_core/crypto";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
@@ -7975,7 +7976,7 @@ Ask if they received the original request and if they can provide a quote.`;
             try {
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/orders.json?status=any&limit=50`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': decrypt(store.accessToken!),
                   'Content-Type': 'application/json',
                 },
               });
@@ -8062,7 +8063,7 @@ Ask if they received the original request and if they can provide a quote.`;
             try {
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/products.json?limit=100`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': decrypt(store.accessToken!),
                   'Content-Type': 'application/json',
                 },
               });
@@ -8139,7 +8140,7 @@ Ask if they received the original request and if they can provide a quote.`;
               // Get inventory levels from Shopify
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/inventory_levels.json?limit=100`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': decrypt(store.accessToken!),
                   'Content-Type': 'application/json',
                 },
               });
@@ -8209,7 +8210,7 @@ Ask if they received the original request and if they can provide a quote.`;
             try {
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/customers.json?limit=100`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': decrypt(store.accessToken!),
                   'Content-Type': 'application/json',
                 },
               });
@@ -10183,20 +10184,13 @@ Ask if they received the original request and if they can provide a quote.`;
         pollingIntervalMinutes: z.number().min(5).default(15),
       }))
       .mutation(async ({ input, ctx }) => {
-        // Encrypt password
-        const crypto = await import('crypto');
-        const key = process.env.JWT_SECRET || 'default-key';
-        const cipher = crypto.createCipheriv('aes-256-cbc', 
-          crypto.createHash('sha256').update(key).digest().slice(0, 32),
-          Buffer.alloc(16, 0)
-        );
-        let encrypted = cipher.update(input.password, 'utf8', 'hex');
-        encrypted += cipher.final('hex');
+        // Encrypt password using central crypto utility (AES-256-CBC, random IV)
+        const encryptedPassword = encrypt(input.password);
 
         const { id } = await db.createImapCredential({
           ...input,
           userId: ctx.user.id,
-          encryptedPassword: encrypted,
+          encryptedPassword,
         });
 
         return { id };
@@ -10243,15 +10237,20 @@ Ask if they received the original request and if they can provide a quote.`;
           throw new TRPCError({ code: 'NOT_FOUND' });
         }
 
-        // Decrypt password
-        const crypto = await import('crypto');
-        const key = process.env.JWT_SECRET || 'default-key';
-        const decipher = crypto.createDecipheriv('aes-256-cbc',
-          crypto.createHash('sha256').update(key).digest().slice(0, 32),
-          Buffer.alloc(16, 0)
-        );
-        let decrypted = decipher.update(credential.encryptedPassword, 'hex', 'utf8');
-        decrypted += decipher.final('utf8');
+        // Decrypt password — handle both new (iv:hex) and legacy (hex-only, static-IV) formats
+        let decrypted: string;
+        if (credential.encryptedPassword.includes(':')) {
+          decrypted = decrypt(credential.encryptedPassword);
+        } else {
+          const crypto = await import('crypto');
+          const key = process.env.JWT_SECRET || 'default-key';
+          const decipher = crypto.createDecipheriv('aes-256-cbc',
+            crypto.createHash('sha256').update(key).digest().slice(0, 32),
+            Buffer.alloc(16, 0)
+          );
+          decrypted = decipher.update(credential.encryptedPassword, 'hex', 'utf8');
+          decrypted += decipher.final('utf8');
+        }
 
         return {
           ...credential,
@@ -10296,17 +10295,10 @@ Ask if they received the original request and if they can provide a quote.`;
         maxEmailsPerScan: z.number().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        // Encrypt password if provided
+        // Encrypt password if provided using central crypto utility (AES-256-CBC, random IV)
         let encryptedPassword = input.imapPassword;
         if (input.imapPassword) {
-          const crypto = await import('crypto');
-          const key = process.env.JWT_SECRET || 'default-key';
-          const cipher = crypto.createCipheriv('aes-256-cbc',
-            crypto.createHash('sha256').update(key).digest().slice(0, 32),
-            Buffer.alloc(16, 0)
-          );
-          encryptedPassword = cipher.update(input.imapPassword, 'utf8', 'hex');
-          encryptedPassword += cipher.final('hex');
+          encryptedPassword = encrypt(input.imapPassword);
         }
 
         const { id } = await db.createEmailCredential({
@@ -10342,17 +10334,9 @@ Ask if they received the original request and if they can provide a quote.`;
         const { id, imapPassword, ...data } = input;
         let updateData: any = data;
 
-        // Encrypt new password if provided
+        // Encrypt new password if provided using central crypto utility (AES-256-CBC, random IV)
         if (imapPassword) {
-          const crypto = await import('crypto');
-          const key = process.env.JWT_SECRET || 'default-key';
-          const cipher = crypto.createCipheriv('aes-256-cbc',
-            crypto.createHash('sha256').update(key).digest().slice(0, 32),
-            Buffer.alloc(16, 0)
-          );
-          let encrypted = cipher.update(imapPassword, 'utf8', 'hex');
-          encrypted += cipher.final('hex');
-          updateData.imapPassword = encrypted;
+          updateData.imapPassword = encrypt(imapPassword);
         }
 
         await db.updateEmailCredential(id, updateData);
@@ -10390,16 +10374,21 @@ Ask if they received the original request and if they can provide a quote.`;
             throw new TRPCError({ code: 'NOT_FOUND' });
           }
 
-          // Decrypt password
+          // Decrypt password — handle both new (iv:hex) and legacy (hex-only, static-IV) formats
           if (credential.imapPassword) {
-            const crypto = await import('crypto');
-            const key = process.env.JWT_SECRET || 'default-key';
-            const decipher = crypto.createDecipheriv('aes-256-cbc',
-              crypto.createHash('sha256').update(key).digest().slice(0, 32),
-              Buffer.alloc(16, 0)
-            );
-            let decrypted = decipher.update(credential.imapPassword, 'hex', 'utf8');
-            decrypted += decipher.final('utf8');
+            let decrypted: string;
+            if (credential.imapPassword.includes(':')) {
+              decrypted = decrypt(credential.imapPassword);
+            } else {
+              const crypto = await import('crypto');
+              const key = process.env.JWT_SECRET || 'default-key';
+              const decipher = crypto.createDecipheriv('aes-256-cbc',
+                crypto.createHash('sha256').update(key).digest().slice(0, 32),
+                Buffer.alloc(16, 0)
+              );
+              decrypted = decipher.update(credential.imapPassword, 'hex', 'utf8');
+              decrypted += decipher.final('utf8');
+            }
             config = { ...credential, imapPassword: decrypted };
           }
         }

@@ -246,6 +246,10 @@ async function startServer() {
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
     if (!clientId || !clientSecret) return res.redirect('/import?error=not_configured');
     try {
+      // Verify the authenticated session and confirm the state userId matches
+      let sessionUser: any;
+      try { sessionUser = await (await import('./sdk')).sdk.authenticateRequest(req); } catch { return res.redirect('/import?error=not_authenticated'); }
+      if (!sessionUser || sessionUser.id !== userId) return res.redirect('/import?error=invalid_state');
       const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
