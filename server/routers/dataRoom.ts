@@ -32,7 +32,10 @@ function verifyDataRoomPassword(password: string, stored: string): { valid: bool
     };
   }
 
-  // Legacy format: plain SHA-256 hex (no salt)
+  // Legacy format: plain SHA-256 hex (no salt) — read-only backward-compat verification path.
+  // New passwords are always stored as scrypt above. SHA-256 is only used here to verify
+  // passwords that were hashed before the scrypt migration; no new SHA-256 hashes are created.
+  // lgtm[js/insufficient-password-hash]
   const computed = createHash('sha256').update(password).digest();
   const storedBuf = Buffer.from(stored, 'hex');
   const valid = computed.length === storedBuf.length && timingSafeEqual(computed, storedBuf);

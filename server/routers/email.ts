@@ -18,8 +18,7 @@ function decryptPassword(encryptedText: string): string {
     return decrypt(encryptedText);
   }
   // Legacy CBC fallback for passwords stored before the GCM migration.
-  // Uses ENV.cookieSecret (JWT_SECRET) which is validated at startup; consistent with
-  // the original code that used `process.env.JWT_SECRET || 'default-key'`.
+  // Uses ENV.cookieSecret which is validated at startup (no insecure fallback).
   const key = ENV.cookieSecret;
   const decipher = createDecipheriv(
     "aes-256-cbc",
