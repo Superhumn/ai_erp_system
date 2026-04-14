@@ -57,12 +57,12 @@ export default function WorkOrderDetail() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "draft": return "bg-gray-100 text-gray-800";
-      case "scheduled": return "bg-blue-100 text-blue-800";
-      case "in_progress": return "bg-yellow-100 text-yellow-800";
-      case "completed": return "bg-green-100 text-green-800";
-      case "cancelled": return "bg-red-100 text-red-800";
-      default: return "bg-gray-100 text-gray-800";
+      case "draft": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "scheduled": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
+      case "in_progress": return "bg-amber-500/8 text-amber-600 dark:text-amber-400";
+      case "completed": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
+      case "cancelled": return "bg-red-500/8 text-red-600 dark:text-red-400";
+      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
     }
   };
 
@@ -83,7 +83,7 @@ export default function WorkOrderDetail() {
             </Button>
           </Link>
           <div className="flex-1">
-            <h1 className="text-2xl font-bold">{workOrder.workOrderNumber}</h1>
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">{workOrder.workOrderNumber}</h1>
             <p className="text-muted-foreground">{product?.name}</p>
           </div>
           <Badge className={getStatusColor(workOrder.status)}>{workOrder.status.replace('_', ' ')}</Badge>
@@ -141,7 +141,7 @@ export default function WorkOrderDetail() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Quantity</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{workOrder.quantity} {workOrder.unit}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em]">{workOrder.quantity} {workOrder.unit}</div>
               {workOrder.completedQuantity && (
                 <p className="text-sm text-green-600">Completed: {workOrder.completedQuantity}</p>
               )}
@@ -152,7 +152,7 @@ export default function WorkOrderDetail() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Location</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{warehouse?.name || '-'}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em]">{warehouse?.name || '-'}</div>
               <p className="text-sm text-muted-foreground">{warehouse?.type}</p>
             </CardContent>
           </Card>
@@ -162,9 +162,9 @@ export default function WorkOrderDetail() {
             </CardHeader>
             <CardContent>
               <Badge className={
-                workOrder.priority === 'urgent' ? 'bg-red-100 text-red-800' :
-                workOrder.priority === 'high' ? 'bg-orange-100 text-orange-800' :
-                'bg-blue-100 text-blue-800'
+                workOrder.priority === 'urgent' ? 'bg-red-500/8 text-red-600 dark:text-red-400' :
+                workOrder.priority === 'high' ? 'bg-orange-500/8 text-orange-600 dark:text-orange-400' :
+                'bg-blue-500/8 text-blue-600 dark:text-blue-400'
               }>
                 {workOrder.priority}
               </Badge>
@@ -220,17 +220,17 @@ export default function WorkOrderDetail() {
                         </TableCell>
                         <TableCell>
                           {mat.status === 'consumed' ? (
-                            <Badge className="bg-green-100 text-green-800">Consumed</Badge>
+                            <Badge className="bg-emerald-500/8 text-emerald-600 dark:text-emerald-400">Consumed</Badge>
                           ) : mat.status === 'partial' ? (
-                            <Badge className="bg-yellow-100 text-yellow-800">Partial</Badge>
+                            <Badge className="bg-amber-500/8 text-amber-600 dark:text-amber-400">Partial</Badge>
                           ) : mat.status === 'shortage' ? (
-                            <Badge className="bg-red-100 text-red-800">
+                            <Badge className="bg-red-500/8 text-red-600 dark:text-red-400">
                               <AlertTriangle className="w-3 h-3 mr-1" /> Shortage
                             </Badge>
                           ) : available ? (
-                            <Badge className="bg-blue-100 text-blue-800">Ready</Badge>
+                            <Badge className="bg-blue-500/8 text-blue-600 dark:text-blue-400">Ready</Badge>
                           ) : (
-                            <Badge className="bg-red-100 text-red-800">
+                            <Badge className="bg-red-500/8 text-red-600 dark:text-red-400">
                               <AlertTriangle className="w-3 h-3 mr-1" /> Low Stock
                             </Badge>
                           )}

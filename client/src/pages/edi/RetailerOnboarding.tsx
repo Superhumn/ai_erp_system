@@ -189,7 +189,10 @@ export default function RetailerOnboarding() {
   });
 
   const updatePartner = trpc.edi.partners.update.useMutation({
-    onSuccess: () => toast.success("Partner activated"),
+    onSuccess: () => {
+      toast.success("Partner activated");
+      setStep("done");
+    },
     onError: (error) => toast.error(error.message),
   });
 
@@ -328,7 +331,6 @@ export default function RetailerOnboarding() {
   const handleActivate = () => {
     if (!createdPartnerId) return;
     updatePartner.mutate({ id: createdPartnerId, status: "active", testMode: false });
-    setStep("done");
   };
 
   // ---- Filtered templates ----
@@ -360,7 +362,7 @@ export default function RetailerOnboarding() {
           </Button>
         ) : null}
         <div>
-          <h1 className="text-2xl font-bold">Connect a Retailer</h1>
+          <h1 className="text-xl font-semibold tracking-[-0.02em]">Connect a Retailer</h1>
           <p className="text-muted-foreground">
             {step === "select" && "Choose a retailer or set up a custom connection"}
             {step === "credentials" && "Enter connection details"}
@@ -411,7 +413,7 @@ export default function RetailerOnboarding() {
             {filteredTemplates.map(([key, template]) => (
               <Card
                 key={key}
-                className="cursor-pointer hover:border-primary hover:shadow-md transition-all"
+                className="cursor-pointer hover:border-primary hover:border-border/80 transition-all"
                 onClick={() => handleSelectTemplate(key)}
               >
                 <CardContent className="pt-6">
@@ -434,7 +436,7 @@ export default function RetailerOnboarding() {
 
             {/* Custom option */}
             <Card
-              className="cursor-pointer hover:border-primary hover:shadow-md transition-all border-dashed"
+              className="cursor-pointer hover:border-primary hover:border-border/80 transition-all border-dashed"
               onClick={handleSelectCustom}
             >
               <CardContent className="pt-6 flex flex-col items-center justify-center text-center h-full">
@@ -711,7 +713,7 @@ export default function RetailerOnboarding() {
         <Card>
           <CardContent className="pt-10 pb-10 text-center space-y-4">
             <CheckCircle2 className="h-16 w-16 mx-auto text-green-500" />
-            <h2 className="text-2xl font-bold">Retailer Connected!</h2>
+            <h2 className="text-xl font-semibold tracking-[-0.02em]">Retailer Connected!</h2>
             <p className="text-muted-foreground max-w-md mx-auto">
               {formData.name} is set up and ready. Inbound 850 Purchase Orders will be auto-processed and acknowledged with a 997.
             </p>

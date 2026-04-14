@@ -18,20 +18,27 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { TrendingUp, Search, Loader2 } from "lucide-react";
+import { TrendingUp, Search, Loader2, DollarSign } from "lucide-react";
 import { format } from "date-fns";
+import { formatCurrency } from "@/lib/format";
+import { getStatusColor } from "@/lib/statusColors";
 
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
+// COGS-related keywords to identify COGS expenses
+const COGS_KEYWORDS = ["cogs", "cost of goods", "cost of sales", "raw material", "freight", "customs", "duty", "shipping cost", "packaging", "manufacturing", "production cost", "ingredient", "landed cost"];
+
+function isCOGSTransaction(tx: any): boolean {
+  const desc = (tx.description || "").toLowerCase();
+  const ref = (tx.referenceType || "").toLowerCase();
+  // Match by description keywords or reference type
+  return COGS_KEYWORDS.some(kw => desc.includes(kw)) ||
+    ref === "purchase_order" || ref === "purchaseorder" ||
+    ref === "cogs" || ref === "inventory";
 }
 
 export default function Transactions() {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [viewMode, setViewMode] = useState<"all" | "cogs">("all");
 
   const { data: transactions, isLoading } = trpc.transactions.list.useQuery();
 
@@ -40,7 +47,8 @@ export default function Transactions() {
       tx.transactionNumber.toLowerCase().includes(search.toLowerCase()) ||
       tx.description?.toLowerCase().includes(search.toLowerCase());
     const matchesType = typeFilter === "all" || tx.type === typeFilter;
-    return matchesSearch && matchesType;
+    const matchesCogs = viewMode === "all" || isCOGSTransaction(tx);
+    return matchesSearch && matchesType && matchesCogs;
   });
 
   const typeColors: Record<string, string> = {
@@ -52,16 +60,10 @@ export default function Transactions() {
     adjustment: "bg-gray-500/10 text-gray-600",
   };
 
-  const statusColors: Record<string, string> = {
-    draft: "bg-amber-500/10 text-amber-600",
-    posted: "bg-green-500/10 text-green-600",
-    void: "bg-gray-500/10 text-gray-500",
-  };
-
   return (
     <div className="space-y-6 animate-fade-in">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+        <h1 className="text-lg font-semibold flex items-center gap-2">
           <TrendingUp className="h-8 w-8" />
           Transactions
         </h1>
@@ -95,6 +97,17 @@ export default function Transactions() {
                 <SelectItem value="transfer">Transfer</SelectItem>
               </SelectContent>
             </Select>
+            <button
+              onClick={() => setViewMode(viewMode === "cogs" ? "all" : "cogs")}
+              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-md border transition-colors ${
+                viewMode === "cogs"
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-muted hover:border-muted-foreground/50 text-muted-foreground"
+              }`}
+            >
+              <DollarSign className="h-3.5 w-3.5" />
+              COGS Only
+            </button>
           </div>
         </CardHeader>
         <CardContent>
@@ -137,7 +150,7 @@ export default function Transactions() {
                       {formatCurrency(tx.totalAmount)}
                     </TableCell>
                     <TableCell>
-                      <Badge className={statusColors[tx.status]}>{tx.status}</Badge>
+                      <Badge className={getStatusColor(tx.status)}>{tx.status}</Badge>
                     </TableCell>
                   </TableRow>
                 ))}

@@ -87,7 +87,7 @@ export default function AIAssistant() {
     <div className="h-[calc(100vh-8rem)] flex flex-col animate-fade-in">
       {/* Header */}
       <div className="mb-4">
-        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+        <h1 className="text-lg font-semibold flex items-center gap-2">
           <Bot className="h-8 w-8 text-primary" />
           AI Assistant
         </h1>

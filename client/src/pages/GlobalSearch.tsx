@@ -2,7 +2,7 @@ import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Search, Users, Building2, Package, UserCog, FileSignature, FolderKanban, Loader2 } from "lucide-react";
+import { Search, Users, Building2, Package, UserCog, FileSignature, FolderKanban, Loader2, Mic } from "lucide-react";
 import { useLocation } from "wouter";
 
 export default function GlobalSearch() {
@@ -20,13 +20,14 @@ export default function GlobalSearch() {
     results.products.length > 0 ||
     results.employees.length > 0 ||
     results.contracts.length > 0 ||
-    results.projects.length > 0
+    results.projects.length > 0 ||
+    (results as any).meetings?.length > 0
   );
 
   return (
     <div className="space-y-6 animate-fade-in">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+        <h1 className="text-lg font-semibold flex items-center gap-2">
           <Search className="h-8 w-8" />
           Global Search
         </h1>
@@ -203,6 +204,32 @@ export default function GlobalSearch() {
                     >
                       <p className="font-medium text-sm">{project.name}</p>
                       <p className="text-xs text-muted-foreground">{project.projectNumber}</p>
+                    </button>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+          {(results as any).meetings?.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <Mic className="h-4 w-4" />
+                  Meetings ({(results as any).meetings.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {(results as any).meetings.map((meeting: any) => (
+                    <button
+                      key={meeting.id}
+                      onClick={() => setLocation('/meetings')}
+                      className="w-full text-left p-2 rounded-md hover:bg-muted transition-colors"
+                    >
+                      <p className="font-medium text-sm">{meeting.title}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {meeting.date ? new Date(meeting.date).toLocaleDateString() : "—"}
+                      </p>
                     </button>
                   ))}
                 </div>

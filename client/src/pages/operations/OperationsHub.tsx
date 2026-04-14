@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
+import { formatCurrency } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -16,28 +17,22 @@ import {
 
 // Status options
 const workOrderStatuses = [
-  { value: "draft", label: "Draft", color: "bg-gray-100 text-gray-800" },
-  { value: "scheduled", label: "Scheduled", color: "bg-yellow-100 text-yellow-800" },
-  { value: "pending", label: "Pending", color: "bg-yellow-100 text-yellow-800" },
-  { value: "in_progress", label: "In Progress", color: "bg-blue-100 text-blue-800" },
-  { value: "completed", label: "Completed", color: "bg-green-100 text-green-800" },
-  { value: "cancelled", label: "Cancelled", color: "bg-red-100 text-red-800" },
+  { value: "draft", label: "Draft", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
+  { value: "scheduled", label: "Scheduled", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
+  { value: "pending", label: "Pending", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
+  { value: "in_progress", label: "In Progress", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
+  { value: "completed", label: "Completed", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+  { value: "cancelled", label: "Cancelled", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
 ];
 
 const poStatusOptions = [
-  { value: "draft", label: "Draft", color: "bg-gray-100 text-gray-800" },
-  { value: "sent", label: "Sent", color: "bg-blue-100 text-blue-800" },
-  { value: "confirmed", label: "Confirmed", color: "bg-green-100 text-green-800" },
-  { value: "shipped", label: "Shipped", color: "bg-purple-100 text-purple-800" },
-  { value: "received", label: "Received", color: "bg-emerald-100 text-emerald-800" },
-  { value: "cancelled", label: "Cancelled", color: "bg-red-100 text-red-800" },
+  { value: "draft", label: "Draft", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
+  { value: "sent", label: "Sent", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
+  { value: "confirmed", label: "Confirmed", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+  { value: "shipped", label: "Shipped", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
+  { value: "received", label: "Received", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+  { value: "cancelled", label: "Cancelled", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
 ];
-
-function formatCurrency(value: string | number | null | undefined) {
-  const num = typeof value === "string" ? parseFloat(value) : value;
-  if (!num) return "-";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(num);
-}
 
 function formatDate(value: string | Date | null | undefined) {
   if (!value) return "-";
@@ -216,7 +211,7 @@ function InventoryItemDetailPanel({ item }: { item: any }) {
           <p className="text-sm text-muted-foreground">SKU: {item.product?.sku || item.rawMaterial?.sku}</p>
         </div>
         <div className="text-right">
-          <div className="text-2xl font-bold">{item.totalQuantity || 0}</div>
+          <div className="text-xl font-semibold tracking-[-0.02em]">{item.totalQuantity || 0}</div>
           <p className="text-sm text-muted-foreground">{item.unit || "units"}</p>
         </div>
       </div>
@@ -426,7 +421,7 @@ export default function OperationsHub() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Operations Hub</h1>
+          <h1 className="text-lg font-semibold">Operations Hub</h1>
           <p className="text-muted-foreground">
             Procurement, Manufacturing, and Inventory Management
           </p>
@@ -449,7 +444,7 @@ export default function OperationsHub() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs text-muted-foreground">Pending POs</p>
-                <p className="text-xl font-bold">{stats.pendingPos}</p>
+                <p className="text-lg font-semibold tracking-[-0.015em]">{stats.pendingPos}</p>
               </div>
               <ShoppingCart className="h-6 w-6 text-muted-foreground" />
             </div>
@@ -460,7 +455,7 @@ export default function OperationsHub() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs text-muted-foreground">Active Vendors</p>
-                <p className="text-xl font-bold">{stats.activeVendors}</p>
+                <p className="text-lg font-semibold tracking-[-0.015em]">{stats.activeVendors}</p>
               </div>
               <Users className="h-6 w-6 text-muted-foreground" />
             </div>
@@ -471,7 +466,7 @@ export default function OperationsHub() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs text-muted-foreground">Low Stock</p>
-                <p className="text-xl font-bold text-amber-600">{stats.lowStockMaterials}</p>
+                <p className="text-lg font-semibold tracking-[-0.015em] text-amber-600">{stats.lowStockMaterials}</p>
               </div>
               <AlertTriangle className="h-6 w-6 text-amber-500" />
             </div>
@@ -482,7 +477,7 @@ export default function OperationsHub() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs text-muted-foreground">Open WOs</p>
-                <p className="text-xl font-bold">{stats.openWorkOrders}</p>
+                <p className="text-lg font-semibold tracking-[-0.015em]">{stats.openWorkOrders}</p>
               </div>
               <Factory className="h-6 w-6 text-muted-foreground" />
             </div>
@@ -493,7 +488,7 @@ export default function OperationsHub() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs text-muted-foreground">Exceptions</p>
-                <p className="text-xl font-bold text-red-600">{stats.exceptions}</p>
+                <p className="text-lg font-semibold tracking-[-0.015em] text-red-600">{stats.exceptions}</p>
               </div>
               <AlertTriangle className="h-6 w-6 text-red-500" />
             </div>
@@ -622,7 +617,7 @@ export default function OperationsHub() {
                     renderExpanded={(workOrder) => (
                       <WorkOrderDetailPanel 
                         workOrder={workOrder} 
-                        onStatusChange={(id, status) => updateWorkOrderStatus.mutate({ id, status })}
+                        onStatusChange={(id, status) => updateWorkOrderStatus.mutate({ id, status: status as any })}
                         onStartProduction={(id) => startProduction.mutate({ id })}
                         onCompleteProduction={(id, completedQuantity) => completeProduction.mutate({ id, completedQuantity })}
                       />
@@ -662,8 +657,8 @@ export default function OperationsHub() {
                     showSearch
                     expandedRowId={expandedLocationId}
                     onExpandChange={setExpandedLocationId}
-                    renderExpanded={(location, onClose) => (
-                      <LocationDetailPanel location={location} onClose={onClose} />
+                    renderExpanded={(location) => (
+                      <LocationDetailPanel location={location} />
                     )}
                   />
                 </CardContent>
@@ -777,7 +772,7 @@ export default function OperationsHub() {
       <QuickCreateDialog
         open={showPoDialog}
         onOpenChange={setShowPoDialog}
-        entityType="purchaseOrder"
+        entityType={"purchaseOrder" as any}
         onCreated={() => refetchPos()}
       />
       <QuickCreateDialog
@@ -789,7 +784,7 @@ export default function OperationsHub() {
       <QuickCreateDialog
         open={showMaterialDialog}
         onOpenChange={setShowMaterialDialog}
-        entityType="rawMaterial"
+        entityType="material"
         onCreated={() => refetchMaterials()}
       />
       <QuickCreateDialog

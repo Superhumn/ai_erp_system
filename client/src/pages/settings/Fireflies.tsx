@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,13 +36,26 @@ export default function FirefliesPage() {
   const [processProjectName, setProcessProjectName] = useState("");
   const [processCreateProject, setProcessCreateProject] = useState(false);
 
-  const { data: config, isLoading: configLoading, refetch: refetchConfig } = trpc.fireflies.getConfig.useQuery();
-  const { data: meetings, isLoading: meetingsLoading, refetch: refetchMeetings } = trpc.fireflies.meetings.list.useQuery({});
-  const { data: stats, refetch: refetchStats } = trpc.fireflies.meetings.getStats.useQuery();
+  const { data: configRaw, isLoading: configLoading, refetch: refetchConfig } = trpc.fireflies.getConfig.useQuery();
+  const config = configRaw as any;
+
+  // Sync toggle state from the server config whenever it loads
+  useEffect(() => {
+    if (config) {
+      if (config.autoCreateContacts != null) setAutoCreateContacts(config.autoCreateContacts);
+      if (config.autoCreateTasks != null) setAutoCreateTasks(config.autoCreateTasks);
+      if (config.autoCreateProjects != null) setAutoCreateProjects(config.autoCreateProjects);
+    }
+  }, [configRaw]);
+
+  const { data: meetingsRaw, isLoading: meetingsLoading, refetch: refetchMeetings } = trpc.fireflies.meetings.list.useQuery({});
+  const meetings = meetingsRaw as any[] | undefined;
+  const { data: statsRaw, refetch: refetchStats } = trpc.fireflies.meetings.getStats.useQuery();
+  const stats = statsRaw as any;
 
   const configureMutation = trpc.fireflies.configure.useMutation({
     onSuccess: (data) => {
-      toast.success(data.updated ? "Fireflies configuration updated" : "Fireflies connected successfully");
+      toast.success((data as any).updated ? "Fireflies configuration updated" : "Fireflies connected successfully");
       setApiKey("");
       refetchConfig();
     },
@@ -59,9 +72,8 @@ export default function FirefliesPage() {
 
   const syncMutation = trpc.fireflies.syncMeetings.useMutation({
     onSuccess: (data) => {
-      toast.success(`Synced ${data.synced} new meetings (${data.skipped} already synced)`);
+      toast.success(`Synced ${data.synced} new meetings (${(data as any).skipped ?? 0} already synced)`);
       refetchMeetings();
-      refetchStats();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -69,12 +81,11 @@ export default function FirefliesPage() {
   const processMeetingMutation = trpc.fireflies.processMeeting.useMutation({
     onSuccess: (data) => {
       toast.success(
-        `Processed: ${data.contactsCreated} contacts, ${data.tasksCreated} tasks${data.projectId ? ", 1 project" : ""} created`
+        `Processed: ${(data as any).contactsCreated ?? 0} contacts, ${(data as any).tasksCreated ?? 0} tasks${(data as any).projectId ? ", 1 project" : ""} created`
       );
       setShowProcessDialog(false);
       setSelectedMeetingId(null);
       refetchMeetings();
-      refetchStats();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -82,21 +93,20 @@ export default function FirefliesPage() {
   const processAllMutation = trpc.fireflies.processAllPending.useMutation({
     onSuccess: (data) => {
       toast.success(
-        `Batch processed ${data.processed} meetings: ${data.contactsCreated} contacts, ${data.tasksCreated} tasks, ${data.projectsCreated} projects`
+        `Batch processed ${data.processed} meetings: ${(data as any).contactsCreated ?? 0} contacts, ${(data as any).tasksCreated ?? 0} tasks, ${(data as any).projectsCreated ?? 0} projects`
       );
       refetchMeetings();
-      refetchStats();
     },
     onError: (error) => toast.error(error.message),
   });
 
   const handleConfigure = () => {
-    if (!apiKey.trim()) {
+    if (!config?.configured && !apiKey.trim()) {
       toast.error("Please enter your Fireflies API key");
       return;
     }
     configureMutation.mutate({
-      apiKey: apiKey.trim(),
+      apiKey: apiKey.trim() || undefined,
       autoCreateContacts,
       autoCreateTasks,
       autoCreateProjects,
@@ -111,7 +121,7 @@ export default function FirefliesPage() {
       createTasks: true,
       createProject: processCreateProject,
       projectName: processProjectName || undefined,
-    });
+    } as any);
   };
 
   const statusBadge = (status: string) => {
@@ -133,11 +143,28 @@ export default function FirefliesPage() {
     }
   };
 
-  const formatDuration = (seconds?: number | null) => {
+  const normalizeDurationSeconds = (raw?: number | string | null) => {
+    if (raw == null) return null;
+    const value = typeof raw === "string" ? Number(raw) : raw;
+    if (!Number.isFinite(value) || value <= 0) return null;
+
+    // Fireflies payloads may arrive in minutes for some accounts.
+    if (value <= 120 && Number.isInteger(value)) return value * 60;
+    // Also support decimal-minute values (e.g., 42.5).
+    if (value < 10 && !Number.isInteger(value)) return Math.round(value * 60);
+
+    return Math.round(value);
+  };
+
+  const formatDuration = (raw?: number | string | null) => {
+    const seconds = normalizeDurationSeconds(raw);
     if (!seconds) return "—";
-    const mins = Math.floor(seconds / 60);
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
-    return `${mins}m ${secs}s`;
+    if (hours > 0) return `${hours}h ${mins}m`;
+    if (mins > 0) return `${mins}m ${secs}s`;
+    return `${secs}s`;
   };
 
   const formatDate = (date?: string | Date | null) => {
@@ -155,7 +182,7 @@ export default function FirefliesPage() {
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
+          <h1 className="text-xl font-semibold tracking-[-0.02em] flex items-center gap-2">
             <Mic className="h-6 w-6" />
             Fireflies.ai Integration
           </h1>
@@ -167,7 +194,7 @@ export default function FirefliesPage() {
           <div className="flex gap-2">
             <Button
               variant="outline"
-              onClick={() => syncMutation.mutate({})}
+              onClick={() => (syncMutation.mutate as any)({ limit: 500 })}
               disabled={syncMutation.isPending}
             >
               {syncMutation.isPending ? (
@@ -179,7 +206,7 @@ export default function FirefliesPage() {
             </Button>
             {(stats?.pending ?? 0) > 0 && (
               <Button
-                onClick={() => processAllMutation.mutate({
+                onClick={() => (processAllMutation.mutate as any)({
                   createContacts: autoCreateContacts,
                   createTasks: autoCreateTasks,
                   createProjects: autoCreateProjects,
@@ -197,42 +224,6 @@ export default function FirefliesPage() {
           </div>
         )}
       </div>
-
-      {/* Stats Cards */}
-      {config?.configured && stats && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="text-sm text-muted-foreground">Total Meetings</div>
-              <div className="text-2xl font-bold">{stats.total}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="text-sm text-muted-foreground">Pending</div>
-              <div className="text-2xl font-bold text-yellow-600">{stats.pending}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="text-sm text-muted-foreground">Processed</div>
-              <div className="text-2xl font-bold text-green-600">{stats.processed}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="text-sm text-muted-foreground flex items-center gap-1"><Users className="h-3 w-3" /> Contacts Created</div>
-              <div className="text-2xl font-bold text-blue-600">{stats.contactsCreated}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="text-sm text-muted-foreground flex items-center gap-1"><ListTodo className="h-3 w-3" /> Tasks Created</div>
-              <div className="text-2xl font-bold text-purple-600">{stats.tasksCreated}</div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
 
       <Tabs defaultValue={config?.configured ? "meetings" : "setup"}>
         <TabsList>
@@ -269,16 +260,16 @@ export default function FirefliesPage() {
                     <CheckCircle2 className="h-4 w-4" />
                     Connected to Fireflies.ai
                   </div>
-                  {config.config && (
+                  {(config as any).config && (
                     <div className="mt-2 text-sm text-green-600">
-                      {(config.config as any).firefliesUserName && (
-                        <span>Account: {(config.config as any).firefliesUserName} ({(config.config as any).firefliesEmail})</span>
+                      {((config as any).config as any).firefliesUserName && (
+                        <span>Account: {((config as any).config as any).firefliesUserName} ({((config as any).config as any).firefliesEmail})</span>
                       )}
                     </div>
                   )}
-                  {config.lastSyncAt && (
+                  {(config as any).lastSyncAt && (
                     <div className="mt-1 text-sm text-green-600">
-                      Last synced: {formatDate(config.lastSyncAt)}
+                      Last synced: {formatDate((config as any).lastSyncAt)}
                     </div>
                   )}
                 </div>
@@ -295,13 +286,18 @@ export default function FirefliesPage() {
                       value={apiKey}
                       onChange={(e) => setApiKey(e.target.value)}
                     />
-                    <Button onClick={handleConfigure} disabled={configureMutation.isPending || !apiKey.trim()}>
+                    <Button onClick={handleConfigure} disabled={configureMutation.isPending || (!config?.configured && !apiKey.trim())}>
                       {configureMutation.isPending ? (
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                       ) : null}
                       {config?.configured ? "Update" : "Connect"}
                     </Button>
                   </div>
+                  {config?.configured && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Leave blank to keep your existing API key and save only settings changes.
+                    </p>
+                  )}
                 </div>
 
                 <div className="border rounded-lg p-4 space-y-4">
@@ -328,6 +324,14 @@ export default function FirefliesPage() {
                     <Switch checked={autoCreateProjects} onCheckedChange={setAutoCreateProjects} />
                   </div>
                 </div>
+                {config?.configured && (
+                  <Button onClick={handleConfigure} disabled={configureMutation.isPending}>
+                    {configureMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : null}
+                    Save Settings
+                  </Button>
+                )}
 
                 {config?.configured && (
                   <div className="pt-4 border-t">
@@ -379,13 +383,13 @@ export default function FirefliesPage() {
                     <TableBody>
                       {meetings.map((meeting) => {
                         const participants = meeting.participants ? JSON.parse(meeting.participants as string) : [];
-                        const actionItems = meeting.actionItems ? JSON.parse(meeting.actionItems as string) : [];
+                        const actionItems = (meeting as any).actionItems ? JSON.parse((meeting as any).actionItems as string) : [];
                         return (
                           <TableRow key={meeting.id}>
                             <TableCell>
                               <div className="font-medium">{meeting.title}</div>
-                              {meeting.organizerEmail && (
-                                <div className="text-xs text-muted-foreground">{meeting.organizerEmail}</div>
+                              {(meeting as any).organizerEmail && (
+                                <div className="text-xs text-muted-foreground">{(meeting as any).organizerEmail}</div>
                               )}
                             </TableCell>
                             <TableCell className="text-sm">{formatDate(meeting.date)}</TableCell>
@@ -407,24 +411,24 @@ export default function FirefliesPage() {
                                 {actionItems.length}
                               </div>
                             </TableCell>
-                            <TableCell>{statusBadge(meeting.processingStatus)}</TableCell>
+                            <TableCell>{statusBadge((meeting as any).processingStatus || meeting.status)}</TableCell>
                             <TableCell>
-                              {meeting.processingStatus !== 'pending' && (
+                              {(meeting as any).processingStatus !== 'pending' && (
                                 <div className="text-xs space-y-0.5">
-                                  {(meeting.autoCreatedContactCount ?? 0) > 0 && (
-                                    <div className="text-blue-600">{meeting.autoCreatedContactCount} contacts</div>
+                                  {((meeting as any).autoCreatedContactCount ?? 0) > 0 && (
+                                    <div className="text-blue-600">{(meeting as any).autoCreatedContactCount} contacts</div>
                                   )}
-                                  {(meeting.autoCreatedTaskCount ?? 0) > 0 && (
-                                    <div className="text-purple-600">{meeting.autoCreatedTaskCount} tasks</div>
+                                  {((meeting as any).autoCreatedTaskCount ?? 0) > 0 && (
+                                    <div className="text-purple-600">{(meeting as any).autoCreatedTaskCount} tasks</div>
                                   )}
-                                  {meeting.autoCreatedProjectId && (
+                                  {(meeting as any).autoCreatedProjectId && (
                                     <div className="text-indigo-600">1 project</div>
                                   )}
                                 </div>
                               )}
                             </TableCell>
                             <TableCell>
-                              {meeting.processingStatus === 'pending' && (
+                              {(meeting as any).processingStatus === 'pending' && (
                                 <Button
                                   size="sm"
                                   variant="outline"

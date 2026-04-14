@@ -24,6 +24,32 @@ import {
 import { useLocation, useParams } from "wouter";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
+// Helper: open or download a file URL, handling data: URLs properly
+function openFileUrl(url: string, filename?: string) {
+  if (url.startsWith('data:')) {
+    // Convert data URL to blob for proper download/viewing
+    const [header, base64] = url.split(',');
+    const mime = header.match(/data:(.*?);/)?.[1] || 'application/octet-stream';
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes], { type: mime });
+    const blobUrl = URL.createObjectURL(blob);
+    if (filename) {
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    } else {
+      window.open(blobUrl, '_blank');
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    }
+  } else {
+    window.open(url, '_blank');
+  }
+}
+
 export default function DataRoomDetail() {
   const params = useParams<{ id: string }>();
   const roomId = parseInt(params.id || "0");
@@ -36,6 +62,7 @@ export default function DataRoomDetail() {
   const [newLink, setNewLink] = useState({
     name: "",
     password: "",
+    expiresAt: "",
     requireEmail: true,
     requireName: false,
     requireCompany: false,
@@ -159,6 +186,44 @@ export default function DataRoomDetail() {
     },
   });
 
+  const syncFromDriveMutation = trpc.dataRoom.syncFromDrive.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Synced ${data.filesCreated} files and ${data.foldersCreated} folders from Google Drive${data.folderName ? ` (${data.folderName})` : ''}`);
+      refetchFolders();
+      refetchDocuments();
+      refetchRoom();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  // Investment pipeline
+  const { data: commitments, refetch: refetchCommitments } = trpc.dataRoom.listCommitments.useQuery({ dataRoomId: roomId });
+  const [finalizeOpen, setFinalizeOpen] = useState(false);
+  const [selectedCommitment, setSelectedCommitment] = useState<any>(null);
+  const [finalizeForm, setFinalizeForm] = useState({ shareClassId: "", shares: "", pricePerShare: "" });
+
+  const updateStatusMutation = trpc.dataRoom.updateCommitmentStatus.useMutation({
+    onSuccess: () => {
+      toast.success("Status updated");
+      refetchCommitments();
+    },
+  });
+
+  const finalizeMutation = trpc.dataRoom.finalizeInvestment.useMutation({
+    onSuccess: () => {
+      toast.success("Investment finalized and added to cap table!");
+      setFinalizeOpen(false);
+      setSelectedCommitment(null);
+      setFinalizeForm({ shareClassId: "", shares: "", pricePerShare: "" });
+      refetchCommitments();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -231,16 +296,59 @@ export default function DataRoomDetail() {
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div className="flex-1">
-            <h1 className="text-2xl font-bold">{room.name}</h1>
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">{room.name}</h1>
             <p className="text-muted-foreground">/dataroom/{room.slug}</p>
           </div>
-          <Button variant="outline" onClick={() => copyLinkUrl(room.slug)}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              const firstLink = links?.[0];
+              if (firstLink) {
+                copyLinkUrl(firstLink.linkCode);
+              } else {
+                toast.error("No share link exists yet. Create one first.");
+              }
+            }}
+          >
             <Copy className="h-4 w-4 mr-2" />
             Copy Link
           </Button>
-          <Button variant="outline" onClick={() => window.open(`/share/${room.slug}`, '_blank')}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              const firstLink = links?.[0];
+              if (firstLink) {
+                window.open(`/share/${firstLink.linkCode}`, '_blank');
+              } else {
+                toast.error("No share link exists yet. Create one first.");
+              }
+            }}
+          >
             <ExternalLink className="h-4 w-4 mr-2" />
             Preview
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              if (room.googleDriveFolderId) {
+                syncFromDriveMutation.mutate({ dataRoomId: roomId, driveFolderId: room.googleDriveFolderId });
+              } else {
+                setGoogleDriveSyncOpen(true);
+              }
+            }}
+            disabled={syncFromDriveMutation.isPending}
+          >
+            {syncFromDriveMutation.isPending ? (
+              <>
+                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                Syncing...
+              </>
+            ) : (
+              <>
+                <HardDrive className="h-4 w-4 mr-2" />
+                Sync from Google Drive
+              </>
+            )}
           </Button>
         </div>
 
@@ -254,7 +362,7 @@ export default function DataRoomDetail() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{analytics?.totalVisitors || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em]">{analytics?.totalVisitors || 0}</div>
             </CardContent>
           </Card>
           <Card>
@@ -265,7 +373,7 @@ export default function DataRoomDetail() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{analytics?.totalDocumentViews || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em]">{analytics?.totalDocumentViews || 0}</div>
             </CardContent>
           </Card>
           <Card>
@@ -276,7 +384,7 @@ export default function DataRoomDetail() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{links?.length || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em]">{links?.length || 0}</div>
             </CardContent>
           </Card>
           <Card>
@@ -287,7 +395,7 @@ export default function DataRoomDetail() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
+              <div className="text-xl font-semibold tracking-[-0.02em]">
                 {Math.round((analytics?.totalTimeSpent || 0) / 60)}m
               </div>
             </CardContent>
@@ -317,10 +425,7 @@ export default function DataRoomDetail() {
               <ClipboardList className="h-4 w-4 mr-2" />
               Checklist
             </TabsTrigger>
-            <TabsTrigger value="driveSync">
-              <HardDrive className="h-4 w-4 mr-2" />
-              Drive Sync
-            </TabsTrigger>
+            {/* Drive Sync removed — use header button instead */}
             <TabsTrigger value="emailRules">
               <Shield className="h-4 w-4 mr-2" />
               Email Rules
@@ -328,6 +433,10 @@ export default function DataRoomDetail() {
             <TabsTrigger value="nda">
               <FileText className="h-4 w-4 mr-2" />
               NDA
+            </TabsTrigger>
+            <TabsTrigger value="investments">
+              <Activity className="h-4 w-4 mr-2" />
+              Investments
             </TabsTrigger>
             <TabsTrigger value="settings">
               <Settings className="h-4 w-4 mr-2" />
@@ -479,7 +588,7 @@ export default function DataRoomDetail() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => window.open(doc.googleDriveWebViewLink || doc.storageUrl!, '_blank')}
+                            onClick={() => openFileUrl(doc.googleDriveWebViewLink || doc.storageUrl!, doc.name)}
                           >
                             <Eye className="h-4 w-4" />
                           </Button>
@@ -492,7 +601,7 @@ export default function DataRoomDetail() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent>
                             {doc.storageUrl && (
-                              <DropdownMenuItem onClick={() => window.open(doc.storageUrl!, '_blank')}>
+                              <DropdownMenuItem onClick={() => openFileUrl(doc.storageUrl!, doc.name)}>
                                 <Download className="h-4 w-4 mr-2" />
                                 Download
                               </DropdownMenuItem>
@@ -563,6 +672,14 @@ export default function DataRoomDetail() {
                             placeholder="Leave empty for no password"
                           />
                         </div>
+                        <div className="space-y-2">
+                          <Label>Link Expiration (optional)</Label>
+                          <Input
+                            type="datetime-local"
+                            value={newLink.expiresAt}
+                            onChange={(e) => setNewLink({ ...newLink, expiresAt: e.target.value })}
+                          />
+                        </div>
                         <div className="flex items-center justify-between">
                           <Label>Require Email</Label>
                           <Switch
@@ -599,6 +716,7 @@ export default function DataRoomDetail() {
                               dataRoomId: roomId,
                               name: newLink.name || undefined,
                               password: newLink.password || undefined,
+                              expiresAt: newLink.expiresAt ? new Date(newLink.expiresAt) : undefined,
                               requireEmail: newLink.requireEmail,
                               requireName: newLink.requireName,
                               requireCompany: newLink.requireCompany,
@@ -861,9 +979,7 @@ export default function DataRoomDetail() {
           </TabsContent>
 
           {/* Google Drive Sync Tab */}
-          <TabsContent value="driveSync" className="mt-4">
-            <GoogleDriveSyncSettings dataRoomId={roomId} />
-          </TabsContent>
+          {/* Drive Sync tab removed — use header button */}
 
           {/* Email Access Rules Tab */}
           <TabsContent value="emailRules" className="mt-4">
@@ -873,6 +989,245 @@ export default function DataRoomDetail() {
           {/* NDA Tab */}
           <TabsContent value="nda" className="mt-4">
             <NdaManagement dataRoomId={roomId} requiresNda={room?.requiresNda || false} />
+          </TabsContent>
+
+          {/* Investments Tab */}
+          <TabsContent value="investments" className="mt-4">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Investment Pipeline</CardTitle>
+                    <CardDescription>Track investor commitments and onboard to cap table</CardDescription>
+                  </div>
+                  <Badge variant="outline" className="text-xs">
+                    {commitments?.length || 0} total
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {!commitments?.length ? (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <Activity className="h-10 w-10 mx-auto mb-3 opacity-40" />
+                    <p className="text-sm font-medium">No investment commitments yet</p>
+                    <p className="text-xs mt-1">Investors can express interest from the public data room page.</p>
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Investor</TableHead>
+                        <TableHead>Company</TableHead>
+                        <TableHead>Amount</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {commitments.map((c: any) => {
+                        const statusColors: Record<string, string> = {
+                          interested: "bg-blue-500/10 text-blue-500 border-blue-500/20",
+                          committed: "bg-indigo-500/10 text-indigo-500 border-indigo-500/20",
+                          docs_sent: "bg-amber-500/10 text-amber-500 border-amber-500/20",
+                          signed: "bg-purple-500/10 text-purple-500 border-purple-500/20",
+                          funded: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
+                          completed: "bg-green-500/10 text-green-500 border-green-500/20",
+                          declined: "bg-red-500/10 text-red-500 border-red-500/20",
+                        };
+                        const typeLabels: Record<string, string> = {
+                          safe: "SAFE",
+                          equity: "Equity",
+                          convertible_note: "Conv. Note",
+                          warrant: "Warrant",
+                        };
+                        const statusSteps = ["interested", "committed", "docs_sent", "signed", "funded", "completed"];
+                        const currentIdx = statusSteps.indexOf(c.status);
+                        const nextStatus = c.status !== "declined" && c.status !== "completed" && currentIdx < statusSteps.length - 1
+                          ? statusSteps[currentIdx + 1]
+                          : null;
+
+                        return (
+                          <TableRow key={c.id}>
+                            <TableCell>
+                              <div>
+                                <p className="font-medium text-sm">{c.investorName}</p>
+                                <p className="text-xs text-muted-foreground">{c.investorEmail}</p>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {c.investorCompany || "-"}
+                              {c.investorTitle && (
+                                <span className="text-xs text-muted-foreground block">{c.investorTitle}</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="font-medium text-sm">
+                              ${Number(c.investmentAmount || 0).toLocaleString()}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="text-xs">
+                                {typeLabels[c.instrumentType] || c.instrumentType}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge className={`text-xs ${statusColors[c.status] || ""}`}>
+                                {c.status?.replace(/_/g, " ")}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground">
+                              {c.createdAt ? new Date(c.createdAt).toLocaleDateString() : "-"}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                {nextStatus && (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button variant="ghost" size="sm" className="h-7 text-xs">
+                                        <ChevronDown className="h-3 w-3 mr-1" />
+                                        Advance
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      {statusSteps.slice(currentIdx + 1).map((s) => (
+                                        <DropdownMenuItem
+                                          key={s}
+                                          onClick={() => updateStatusMutation.mutate({ id: c.id, status: s as any })}
+                                        >
+                                          {s.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
+                                        </DropdownMenuItem>
+                                      ))}
+                                      <DropdownMenuItem
+                                        className="text-red-500"
+                                        onClick={() => updateStatusMutation.mutate({ id: c.id, status: "declined" })}
+                                      >
+                                        Decline
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                )}
+                                {(c.status === "funded" || c.status === "signed") && !c.addedToCapTable && (
+                                  <Button
+                                    variant="default"
+                                    size="sm"
+                                    className="h-7 text-xs"
+                                    onClick={() => {
+                                      setSelectedCommitment(c);
+                                      setFinalizeOpen(true);
+                                    }}
+                                  >
+                                    <CheckCircle2 className="h-3 w-3 mr-1" />
+                                    Finalize
+                                  </Button>
+                                )}
+                                {c.addedToCapTable && (
+                                  <Badge variant="outline" className="text-xs text-green-600 border-green-600/30">
+                                    <CheckCircle2 className="h-3 w-3 mr-1" />
+                                    On Cap Table
+                                  </Badge>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                )}
+
+                {/* Pipeline summary */}
+                {commitments && commitments.length > 0 && (
+                  <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Total Interest</p>
+                      <p className="text-lg font-semibold">
+                        ${commitments.reduce((sum: number, c: any) => sum + Number(c.investmentAmount || 0), 0).toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Active Pipeline</p>
+                      <p className="text-lg font-semibold">
+                        {commitments.filter((c: any) => !["completed", "declined"].includes(c.status)).length}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Completed</p>
+                      <p className="text-lg font-semibold">
+                        {commitments.filter((c: any) => c.status === "completed").length}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">On Cap Table</p>
+                      <p className="text-lg font-semibold">
+                        {commitments.filter((c: any) => c.addedToCapTable).length}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Finalize Investment Dialog */}
+            <Dialog open={finalizeOpen} onOpenChange={setFinalizeOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Finalize Investment</DialogTitle>
+                  <DialogDescription>
+                    Add {selectedCommitment?.investorName} to the cap table. This will create a stakeholder record and equity grant.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="rounded-lg bg-muted/50 p-3 space-y-1">
+                    <p className="text-sm"><span className="text-muted-foreground">Investor:</span> {selectedCommitment?.investorName}</p>
+                    <p className="text-sm"><span className="text-muted-foreground">Amount:</span> ${Number(selectedCommitment?.investmentAmount || 0).toLocaleString()}</p>
+                    <p className="text-sm"><span className="text-muted-foreground">Type:</span> {selectedCommitment?.instrumentType?.replace(/_/g, " ")}</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Share Class ID</Label>
+                    <Input
+                      type="number"
+                      placeholder="e.g., 1"
+                      value={finalizeForm.shareClassId}
+                      onChange={(e) => setFinalizeForm(f => ({ ...f, shareClassId: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Number of Shares</Label>
+                    <Input
+                      placeholder="e.g., 10000"
+                      value={finalizeForm.shares}
+                      onChange={(e) => setFinalizeForm(f => ({ ...f, shares: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Price Per Share</Label>
+                    <Input
+                      placeholder="e.g., 1.00"
+                      value={finalizeForm.pricePerShare}
+                      onChange={(e) => setFinalizeForm(f => ({ ...f, pricePerShare: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setFinalizeOpen(false)}>Cancel</Button>
+                  <Button
+                    disabled={!finalizeForm.shareClassId || !finalizeForm.shares || !finalizeForm.pricePerShare || finalizeMutation.isPending}
+                    onClick={() => {
+                      if (selectedCommitment) {
+                        finalizeMutation.mutate({
+                          commitmentId: selectedCommitment.id,
+                          shareClassId: parseInt(finalizeForm.shareClassId),
+                          shares: finalizeForm.shares,
+                          pricePerShare: finalizeForm.pricePerShare,
+                        });
+                      }
+                    }}
+                  >
+                    {finalizeMutation.isPending ? "Adding..." : "Add to Cap Table"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </TabsContent>
 
           {/* Settings Tab */}
@@ -968,44 +1323,7 @@ export default function DataRoomDetail() {
                     )}
                   </div>
                 </div>
-                <div className="border-t pt-6 mt-6">
-                  <h3 className="font-medium mb-4">Google Drive Sync</h3>
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <Label>Google Drive Folder</Label>
-                        <p className="text-sm text-muted-foreground">
-                          {room.googleDriveFolderId 
-                            ? `Synced to Google Drive folder` 
-                            : "Not connected to Google Drive"}
-                        </p>
-                        {room.lastSyncedAt && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Last synced: {new Date(room.lastSyncedAt).toLocaleString()}
-                          </p>
-                        )}
-                      </div>
-                      <Button
-                        onClick={() => setGoogleDriveSyncOpen(true)}
-                        variant={room.googleDriveFolderId ? "outline" : "default"}
-                      >
-                        {room.googleDriveFolderId ? "Re-sync" : "Connect"}
-                      </Button>
-                    </div>
-                    {room.googleDriveFolderId && (
-                      <div className="pl-4 border-l-2 border-muted text-sm text-muted-foreground">
-                        <p>Files and folders from Google Drive will inherit all security settings from this data room, including:</p>
-                        <ul className="list-disc list-inside mt-2 space-y-1">
-                          <li>Password protection</li>
-                          <li>NDA requirements</li>
-                          <li>Download and print permissions</li>
-                          <li>Access controls and invitations</li>
-                          <li>Visitor tracking and analytics</li>
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                {/* Google Drive sync — use header button only */}
               </CardContent>
             </Card>
           </TabsContent>
@@ -1410,13 +1728,13 @@ function NdaManagement({ dataRoomId, requiresNda }: { dataRoomId: number; requir
 function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
   const [selectedVisitor, setSelectedVisitor] = useState<number | null>(null);
 
-  const { data: report, isLoading } = trpc.dataRoom.detailedAnalytics.getEngagementReport.useQuery({ dataRoomId });
-  const { data: visitorDetails } = trpc.dataRoom.detailedAnalytics.getVisitorDetails.useQuery(
+  const { data: report, isLoading } = (trpc.dataRoom as any).detailedAnalytics.getEngagementReport.useQuery({ dataRoomId });
+  const { data: visitorDetails } = (trpc.dataRoom as any).detailedAnalytics.getVisitorDetails.useQuery(
     { dataRoomId, visitorId: selectedVisitor! },
     { enabled: !!selectedVisitor }
   );
 
-  const exportCsvMutation = trpc.dataRoom.detailedAnalytics.exportCsv.useMutation({
+  const exportCsvMutation = (trpc.dataRoom as any).detailedAnalytics.exportCsv.useMutation({
     onSuccess: (data) => {
       const blob = new Blob([data.csv], { type: 'text/csv' });
       const url = window.URL.createObjectURL(blob);
@@ -1449,7 +1767,7 @@ function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
             <CardTitle className="text-sm font-medium text-muted-foreground">Total Visitors</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{report?.summary.totalVisitors || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{report?.summary.totalVisitors || 0}</div>
             <p className="text-xs text-muted-foreground">{report?.summary.activeVisitors || 0} active</p>
           </CardContent>
         </Card>
@@ -1458,7 +1776,7 @@ function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
             <CardTitle className="text-sm font-medium text-muted-foreground">Total Sessions</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{report?.summary.totalSessions || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{report?.summary.totalSessions || 0}</div>
           </CardContent>
         </Card>
         <Card>
@@ -1466,7 +1784,7 @@ function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
             <CardTitle className="text-sm font-medium text-muted-foreground">Total Page Views</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{report?.summary.totalPageViews || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{report?.summary.totalPageViews || 0}</div>
           </CardContent>
         </Card>
         <Card>
@@ -1474,7 +1792,7 @@ function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
             <CardTitle className="text-sm font-medium text-muted-foreground">Total Time Spent</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatDuration(report?.summary.totalEngagementTimeMs || 0)}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{formatDuration(report?.summary.totalEngagementTimeMs || 0)}</div>
           </CardContent>
         </Card>
       </div>
@@ -1596,19 +1914,19 @@ function DetailedAnalytics({ dataRoomId }: { dataRoomId: number }) {
             <div className="space-y-4">
               <div className="grid grid-cols-4 gap-4">
                 <div className="text-center">
-                  <div className="text-2xl font-bold">{visitorDetails.summary.totalSessions}</div>
+                  <div className="text-xl font-semibold tracking-[-0.02em]">{visitorDetails.summary.totalSessions}</div>
                   <div className="text-xs text-muted-foreground">Sessions</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-bold">{visitorDetails.summary.totalDocuments}</div>
+                  <div className="text-xl font-semibold tracking-[-0.02em]">{visitorDetails.summary.totalDocuments}</div>
                   <div className="text-xs text-muted-foreground">Documents</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-bold">{visitorDetails.summary.totalPageViews}</div>
+                  <div className="text-xl font-semibold tracking-[-0.02em]">{visitorDetails.summary.totalPageViews}</div>
                   <div className="text-xs text-muted-foreground">Page Views</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-bold">{formatDuration(visitorDetails.summary.totalTimeMs)}</div>
+                  <div className="text-xl font-semibold tracking-[-0.02em]">{formatDuration(visitorDetails.summary.totalTimeMs)}</div>
                   <div className="text-xs text-muted-foreground">Total Time</div>
                 </div>
               </div>
@@ -1647,14 +1965,14 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
   const [currentParentId, setCurrentParentId] = useState<string | undefined>(undefined);
   const [folderPath, setFolderPath] = useState<{ id: string; name: string }[]>([]);
 
-  const { data: syncConfig, refetch: refetchConfig } = trpc.dataRoom.driveSync.getConfig.useQuery({ dataRoomId });
-  const { data: syncLogs, refetch: refetchLogs } = trpc.dataRoom.driveSync.getLogs.useQuery({ dataRoomId, limit: 10 });
-  const { data: driveFolders, isLoading: foldersLoading } = trpc.dataRoom.driveSync.listDriveFolders.useQuery(
+  const { data: syncConfig, refetch: refetchConfig } = (trpc.dataRoom as any).driveSync.getConfig.useQuery({ dataRoomId });
+  const { data: syncLogs, refetch: refetchLogs } = (trpc.dataRoom as any).driveSync.getLogs.useQuery({ dataRoomId, limit: 10 });
+  const { data: driveFolders, isLoading: foldersLoading } = (trpc.dataRoom as any).driveSync.listDriveFolders.useQuery(
     { parentId: currentParentId },
     { enabled: folderPickerOpen }
   );
 
-  const saveConfigMutation = trpc.dataRoom.driveSync.saveConfig.useMutation({
+  const saveConfigMutation = (trpc.dataRoom as any).driveSync.saveConfig.useMutation({
     onSuccess: () => {
       toast.success("Sync configuration saved");
       refetchConfig();
@@ -1665,7 +1983,7 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
     },
   });
 
-  const syncNowMutation = trpc.dataRoom.driveSync.syncNow.useMutation({
+  const syncNowMutation = (trpc.dataRoom as any).driveSync.syncNow.useMutation({
     onSuccess: (result) => {
       toast.success(`Sync completed: ${result.filesAdded} added, ${result.filesUpdated} updated`);
       refetchConfig();
@@ -1676,7 +1994,7 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
     },
   });
 
-  const deleteConfigMutation = trpc.dataRoom.driveSync.deleteConfig.useMutation({
+  const deleteConfigMutation = (trpc.dataRoom as any).driveSync.deleteConfig.useMutation({
     onSuccess: () => {
       toast.success("Sync configuration removed");
       refetchConfig();
@@ -1741,7 +2059,7 @@ function GoogleDriveSyncSettings({ dataRoomId }: { dataRoomId: number }) {
                 </div>
                 <div className="flex items-center gap-2">
                   {syncConfig.lastSyncStatus === 'success' && (
-                    <Badge className="bg-green-100 text-green-800">
+                    <Badge className="bg-emerald-500/8 text-emerald-600 dark:text-emerald-400">
                       <CheckCircle2 className="h-3 w-3 mr-1" />
                       Synced
                     </Badge>
@@ -1931,9 +2249,9 @@ function EmailAccessRulesManager({ dataRoomId }: { dataRoomId: number }) {
     notifyOnAccess: true,
   });
 
-  const { data: rules, refetch } = trpc.dataRoom.emailRules.list.useQuery({ dataRoomId });
+  const { data: rules, refetch } = (trpc.dataRoom as any).emailRules.list.useQuery({ dataRoomId });
 
-  const createMutation = trpc.dataRoom.emailRules.create.useMutation({
+  const createMutation = (trpc.dataRoom as any).emailRules.create.useMutation({
     onSuccess: () => {
       toast.success("Rule created");
       setCreateOpen(false);
@@ -1952,14 +2270,14 @@ function EmailAccessRulesManager({ dataRoomId }: { dataRoomId: number }) {
     },
   });
 
-  const deleteMutation = trpc.dataRoom.emailRules.delete.useMutation({
+  const deleteMutation = (trpc.dataRoom as any).emailRules.delete.useMutation({
     onSuccess: () => {
       toast.success("Rule deleted");
       refetch();
     },
   });
 
-  const toggleMutation = trpc.dataRoom.emailRules.update.useMutation({
+  const toggleMutation = (trpc.dataRoom as any).emailRules.update.useMutation({
     onSuccess: () => {
       refetch();
     },
@@ -1976,7 +2294,7 @@ function EmailAccessRulesManager({ dataRoomId }: { dataRoomId: number }) {
   };
 
   const getRuleTypeColor = (type: string) => {
-    return type.startsWith('allow') ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800';
+    return type.startsWith('allow') ? 'bg-emerald-500/8 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/8 text-red-600 dark:text-red-400';
   };
 
   return (
@@ -2160,14 +2478,14 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
   const [showMissingOnly, setShowMissingOnly] = useState(false);
   const [hasAutoMatched, setHasAutoMatched] = useState(false);
 
-  const { data: summary, refetch: refetchSummary } = trpc.dataRoom.dueDiligence.getSummary.useQuery({ dataRoomId });
-  const { data: checklistData, refetch: refetchChecklist } = trpc.dataRoom.dueDiligence.getById.useQuery(
+  const { data: summary, refetch: refetchSummary } = (trpc.dataRoom as any).dueDiligence.getSummary.useQuery({ dataRoomId });
+  const { data: checklistData, refetch: refetchChecklist } = (trpc.dataRoom as any).dueDiligence.getById.useQuery(
     { id: summary?.checklist?.id || 0 },
     { enabled: !!summary?.checklist?.id }
   );
   const { data: documents } = trpc.dataRoom.documents.list.useQuery({ dataRoomId });
 
-  const createStandardMutation = trpc.dataRoom.dueDiligence.createStandard.useMutation({
+  const createStandardMutation = (trpc.dataRoom as any).dueDiligence.createStandard.useMutation({
     onSuccess: () => {
       toast.success("Checklist created - scanning documents...");
       setCreateOpen(false);
@@ -2178,7 +2496,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
     },
   });
 
-  const autoMatchMutation = trpc.dataRoom.dueDiligence.autoMatch.useMutation({
+  const autoMatchMutation = (trpc.dataRoom as any).dueDiligence.autoMatch.useMutation({
     onSuccess: (result) => {
       if (result.matched > 0) {
         toast.success(`Matched ${result.matched} documents to checklist items`);
@@ -2193,14 +2511,14 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
     },
   });
 
-  const updateItemMutation = trpc.dataRoom.dueDiligence.updateItem.useMutation({
+  const updateItemMutation = (trpc.dataRoom as any).dueDiligence.updateItem.useMutation({
     onSuccess: () => {
       refetchSummary();
       refetchChecklist();
     },
   });
 
-  const linkDocumentMutation = trpc.dataRoom.dueDiligence.linkDocument.useMutation({
+  const linkDocumentMutation = (trpc.dataRoom as any).dueDiligence.linkDocument.useMutation({
     onSuccess: () => {
       toast.success("Document linked");
       refetchChecklist();
@@ -2391,7 +2709,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
 
           {/* Category progress chips */}
           <div className="flex flex-wrap gap-2">
-            {Object.entries(summary.byCategory).map(([name, stats]) => {
+            {Object.entries(summary.byCategory).map(([name, stats]: [string, any]) => {
               const pct = Math.round((stats.complete / stats.total) * 100);
               return (
                 <Badge
@@ -2406,7 +2724,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                     setExpandedCategories(newSet);
                   }}
                 >
-                  {name}: {stats.complete}/{stats.total}
+                  {name}: {(stats as any).complete}/{(stats as any).total}
                 </Badge>
               );
             })}

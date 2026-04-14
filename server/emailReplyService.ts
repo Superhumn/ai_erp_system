@@ -107,7 +107,8 @@ ${email.body}`,
 
   const content = response.choices[0]?.message?.content;
   if (typeof content === "string") {
-    return JSON.parse(content);
+    const cleaned = content.replace(/```json\n?|\n?```/g, '').trim();
+    return JSON.parse(cleaned);
   }
   throw new Error("Failed to analyze email");
 }
@@ -198,7 +199,8 @@ Generate an appropriate reply.`,
 
   const content = response.choices[0]?.message?.content;
   if (typeof content === "string") {
-    return JSON.parse(content);
+    const cleaned = content.replace(/```json\n?|\n?```/g, '').trim();
+    return JSON.parse(cleaned);
   }
   throw new Error("Failed to generate email reply");
 }

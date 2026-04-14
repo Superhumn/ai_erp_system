@@ -165,7 +165,7 @@ export default function Forecasting() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">AI Production Forecasting</h1>
+          <h1 className="text-xl font-semibold tracking-[-0.02em]">AI Production Forecasting</h1>
           <p className="text-muted-foreground">Predict demand and auto-generate purchase orders</p>
         </div>
         <div className="flex gap-2">
@@ -234,7 +234,7 @@ export default function Forecasting() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Active Forecasts</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{dashboardData?.activeForecasts || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{dashboardData?.activeForecasts || 0}</div>
           </CardContent>
         </Card>
         <Card>
@@ -242,7 +242,7 @@ export default function Forecasting() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Pending Plans</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{dashboardData?.pendingPlans || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{dashboardData?.pendingPlans || 0}</div>
           </CardContent>
         </Card>
         <Card>
@@ -250,7 +250,7 @@ export default function Forecasting() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Suggested POs</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-orange-600">{dashboardData?.pendingSuggestedPOs || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-orange-600">{dashboardData?.pendingSuggestedPOs || 0}</div>
           </CardContent>
         </Card>
         <Card>
@@ -258,7 +258,7 @@ export default function Forecasting() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Forecasted Demand</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{dashboardData?.totalForecastedDemand?.toLocaleString() || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em]">{dashboardData?.totalForecastedDemand?.toLocaleString() || 0}</div>
             <p className="text-xs text-muted-foreground">units</p>
           </CardContent>
         </Card>
@@ -267,7 +267,7 @@ export default function Forecasting() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Pending PO Value</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">${dashboardData?.totalPendingPOValue?.toLocaleString() || 0}</div>
+            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">${dashboardData?.totalPendingPOValue?.toLocaleString() || 0}</div>
           </CardContent>
         </Card>
       </div>

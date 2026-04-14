@@ -24,14 +24,14 @@ export const agentRouter = router({
       z.object({
         goal: z.string().min(1).max(2000),
         maxIterations: z.number().int().min(1).max(50).optional(),
-        context: z.record(z.unknown()).optional(),
+        context: z.record(z.string(), z.unknown()).optional(),
       }),
     )
     .mutation(async ({ input, ctx }) => {
       const result = await triggerAgent({
         goal: input.goal,
         userId: String(ctx.user.id),
-        companyId: ctx.user.companyId ?? undefined,
+        companyId: (ctx.user as any).companyId ?? undefined,
         maxIterations: input.maxIterations,
         context: input.context,
       });

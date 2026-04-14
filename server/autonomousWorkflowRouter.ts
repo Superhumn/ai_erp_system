@@ -68,6 +68,12 @@ export const autonomousWorkflowRouter = router({
       await orchestrator.configureDefaultWorkflows();
       return { success: true, message: "Default workflows configured" };
     }),
+
+    initializeDefaults: opsOrAdminProcedure.mutation(async () => {
+      const orchestrator = getOrchestrator();
+      await orchestrator.configureDefaultWorkflows();
+      return { success: true, initialized: true };
+    }),
   }),
 
   // ============================================
@@ -186,7 +192,7 @@ export const autonomousWorkflowRouter = router({
     trigger: opsOrAdminProcedure
       .input(z.object({
         id: z.number(),
-        inputData: z.record(z.any()).optional(),
+        inputData: z.record(z.string(), z.any()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const orchestrator = getOrchestrator();
@@ -535,7 +541,7 @@ export const autonomousWorkflowRouter = router({
         sourceSystem: z.string(),
         sourceEntityType: z.string().optional(),
         sourceEntityId: z.number().optional(),
-        eventData: z.record(z.any()).optional(),
+        eventData: z.record(z.string(), z.any()).optional(),
         summary: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
@@ -849,7 +855,7 @@ export const autonomousWorkflowRouter = router({
       .input(z.object({
         id: z.number(),
         reason: z.string().min(1),
-        newDecision: z.record(z.any()),
+        newDecision: z.record(z.string(), z.any()),
       }))
       .mutation(async ({ input, ctx }) => {
         const db = await getDb();

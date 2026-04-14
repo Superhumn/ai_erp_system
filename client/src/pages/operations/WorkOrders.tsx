@@ -24,17 +24,17 @@ export default function WorkOrders() {
     notes: "",
   });
 
-  const { data: workOrders, isLoading, refetch } = trpc.workOrders.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: workOrders, isLoading } = trpc.workOrders.list.useQuery();
   const { data: boms } = trpc.bom.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
   const { data: warehouses } = trpc.warehouses.list.useQuery();
-  const utils = trpc.useUtils();
 
   const createMutation = trpc.workOrders.create.useMutation({
     onSuccess: () => {
       toast.success("Work order created");
       setIsCreateOpen(false);
-      refetch();
+      utils.workOrders.list.invalidate();
       setNewWorkOrder({ bomId: 0, productId: 0, warehouseId: 0, quantity: "", priority: "normal", notes: "" });
     },
     onError: (err) => toast.error(err.message),
@@ -43,28 +43,28 @@ export default function WorkOrders() {
   const startMutation = trpc.workOrders.startProduction.useMutation({
     onSuccess: () => {
       toast.success("Production started");
-      refetch();
+      utils.workOrders.list.invalidate();
     },
   });
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "draft": return "bg-gray-100 text-gray-800";
-      case "scheduled": return "bg-blue-100 text-blue-800";
-      case "in_progress": return "bg-yellow-100 text-yellow-800";
-      case "completed": return "bg-green-100 text-green-800";
-      case "cancelled": return "bg-red-100 text-red-800";
-      default: return "bg-gray-100 text-gray-800";
+      case "draft": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      case "scheduled": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
+      case "in_progress": return "bg-amber-500/8 text-amber-600 dark:text-amber-400";
+      case "completed": return "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400";
+      case "cancelled": return "bg-red-500/8 text-red-600 dark:text-red-400";
+      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
     }
   };
 
   const getPriorityColor = (priority: string) => {
     switch (priority) {
-      case "urgent": return "bg-red-100 text-red-800";
-      case "high": return "bg-orange-100 text-orange-800";
-      case "normal": return "bg-blue-100 text-blue-800";
-      case "low": return "bg-gray-100 text-gray-800";
-      default: return "bg-gray-100 text-gray-800";
+      case "urgent": return "bg-red-500/8 text-red-600 dark:text-red-400";
+      case "high": return "bg-orange-500/8 text-orange-600 dark:text-orange-400";
+      case "normal": return "bg-blue-500/8 text-blue-600 dark:text-blue-400";
+      case "low": return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
+      default: return "bg-gray-500/8 text-gray-600 dark:text-gray-400";
     }
   };
 
@@ -81,7 +81,7 @@ export default function WorkOrders() {
     <div className="p-6 space-y-6">
         <div className="flex justify-between items-center">
           <div>
-            <h1 className="text-2xl font-bold">Work Orders</h1>
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">Work Orders</h1>
             <p className="text-muted-foreground">Manage production runs and material consumption</p>
           </div>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
@@ -177,7 +177,7 @@ export default function WorkOrders() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Draft</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{workOrders?.filter(w => w.status === 'draft').length || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em]">{workOrders?.filter(w => w.status === 'draft').length || 0}</div>
             </CardContent>
           </Card>
           <Card>
@@ -185,7 +185,7 @@ export default function WorkOrders() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Scheduled</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{workOrders?.filter(w => w.status === 'scheduled').length || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em]">{workOrders?.filter(w => w.status === 'scheduled').length || 0}</div>
             </CardContent>
           </Card>
           <Card>
@@ -193,7 +193,7 @@ export default function WorkOrders() {
               <CardTitle className="text-sm font-medium text-muted-foreground">In Progress</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-yellow-600">{workOrders?.filter(w => w.status === 'in_progress').length || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em] text-yellow-600">{workOrders?.filter(w => w.status === 'in_progress').length || 0}</div>
             </CardContent>
           </Card>
           <Card>
@@ -201,7 +201,7 @@ export default function WorkOrders() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Completed</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-green-600">{workOrders?.filter(w => w.status === 'completed').length || 0}</div>
+              <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{workOrders?.filter(w => w.status === 'completed').length || 0}</div>
             </CardContent>
           </Card>
         </div>

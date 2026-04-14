@@ -28,7 +28,7 @@ export default function Procurement() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Procurement</h1>
+            <h1 className="text-lg font-semibold">Procurement</h1>
             <p className="text-muted-foreground">
               Manage purchase orders, vendors, and raw materials
             </p>
@@ -130,7 +130,7 @@ function ProcurementStatsCard({ title, icon: Icon, type }: { title: string; icon
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-muted-foreground">{title}</p>
-            <p className="text-2xl font-bold">{value}</p>
+            <p className="text-xl font-semibold tracking-[-0.02em]">{value}</p>
           </div>
           <Icon className="h-8 w-8 text-muted-foreground/50" />
         </div>
@@ -141,6 +141,7 @@ function ProcurementStatsCard({ title, icon: Icon, type }: { title: string; icon
 
 // Purchase Orders Tab
 function PurchaseOrdersTab({ searchTerm }: { searchTerm: string }) {
+  const { canSeeCosts } = useCostVisibility();
   const { data: pos, isLoading } = trpc.purchaseOrders.list.useQuery();
   const { data: vendors } = trpc.vendors.list.useQuery();
   const [createOpen, setCreateOpen] = useState(false);
@@ -313,10 +314,10 @@ function VendorsTab({ searchTerm }: { searchTerm: string }) {
 
   const getTypeBadge = (type: string) => {
     const colors: Record<string, string> = {
-      supplier: "bg-blue-100 text-blue-800",
-      manufacturer: "bg-green-100 text-green-800",
-      distributor: "bg-purple-100 text-purple-800",
-      freight: "bg-orange-100 text-orange-800",
+      supplier: "bg-blue-500/8 text-blue-600 dark:text-blue-400",
+      manufacturer: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
+      distributor: "bg-violet-500/8 text-violet-600 dark:text-violet-400",
+      freight: "bg-orange-500/8 text-orange-600 dark:text-orange-400",
     };
     return <Badge className={colors[type] || ""}>{type}</Badge>;
   };
@@ -460,6 +461,7 @@ function VendorsTab({ searchTerm }: { searchTerm: string }) {
 
 // Raw Materials Tab
 function RawMaterialsTab({ searchTerm }: { searchTerm: string }) {
+  const { canSeeCosts } = useCostVisibility();
   const { data: materials, isLoading } = trpc.rawMaterials.list.useQuery();
   const { data: vendors } = trpc.vendors.list.useQuery();
   const [createOpen, setCreateOpen] = useState(false);

@@ -66,7 +66,12 @@ export async function analyzeNegotiationOpportunity(params: {
   negotiationType: string;
 }): Promise<NegotiationAnalysis> {
   // Gather vendor data
-  const spending = await db.getVendorSpendingHistory(params.vendorId);
+  const spendingRecords = await db.getVendorSpendingHistory(params.vendorId) || [];
+  const spending = {
+    totalSpend: spendingRecords.reduce((s: number, po: any) => s + parseFloat(String(po.totalAmount || 0)), 0),
+    orderCount: spendingRecords.length,
+    avgOrderValue: spendingRecords.length > 0 ? spendingRecords.reduce((s: number, po: any) => s + parseFloat(String(po.totalAmount || 0)), 0) / spendingRecords.length : 0,
+  };
 
   // Get product details if provided
   let productDetails: any[] = [];
@@ -78,9 +83,8 @@ export async function analyzeNegotiationOpportunity(params: {
     productDetails = products.filter((product) => product);
   }
 
-  // Get recent POs for price trend analysis
-  const recentPOs = await db.getPurchaseOrders({ vendorId: params.vendorId });
-  const last10POs = recentPOs.slice(0, 10);
+  // Get recent POs for price trend analysis (limit at DB level)
+  const last10POs = await db.getPurchaseOrders({ vendorId: params.vendorId, limit: 10 });
 
   // Use AI to analyze and generate strategy
   const analysisPrompt = `Analyze this vendor relationship and generate a negotiation strategy.
@@ -180,7 +184,7 @@ Respond ONLY with valid JSON matching this schema:
     });
 
     const content = aiResult.choices?.[0]?.message?.content;
-        const text = typeof content === "string" ? content : "";
+    const text = typeof content === "string" ? content : "";
     // Extract JSON from the response
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     let parsed: any;

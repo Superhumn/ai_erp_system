@@ -805,33 +805,19 @@ function SOPCard({
   const Icon = sop.icon;
 
   return (
-    <Card className={`transition-all duration-200 ${isExpanded ? "ring-1 ring-primary/20" : "hover:shadow-md"}`}>
+    <Card className={`transition-all duration-200 py-0 ${isExpanded ? "ring-1 ring-primary/20" : "hover:border-border/80"}`}>
       <button
         onClick={onToggle}
         className="w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-t-lg"
       >
-        <CardHeader className="pb-3">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${isExpanded ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"}`}>
-                <Icon className="h-5 w-5" />
-              </div>
+        <CardHeader className="py-2.5 px-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <Icon className={`h-4 w-4 shrink-0 ${isExpanded ? "text-primary" : "text-muted-foreground"}`} />
               <div>
-                <CardTitle className="text-base font-semibold">
-                  SOP {index + 1}: {sop.title}
+                <CardTitle className="text-sm font-medium">
+                  {sop.title}
                 </CardTitle>
-                <p className="text-sm text-muted-foreground mt-1">{sop.purpose}</p>
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {sop.audience.map((a) => (
-                    <Badge
-                      key={a}
-                      variant="secondary"
-                      className={`text-[11px] font-medium ${audienceColors[a] || "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300"}`}
-                    >
-                      {a}
-                    </Badge>
-                  ))}
-                </div>
               </div>
             </div>
             <ChevronDown
@@ -962,54 +948,13 @@ export default function SOPs() {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-3 animate-fade-in">
       {/* Header */}
-      <div>
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-            <BookOpen className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">
-              Standard Operating Procedures
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              Step-by-step guides for every workflow in the system. Select an SOP to view detailed instructions.
-            </p>
-          </div>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-semibold">SOPs</h1>
+          <p className="text-muted-foreground text-sm">{sops.length} procedures — select to expand</p>
         </div>
-      </div>
-
-      {/* Quick Stats */}
-      <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
-        <Card className="p-4">
-          <div className="flex items-center gap-2">
-            <FileText className="h-4 w-4 text-muted-foreground" />
-            <span className="text-2xl font-bold">{sops.length}</span>
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">Total SOPs</p>
-        </Card>
-        <Card className="p-4">
-          <div className="flex items-center gap-2">
-            <Users className="h-4 w-4 text-muted-foreground" />
-            <span className="text-2xl font-bold">{allAudiences.length}</span>
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">Role Groups</p>
-        </Card>
-        <Card className="p-4">
-          <div className="flex items-center gap-2">
-            <Building2 className="h-4 w-4 text-teal-500" />
-            <span className="text-2xl font-bold">1</span>
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">Copacker SOP</p>
-        </Card>
-        <Card className="p-4">
-          <div className="flex items-center gap-2">
-            <Truck className="h-4 w-4 text-sky-500" />
-            <span className="text-2xl font-bold">1</span>
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">Vendor SOP</p>
-        </Card>
       </div>
 
       {/* Search & Filter Bar */}

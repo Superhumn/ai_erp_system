@@ -10,13 +10,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { UserPlus, Mail, Shield, Building2, Warehouse, Copy, Users, Clock, CheckCircle, XCircle, AlertCircle } from "lucide-react";
+import { UserPlus, Mail, Shield, Building2, Warehouse, Copy, Users, Clock, CheckCircle, XCircle, AlertCircle, Send, RefreshCw } from "lucide-react";
 
 const ROLE_LABELS: Record<string, string> = {
   admin: "Administrator",
   finance: "Finance",
   ops: "Operations",
   legal: "Legal",
+  sales: "Sales",
   exec: "Executive",
   copacker: "Copacker",
   vendor: "Vendor",
@@ -38,21 +39,28 @@ const ROLE_DESCRIPTIONS: Record<string, string> = {
 
 export default function Team() {
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [emailInviteOpen, setEmailInviteOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [selectedMember, setSelectedMember] = useState<any>(null);
-  
+
   // Form state for invite
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<string>("user");
   const [linkedVendorId, setLinkedVendorId] = useState<number | null>(null);
   const [linkedWarehouseId, setLinkedWarehouseId] = useState<number | null>(null);
-  
+
+  // Form state for email invite
+  const [emailInviteEmail, setEmailInviteEmail] = useState("");
+  const [emailInviteName, setEmailInviteName] = useState("");
+  const [emailInviteRole, setEmailInviteRole] = useState<string>("user");
+
   // Queries
   const { data: teamMembers, isLoading: loadingMembers, refetch: refetchMembers } = trpc.team.list.useQuery();
   const { data: invitations, isLoading: loadingInvitations, refetch: refetchInvitations } = trpc.invitations.list.useQuery();
+  const { data: emailInvites, isLoading: loadingEmailInvites, refetch: refetchEmailInvites } = trpc.teamInvites.list.useQuery();
   const { data: vendors } = trpc.vendors.list.useQuery();
   const { data: warehouses } = trpc.warehouses.list.useQuery();
-  
+
   // Mutations
   const createInvitation = trpc.invitations.create.useMutation({
     onSuccess: (data) => {
@@ -65,6 +73,38 @@ export default function Team() {
     },
     onError: (error) => {
       toast.error("Failed to create invitation", { description: error.message });
+    },
+  });
+
+  const sendEmailInvite = trpc.teamInvites.invite.useMutation({
+    onSuccess: () => {
+      toast.success("Email invitation sent", {
+        description: `Invite email sent to ${emailInviteEmail}`,
+      });
+      setEmailInviteOpen(false);
+      setEmailInviteEmail("");
+      setEmailInviteName("");
+      setEmailInviteRole("user");
+      refetchEmailInvites();
+    },
+    onError: (error) => {
+      toast.error("Failed to send invitation", { description: error.message });
+    },
+  });
+
+  const cancelEmailInvite = trpc.teamInvites.cancel.useMutation({
+    onSuccess: () => {
+      toast.success("Invitation cancelled");
+      refetchEmailInvites();
+    },
+  });
+
+  const resendEmailInvite = trpc.teamInvites.resend.useMutation({
+    onSuccess: () => {
+      toast.success("Invitation email resent");
+    },
+    onError: (error) => {
+      toast.error("Failed to resend invitation", { description: error.message });
     },
   });
   
@@ -91,6 +131,14 @@ export default function Team() {
       toast.success("Team member reactivated");
       refetchMembers();
     },
+  });
+
+  const deleteUserMutation = trpc.users.delete.useMutation({
+    onSuccess: () => {
+      toast.success("User deleted");
+      refetchMembers();
+    },
+    onError: (err) => toast.error(err.message),
   });
   
   const revokeInvitation = trpc.invitations.revoke.useMutation({
@@ -139,7 +187,7 @@ export default function Team() {
     <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold">Team Management</h1>
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">Team Management</h1>
             <p className="text-muted-foreground">Manage team members, roles, and permissions</p>
           </div>
           <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
@@ -246,13 +294,90 @@ export default function Team() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          <Dialog open={emailInviteOpen} onOpenChange={setEmailInviteOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline">
+                <Send className="h-4 w-4 mr-2" />
+                Invite via Email
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Invite Team Member via Email</DialogTitle>
+                <DialogDescription>
+                  Send an email invitation with a direct sign-up link
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="emailInviteEmail">Email Address</Label>
+                  <Input
+                    id="emailInviteEmail"
+                    type="email"
+                    placeholder="colleague@company.com"
+                    value={emailInviteEmail}
+                    onChange={(e) => setEmailInviteEmail(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="emailInviteName">Name (optional)</Label>
+                  <Input
+                    id="emailInviteName"
+                    type="text"
+                    placeholder="John Doe"
+                    value={emailInviteName}
+                    onChange={(e) => setEmailInviteName(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="emailInviteRole">Role</Label>
+                  <Select value={emailInviteRole} onValueChange={setEmailInviteRole}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(ROLE_LABELS).map(([value, label]) => (
+                        <SelectItem key={value} value={value}>
+                          <div className="flex flex-col">
+                            <span>{label}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {ROLE_DESCRIPTIONS[value]}
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setEmailInviteOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => sendEmailInvite.mutate({
+                    email: emailInviteEmail,
+                    name: emailInviteName || undefined,
+                    role: emailInviteRole as any,
+                  })}
+                  disabled={!emailInviteEmail || sendEmailInvite.isPending}
+                >
+                  {sendEmailInvite.isPending ? "Sending..." : "Send Invitation"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
-        
+
         <Tabs defaultValue="members">
           <TabsList>
             <TabsTrigger value="members">
               <Users className="h-4 w-4 mr-2" />
               Team Members ({teamMembers?.length || 0})
+            </TabsTrigger>
+            <TabsTrigger value="email-invites">
+              <Send className="h-4 w-4 mr-2" />
+              Email Invites ({emailInvites?.filter((i: any) => i.status === 'pending').length || 0})
             </TabsTrigger>
             <TabsTrigger value="invitations">
               <Mail className="h-4 w-4 mr-2" />
@@ -362,6 +487,18 @@ export default function Team() {
                                   Reactivate
                                 </Button>
                               )}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive"
+                                onClick={() => {
+                                  if (confirm(`Delete ${member.name || member.email}? This cannot be undone.`)) {
+                                    deleteUserMutation.mutate({ userId: member.id });
+                                  }
+                                }}
+                              >
+                                Delete
+                              </Button>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -372,7 +509,105 @@ export default function Team() {
               </CardContent>
             </Card>
           </TabsContent>
-          
+
+          <TabsContent value="email-invites" className="mt-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Email Invitations</CardTitle>
+                <CardDescription>
+                  Invitations sent via email with direct sign-up links
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {loadingEmailInvites ? (
+                  <div className="text-center py-8 text-muted-foreground">Loading...</div>
+                ) : !emailInvites?.length ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    No email invitations sent yet
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Email</TableHead>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Role</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Expires</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {emailInvites.map((invite: any) => (
+                        <TableRow key={invite.id}>
+                          <TableCell className="font-medium">{invite.email}</TableCell>
+                          <TableCell>{invite.name || "\u2014"}</TableCell>
+                          <TableCell>
+                            <Badge variant={getRoleBadgeVariant(invite.role)}>
+                              {ROLE_LABELS[invite.role] || invite.role}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {invite.status === "pending" && (
+                              <Badge variant="outline" className="text-yellow-600">
+                                <Clock className="h-3 w-3 mr-1" />
+                                Pending
+                              </Badge>
+                            )}
+                            {invite.status === "accepted" && (
+                              <Badge variant="outline" className="text-green-600">
+                                <CheckCircle className="h-3 w-3 mr-1" />
+                                Accepted
+                              </Badge>
+                            )}
+                            {invite.status === "expired" && (
+                              <Badge variant="outline" className="text-red-600">
+                                <AlertCircle className="h-3 w-3 mr-1" />
+                                Expired
+                              </Badge>
+                            )}
+                            {invite.status === "cancelled" && (
+                              <Badge variant="outline" className="text-gray-600">
+                                <XCircle className="h-3 w-3 mr-1" />
+                                Cancelled
+                              </Badge>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground text-sm">
+                            {new Date(invite.expiresAt).toLocaleDateString()}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {invite.status === "pending" && (
+                              <div className="flex justify-end gap-2">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => resendEmailInvite.mutate({ id: invite.id })}
+                                  disabled={resendEmailInvite.isPending}
+                                >
+                                  <RefreshCw className="h-3 w-3 mr-1" />
+                                  Resend
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-red-600"
+                                  onClick={() => cancelEmailInvite.mutate({ id: invite.id })}
+                                >
+                                  Cancel
+                                </Button>
+                              </div>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           <TabsContent value="invitations" className="mt-4">
             <Card>
               <CardHeader>

@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { getStatusColor } from "@/lib/statusColors";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -36,12 +37,96 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+type EditableCellProps = {
+  item: any;
+  field: string;
+  value: any;
+  rawValue?: any;
+  type?: "text" | "select" | "date";
+  options?: string[];
+  editingCell: { id: number; field: string } | null;
+  editValue: string;
+  setEditValue: (v: string) => void;
+  onSave: (id: number, field: string) => void;
+  onCancel: () => void;
+  onStart: (id: number, field: string, currentValue: any) => void;
+};
+
+function EditableCell({
+  item,
+  field,
+  value,
+  rawValue,
+  type = "text",
+  options,
+  editingCell,
+  editValue,
+  setEditValue,
+  onSave,
+  onCancel,
+  onStart,
+}: EditableCellProps) {
+  const isEditing = editingCell?.id === item.id && editingCell?.field === field;
+
+  if (isEditing) {
+    return (
+      <div className="flex items-center gap-2">
+        {type === "select" && options ? (
+          <Select value={editValue} onValueChange={setEditValue}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Select status" />
+            </SelectTrigger>
+            <SelectContent>
+              {options.map((option) => (
+                <SelectItem key={option} value={option}>
+                  {option.replace(/_/g, " ")}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <Input
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            className="w-32"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                onSave(item.id, field);
+              } else if (e.key === "Escape") {
+                onCancel();
+              }
+            }}
+          />
+        )}
+        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onSave(item.id, field)}>
+          <Check className="h-4 w-4 text-green-600" />
+        </Button>
+        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={onCancel}>
+          <X className="h-4 w-4 text-red-600" />
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="flex items-center gap-2 cursor-pointer hover:bg-muted/50 px-2 py-1 rounded group"
+      onClick={() => onStart(item.id, field, rawValue !== undefined ? rawValue : value)}
+    >
+      <span>{value || "-"}</span>
+      <Edit2 className="h-3 w-3 opacity-0 group-hover:opacity-50" />
+    </div>
+  );
+}
+
 export default function InventoryManagementHub() {
   const [search, setSearch] = useState("");
   const [editingCell, setEditingCell] = useState<{ id: number; field: string } | null>(null);
   const [editValue, setEditValue] = useState("");
 
-  const { data: inventory, isLoading, refetch } = trpc.inventoryManagement.list.useQuery();
+  const { data: inventoryRaw, isLoading, refetch } = trpc.inventoryManagement.list.useQuery();
+  const inventory = inventoryRaw as any[] | undefined;
   const updateMutation = trpc.inventoryManagement.update.useMutation({
     onSuccess: () => {
       toast.success("Updated successfully");
@@ -88,110 +173,18 @@ export default function InventoryManagementHub() {
 
   const getStatusBadge = (status: string | null) => {
     if (!status) return null;
-    
-    const statusColors: Record<string, string> = {
-      draft: "bg-gray-500/10 text-gray-600",
-      sent: "bg-blue-500/10 text-blue-600",
-      confirmed: "bg-green-500/10 text-green-600",
-      partial: "bg-yellow-500/10 text-yellow-600",
-      received: "bg-green-500/10 text-green-600",
-      cancelled: "bg-red-500/10 text-red-600",
-      pending: "bg-yellow-500/10 text-yellow-600",
-      in_transit: "bg-blue-500/10 text-blue-600",
-      arrived: "bg-green-500/10 text-green-600",
-      delivered: "bg-green-500/10 text-green-600",
-    };
-    
+
     return (
-      <Badge className={statusColors[status] || "bg-gray-500/10 text-gray-600"}>
+      <Badge className={getStatusColor(status)}>
         {status.replace(/_/g, " ")}
       </Badge>
-    );
-  };
-
-  const EditableCell = ({ 
-    item, 
-    field, 
-    value, 
-    rawValue,
-    type = "text",
-    options 
-  }: { 
-    item: any; 
-    field: string; 
-    value: any;
-    rawValue?: any;
-    type?: "text" | "select" | "date";
-    options?: string[];
-  }) => {
-    const isEditing = editingCell?.id === item.id && editingCell?.field === field;
-    
-    if (isEditing) {
-      return (
-        <div className="flex items-center gap-2">
-          {type === "select" && options ? (
-            <Select value={editValue} onValueChange={setEditValue}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Select status" />
-              </SelectTrigger>
-              <SelectContent>
-                {options.map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {option.replace(/_/g, " ")}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
-            <Input
-              value={editValue}
-              onChange={(e) => setEditValue(e.target.value)}
-              className="w-32"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  saveEdit(item.id, field);
-                } else if (e.key === "Escape") {
-                  cancelEdit();
-                }
-              }}
-            />
-          )}
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-7 w-7"
-            onClick={() => saveEdit(item.id, field)}
-          >
-            <Check className="h-4 w-4 text-green-600" />
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-7 w-7"
-            onClick={cancelEdit}
-          >
-            <X className="h-4 w-4 text-red-600" />
-          </Button>
-        </div>
-      );
-    }
-    
-    return (
-      <div 
-        className="flex items-center gap-2 cursor-pointer hover:bg-muted/50 px-2 py-1 rounded group"
-        onClick={() => startEdit(item.id, field, rawValue !== undefined ? rawValue : value)}
-      >
-        <span>{value || "-"}</span>
-        <Edit2 className="h-3 w-3 opacity-0 group-hover:opacity-50" />
-      </div>
     );
   };
 
   return (
     <div className="space-y-6 animate-fade-in">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+        <h1 className="text-lg font-semibold flex items-center gap-2">
           <Warehouse className="h-8 w-8" />
           Inventory Management Hub
         </h1>
@@ -207,7 +200,7 @@ export default function InventoryManagementHub() {
             <div className="flex items-center gap-2">
               <Package className="h-5 w-5 text-muted-foreground" />
               <div>
-                <div className="text-2xl font-bold">{inventory?.length || 0}</div>
+                <div className="text-xl font-semibold tracking-[-0.02em]">{inventory?.length || 0}</div>
                 <p className="text-xs text-muted-foreground">Raw Materials</p>
               </div>
             </div>
@@ -218,7 +211,7 @@ export default function InventoryManagementHub() {
             <div className="flex items-center gap-2">
               <ShoppingCart className="h-5 w-5 text-blue-600" />
               <div>
-                <div className="text-2xl font-bold text-blue-600">
+                <div className="text-xl font-semibold tracking-[-0.02em] text-blue-600">
                   {inventory?.filter(i => i.poId).length || 0}
                 </div>
                 <p className="text-xs text-muted-foreground">Active POs</p>
@@ -231,7 +224,7 @@ export default function InventoryManagementHub() {
             <div className="flex items-center gap-2">
               <Truck className="h-5 w-5 text-amber-600" />
               <div>
-                <div className="text-2xl font-bold text-amber-600">
+                <div className="text-xl font-semibold tracking-[-0.02em] text-amber-600">
                   {inventory?.filter(i => i.freightId && i.freightStatus === 'in_transit').length || 0}
                 </div>
                 <p className="text-xs text-muted-foreground">In Transit</p>
@@ -244,7 +237,7 @@ export default function InventoryManagementHub() {
             <div className="flex items-center gap-2">
               <TrendingUp className="h-5 w-5 text-green-600" />
               <div>
-                <div className="text-2xl font-bold text-green-600">
+                <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">
                   {inventory?.filter(i => i.forecastId).length || 0}
                 </div>
                 <p className="text-xs text-muted-foreground">Forecasted</p>
@@ -337,6 +330,12 @@ export default function InventoryManagementHub() {
                               item={item}
                               field="forecastedQuantity"
                               value={item.forecastedQuantity ? `${parseFloat(item.forecastedQuantity).toFixed(0)} ${item.unit}` : "-"}
+                              editingCell={editingCell}
+                              editValue={editValue}
+                              setEditValue={setEditValue}
+                              onSave={saveEdit}
+                              onCancel={cancelEdit}
+                              onStart={startEdit}
                             />
                             {item.forecastPeriodStart && (
                               <div className="text-xs text-muted-foreground">
@@ -373,6 +372,12 @@ export default function InventoryManagementHub() {
                               rawValue={item.poStatus}
                               type="select"
                               options={["draft", "sent", "confirmed", "partial", "received", "cancelled"]}
+                              editingCell={editingCell}
+                              editValue={editValue}
+                              setEditValue={setEditValue}
+                              onSave={saveEdit}
+                              onCancel={cancelEdit}
+                              onStart={startEdit}
                             />
                             {item.poExpectedDate && (
                               <div className="text-xs text-muted-foreground flex items-center gap-1">
@@ -428,11 +433,23 @@ export default function InventoryManagementHub() {
                               rawValue={item.freightStatus}
                               type="select"
                               options={["pending", "confirmed", "in_transit", "arrived", "delivered", "cancelled"]}
+                              editingCell={editingCell}
+                              editValue={editValue}
+                              setEditValue={setEditValue}
+                              onSave={saveEdit}
+                              onCancel={cancelEdit}
+                              onStart={startEdit}
                             />
                             <EditableCell
                               item={item}
                               field="freightTrackingNumber"
                               value={item.freightTrackingNumber || "Add tracking"}
+                              editingCell={editingCell}
+                              editValue={editValue}
+                              setEditValue={setEditValue}
+                              onSave={saveEdit}
+                              onCancel={cancelEdit}
+                              onStart={startEdit}
                             />
                             {item.freightArrivalDate && (
                               <div className="text-xs text-muted-foreground flex items-center gap-1">

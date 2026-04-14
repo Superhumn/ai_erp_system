@@ -47,9 +47,9 @@ export async function runEmailCommunication(input: SendEmailInput): Promise<Tool
       if (contactType && contactId) {
         const resolved = await resolveContact(db, contactType, contactId);
         if (!resolved.success) return resolved;
-        recipientEmail = resolved.data.email;
-        recipientName = resolved.data.name;
-        resolvedContactId = resolved.data.crmContactId;
+        recipientEmail = (resolved.data as any).email;
+        recipientName = (resolved.data as any).name;
+        resolvedContactId = (resolved.data as any).crmContactId;
       }
 
       if (!recipientEmail) {
@@ -138,20 +138,20 @@ export async function runEmailCommunication(input: SendEmailInput): Promise<Tool
       const resolved = await resolveContact(db, payload.contactType, payload.contactId);
       if (!resolved.success) return resolved;
 
-      if (!resolved.data.crmContactId) {
+      if (!(resolved.data as any).crmContactId) {
         return { success: true, data: { interactions: [], message: "No CRM contact linked" } };
       }
 
       const interactions = await db
         .select()
         .from(crmInteractions)
-        .where(eq(crmInteractions.contactId, resolved.data.crmContactId))
+        .where(eq(crmInteractions.contactId, (resolved.data as any).crmContactId))
         .limit(50);
 
       return {
         success: true,
         data: {
-          contact: { name: resolved.data.name, email: resolved.data.email },
+          contact: { name: (resolved.data as any).name, email: (resolved.data as any).email },
           interactions,
           count: interactions.length,
         },

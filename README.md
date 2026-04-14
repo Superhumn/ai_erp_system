@@ -864,12 +864,7 @@ While the system works completely standalone with email/password authentication,
 
 ## Post-Deployment: How to Access Your App
 
-**Just deployed? Start here:**
-- 🎯 **[HOW TO ACCESS](./HOW_TO_ACCESS.md)** - Visual quick guide with diagrams
-- ❓ **[Access FAQ](./ACCESS_FAQ.md)** - Common questions answered
-
-**Detailed guides:**
-- 📗 [Standalone Deployment](./docs/STANDALONE_DEPLOYMENT.md) - All platforms
+See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for the comprehensive deployment guide covering Docker, Railway, and manual hosting.
 
 **TL;DR:** Visit `https://[your-app].railway.app` → Click "Sign up" → First user = Admin
 
@@ -879,8 +874,8 @@ While the system works completely standalone with email/password authentication,
 
 Detailed setup documentation for each integration:
 
-- **QuickBooks** -- See [QUICKBOOKS_SETUP.md](./QUICKBOOKS_SETUP.md)
-- **Shopify** -- See [SHOPIFY_SETUP.md](./SHOPIFY_SETUP.md)
+- **QuickBooks** -- See [docs/QUICKBOOKS_SETUP.md](./docs/QUICKBOOKS_SETUP.md)
+- **Shopify** -- See [docs/SHOPIFY_SETUP.md](./docs/SHOPIFY_SETUP.md)
 - **SendGrid** -- See [docs/SENDGRID_SETUP.md](./docs/SENDGRID_SETUP.md)
 - **Google Drive** -- See [docs/GOOGLE_DRIVE_SYNC.md](./docs/GOOGLE_DRIVE_SYNC.md)
 
@@ -890,10 +885,8 @@ Detailed setup documentation for each integration:
 
 ### Quick Start Options
 
-**Want to deploy in 5 minutes?**
-- **Railway:** See detailed guide below
+See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for full platform-specific instructions (Docker, Railway, and manual hosting).
 
-**Need help accessing after deployment?**
 - Your app will be at `https://[your-app].railway.app`
 - First visit redirects to `/login` - click "Sign up" to create admin account
 
@@ -904,6 +897,7 @@ Detailed setup documentation for each integration:
 3. Set all required environment variables in the Railway dashboard.
 4. Railway auto-detects configuration from `package.json`.
 5. **Access:** Visit `https://[your-app].railway.app`, click "Sign up", create first user (auto-admin)
+
 
 ### Production Build (Manual)
 

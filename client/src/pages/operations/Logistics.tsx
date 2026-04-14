@@ -25,7 +25,7 @@ export default function Logistics() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Logistics</h1>
+            <h1 className="text-lg font-semibold">Logistics</h1>
             <p className="text-muted-foreground">
               Manage shipments, receiving, and inventory transfers
             </p>
@@ -131,7 +131,7 @@ function StatsCard({ title, icon: Icon, tab }: { title: string; icon: any; tab: 
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-muted-foreground">{title}</p>
-            <p className="text-2xl font-bold">{value}</p>
+            <p className="text-xl font-semibold tracking-[-0.02em]">{value}</p>
           </div>
           <Icon className="h-8 w-8 text-muted-foreground/50" />
         </div>

@@ -16,9 +16,9 @@ export interface AIMessage {
 }
 
 export interface AIAction {
-  type: string;
-  description: string;
-  status: 'pending' | 'completed' | 'failed';
+  type?: string;
+  description?: string;
+  status?: 'pending' | 'completed' | 'failed';
   result?: any;
   error?: string;
 }
@@ -208,7 +208,13 @@ export function AIAgentProvider({ children }: AIAgentProviderProps) {
           role: 'assistant',
           content: response.message,
           timestamp: new Date(),
-          actions: response.actions,
+          actions: (response.actions || []).map((a: any) => ({
+            type: a.type || 'unknown',
+            description: a.description || '',
+            status: a.status || 'pending',
+            result: a.result,
+            error: a.error,
+          })) as AIAction[],
           data: response.data,
           suggestions: response.suggestions,
         };

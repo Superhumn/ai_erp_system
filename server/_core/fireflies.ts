@@ -36,7 +36,7 @@ export interface FirefliesTranscript {
   duration: number; // seconds
   organizer_email: string;
   participants: string[];
-  participant_emails: string[];
+  participant_emails?: string[]; // deprecated in Fireflies API
   summary?: {
     overview?: string;
     shorthand_bullet?: string[];
@@ -110,17 +110,22 @@ export async function getFirefliesUser(apiKey: string): Promise<FirefliesUser> {
 /**
  * List recent transcripts from Fireflies
  */
-export async function listTranscripts(apiKey: string, limit: number = 50): Promise<FirefliesTranscript[]> {
+export async function listTranscripts(
+  apiKey: string,
+  options: { limit?: number; skip?: number } = {}
+): Promise<FirefliesTranscript[]> {
+  const limit = options.limit ?? 50;
+  const skip = options.skip ?? 0;
   const query = `
-    query ListTranscripts($limit: Int) {
-      transcripts(limit: $limit) {
+    query ListTranscripts($limit: Int, $skip: Int) {
+      transcripts(limit: $limit, skip: $skip) {
         id
         title
         date
         duration
         organizer_email
         participants
-        participant_emails
+
         summary {
           overview
           shorthand_bullet
@@ -139,8 +144,46 @@ export async function listTranscripts(apiKey: string, limit: number = 50): Promi
     }
   `;
 
-  const data = await firefliesQuery<{ transcripts: FirefliesTranscript[] }>(apiKey, query, { limit });
+  const data = await firefliesQuery<{ transcripts: FirefliesTranscript[] }>(apiKey, query, { limit, skip });
   return data.transcripts || [];
+}
+
+/**
+ * Fetch all available transcripts using paginated requests.
+ * Falls back to a single request if the API does not support `skip`.
+ */
+export async function listAllTranscripts(apiKey: string, pageSize: number = 50): Promise<FirefliesTranscript[]> {
+  const size = Math.max(1, Math.min(pageSize, 100));
+  const all: FirefliesTranscript[] = [];
+  const seenIds = new Set<string>();
+
+  try {
+    let skip = 0;
+    while (true) {
+      const page = await listTranscripts(apiKey, { limit: size, skip });
+      if (!page.length) break;
+
+      for (const item of page) {
+        if (!item?.id || seenIds.has(item.id)) continue;
+        seenIds.add(item.id);
+        all.push(item);
+      }
+
+      if (page.length < size) break;
+      skip += size;
+
+      // Hard cap to prevent runaway loops if upstream pagination behaves unexpectedly.
+      if (all.length >= 2000) break;
+    }
+
+    return all;
+  } catch (error: any) {
+    // Older Fireflies API variants may not support `skip`.
+    if (typeof error?.message === "string" && /skip/i.test(error.message)) {
+      return listTranscripts(apiKey, { limit: size });
+    }
+    throw error;
+  }
 }
 
 /**
@@ -156,7 +199,7 @@ export async function getTranscript(apiKey: string, transcriptId: string): Promi
         duration
         organizer_email
         participants
-        participant_emails
+
         summary {
           overview
           shorthand_bullet
@@ -190,8 +233,21 @@ export async function getTranscript(apiKey: string, transcriptId: string): Promi
  * Fireflies returns action items as plain strings - this attempts to extract
  * assignee names and due dates from natural language.
  */
-export function parseActionItems(rawItems: string[]): FirefliesActionItem[] {
-  return rawItems.map((text) => {
+export function parseActionItems(rawItems: unknown): FirefliesActionItem[] {
+  const normalizedItems: string[] = Array.isArray(rawItems)
+    ? rawItems
+        .map((item) => {
+          if (typeof item === "string") return item;
+          if (item && typeof item === "object") {
+            const candidate = (item as any).text ?? (item as any).action_item ?? (item as any).description;
+            return typeof candidate === "string" ? candidate : "";
+          }
+          return "";
+        })
+        .filter((text) => text.trim().length > 0)
+    : [];
+
+  return normalizedItems.map((text) => {
     const item: FirefliesActionItem = { text: text.trim() };
 
     // Try to extract assignee patterns like "John:" or "@John" or "assigned to John"
@@ -250,15 +306,14 @@ export function extractParticipants(transcript: FirefliesTranscript): Array<{ na
     }
   }
 
-  // From participant_emails + participants arrays (fallback)
-  if (transcript.participant_emails && transcript.participants) {
-    for (let i = 0; i < transcript.participant_emails.length; i++) {
-      const email = transcript.participant_emails[i]?.toLowerCase();
-      if (email && !participantMap.has(email)) {
-        participantMap.set(email, {
-          name: transcript.participants[i] || email.split("@")[0],
-          email,
-        });
+  // From participants array (fallback — names or emails)
+  if (transcript.participants) {
+    for (const p of transcript.participants) {
+      if (p && p.includes("@")) {
+        const email = p.toLowerCase();
+        if (!participantMap.has(email)) {
+          participantMap.set(email, { name: email.split("@")[0], email });
+        }
       }
     }
   }

@@ -33,34 +33,43 @@ import { ShoppingCart, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { Link } from "wouter";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
+import { getStatusColor } from "@/lib/statusColors";
 
 export default function Orders() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [selectedOrders, setSelectedOrders] = useState<Set<number>>(new Set());
   const [formData, setFormData] = useState({
     customerId: 0,
     subtotal: "",
     tax: "",
     total: "",
   });
+  const [newCustomerName, setNewCustomerName] = useState("");
 
-  const { data: orders, isLoading, refetch } = trpc.orders.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: orders, isLoading } = trpc.orders.list.useQuery();
   const { data: customers } = trpc.customers.list.useQuery();
+  const createCustomer = trpc.customers.create.useMutation();
+  const bulkDeleteOrders = trpc.orders.bulkDelete.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Deleted ${data.deleted} order(s)`);
+      setSelectedOrders(new Set());
+      utils.orders.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   const createOrder = trpc.orders.create.useMutation({
     onSuccess: () => {
       toast.success("Order created successfully");
       setIsOpen(false);
       setFormData({ customerId: 0, subtotal: "", tax: "", total: "" });
-      refetch();
+      setNewCustomerName("");
+      utils.orders.list.invalidate();
+      utils.customers.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -73,20 +82,20 @@ export default function Orders() {
     return matchesSearch && matchesStatus;
   });
 
-  const statusColors: Record<string, string> = {
-    draft: "bg-gray-500/10 text-gray-600",
-    pending: "bg-amber-500/10 text-amber-600",
-    confirmed: "bg-blue-500/10 text-blue-600",
-    processing: "bg-purple-500/10 text-purple-600",
-    shipped: "bg-indigo-500/10 text-indigo-600",
-    delivered: "bg-green-500/10 text-green-600",
-    cancelled: "bg-red-500/10 text-red-600",
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    let customerId = formData.customerId;
+    if (!customerId && newCustomerName.trim()) {
+      try {
+        const newCust = await createCustomer.mutateAsync({ name: newCustomerName.trim() });
+        customerId = newCust.id;
+      } catch (err: any) {
+        toast.error("Failed to create customer: " + err.message);
+        return;
+      }
+    }
     createOrder.mutate({
-      customerId: formData.customerId,
+      customerId: customerId || undefined,
       orderDate: new Date(),
       subtotal: formData.subtotal,
       taxAmount: formData.tax || "0",
@@ -98,7 +107,7 @@ export default function Orders() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
             <ShoppingCart className="h-8 w-8" />
             Sales Orders
           </h1>
@@ -124,21 +133,32 @@ export default function Orders() {
               <div className="grid gap-4 py-4">
                 <div className="space-y-2">
                   <Label htmlFor="customer">Customer</Label>
-                  <Select
-                    value={formData.customerId.toString()}
-                    onValueChange={(value) => setFormData({ ...formData, customerId: parseInt(value) })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select customer" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {customers?.map((customer) => (
-                        <SelectItem key={customer.id} value={customer.id.toString()}>
-                          {customer.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {customers && customers.length > 0 ? (
+                    <Select
+                      value={formData.customerId.toString()}
+                      onValueChange={(value) => setFormData({ ...formData, customerId: parseInt(value) })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select customer" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {customers.map((customer) => (
+                          <SelectItem key={customer.id} value={customer.id.toString()}>
+                            {customer.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="space-y-2">
+                      <Input
+                        placeholder="Enter customer name to create"
+                        value={newCustomerName}
+                        onChange={(e) => setNewCustomerName(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">No customers yet — type a name and it will be created with the order</p>
+                    </div>
+                  )}
                 </div>
                 <div className="grid grid-cols-3 gap-4">
                   <div className="space-y-2">
@@ -244,8 +264,24 @@ export default function Orders() {
             </div>
           ) : (
             <Table>
+              {selectedOrders.size > 0 && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-primary/5 border-b rounded-t-lg">
+                  <span className="text-xs font-medium">{selectedOrders.size} selected</span>
+                  <Button size="sm" variant="destructive" className="h-6 text-xs" onClick={() => bulkDeleteOrders.mutate({ ids: Array.from(selectedOrders) })} disabled={bulkDeleteOrders.isPending}>
+                    {bulkDeleteOrders.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+                    Delete Selected
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setSelectedOrders(new Set())}>Clear</Button>
+                </div>
+              )}
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-8">
+                    <input type="checkbox" className="rounded" checked={selectedOrders.size === (filteredOrders?.length || 0) && selectedOrders.size > 0} onChange={(e) => {
+                      if (e.target.checked) setSelectedOrders(new Set(filteredOrders?.map(o => o.id) || []));
+                      else setSelectedOrders(new Set());
+                    }} />
+                  </TableHead>
                   <TableHead>Order #</TableHead>
                   <TableHead>Customer</TableHead>
                   <TableHead>Date</TableHead>
@@ -255,13 +291,24 @@ export default function Orders() {
               </TableHeader>
               <TableBody>
                 {filteredOrders.map((order) => (
-                  <TableRow key={order.id} className="cursor-pointer hover:bg-muted/50">
+                  <TableRow
+                    key={order.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => window.location.href = `/sales/orders/${order.id}`}
+                  >
+                    <TableCell className="w-8" onClick={(e) => e.stopPropagation()}>
+                      <input type="checkbox" className="rounded" checked={selectedOrders.has(order.id)} onChange={(e) => {
+                        const next = new Set(selectedOrders);
+                        if (e.target.checked) next.add(order.id); else next.delete(order.id);
+                        setSelectedOrders(next);
+                      }} />
+                    </TableCell>
                     <TableCell className="font-mono">
                       <Link href={`/sales/orders/${order.id}`}>
-                        <span className="hover:underline">{order.orderNumber}</span>
+                        <span className="text-primary hover:underline">{order.orderNumber}</span>
                       </Link>
                     </TableCell>
-                    <TableCell className="font-medium">Customer #{order.customerId || "-"}</TableCell>
+                    <TableCell className="font-medium">{customers?.find((c) => c.id === order.customerId)?.name || (order.customerId ? `Customer #${order.customerId}` : "-")}</TableCell>
                     <TableCell>
                       {order.orderDate
                         ? format(new Date(order.orderDate), "MMM d, yyyy")
@@ -271,7 +318,7 @@ export default function Orders() {
                       {formatCurrency(order.totalAmount)}
                     </TableCell>
                     <TableCell>
-                      <Badge className={statusColors[order.status]}>{order.status}</Badge>
+                      <Badge className={getStatusColor(order.status)}>{order.status}</Badge>
                     </TableCell>
                   </TableRow>
                 ))}

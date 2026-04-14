@@ -31,17 +31,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SelectWithCreate } from "@/components/ui/select-with-create";
-import { ClipboardList, Plus, Search, Loader2, Sparkles, Send } from "lucide-react";
+import { ClipboardList, Plus, Search, Loader2, Sparkles, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
+import { getStatusColor } from "@/lib/statusColors";
 
 type LineItem = {
   productId?: number;
@@ -87,13 +81,62 @@ export default function PurchaseOrders() {
   const { data: vendors } = trpc.vendors.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
   const utils = trpc.useUtils();
-  
+
+  const resetForm = () => {
+    setFormData({ vendorId: 0, expectedDeliveryDate: "", notes: "" });
+    setLineItems([]);
+  };
+
+  const calculateTotals = () => {
+    const subtotal = lineItems.reduce((sum, item) => {
+      return sum + (parseFloat(item.quantity || "0") * parseFloat(item.unitPrice || "0"));
+    }, 0);
+    return { subtotal, total: subtotal };
+  };
+
+  const totals = calculateTotals();
+
+  const addLineItem = () => {
+    setLineItems([...lineItems, { description: "", quantity: "1", unitPrice: "0", totalAmount: "0" }]);
+  };
+
+  const selectProduct = (index: number, productIdStr: string) => {
+    const productId = parseInt(productIdStr);
+    const product = products?.find(p => p.id === productId);
+    const updated = lineItems.map((item, i) => {
+      if (i !== index) return item;
+      const unitPrice = product?.unitPrice || "0";
+      const quantity = item.quantity || "1";
+      const totalAmount = (parseFloat(quantity) * parseFloat(unitPrice)).toFixed(2);
+      return { ...item, productId, description: product?.name || item.description, unitPrice, totalAmount };
+    });
+    setLineItems(updated);
+  };
+
+  const updateLineItem = (index: number, field: keyof LineItem, value: string) => {
+    const updated = lineItems.map((item, i) => {
+      if (i !== index) return item;
+      const newItem = { ...item, [field]: value };
+      if (field === "quantity" || field === "unitPrice") {
+        const qty = parseFloat(field === "quantity" ? value : item.quantity) || 0;
+        const price = parseFloat(field === "unitPrice" ? value : item.unitPrice) || 0;
+        newItem.totalAmount = (qty * price).toFixed(2);
+      }
+      return newItem;
+    });
+    setLineItems(updated);
+  };
+
+  const removeLineItem = (index: number) => {
+    setLineItems(lineItems.filter((_, i) => i !== index));
+  };
+
   const createPO = trpc.purchaseOrders.create.useMutation({
     onSuccess: () => {
       toast.success("Purchase order created successfully");
       setIsOpen(false);
       resetForm();
-      refetch();
+      utils.purchaseOrders.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -123,7 +166,7 @@ export default function PurchaseOrders() {
       setTextInput("");
       setPoPreview(null);
       setActiveAction(null);
-      refetch();
+      utils.purchaseOrders.list.invalidate();
     },
     onError: (error) => {
       toast.error(`Failed to create PO: ${error.message}`);
@@ -136,16 +179,6 @@ export default function PurchaseOrders() {
     const matchesStatus = statusFilter === "all" || po.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-
-  const statusColors: Record<string, string> = {
-    draft: "bg-gray-500/10 text-gray-600",
-    pending: "bg-amber-500/10 text-amber-600",
-    approved: "bg-blue-500/10 text-blue-600",
-    ordered: "bg-purple-500/10 text-purple-600",
-    partial: "bg-indigo-500/10 text-indigo-600",
-    received: "bg-green-500/10 text-green-600",
-    cancelled: "bg-red-500/10 text-red-600",
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -224,7 +257,7 @@ export default function PurchaseOrders() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
             <ClipboardList className="h-8 w-8" />
             Purchase Orders
           </h1>
@@ -580,32 +613,45 @@ export default function PurchaseOrders() {
               <TableHeader>
                 <TableRow>
                   <TableHead>PO #</TableHead>
-                  <TableHead>Vendor</TableHead>
-                  <TableHead>Order Date</TableHead>
-                  <TableHead>Expected</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead>Vendor Name</TableHead>
+                  <TableHead className="text-right">Total Amount</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Order Date</TableHead>
+                  <TableHead>Expected Date</TableHead>
+                  <TableHead className="text-right">Items Count</TableHead>
+                  <TableHead>Notes</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredPOs.map((po) => (
-                  <TableRow key={po.id}>
-                    <TableCell className="font-mono">{po.poNumber}</TableCell>
-                    <TableCell className="font-medium">Vendor #{po.vendorId || "-"}</TableCell>
-                    <TableCell>
-                      {po.orderDate ? format(new Date(po.orderDate), "MMM d, yyyy") : "-"}
-                    </TableCell>
-                    <TableCell>
-                      {po.expectedDate ? format(new Date(po.expectedDate), "MMM d, yyyy") : "-"}
-                    </TableCell>
-                    <TableCell className="text-right font-mono">
-                      {formatCurrency(po.totalAmount)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={statusColors[po.status]}>{po.status}</Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {filteredPOs.map((po) => {
+                  const vendor = vendors?.find((v) => v.id === po.vendorId);
+                  return (
+                    <TableRow key={po.id}>
+                      <TableCell className="font-mono">{po.poNumber}</TableCell>
+                      <TableCell className="font-medium">
+                        {vendor?.name || (po.vendorId ? `Vendor #${po.vendorId}` : "-")}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {formatCurrency(po.totalAmount)}
+                      </TableCell>
+                      <TableCell>
+                        <Badge className={getStatusColor(po.status)}>{po.status}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        {po.orderDate ? format(new Date(po.orderDate), "MMM d, yyyy") : "-"}
+                      </TableCell>
+                      <TableCell>
+                        {po.expectedDate ? format(new Date(po.expectedDate), "MMM d, yyyy") : "-"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {(po as any).items?.length ?? "-"}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
+                        {po.notes || "-"}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}

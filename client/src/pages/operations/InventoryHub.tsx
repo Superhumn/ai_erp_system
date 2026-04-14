@@ -1,10 +1,9 @@
 import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,35 +11,20 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import {
   Package,
-  MapPin,
   AlertTriangle,
   Search,
-  ChevronRight,
-  ChevronDown,
   Truck,
   Factory,
   Shield,
-  Clock,
-  CheckCircle,
-  XCircle,
-  Play,
-  ArrowRight,
-  Box,
-  Layers,
-  Send,
-  AlertCircle,
   RefreshCw,
   Plus,
-  FileText,
-  ExternalLink,
   Loader2,
-  Ship,
-  Plane,
   ShoppingBag,
   Plug,
   CloudUpload,
   FileSpreadsheet,
-  Mail,
+  Layers,
+  Send,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -50,104 +34,53 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { cn } from "@/lib/utils";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { QuickCreateDialog } from "@/components/QuickCreateDialog";
-import { Link } from "wouter";
-
-// Types
-interface InventoryItem {
-  id: number;
-  productId: number;
-  product?: { id: number; name: string; sku: string; type?: string };
-  rawMaterial?: { id: number; name: string; sku: string };
-  totalQuantity: number;
-  onOrderQuantity: number; // From pending POs
-  inTransitQuantity: number; // From PO shipments in transit
-  unit: string;
-  locations: LocationBreakdown[];
-  inTransit: TransitItem[];
-  pendingPOs: PendingPOItem[];
-  productType: "finished" | "wip" | "material" | "packaging";
-}
-
-interface PendingPOItem {
-  poId: number;
-  poNumber: string;
-  quantity: number;
-  expectedDate: Date | null;
-  shipmentStatus: string | null;
-  trackingNumber: string | null;
-}
-
-interface LocationBreakdown {
-  warehouseId: number;
-  warehouseName: string;
-  warehouseType: string;
-  available: number;
-  onHold: number;
-  reserved: number;
-  allocated: number;
-}
-
-interface TransitItem {
-  shipmentId: number;
-  quantity: number;
-  eta: Date | null;
-  from: string;
-  to: string;
-}
-
-interface Exception {
-  id: number;
-  type: string;
-  severity: "critical" | "warning" | "info";
-  title: string;
-  description: string;
-  entityType: string;
-  entityId: number;
-  createdAt: Date;
-}
+import { Link, useLocation } from "wouter";
 
 export default function InventoryHub() {
-  const [activeView, setActiveView] = useState<"exceptions" | "by_item" | "by_location">("exceptions");
+  const [, navigate] = useLocation();
   const [searchTerm, setSearchTerm] = useState("");
   const [isSyncing, setIsSyncing] = useState(false);
-  const [expandedItems, setExpandedItems] = useState<Set<number>>(new Set());
-  const [selectedLocation, setSelectedLocation] = useState<number | null>(null);
   const [showShipmentDialog, setShowShipmentDialog] = useState(false);
   const [showProductionDialog, setShowProductionDialog] = useState(false);
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [showNewInventoryDialog, setShowNewInventoryDialog] = useState(false);
-  const [showNewLocationDialog, setShowNewLocationDialog] = useState(false);
-  const [showWorkOrderDialog, setShowWorkOrderDialog] = useState(false);
-  const [selectedWorkOrder, setSelectedWorkOrder] = useState<any>(null);
   const [showQcHoldDialog, setShowQcHoldDialog] = useState(false);
   const [qcHoldReason, setQcHoldReason] = useState("");
-  const [showExceptionDialog, setShowExceptionDialog] = useState(false);
-  const [exceptionType, setExceptionType] = useState("yield_variance");
-  const [exceptionDescription, setExceptionDescription] = useState("");
-  const [selectedWorkOrderForException, setSelectedWorkOrderForException] = useState<any>(null);
-  const [showTransferDetailDialog, setShowTransferDetailDialog] = useState(false);
-  const [selectedTransfer, setSelectedTransfer] = useState<any>(null);
+  const [statusFilter, setStatusFilter] = useState<string>("all");
 
-  // Data fetching
-  const { data: warehouses, isLoading: warehousesLoading } = trpc.warehouses.list.useQuery();
-  const { data: inventory, isLoading: inventoryLoading } = trpc.inventory.list.useQuery();
-  const { data: rawMaterials, isLoading: materialsLoading } = trpc.rawMaterials.list.useQuery();
-  const { data: workOrders, isLoading: workOrdersLoading } = trpc.workOrders.list.useQuery();
-  const { data: transfers, isLoading: transfersLoading } = trpc.transfers.list.useQuery();
-  const { data: alerts, isLoading: alertsLoading } = trpc.alerts.list.useQuery({ status: "open" });
-  const { data: freightBookings } = trpc.freight.bookings.list.useQuery({});
-  const { data: pendingFromPOs, isLoading: pendingLoading } = trpc.inventory.getPendingFromPOs.useQuery();
-  const { data: inboundShipments, isLoading: inboundLoading } = trpc.inventory.getInboundShipments.useQuery();
-  // Lots and balances will be fetched from inventory data
+  // Data fetching - all sources (staleTime prevents refetch on every re-render)
+  const queryOpts = { staleTime: 30_000 } as const;  // 30s stale time for all queries
+  const deferredOpts = { staleTime: 60_000 } as const;  // 60s for secondary data
+
+  const { data: warehouses, isLoading: warehousesLoading } = trpc.warehouses.list.useQuery(undefined, queryOpts);
+  const { data: inventory, isLoading: inventoryLoading } = trpc.inventory.list.useQuery(undefined, queryOpts);
+  const { data: products, isLoading: productsLoading } = trpc.products.list.useQuery(undefined, queryOpts);
+  const { data: vendors } = trpc.vendors.list.useQuery(undefined, queryOpts);
+  const { data: rawMaterials, isLoading: materialsLoading } = trpc.rawMaterials.list.useQuery(undefined, queryOpts);
+  const { data: pendingFromPOs, isLoading: pendingLoading } = trpc.inventory.getPendingFromPOs.useQuery(undefined, queryOpts);
+  const { data: inboundShipments, isLoading: inboundLoading } = trpc.inventory.getInboundShipments.useQuery(undefined, deferredOpts);
+
+  // Secondary data - only needed for PO/shipment enrichment columns, loaded with longer stale time
+  const { data: purchaseOrders } = trpc.purchaseOrders.list.useQuery(undefined, deferredOpts);
+  const { data: shipments } = trpc.shipments.list.useQuery(undefined, deferredOpts);
+  const { data: transfers } = trpc.transfers.list.useQuery(undefined, deferredOpts);
+  // workOrders only needed when production dialog is open — lazy loaded
+  const { data: workOrders } = trpc.workOrders.list.useQuery(undefined, { ...deferredOpts, enabled: showProductionDialog });
 
   const utils = trpc.useUtils();
 
-  // Integration status
-  const { data: integrationStatus } = trpc.integrations.getStatus.useQuery();
+  // Update product (for vendor linking)
+  const updateProductMutation = trpc.products.update.useMutation({
+    onSuccess: () => { toast.success("Vendor linked"); utils.products.list.invalidate(); },
+    onError: (err) => toast.error(err.message),
+  });
 
-  // Shopify sync mutations for inventory
+  // Integration status
+  const { data: integrationStatus } = trpc.integrations.getStatus.useQuery(undefined, { staleTime: 120_000 });
+
+  // Shopify sync mutations
   const syncShopifyInventory = trpc.shopify.sync.inventory.useMutation({
     onSuccess: (data) => {
       toast.success(`Synced ${data.updated} inventory records from Shopify`);
@@ -177,28 +110,10 @@ export default function InventoryHub() {
   };
 
   // Mutations
-  const receiveTransfer = trpc.transfers.receive.useMutation({
+  const updateInventory = trpc.inventory.update.useMutation({
     onSuccess: () => {
-      toast.success("Shipment received successfully!");
-      utils.transfers.invalidate();
+      toast.success("Inventory updated!");
       utils.inventory.invalidate();
-      // Lots invalidated through inventory
-    },
-    onError: (err: any) => toast.error(err.message),
-  });
-
-  const updateWorkOrder = trpc.workOrders.update.useMutation({
-    onSuccess: () => {
-      toast.success("Work order updated!");
-      utils.workOrders.invalidate();
-    },
-    onError: (err: any) => toast.error(err.message),
-  });
-
-  const resolveAlert = trpc.alerts.resolve.useMutation({
-    onSuccess: () => {
-      toast.success("Exception resolved!");
-      utils.alerts.invalidate();
     },
     onError: (err: any) => toast.error(err.message),
   });
@@ -210,251 +125,6 @@ export default function InventoryHub() {
     },
     onError: (err: any) => toast.error(err.message),
   });
-
-  const updateInventory = trpc.inventory.update.useMutation({
-    onSuccess: () => {
-      toast.success("Inventory updated!");
-      utils.inventory.invalidate();
-    },
-    onError: (err: any) => toast.error(err.message),
-  });
-
-  // Build inventory by item view data
-  const inventoryByItem = useMemo(() => {
-    if (!inventory || !warehouses) return [];
-
-    const itemMap = new Map<number, InventoryItem>();
-
-    // Group inventory by product
-    inventory.forEach((inv: any) => {
-      const key = inv.productId;
-      if (!itemMap.has(key)) {
-        itemMap.set(key, {
-          id: inv.id,
-          productId: inv.productId,
-          product: inv.product,
-          totalQuantity: 0,
-          onOrderQuantity: 0,
-          inTransitQuantity: 0,
-          unit: inv.unit || "EA",
-          locations: [],
-          inTransit: [],
-          pendingPOs: [],
-          productType: "finished",
-        });
-      }
-
-      const item = itemMap.get(key)!;
-      const qty = parseFloat(inv.quantity) || 0;
-      const reserved = parseFloat(inv.reservedQuantity) || 0;
-      item.totalQuantity += qty;
-
-      const warehouse = warehouses.find((w: any) => w.id === inv.warehouseId);
-      if (warehouse) {
-        const existingLoc = item.locations.find(l => l.warehouseId === inv.warehouseId);
-        if (existingLoc) {
-          existingLoc.available += qty - reserved;
-          existingLoc.reserved += reserved;
-        } else {
-          item.locations.push({
-            warehouseId: inv.warehouseId,
-            warehouseName: warehouse.name,
-            warehouseType: warehouse.type,
-            available: qty - reserved,
-            onHold: 0,
-            reserved: reserved,
-            allocated: 0,
-          });
-        }
-      }
-    });
-
-    // Add raw materials
-    rawMaterials?.forEach((mat: any) => {
-      const key = -mat.id; // Negative to distinguish from products
-      if (!itemMap.has(key)) {
-        itemMap.set(key, {
-          id: mat.id,
-          productId: mat.id,
-          rawMaterial: mat,
-          totalQuantity: parseFloat(mat.quantityOnHand) || 0,
-          onOrderQuantity: 0,
-          inTransitQuantity: 0,
-          unit: mat.unit || "LB",
-          locations: [],
-          inTransit: [],
-          pendingPOs: [],
-          productType: "material",
-        });
-
-        // Add location if warehouse exists
-        if (mat.warehouseId) {
-          const warehouse = warehouses.find((w: any) => w.id === mat.warehouseId);
-          if (warehouse) {
-            itemMap.get(key)!.locations.push({
-              warehouseId: mat.warehouseId,
-              warehouseName: warehouse.name,
-              warehouseType: warehouse.type,
-              available: parseFloat(mat.quantityOnHand) || 0,
-              onHold: 0,
-              reserved: parseFloat(mat.quantityOnOrder) || 0,
-              allocated: 0,
-            });
-          }
-        }
-      }
-    });
-
-    // Add pending inventory from POs (on order and in transit)
-    pendingFromPOs?.forEach((pending: any) => {
-      // Find matching item by raw material or product
-      let itemKey: number | null = null;
-
-      if (pending.rawMaterialId) {
-        itemKey = -pending.rawMaterialId;
-      } else if (pending.productId) {
-        itemKey = pending.productId;
-      }
-
-      if (itemKey && itemMap.has(itemKey)) {
-        const item = itemMap.get(itemKey)!;
-        const pendingQty = parseFloat(pending.pendingQuantity) || 0;
-
-        // Add to on-order or in-transit based on shipment status
-        if (pending.status === 'in_transit') {
-          item.inTransitQuantity += pendingQty;
-        } else {
-          item.onOrderQuantity += pendingQty;
-        }
-
-        // Add PO tracking info
-        item.pendingPOs.push({
-          poId: pending.purchaseOrderId,
-          poNumber: pending.poNumber,
-          quantity: pendingQty,
-          expectedDate: pending.expectedDate,
-          shipmentStatus: pending.shipmentStatus,
-          trackingNumber: pending.trackingNumber,
-        });
-      }
-    });
-
-    // Add in-transit items from transfers
-    transfers?.forEach((transfer: any) => {
-      if (transfer.status === "in_transit") {
-        transfer.items?.forEach((item: any) => {
-          const invItem = itemMap.get(item.productId);
-          if (invItem) {
-            const fromWarehouse = warehouses.find((w: any) => w.id === transfer.fromWarehouseId);
-            const toWarehouse = warehouses.find((w: any) => w.id === transfer.toWarehouseId);
-            invItem.inTransit.push({
-              shipmentId: transfer.id,
-              quantity: parseFloat(item.shippedQuantity) || parseFloat(item.requestedQuantity) || 0,
-              eta: transfer.expectedArrival,
-              from: fromWarehouse?.name || "Unknown",
-              to: toWarehouse?.name || "Unknown",
-            });
-          }
-        });
-      }
-    });
-
-    return Array.from(itemMap.values()).filter(item =>
-      !searchTerm ||
-      item.product?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.product?.sku?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.rawMaterial?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.rawMaterial?.sku?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }, [inventory, rawMaterials, warehouses, transfers, pendingFromPOs, searchTerm]);
-
-  // Build inventory by location view data
-  const inventoryByLocation = useMemo(() => {
-    if (!warehouses || !inventory) return [];
-    
-    return warehouses.map((warehouse: any) => {
-      const warehouseInventory = inventory.filter((inv: any) => inv.warehouseId === warehouse.id);
-      const warehouseMaterials = rawMaterials?.filter((mat: any) => mat.warehouseId === warehouse.id) || [];
-      
-      return {
-        ...warehouse,
-        rawMaterials: warehouseMaterials.map((mat: any) => ({
-          id: mat.id,
-          name: mat.name,
-          sku: mat.sku,
-          quantity: parseFloat(mat.quantityOnHand) || 0,
-          unit: mat.unit,
-          status: "available",
-        })),
-        finishedGoods: warehouseInventory.map((inv: any) => ({
-          id: inv.id,
-          name: inv.product?.name || "Unknown",
-          sku: inv.product?.sku || "",
-          quantity: parseFloat(inv.quantity) || 0,
-          unit: inv.unit || "EA",
-          status: parseFloat(inv.reservedQuantity) > 0 ? "allocated" : "available",
-        })),
-        totalItems: warehouseInventory.length + warehouseMaterials.length,
-      };
-    }).filter((loc: any) => 
-      !selectedLocation || loc.id === selectedLocation
-    );
-  }, [warehouses, inventory, rawMaterials, selectedLocation]);
-
-  // Build exceptions from alerts
-  const exceptions = useMemo(() => {
-    if (!alerts) return [];
-    
-    return alerts.map((alert: any) => ({
-      id: alert.id,
-      type: alert.alertType as Exception["type"],
-      severity: alert.severity as Exception["severity"],
-      title: alert.title,
-      description: alert.message,
-      entityType: alert.entityType,
-      entityId: alert.entityId,
-      createdAt: alert.createdAt,
-    })).filter((exc: Exception) =>
-      ["delayed_shipment", "blocked_production", "yield_variance", "qc_hold", "stranded_inventory", "low_stock", "late_shipment"].includes(exc.type)
-    );
-  }, [alerts]);
-
-  // Pending work orders
-  const pendingWorkOrders = useMemo(() => {
-    return workOrders?.filter((wo: any) => 
-      wo.status === "pending" || wo.status === "in_progress"
-    ) || [];
-  }, [workOrders]);
-
-  // In-transit shipments
-  const inTransitShipments = useMemo(() => {
-    return transfers?.filter((t: any) => t.status === "in_transit") || [];
-  }, [transfers]);
-
-  const toggleExpanded = (id: number) => {
-    const newExpanded = new Set(expandedItems);
-    if (newExpanded.has(id)) {
-      newExpanded.delete(id);
-    } else {
-      newExpanded.add(id);
-    }
-    setExpandedItems(newExpanded);
-  };
-
-  const handleReceiveShipment = (transferId: number) => {
-    // For one-click receive, we receive all items at full quantity
-    // The backend will handle the actual item lookup
-    receiveTransfer.mutate({ id: transferId, items: [] });
-  };
-
-  const handleResolveException = (alertId: number) => {
-    resolveAlert.mutate({ id: alertId, notes: "Resolved via Inventory Hub" });
-  };
-
-  const handleViewWorkOrderDetails = (wo: any) => {
-    setSelectedWorkOrder(wo);
-    setShowWorkOrderDialog(true);
-  };
 
   const handleQcHold = (item: any) => {
     setSelectedItem(item);
@@ -470,7 +140,7 @@ export default function InventoryHub() {
     createAlert.mutate({
       type: "quality_issue",
       severity: "warning",
-      title: `QC Hold: ${selectedItem.product?.name || selectedItem.rawMaterial?.name || "Unknown Item"}`,
+      title: `QC Hold: ${selectedItem.productName || "Unknown Item"}`,
       description: qcHoldReason,
       entityType: "inventory",
       entityId: selectedItem.id,
@@ -480,100 +150,431 @@ export default function InventoryHub() {
     setSelectedItem(null);
   };
 
-  const handleReportException = (wo: any) => {
-    setSelectedWorkOrderForException(wo);
-    setExceptionType("yield_variance");
-    setExceptionDescription("");
-    setShowExceptionDialog(true);
-  };
+  // Pre-compute lookup maps for joins
+  const productMap = useMemo(() => {
+    const m = new Map<number, any>();
+    products?.forEach((p: any) => m.set(p.id, p));
+    return m;
+  }, [products]);
 
-  const submitException = () => {
-    if (!selectedWorkOrderForException || !exceptionDescription.trim()) {
-      toast.error("Please provide a description for the exception");
-      return;
-    }
-    // Map exception types to valid alert types
-    const alertTypeMap: Record<string, string> = {
-      yield_variance: "yield_variance",
-      blocked_production: "shortage",
-      qc_hold: "quality_issue",
-      equipment_failure: "shortage",
-      material_shortage: "shortage",
-    };
-    const alertType = alertTypeMap[exceptionType] || "yield_variance";
-    createAlert.mutate({
-      type: alertType as any,
-      severity: exceptionType === "blocked_production" || exceptionType === "material_shortage" ? "critical" : "warning",
-      title: `${exceptionType.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}: WO-${selectedWorkOrderForException.id}`,
-      description: exceptionDescription,
-      entityType: "workOrder",
-      entityId: selectedWorkOrderForException.id,
+  const vendorMap = useMemo(() => {
+    const m = new Map<number, any>();
+    vendors?.forEach((v: any) => m.set(v.id, v));
+    return m;
+  }, [vendors]);
+
+  const warehouseMap = useMemo(() => {
+    const m = new Map<number, any>();
+    warehouses?.forEach((w: any) => m.set(w.id, w));
+    return m;
+  }, [warehouses]);
+
+  // Build PO data per product: { productId -> { openQty, poNumbers[], latestPOStatus, latestPODate, vendorId } }
+  const poByProduct = useMemo(() => {
+    const m = new Map<number, { openQty: number; poNumbers: string[]; latestStatus: string; latestDate: string | null; vendorId: number | null }>();
+    if (!purchaseOrders) return m;
+
+    // POs that are open (not received or cancelled)
+    const openStatuses = new Set(["draft", "sent", "confirmed", "partial"]);
+    purchaseOrders.forEach((po: any) => {
+      if (!openStatuses.has(po.status)) return;
+      // Since PO items have productId, but we don't fetch items separately for each PO here,
+      // we associate the PO with its vendor and track by vendorId.
+      // For now, associate PO data at the PO level (not per-product-item).
+      // We'll also note the PO for any product that has this vendor as preferred.
     });
-    setShowExceptionDialog(false);
-    setExceptionDescription("");
-    setSelectedWorkOrderForException(null);
-  };
 
-  const handleViewTransferDetails = (transfer: any) => {
-    setSelectedTransfer(transfer);
-    setShowTransferDetailDialog(true);
-  };
+    // Instead, iterate POs and match to products via vendor
+    // But first, let's build from pendingFromPOs which already gives us productId-level data
+    pendingFromPOs?.forEach((pending: any) => {
+      const existing = m.get(pending.productId);
+      if (existing) {
+        existing.openQty += parseFloat(pending.pendingQuantity) || 0;
+      } else {
+        m.set(pending.productId, {
+          openQty: parseFloat(pending.pendingQuantity) || 0,
+          poNumbers: [],
+          latestStatus: "",
+          latestDate: null,
+          vendorId: null,
+        });
+      }
+    });
 
-  // Find freight booking for a transfer
-  const getFreightBookingForTransfer = (transfer: any) => {
-    return freightBookings?.find((booking: any) =>
-      booking.shipmentId === transfer.id ||
-      booking.referenceNumber === transfer.transferNumber
-    );
-  };
+    // Now enrich with PO-level data
+    purchaseOrders.forEach((po: any) => {
+      if (!openStatuses.has(po.status)) return;
+      // For each product, check if this PO's vendor is the preferred vendor
+      products?.forEach((prod: any) => {
+        if (prod.preferredVendorId && prod.preferredVendorId === po.vendorId) {
+          const existing = m.get(prod.id);
+          if (existing) {
+            if (!existing.poNumbers.includes(po.poNumber)) {
+              existing.poNumbers.push(po.poNumber);
+            }
+            // Update latest PO info
+            const poDate = po.orderDate || po.createdAt;
+            if (!existing.latestDate || (poDate && new Date(poDate) > new Date(existing.latestDate))) {
+              existing.latestStatus = po.status;
+              existing.latestDate = poDate;
+              existing.vendorId = po.vendorId;
+            }
+          } else {
+            m.set(prod.id, {
+              openQty: 0,
+              poNumbers: [po.poNumber],
+              latestStatus: po.status,
+              latestDate: po.orderDate || po.createdAt,
+              vendorId: po.vendorId,
+            });
+          }
+        }
+      });
+    });
 
-  const getTypeIcon = (type: string) => {
-    switch (type) {
-      case "finished": return <Package className="h-4 w-4 text-green-500" />;
-      case "wip": return <Factory className="h-4 w-4 text-yellow-500" />;
-      case "material": return <Layers className="h-4 w-4 text-blue-500" />;
-      case "packaging": return <Box className="h-4 w-4 text-purple-500" />;
-      default: return <Package className="h-4 w-4" />;
+    // Also scan all POs for recent PO info per vendor
+    purchaseOrders.forEach((po: any) => {
+      products?.forEach((prod: any) => {
+        if (prod.preferredVendorId === po.vendorId) {
+          const existing = m.get(prod.id);
+          if (existing) {
+            const poDate = po.orderDate || po.createdAt;
+            if (!existing.latestDate || (poDate && new Date(poDate) > new Date(existing.latestDate))) {
+              existing.latestStatus = po.status;
+              existing.latestDate = poDate;
+            }
+          }
+        }
+      });
+    });
+
+    return m;
+  }, [purchaseOrders, pendingFromPOs, products]);
+
+  // Build shipment data per product via PO link
+  const shipmentByProduct = useMemo(() => {
+    const m = new Map<number, { tracking: string; status: string; date: string | null }>();
+    if (!shipments || !purchaseOrders) return m;
+
+    // Map PO id -> vendorId
+    const poVendorMap = new Map<number, number>();
+    purchaseOrders.forEach((po: any) => poVendorMap.set(po.id, po.vendorId));
+
+    // For each shipment linked to a PO, find products by vendor match
+    shipments.forEach((ship: any) => {
+      if (!ship.purchaseOrderId) return;
+      const vendorId = poVendorMap.get(ship.purchaseOrderId);
+      if (!vendorId) return;
+
+      products?.forEach((prod: any) => {
+        if (prod.preferredVendorId === vendorId) {
+          const existing = m.get(prod.id);
+          const shipDate = ship.shipDate || ship.createdAt;
+          if (!existing || (shipDate && new Date(shipDate) > new Date(existing.date || ""))) {
+            m.set(prod.id, {
+              tracking: ship.trackingNumber || (shipDate ? new Date(shipDate).toLocaleDateString() : ""),
+              status: ship.status || "",
+              date: shipDate,
+            });
+          }
+        }
+      });
+    });
+
+    return m;
+  }, [shipments, purchaseOrders, products]);
+
+  // Build flat inventory rows - unified view
+  const inventoryRows = useMemo(() => {
+    if (!inventory && !rawMaterials && !products) return [];
+
+    const rows: any[] = [];
+
+    // Track which product IDs already have inventory_items rows
+    const productIdsWithInventory = new Set<number>();
+
+    // Add finished goods inventory
+    inventory?.forEach((inv: any) => {
+      productIdsWithInventory.add(inv.productId);
+      const qty = parseFloat(inv.quantity) || 0;
+      const reserved = parseFloat(inv.reservedQuantity) || 0;
+      const reorderPoint = parseFloat(inv.reorderPoint) || parseFloat(inv.reorderLevel) || 0;
+      const available = qty - reserved;
+
+      const product = productMap.get(inv.productId);
+      const warehouse = warehouseMap.get(inv.warehouseId);
+
+      // In-transit from transfers
+      let inTransitQty = 0;
+      transfers?.forEach((t: any) => {
+        if (t.status === "in_transit") {
+          t.items?.forEach((item: any) => {
+            if (item.productId === inv.productId) {
+              inTransitQty += parseFloat(item.shippedQuantity) || parseFloat(item.requestedQuantity) || 0;
+            }
+          });
+        }
+      });
+
+      // On-order from POs
+      let onOrderQty = 0;
+      pendingFromPOs?.forEach((pending: any) => {
+        if (pending.productId === inv.productId) {
+          onOrderQty += parseFloat(pending.pendingQuantity) || 0;
+        }
+      });
+
+      // PO info
+      const poInfo = poByProduct.get(inv.productId);
+      // Shipment info
+      const shipInfo = shipmentByProduct.get(inv.productId);
+
+      // Vendor - from product's preferredVendorId or from PO data
+      const vendorId = product?.preferredVendorId || poInfo?.vendorId;
+      const vendor = vendorId ? vendorMap.get(vendorId) : null;
+
+      // Unit cost from product costPrice or inventory averageCost
+      const unitCost = parseFloat(inv.averageCost) || parseFloat(product?.costPrice) || 0;
+      const totalValue = qty * unitCost;
+
+      let status = "ok";
+      if (qty <= 0) status = "out_of_stock";
+      else if (reorderPoint > 0 && qty <= reorderPoint) status = "low";
+
+      rows.push({
+        id: inv.id,
+        sku: product?.sku || "",
+        productName: product?.name || `Product #${inv.productId}`,
+        category: product?.category || "",
+        location: warehouse?.name || "",
+        locationId: inv.warehouseId,
+        qtyOnHand: qty,
+        reserved,
+        available,
+        reorderPoint,
+        inTransit: inTransitQty,
+        onOrderQty: onOrderQty || (poInfo?.openQty || 0),
+        openPONumbers: poInfo?.poNumbers?.join(", ") || "",
+        poStatus: poInfo?.latestStatus || "",
+        lastPODate: poInfo?.latestDate || null,
+        vendorName: vendor?.name || "",
+        lastShipment: shipInfo?.tracking || "",
+        shipStatus: shipInfo?.status || "",
+        unitCost,
+        totalValue,
+        lastUpdated: inv.updatedAt || inv.createdAt,
+        status,
+        productId: inv.productId,
+        productType: "finished",
+      });
+    });
+
+    // Add products that have no inventory_items rows (e.g. Shopify-synced products
+    // where the inventory_items table is empty). Shows them with 0 on-hand qty.
+    products?.forEach((prod: any) => {
+      if (productIdsWithInventory.has(prod.id)) return; // already shown from inventory
+
+      const poInfo = poByProduct.get(prod.id);
+      const shipInfo = shipmentByProduct.get(prod.id);
+      const vendorId = prod.preferredVendorId || poInfo?.vendorId;
+      const vendor = vendorId ? vendorMap.get(vendorId) : null;
+      const unitCost = parseFloat(prod.costPrice) || parseFloat(prod.price) || 0;
+
+      // On-order from POs
+      let onOrderQty = 0;
+      pendingFromPOs?.forEach((pending: any) => {
+        if (pending.productId === prod.id) {
+          onOrderQty += parseFloat(pending.pendingQuantity) || 0;
+        }
+      });
+
+      rows.push({
+        id: `prod-${prod.id}`,
+        sku: prod.sku || "",
+        productName: prod.name || prod.title || `Product #${prod.id}`,
+        category: prod.category || prod.productType || "",
+        location: "",
+        locationId: null,
+        qtyOnHand: 0,
+        reserved: 0,
+        available: 0,
+        reorderPoint: parseFloat(prod.reorderPoint) || 0,
+        inTransit: 0,
+        onOrderQty: onOrderQty || (poInfo?.openQty || 0),
+        openPONumbers: poInfo?.poNumbers?.join(", ") || "",
+        poStatus: poInfo?.latestStatus || "",
+        lastPODate: poInfo?.latestDate || null,
+        vendorName: vendor?.name || "",
+        lastShipment: shipInfo?.tracking || "",
+        shipStatus: shipInfo?.status || "",
+        unitCost,
+        totalValue: 0,
+        lastUpdated: prod.updatedAt || prod.createdAt,
+        status: "out_of_stock",
+        productId: prod.id,
+        productType: "finished",
+      });
+    });
+
+    // Add raw materials
+    rawMaterials?.forEach((mat: any) => {
+      const qty = parseFloat(mat.quantityOnHand) || 0;
+      const reserved = parseFloat(mat.quantityOnOrder) || 0;
+      const reorderPoint = parseFloat(mat.reorderPoint) || parseFloat(mat.reorderLevel) || 0;
+      const available = qty - reserved;
+
+      const warehouse = mat.warehouseId ? warehouseMap.get(mat.warehouseId) : null;
+      const vendor = mat.preferredVendorId ? vendorMap.get(mat.preferredVendorId) : null;
+      const unitCost = parseFloat(mat.costPerUnit) || parseFloat(mat.unitCost) || 0;
+      const totalValue = qty * unitCost;
+
+      let status = "ok";
+      if (qty <= 0) status = "out_of_stock";
+      else if (reorderPoint > 0 && qty <= reorderPoint) status = "low";
+
+      rows.push({
+        id: -mat.id,
+        sku: mat.sku || "",
+        productName: mat.name || `Material #${mat.id}`,
+        category: mat.category || "Raw Material",
+        location: warehouse?.name || "",
+        locationId: mat.warehouseId,
+        qtyOnHand: qty,
+        reserved,
+        available,
+        reorderPoint,
+        inTransit: 0,
+        onOrderQty: 0,
+        openPONumbers: "",
+        poStatus: "",
+        lastPODate: null,
+        vendorName: vendor?.name || "",
+        lastShipment: "",
+        shipStatus: "",
+        unitCost,
+        totalValue,
+        lastUpdated: mat.updatedAt || mat.createdAt,
+        status,
+        productId: mat.id,
+        productType: "material",
+      });
+    });
+
+    // Apply search filter
+    let filtered = rows;
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      filtered = filtered.filter(r =>
+        r.productName.toLowerCase().includes(term) ||
+        r.sku.toLowerCase().includes(term) ||
+        r.location.toLowerCase().includes(term) ||
+        r.category.toLowerCase().includes(term) ||
+        r.vendorName.toLowerCase().includes(term)
+      );
+    }
+
+    // Apply status filter
+    if (statusFilter === "low") {
+      filtered = filtered.filter(r => r.status === "low");
+    } else if (statusFilter === "out_of_stock") {
+      filtered = filtered.filter(r => r.status === "out_of_stock");
+    }
+
+    return filtered;
+  }, [inventory, rawMaterials, products, warehouses, transfers, pendingFromPOs, vendors, purchaseOrders, shipments, productMap, warehouseMap, vendorMap, poByProduct, shipmentByProduct, searchTerm, statusFilter]);
+
+  // Summary stats
+  const stats = useMemo(() => {
+    const allRows = inventoryRows;
+    return {
+      totalItems: allRows.length,
+      lowStock: allRows.filter(r => r.status === "low").length,
+      outOfStock: allRows.filter(r => r.status === "out_of_stock").length,
+      inTransitCount: allRows.filter(r => r.inTransit > 0).length,
+    };
+  }, [inventoryRows]);
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case "low":
+        return <Badge className="bg-amber-500/8 text-amber-600 dark:text-amber-400 text-[10px] px-1.5 py-0">Low</Badge>;
+      case "out_of_stock":
+        return <Badge className="bg-red-500/8 text-red-600 dark:text-red-400 text-[10px] px-1.5 py-0">Out</Badge>;
+      default:
+        return <Badge className="bg-emerald-500/8 text-emerald-600 dark:text-emerald-400 text-[10px] px-1.5 py-0">OK</Badge>;
     }
   };
 
-  const getSeverityColor = (severity: string) => {
-    switch (severity) {
-      case "critical": return "bg-red-100 text-red-800 border-red-200";
-      case "warning": return "bg-yellow-100 text-yellow-800 border-yellow-200";
-      default: return "bg-blue-100 text-blue-800 border-blue-200";
-    }
+  const getPOStatusBadge = (status: string) => {
+    if (!status) return <span className="text-muted-foreground">—</span>;
+    const colors: Record<string, string> = {
+      draft: "bg-gray-500/8 text-gray-600",
+      sent: "bg-blue-500/8 text-blue-600",
+      confirmed: "bg-emerald-500/8 text-emerald-600",
+      partial: "bg-amber-500/8 text-amber-600",
+      received: "bg-green-500/8 text-green-600",
+      cancelled: "bg-red-500/8 text-red-600",
+    };
+    return <Badge className={`${colors[status] || "bg-gray-500/8 text-gray-600"} text-[10px] px-1.5 py-0`}>{status}</Badge>;
   };
 
-  const getLocationIcon = (type: string) => {
-    switch (type) {
-      case "copacker": return <Factory className="h-4 w-4" />;
-      case "3pl": return <Truck className="h-4 w-4" />;
-      case "warehouse": return <Package className="h-4 w-4" />;
-      default: return <MapPin className="h-4 w-4" />;
-    }
+  const getShipStatusBadge = (status: string) => {
+    if (!status) return <span className="text-muted-foreground">—</span>;
+    const colors: Record<string, string> = {
+      pending: "bg-gray-500/8 text-gray-600",
+      in_transit: "bg-blue-500/8 text-blue-600",
+      delivered: "bg-emerald-500/8 text-emerald-600",
+      returned: "bg-amber-500/8 text-amber-600",
+      cancelled: "bg-red-500/8 text-red-600",
+    };
+    return <Badge className={`${colors[status] || "bg-gray-500/8 text-gray-600"} text-[10px] px-1.5 py-0`}>{status.replace("_", " ")}</Badge>;
   };
 
-  const isLoading = warehousesLoading || inventoryLoading || materialsLoading || workOrdersLoading || transfersLoading || alertsLoading || pendingLoading || inboundLoading;
+  const fmtDate = (d: any) => {
+    if (!d) return "—";
+    try { return new Date(d).toLocaleDateString(); } catch { return "—"; }
+  };
+
+  const fmtCurrency = (n: number) => {
+    if (!n) return "—";
+    return "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  const isLoading = warehousesLoading || inventoryLoading || productsLoading || materialsLoading || pendingLoading || inboundLoading;
 
   return (
-    <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
+    <div className="p-6 space-y-4 max-w-[1800px] mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Inventory</h1>
-          <p className="text-muted-foreground">Multi-location inventory tracking across all copackers</p>
+          <h1 className="text-lg font-semibold">Products & Inventory</h1>
+          <div className="flex items-center gap-2 mt-1">
+            <p className="text-muted-foreground">Unified view — inventory, POs, shipments, costing, vendors</p>
+            <a href="/operations/work-orders" className="text-xs text-primary hover:underline font-medium">Work Orders →</a>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search items..."
+              placeholder="Search SKU, name, vendor, category..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-9 w-[280px]"
             />
           </div>
+
+          {/* Status Filter */}
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-40">
+              <SelectValue placeholder="All Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Status</SelectItem>
+              <SelectItem value="low">Low Stock</SelectItem>
+              <SelectItem value="out_of_stock">Out of Stock</SelectItem>
+            </SelectContent>
+          </Select>
 
           {/* Shopify Inventory Sync */}
           <DropdownMenu>
@@ -653,879 +654,182 @@ export default function InventoryHub() {
           </DropdownMenu>
 
           <Button variant="outline" onClick={() => utils.inventory.invalidate()}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+
+          <Button onClick={() => setShowNewInventoryDialog(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            New Item
           </Button>
         </div>
       </div>
 
-      {/* Toggle Tabs */}
-      <Tabs value={activeView} onValueChange={(v) => setActiveView(v as any)} className="w-full">
-        <TabsList className="grid w-full max-w-md grid-cols-3">
-          <TabsTrigger value="exceptions" className="flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4" />
-            Exceptions
-            {exceptions.length > 0 && (
-              <Badge variant="destructive" className="ml-1 h-5 px-1.5">
-                {exceptions.length}
-              </Badge>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="by_item" className="flex items-center gap-2">
-            <Package className="h-4 w-4" />
-            By Item
-          </TabsTrigger>
-          <TabsTrigger value="by_location" className="flex items-center gap-2">
-            <MapPin className="h-4 w-4" />
-            By Location
-          </TabsTrigger>
-        </TabsList>
-
-        {/* Quick Create Buttons */}
-        <div className="flex gap-2 mt-4">
-          <Button onClick={() => setShowNewInventoryDialog(true)} size="sm">
-            <Plus className="h-4 w-4 mr-1" /> New Inventory Item
-          </Button>
-          <Button onClick={() => setShowNewLocationDialog(true)} size="sm" variant="outline">
-            <Plus className="h-4 w-4 mr-1" /> New Location
-          </Button>
+      {/* Compact KPI bar */}
+      <div className="flex items-center gap-5 flex-wrap text-sm border rounded-xl px-4 py-3 bg-card">
+        <div>
+          <span className="text-xs text-muted-foreground">Total Items</span>
+          <div className="font-bold text-base">{stats.totalItems}</div>
         </div>
+        <div className="h-8 w-px bg-border" />
+        <div>
+          <span className="text-xs text-muted-foreground">Low Stock</span>
+          <div className="font-bold text-base text-amber-600">{stats.lowStock}</div>
+        </div>
+        <div className="h-8 w-px bg-border" />
+        <div>
+          <span className="text-xs text-muted-foreground">Out of Stock</span>
+          <div className="font-bold text-base text-red-600">{stats.outOfStock}</div>
+        </div>
+        <div className="h-8 w-px bg-border" />
+        <div>
+          <span className="text-xs text-muted-foreground">In Transit</span>
+          <div className="font-bold text-base text-blue-600">{stats.inTransitCount}</div>
+        </div>
+      </div>
 
-        {/* Exceptions View */}
-        <TabsContent value="exceptions" className="mt-6">
-          <div className="space-y-4">
-            {/* Summary Cards */}
-            <div className="grid grid-cols-5 gap-4">
-              <Card className="border-red-200 bg-red-50/50">
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-red-100 rounded-lg">
-                      <Truck className="h-5 w-5 text-red-600" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Delayed Shipments</p>
-                      <p className="text-2xl font-bold">{exceptions.filter(e => e.type === "delayed_shipment" || e.type === "late_shipment" || e.type === "shortage").length}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card className="border-orange-200 bg-orange-50/50">
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-orange-100 rounded-lg">
-                      <Factory className="h-5 w-5 text-orange-600" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Blocked Production</p>
-                      <p className="text-2xl font-bold">{exceptions.filter(e => e.type === "blocked_production").length}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card className="border-yellow-200 bg-yellow-50/50">
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-yellow-100 rounded-lg">
-                      <AlertCircle className="h-5 w-5 text-yellow-600" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Yield Variance</p>
-                      <p className="text-2xl font-bold">{exceptions.filter(e => e.type === "yield_variance").length}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card className="border-purple-200 bg-purple-50/50">
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-purple-100 rounded-lg">
-                      <Shield className="h-5 w-5 text-purple-600" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">QC Holds</p>
-                      <p className="text-2xl font-bold">{exceptions.filter(e => e.type === "qc_hold").length}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card className="border-gray-200 bg-gray-50/50">
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-gray-100 rounded-lg">
-                      <Package className="h-5 w-5 text-gray-600" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Low Stock</p>
-                      <p className="text-2xl font-bold">{exceptions.filter(e => e.type === "low_stock" || e.type === "shortage").length}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+      {/* Unified Products & Inventory Table */}
+      <Card>
+        <CardContent className="pt-6 px-0">
+          {isLoading ? (
+            <div className="text-center py-12">
+              <RefreshCw className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
+              <p className="mt-2 text-muted-foreground">Loading inventory...</p>
             </div>
-
-            {/* Exception List */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Active Exceptions</CardTitle>
-                <CardDescription>Issues requiring attention</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {exceptions.length === 0 ? (
-                  <div className="text-center py-12 text-muted-foreground">
-                    <CheckCircle className="h-12 w-12 mx-auto mb-4 text-green-500" />
-                    <p className="text-lg font-medium">All Clear!</p>
-                    <p>No exceptions requiring attention</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {exceptions.map((exc) => (
-                      <div 
-                        key={exc.id}
-                        className={cn(
-                          "flex items-center justify-between p-4 rounded-lg border",
-                          getSeverityColor(exc.severity)
-                        )}
-                      >
-                        <div className="flex items-center gap-4">
-                          <div className="p-2 bg-white/50 rounded-lg">
-                            {exc.type === "delayed_shipment" || exc.type === "late_shipment" ? <Truck className="h-5 w-5" /> :
-                             exc.type === "blocked_production" ? <Factory className="h-5 w-5" /> :
-                             exc.type === "yield_variance" ? <AlertCircle className="h-5 w-5" /> :
-                             exc.type === "qc_hold" ? <Shield className="h-5 w-5" /> :
-                             <Package className="h-5 w-5" />}
-                          </div>
-                          <div>
-                            <p className="font-medium">{exc.title}</p>
-                            <p className="text-sm opacity-80">{exc.description}</p>
-                          </div>
+          ) : inventoryRows.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <Package className="h-12 w-12 mx-auto mb-4" />
+              <p>No inventory items found</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table className="text-xs">
+                <TableHeader>
+                  <TableRow className="border-b">
+                    {/* Sticky left columns */}
+                    <TableHead className="sticky left-0 z-20 bg-background min-w-[80px] px-2 py-2 text-xs font-semibold">SKU</TableHead>
+                    <TableHead className="sticky left-[80px] z-20 bg-background min-w-[160px] px-2 py-2 text-xs font-semibold border-r">Product Name</TableHead>
+                    {/* Scrollable columns */}
+                    <TableHead className="min-w-[90px] px-2 py-2 text-xs font-semibold">Category</TableHead>
+                    <TableHead className="min-w-[100px] px-2 py-2 text-xs font-semibold">Location</TableHead>
+                    <TableHead className="min-w-[70px] px-2 py-2 text-xs font-semibold text-right">Stock Qty</TableHead>
+                    <TableHead className="min-w-[70px] px-2 py-2 text-xs font-semibold text-right">Reserved</TableHead>
+                    <TableHead className="min-w-[70px] px-2 py-2 text-xs font-semibold text-right">Available</TableHead>
+                    <TableHead className="min-w-[70px] px-2 py-2 text-xs font-semibold text-right">Reorder Pt</TableHead>
+                    <TableHead className="min-w-[70px] px-2 py-2 text-xs font-semibold text-right">In Transit</TableHead>
+                    <TableHead className="min-w-[80px] px-2 py-2 text-xs font-semibold text-right">Open PO Qty</TableHead>
+                    <TableHead className="min-w-[100px] px-2 py-2 text-xs font-semibold">Open PO#</TableHead>
+                    <TableHead className="min-w-[75px] px-2 py-2 text-xs font-semibold">PO Status</TableHead>
+                    <TableHead className="min-w-[85px] px-2 py-2 text-xs font-semibold">Last PO Date</TableHead>
+                    <TableHead className="min-w-[110px] px-2 py-2 text-xs font-semibold">Vendor</TableHead>
+                    <TableHead className="min-w-[100px] px-2 py-2 text-xs font-semibold">Last Shipment</TableHead>
+                    <TableHead className="min-w-[80px] px-2 py-2 text-xs font-semibold">Ship Status</TableHead>
+                    <TableHead className="min-w-[80px] px-2 py-2 text-xs font-semibold text-right">Unit Cost</TableHead>
+                    <TableHead className="min-w-[90px] px-2 py-2 text-xs font-semibold text-right">Total Value</TableHead>
+                    <TableHead className="min-w-[85px] px-2 py-2 text-xs font-semibold">Last Updated</TableHead>
+                    <TableHead className="min-w-[50px] px-2 py-2 text-xs font-semibold text-center">Status</TableHead>
+                    <TableHead className="min-w-[110px] px-2 py-2 text-xs font-semibold text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {inventoryRows.map((row) => (
+                    <TableRow key={row.id} className="hover:bg-muted/50 h-8">
+                      {/* Sticky left columns */}
+                      <TableCell className="sticky left-0 z-10 bg-background px-2 py-1 font-mono text-xs">{row.sku || "—"}</TableCell>
+                      <TableCell className="sticky left-[80px] z-10 bg-background px-2 py-1 border-r max-w-[160px]">
+                        <div className="flex items-center gap-1 truncate">
+                          <span className="font-medium truncate text-xs">{row.productName}</span>
+                          {row.productType === "material" && (
+                            <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">Mat</Badge>
+                          )}
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline" className="bg-white/50">
-                            {exc.entityType} #{exc.entityId}
-                          </Badge>
-                          <Button 
-                            size="sm" 
-                            variant="secondary"
-                            onClick={() => handleResolveException(exc.id)}
+                      </TableCell>
+                      {/* Scrollable columns */}
+                      <TableCell className="px-2 py-1 text-xs truncate max-w-[90px]">{row.category || "—"}</TableCell>
+                      <TableCell className="px-2 py-1 text-xs truncate max-w-[100px]">{row.location || "—"}</TableCell>
+                      <TableCell className="px-2 py-1 text-right font-mono text-xs">{row.qtyOnHand.toLocaleString()}</TableCell>
+                      <TableCell className="px-2 py-1 text-right font-mono text-xs text-muted-foreground">{row.reserved > 0 ? row.reserved.toLocaleString() : "—"}</TableCell>
+                      <TableCell className="px-2 py-1 text-right font-mono text-xs font-medium">{row.available.toLocaleString()}</TableCell>
+                      <TableCell className="px-2 py-1 text-right font-mono text-xs text-muted-foreground">{row.reorderPoint > 0 ? row.reorderPoint.toLocaleString() : "—"}</TableCell>
+                      <TableCell className="px-2 py-1 text-right font-mono text-xs">
+                        {row.inTransit > 0 ? <span className="text-blue-600">+{row.inTransit.toLocaleString()}</span> : "—"}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-right font-mono text-xs">
+                        {row.onOrderQty > 0 ? <span className="text-violet-600">{row.onOrderQty.toLocaleString()}</span> : "—"}
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-xs font-mono truncate max-w-[100px]">
+                        {row.openPONumbers ? (
+                          <a href="/operations/purchase-orders" onClick={(e) => { e.preventDefault(); navigate("/operations/purchase-orders"); }} className="text-primary hover:underline cursor-pointer">
+                            {row.openPONumbers}
+                          </a>
+                        ) : "—"}
+                      </TableCell>
+                      <TableCell className="px-2 py-1">{getPOStatusBadge(row.poStatus)}</TableCell>
+                      <TableCell className="px-2 py-1 text-xs text-muted-foreground">{fmtDate(row.lastPODate)}</TableCell>
+                      <TableCell className="px-2 py-1 text-xs truncate max-w-[130px]">
+                        <select
+                          value={row.productId ? (products?.find((p: any) => p.id === row.productId)?.preferredVendorId || "") : ""}
+                          onChange={(e) => {
+                            const vendorId = e.target.value ? parseInt(e.target.value) : null;
+                            if (row.productId) {
+                              updateProductMutation.mutate({ id: row.productId, preferredVendorId: vendorId });
+                            }
+                          }}
+                          className="bg-transparent border-none text-xs cursor-pointer focus:outline-none w-full"
+                        >
+                          <option value="">—</option>
+                          {vendors?.map((v: any) => (
+                            <option key={v.id} value={v.id}>{v.name}</option>
+                          ))}
+                        </select>
+                      </TableCell>
+                      <TableCell className="px-2 py-1 text-xs font-mono truncate max-w-[100px]">
+                        {row.lastShipment ? (
+                          <a href="/operations/shipments" onClick={(e) => { e.preventDefault(); navigate("/operations/shipments"); }} className="text-primary hover:underline cursor-pointer">
+                            {row.lastShipment}
+                          </a>
+                        ) : "—"}
+                      </TableCell>
+                      <TableCell className="px-2 py-1">{getShipStatusBadge(row.shipStatus)}</TableCell>
+                      <TableCell className="px-2 py-1 text-right font-mono text-xs">{fmtCurrency(row.unitCost)}</TableCell>
+                      <TableCell className="px-2 py-1 text-right font-mono text-xs font-medium">{fmtCurrency(row.totalValue)}</TableCell>
+                      <TableCell className="px-2 py-1 text-xs text-muted-foreground">{fmtDate(row.lastUpdated)}</TableCell>
+                      <TableCell className="px-2 py-1 text-center">{getStatusBadge(row.status)}</TableCell>
+                      <TableCell className="px-2 py-1 text-right">
+                        <div className="flex justify-end gap-0.5">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 px-1.5 text-[10px]"
+                            onClick={() => { setSelectedItem(row); setShowShipmentDialog(true); }}
                           >
-                            Resolve
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Active Production Orders with Transformation Visualization */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Factory className="h-5 w-5" />
-                  Active Production Orders
-                </CardTitle>
-                <CardDescription>Material transformations in progress</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {workOrders?.filter((wo: any) => wo.status === "in_progress").length === 0 ? (
-                  <p className="text-center py-6 text-muted-foreground">No active production orders</p>
-                ) : (
-                  <div className="space-y-4">
-                    {workOrders?.filter((wo: any) => wo.status === "in_progress").map((wo: any) => (
-                      <div key={wo.id} className="border rounded-lg p-4 bg-gradient-to-r from-blue-50 to-green-50">
-                        <div className="flex items-center justify-between mb-4">
-                          <div>
-                            <p className="font-semibold text-lg">{wo.workOrderNumber}</p>
-                            <p className="text-sm text-muted-foreground">
-                              Started: {new Date(wo.startDate || wo.createdAt).toLocaleDateString()}
-                            </p>
-                          </div>
-                          <Badge className="bg-blue-500">{wo.status}</Badge>
-                        </div>
-                        
-                        {/* Transformation Visualization */}
-                        <div className="flex items-center gap-4">
-                          {/* Input Materials */}
-                          <div className="flex-1 p-3 bg-white rounded-lg border">
-                            <p className="text-xs font-medium text-muted-foreground mb-2">INPUT MATERIALS</p>
-                            <div className="space-y-1">
-                              {wo.bom?.components?.slice(0, 3).map((comp: any, idx: number) => (
-                                <div key={idx} className="flex justify-between text-sm">
-                                  <span>{comp.rawMaterial?.name || comp.name || "Material"}</span>
-                                  <span className="font-medium">{comp.quantity} {comp.unit || "LB"}</span>
-                                </div>
-                              )) || (
-                                <p className="text-sm text-muted-foreground">BOM materials</p>
-                              )}
-                              {wo.bom?.components?.length > 3 && (
-                                <p className="text-xs text-muted-foreground">+{wo.bom.components.length - 3} more</p>
-                              )}
-                            </div>
-                          </div>
-                          
-                          {/* Arrow */}
-                          <div className="flex flex-col items-center">
-                            <ArrowRight className="h-8 w-8 text-blue-500" />
-                            <span className="text-xs text-muted-foreground mt-1">Transform</span>
-                          </div>
-                          
-                          {/* Output Product */}
-                          <div className="flex-1 p-3 bg-white rounded-lg border border-green-200">
-                            <p className="text-xs font-medium text-muted-foreground mb-2">OUTPUT</p>
-                            <div className="flex justify-between items-center">
-                              <span className="font-medium">{wo.product?.name || wo.bom?.product?.name || "Product"}</span>
-                              <span className="text-lg font-bold text-green-600">{wo.quantity} {wo.unit || "EA"}</span>
-                            </div>
-                            {wo.completedQuantity > 0 && (
-                              <div className="mt-2">
-                                <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                                  <span>Progress</span>
-                                  <span>{Math.round((wo.completedQuantity / wo.quantity) * 100)}%</span>
-                                </div>
-                                <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                                  <div 
-                                    className="h-full bg-green-500 rounded-full transition-all"
-                                    style={{ width: `${(wo.completedQuantity / wo.quantity) * 100}%` }}
-                                  />
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        
-                        {/* Actions */}
-                        <div className="flex justify-end gap-2 mt-4">
-                          <Button size="sm" variant="outline" onClick={() => handleViewWorkOrderDetails(wo)}>
-                            <FileText className="h-4 w-4 mr-1" />
-                            View Details
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={() => handleReportException(wo)}>
-                            <AlertTriangle className="h-4 w-4 mr-1" />
-                            Exception
+                            <Send className="h-3 w-3" />
                           </Button>
                           <Button
                             size="sm"
-                            className="bg-green-600 hover:bg-green-700"
-                            onClick={() => {
-                              updateWorkOrder.mutate({ id: wo.id, status: "completed" });
-                            }}
+                            variant="ghost"
+                            className="h-6 px-1.5 text-[10px]"
+                            onClick={() => { setSelectedItem(row); setShowProductionDialog(true); }}
                           >
-                            <CheckCircle className="h-4 w-4 mr-1" />
-                            Complete
+                            <Factory className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 px-1.5 text-[10px]"
+                            onClick={() => handleQcHold(row)}
+                          >
+                            <Shield className="h-3 w-3" />
                           </Button>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Incoming Shipments with One-Click Receive */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Truck className="h-5 w-5" />
-                  Incoming Shipments
-                </CardTitle>
-                <CardDescription>Shipments ready to receive</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {transfers?.filter((t: any) => t.status === "in_transit").length === 0 ? (
-                  <p className="text-center py-6 text-muted-foreground">No incoming shipments</p>
-                ) : (
-                  <div className="space-y-3">
-                    {transfers?.filter((t: any) => t.status === "in_transit").map((transfer: any) => {
-                      const fromWarehouse = warehouses?.find((w: any) => w.id === transfer.fromWarehouseId);
-                      const toWarehouse = warehouses?.find((w: any) => w.id === transfer.toWarehouseId);
-                      const freightBooking = getFreightBookingForTransfer(transfer);
-                      return (
-                        <div
-                          key={transfer.id}
-                          className="p-4 border rounded-lg bg-blue-50/50 hover:bg-blue-100/50 cursor-pointer transition-colors"
-                          onClick={() => handleViewTransferDetails(transfer)}
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                              <div className="p-2 bg-blue-100 rounded-lg">
-                                {freightBooking?.quote?.shippingMode === "ocean" ? <Ship className="h-5 w-5 text-blue-600" /> :
-                                 freightBooking?.quote?.shippingMode === "air" ? <Plane className="h-5 w-5 text-blue-600" /> :
-                                 <Truck className="h-5 w-5 text-blue-600" />}
-                              </div>
-                              <div>
-                                <p className="font-medium">{transfer.transferNumber}</p>
-                                <p className="text-sm text-muted-foreground">
-                                  {fromWarehouse?.name || "Unknown"} → {toWarehouse?.name || "Unknown"}
-                                </p>
-                                {freightBooking && (
-                                  <div className="flex items-center gap-2 mt-1">
-                                    <Badge variant="outline" className="text-xs">
-                                      {freightBooking.carrier?.name || "Carrier TBD"}
-                                    </Badge>
-                                    {freightBooking.trackingNumber && (
-                                      <Badge variant="secondary" className="text-xs">
-                                        {freightBooking.trackingNumber}
-                                      </Badge>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-4">
-                              {transfer.expectedArrival && (
-                                <div className="text-right">
-                                  <p className="text-sm text-muted-foreground">ETA</p>
-                                  <p className="font-medium">{new Date(transfer.expectedArrival).toLocaleDateString()}</p>
-                                </div>
-                              )}
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={(e) => { e.stopPropagation(); handleViewTransferDetails(transfer); }}
-                              >
-                                <ExternalLink className="h-4 w-4 mr-1" />
-                                Details
-                              </Button>
-                              <Button
-                                className="bg-green-600 hover:bg-green-700"
-                                onClick={(e) => { e.stopPropagation(); handleReceiveShipment(transfer.id); }}
-                              >
-                                <CheckCircle className="h-4 w-4 mr-2" />
-                                One-Click Receive
-                              </Button>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-
-        {/* Inventory by Item View */}
-        <TabsContent value="by_item" className="mt-6">
-          <div className="space-y-4">
-            {isLoading ? (
-              <div className="text-center py-12">
-                <RefreshCw className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
-                <p className="mt-2 text-muted-foreground">Loading inventory...</p>
-              </div>
-            ) : inventoryByItem.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                <Package className="h-12 w-12 mx-auto mb-4" />
-                <p>No inventory items found</p>
-              </div>
-            ) : (
-              inventoryByItem.map((item) => (
-                <Card key={item.id} className="overflow-hidden">
-                  <div 
-                    className="p-4 cursor-pointer hover:bg-muted/50 transition-colors"
-                    onClick={() => toggleExpanded(item.id)}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-2">
-                          {expandedItems.has(item.id) ? 
-                            <ChevronDown className="h-5 w-5 text-muted-foreground" /> : 
-                            <ChevronRight className="h-5 w-5 text-muted-foreground" />
-                          }
-                          {getTypeIcon(item.productType)}
-                        </div>
-                        <div>
-                          <p className="font-semibold">
-                            {item.product?.name || item.rawMaterial?.name || "Unknown Item"}
-                          </p>
-                          <p className="text-sm text-muted-foreground">
-                            {item.product?.sku || item.rawMaterial?.sku}
-                            {item.productType !== "finished" && (
-                              <Badge variant="outline" className="ml-2 text-xs">
-                                {item.productType === "material" ? "Raw Material" : 
-                                 item.productType === "wip" ? "Semi-Finished" : item.productType}
-                              </Badge>
-                            )}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-6">
-                        <div className="text-right">
-                          <p className="text-2xl font-bold">
-                            {item.totalQuantity.toLocaleString()} <span className="text-sm font-normal text-muted-foreground">{item.unit}</span>
-                          </p>
-                          <p className="text-sm text-muted-foreground">On Hand</p>
-                        </div>
-                        {(item.onOrderQuantity > 0 || item.inTransitQuantity > 0) && (
-                          <>
-                            {item.onOrderQuantity > 0 && (
-                              <div className="text-right border-l pl-4">
-                                <p className="text-lg font-semibold text-blue-600">
-                                  +{item.onOrderQuantity.toLocaleString()} <span className="text-sm font-normal">{item.unit}</span>
-                                </p>
-                                <p className="text-sm text-muted-foreground flex items-center gap-1">
-                                  <Clock className="h-3 w-3" /> On Order
-                                </p>
-                              </div>
-                            )}
-                            {item.inTransitQuantity > 0 && (
-                              <div className="text-right border-l pl-4">
-                                <p className="text-lg font-semibold text-green-600">
-                                  +{item.inTransitQuantity.toLocaleString()} <span className="text-sm font-normal">{item.unit}</span>
-                                </p>
-                                <p className="text-sm text-muted-foreground flex items-center gap-1">
-                                  <Truck className="h-3 w-3" /> In Transit
-                                </p>
-                              </div>
-                            )}
-                          </>
-                        )}
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); setSelectedItem(item); setShowShipmentDialog(true); }}>
-                            <Send className="h-4 w-4 mr-1" />
-                            Create Shipment
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); setSelectedItem(item); setShowProductionDialog(true); }}>
-                            <Factory className="h-4 w-4 mr-1" />
-                            Allocate
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); handleQcHold(item); }}>
-                            <Shield className="h-4 w-4 mr-1" />
-                            QC Hold
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {/* Expanded Details */}
-                  {expandedItems.has(item.id) && (
-                    <div className="border-t bg-muted/30 p-4">
-                      <div className="grid grid-cols-2 gap-6">
-                        {/* Location Breakdown */}
-                        <div className="space-y-3">
-                          {item.locations.map((loc, idx) => (
-                            <div key={idx} className="flex items-start gap-3 p-3 bg-background rounded-lg border">
-                              <div className="p-2 bg-muted rounded-lg">
-                                {getLocationIcon(loc.warehouseType)}
-                              </div>
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2">
-                                  <p className="font-medium">{loc.warehouseName}</p>
-                                  <Badge variant="outline" className="text-xs">{loc.warehouseType}</Badge>
-                                </div>
-                                <div className="mt-2 space-y-1 text-sm">
-                                  <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Available:</span>
-                                    <span className="font-medium text-green-600">{loc.available.toLocaleString()} {item.unit}</span>
-                                  </div>
-                                  {loc.onHold > 0 && (
-                                    <div className="flex justify-between">
-                                      <span className="text-muted-foreground">On Hold (QC):</span>
-                                      <span className="font-medium text-yellow-600">{loc.onHold.toLocaleString()} {item.unit}</span>
-                                    </div>
-                                  )}
-                                  {loc.reserved > 0 && (
-                                    <div className="flex justify-between">
-                                      <span className="text-muted-foreground">Reserved:</span>
-                                      <span className="font-medium text-blue-600">{loc.reserved.toLocaleString()} {item.unit}</span>
-                                    </div>
-                                  )}
-                                  {loc.allocated > 0 && (
-                                    <div className="flex justify-between">
-                                      <span className="text-muted-foreground">Allocated to Production:</span>
-                                      <span className="font-medium text-purple-600">{loc.allocated.toLocaleString()} {item.unit}</span>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* In Transit & On Order */}
-                        <div className="space-y-3">
-                          <p className="font-medium text-muted-foreground">Internal Transfers</p>
-                          {item.inTransit.length === 0 ? (
-                            <p className="text-sm text-muted-foreground">No internal transfers in transit</p>
-                          ) : (
-                            item.inTransit.map((transit, idx) => (
-                              <div key={idx} className="flex items-center gap-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
-                                <Truck className="h-5 w-5 text-blue-600" />
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-medium">{transit.quantity.toLocaleString()} {item.unit}</span>
-                                    <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                                    <span className="text-sm">{transit.from} → {transit.to}</span>
-                                  </div>
-                                  {transit.eta && (
-                                    <p className="text-sm text-muted-foreground flex items-center gap-1 mt-1">
-                                      <Clock className="h-3 w-3" />
-                                      ETA: {new Date(transit.eta).toLocaleDateString()}
-                                    </p>
-                                  )}
-                                </div>
-                                <Button size="sm" variant="outline" onClick={() => handleReceiveShipment(transit.shipmentId)}>
-                                  Receive
-                                </Button>
-                              </div>
-                            ))
-                          )}
-
-                          {/* Pending Purchase Orders */}
-                          {item.pendingPOs.length > 0 && (
-                            <>
-                              <p className="font-medium text-muted-foreground mt-4">Pending Purchase Orders</p>
-                              {item.pendingPOs.map((po, idx) => (
-                                <div
-                                  key={idx}
-                                  className={cn(
-                                    "flex items-center gap-3 p-3 rounded-lg border",
-                                    po.shipmentStatus === 'in_transit'
-                                      ? "bg-green-50 border-green-200"
-                                      : "bg-yellow-50 border-yellow-200"
-                                  )}
-                                >
-                                  {po.shipmentStatus === 'in_transit' ? (
-                                    <Truck className="h-5 w-5 text-green-600" />
-                                  ) : (
-                                    <Clock className="h-5 w-5 text-yellow-600" />
-                                  )}
-                                  <div className="flex-1">
-                                    <div className="flex items-center gap-2">
-                                      <span className="font-medium">{po.quantity.toLocaleString()} {item.unit}</span>
-                                      <Badge
-                                        variant="outline"
-                                        className={cn(
-                                          "text-xs",
-                                          po.shipmentStatus === 'in_transit'
-                                            ? "bg-green-100 text-green-700 border-green-300"
-                                            : "bg-yellow-100 text-yellow-700 border-yellow-300"
-                                        )}
-                                      >
-                                        {po.shipmentStatus === 'in_transit' ? 'In Transit' : 'On Order'}
-                                      </Badge>
-                                    </div>
-                                    <p className="text-sm text-muted-foreground mt-1">
-                                      PO: {po.poNumber}
-                                      {po.trackingNumber && (
-                                        <span className="ml-2">Tracking: {po.trackingNumber}</span>
-                                      )}
-                                    </p>
-                                    {po.expectedDate && (
-                                      <p className="text-sm text-muted-foreground flex items-center gap-1">
-                                        <Clock className="h-3 w-3" />
-                                        Expected: {new Date(po.expectedDate).toLocaleDateString()}
-                                      </p>
-                                    )}
-                                  </div>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      window.location.href = `/operations/po-receiving?poId=${po.poId}`;
-                                    }}
-                                  >
-                                    Receive
-                                  </Button>
-                                </div>
-                              ))}
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </Card>
-              ))
-            )}
-          </div>
-        </TabsContent>
-
-        {/* Inventory by Location View */}
-        <TabsContent value="by_location" className="mt-6">
-          <div className="space-y-4">
-            {/* Location Filter */}
-            <div className="flex items-center gap-4">
-              <Select 
-                value={selectedLocation?.toString() || "all"} 
-                onValueChange={(v) => setSelectedLocation(v === "all" ? null : parseInt(v))}
-              >
-                <SelectTrigger className="w-[250px]">
-                  <SelectValue placeholder="All Locations" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Locations</SelectItem>
-                  {warehouses?.map((w: any) => (
-                    <SelectItem key={w.id} value={w.id.toString()}>
-                      {w.name} ({w.type})
-                    </SelectItem>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </SelectContent>
-              </Select>
+                </TableBody>
+              </Table>
             </div>
-
-            {/* Location Cards */}
-            {inventoryByLocation.map((location: any) => (
-              <Card key={location.id}>
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-muted rounded-lg">
-                        {getLocationIcon(location.type)}
-                      </div>
-                      <div>
-                        <CardTitle className="text-lg">{location.name}</CardTitle>
-                        <CardDescription className="flex items-center gap-2">
-                          <Badge variant="outline">{location.type}</Badge>
-                          {location.city && <span>{location.city}, {location.country}</span>}
-                        </CardDescription>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-2xl font-bold">{location.totalItems}</p>
-                      <p className="text-sm text-muted-foreground">Total Items</p>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-2 gap-6">
-                    {/* Raw / Semi-Finished */}
-                    <div>
-                      <p className="font-medium text-muted-foreground mb-3">Raw / Semi-Finished</p>
-                      <div className="space-y-2">
-                        {location.rawMaterials.length === 0 ? (
-                          <p className="text-sm text-muted-foreground">No raw materials at this location</p>
-                        ) : (
-                          location.rawMaterials.slice(0, 5).map((mat: any) => (
-                            <div key={mat.id} className="flex items-center justify-between p-2 bg-muted/50 rounded-lg">
-                              <div className="flex items-center gap-2">
-                                <Layers className="h-4 w-4 text-blue-500" />
-                                <span className="font-medium">{mat.name}</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono">{mat.quantity.toLocaleString()} {mat.unit}</span>
-                                <Badge variant={mat.status === "available" ? "default" : "secondary"} className="text-xs">
-                                  {mat.status}
-                                </Badge>
-                              </div>
-                            </div>
-                          ))
-                        )}
-                        {location.rawMaterials.length > 5 && (
-                          <p className="text-sm text-muted-foreground text-center">
-                            +{location.rawMaterials.length - 5} more items
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Finished Goods */}
-                    <div>
-                      <p className="font-medium text-muted-foreground mb-3">Finished Goods</p>
-                      <div className="space-y-2">
-                        {location.finishedGoods.length === 0 ? (
-                          <p className="text-sm text-muted-foreground">No finished goods at this location</p>
-                        ) : (
-                          location.finishedGoods.slice(0, 5).map((item: any) => (
-                            <div key={item.id} className="flex items-center justify-between p-2 bg-muted/50 rounded-lg">
-                              <div className="flex items-center gap-2">
-                                <Package className="h-4 w-4 text-green-500" />
-                                <span className="font-medium">{item.name}</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono">{item.quantity.toLocaleString()} {item.unit}</span>
-                                <Badge variant={item.status === "available" ? "default" : "secondary"} className="text-xs">
-                                  {item.status}
-                                </Badge>
-                              </div>
-                            </div>
-                          ))
-                        )}
-                        {location.finishedGoods.length > 5 && (
-                          <p className="text-sm text-muted-foreground text-center">
-                            +{location.finishedGoods.length - 5} more items
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </TabsContent>
-      </Tabs>
-
-      {/* Production Orders Section (Always Visible) */}
-      {(activeView === "by_item" || activeView === "by_location") && pendingWorkOrders.length > 0 && (
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Factory className="h-5 w-5" />
-              Active Production Orders
-            </CardTitle>
-            <CardDescription>Work orders transforming inventory</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 gap-4">
-              {pendingWorkOrders.slice(0, 4).map((wo: any) => (
-                <div key={wo.id} className="p-4 border rounded-lg bg-muted/30">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline">WO-{wo.id}</Badge>
-                      <Badge variant={wo.status === "in_progress" ? "default" : "secondary"}>
-                        {wo.status}
-                      </Badge>
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      Yield: {wo.yieldPercent || "—"}%
-                    </p>
-                  </div>
-                  
-                  <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-center">
-                    {/* Inputs */}
-                    <div className="space-y-1">
-                      <p className="text-xs font-medium text-muted-foreground uppercase">Inputs</p>
-                      <p className="text-sm">
-                        {wo.bom?.name || "BOM"} × {wo.quantity}
-                      </p>
-                    </div>
-                    
-                    <ArrowRight className="h-5 w-5 text-muted-foreground" />
-                    
-                    {/* Outputs */}
-                    <div className="space-y-1">
-                      <p className="text-xs font-medium text-muted-foreground uppercase">Outputs</p>
-                      <p className="text-sm">
-                        {wo.product?.name || "Product"} × {wo.quantity}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-2 mt-4">
-                    {wo.status === "pending" && (
-                      <Button size="sm" onClick={() => updateWorkOrder.mutate({ id: wo.id, status: "in_progress" })}>
-                        <Play className="h-4 w-4 mr-1" />
-                        Start
-                      </Button>
-                    )}
-                    {wo.status === "in_progress" && (
-                      <Button size="sm" onClick={() => updateWorkOrder.mutate({ id: wo.id, status: "completed" })}>
-                        <CheckCircle className="h-4 w-4 mr-1" />
-                        Complete
-                      </Button>
-                    )}
-                    <Button size="sm" variant="outline" onClick={() => handleReportException(wo)}>
-                      <AlertTriangle className="h-4 w-4 mr-1" />
-                      Exception
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* In-Transit Shipments Section */}
-      {inTransitShipments.length > 0 && (
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Truck className="h-5 w-5" />
-              Shipments In Transit
-            </CardTitle>
-            <CardDescription>Inventory moving between locations</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {inTransitShipments.map((shipment: any) => {
-                const fromWarehouse = warehouses?.find((w: any) => w.id === shipment.fromWarehouseId);
-                const toWarehouse = warehouses?.find((w: any) => w.id === shipment.toWarehouseId);
-                const freightBooking = getFreightBookingForTransfer(shipment);
-
-                return (
-                  <div
-                    key={shipment.id}
-                    className="p-4 border rounded-lg bg-blue-50/50 border-blue-200 hover:bg-blue-100/50 cursor-pointer transition-colors"
-                    onClick={() => handleViewTransferDetails(shipment)}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <div className="p-2 bg-blue-100 rounded-lg">
-                          {freightBooking?.quote?.shippingMode === "ocean" ? <Ship className="h-5 w-5 text-blue-600" /> :
-                           freightBooking?.quote?.shippingMode === "air" ? <Plane className="h-5 w-5 text-blue-600" /> :
-                           <Truck className="h-5 w-5 text-blue-600" />}
-                        </div>
-                        <div>
-                          <p className="font-medium">Shipment #{shipment.transferNumber}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {fromWarehouse?.name || "Unknown"} → {toWarehouse?.name || "Unknown"}
-                          </p>
-                          <div className="flex items-center gap-2 mt-1">
-                            {shipment.items?.slice(0, 2).map((item: any, idx: number) => (
-                              <Badge key={idx} variant="outline" className="text-xs">
-                                {item.product?.name || "Item"}: {item.shippedQuantity || item.requestedQuantity}
-                              </Badge>
-                            ))}
-                            {shipment.items?.length > 2 && (
-                              <Badge variant="secondary" className="text-xs">+{shipment.items.length - 2} more</Badge>
-                            )}
-                          </div>
-                          {freightBooking && (
-                            <div className="flex items-center gap-2 mt-1">
-                              <Badge variant="outline" className="text-xs bg-blue-100">
-                                {freightBooking.carrier?.name || "Carrier"}
-                              </Badge>
-                              {freightBooking.trackingNumber && (
-                                <Badge variant="secondary" className="text-xs">
-                                  Tracking: {freightBooking.trackingNumber}
-                                </Badge>
-                              )}
-                              <Badge className={cn(
-                                "text-xs",
-                                freightBooking.status === "in_transit" ? "bg-purple-500" :
-                                freightBooking.status === "delivered" ? "bg-green-500" :
-                                "bg-gray-500"
-                              )}>
-                                {freightBooking.status?.replace(/_/g, " ")}
-                              </Badge>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        {shipment.expectedArrival && (
-                          <div className="text-right">
-                            <p className="text-sm text-muted-foreground">ETA</p>
-                            <p className="font-medium">{new Date(shipment.expectedArrival).toLocaleDateString()}</p>
-                          </div>
-                        )}
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={(e) => { e.stopPropagation(); handleViewTransferDetails(shipment); }}
-                        >
-                          <ExternalLink className="h-4 w-4 mr-1" />
-                          Details
-                        </Button>
-                        <Button onClick={(e) => { e.stopPropagation(); handleReceiveShipment(shipment.id); }} disabled={receiveTransfer.isPending}>
-                          {receiveTransfer.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                          <CheckCircle className="h-4 w-4 mr-2" />
-                          RECEIVE
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
 
       {/* Shipment Dialog */}
       <Dialog open={showShipmentDialog} onOpenChange={setShowShipmentDialog}>
@@ -1535,7 +839,7 @@ export default function InventoryHub() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <p className="text-sm text-muted-foreground">
-              Create a shipment for {selectedItem?.product?.name || selectedItem?.rawMaterial?.name}
+              Create a shipment for {selectedItem?.productName}
             </p>
             <div className="space-y-3">
               <div>
@@ -1545,9 +849,9 @@ export default function InventoryHub() {
                     <SelectValue placeholder="Select source location" />
                   </SelectTrigger>
                   <SelectContent>
-                    {selectedItem?.locations?.map((loc: any) => (
-                      <SelectItem key={loc.warehouseId} value={loc.warehouseId.toString()}>
-                        {loc.warehouseName} ({loc.available.toLocaleString()} available)
+                    {warehouses?.map((w: any) => (
+                      <SelectItem key={w.id} value={w.id.toString()}>
+                        {w.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1591,7 +895,7 @@ export default function InventoryHub() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <p className="text-sm text-muted-foreground">
-              Allocate {selectedItem?.product?.name || selectedItem?.rawMaterial?.name} to a work order
+              Allocate {selectedItem?.productName} to a work order
             </p>
             <div className="space-y-3">
               <div>
@@ -1601,9 +905,9 @@ export default function InventoryHub() {
                     <SelectValue placeholder="Select work order" />
                   </SelectTrigger>
                   <SelectContent>
-                    {pendingWorkOrders.map((wo: any) => (
+                    {workOrders?.filter((wo: any) => wo.status === "pending" || wo.status === "in_progress").map((wo: any) => (
                       <SelectItem key={wo.id} value={wo.id.toString()}>
-                        WO-{wo.id}: {wo.product?.name} × {wo.quantity}
+                        WO-{wo.id}: {wo.product?.name} x {wo.quantity}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1624,7 +928,7 @@ export default function InventoryHub() {
         </DialogContent>
       </Dialog>
 
-      {/* Quick Create Dialogs */}
+      {/* Quick Create Dialog */}
       <QuickCreateDialog
         entityType="inventory"
         open={showNewInventoryDialog}
@@ -1634,132 +938,6 @@ export default function InventoryHub() {
           setShowNewInventoryDialog(false);
         }}
       />
-      <QuickCreateDialog
-        entityType="location"
-        open={showNewLocationDialog}
-        onOpenChange={setShowNewLocationDialog}
-        onCreated={() => {
-          utils.warehouses.invalidate();
-          setShowNewLocationDialog(false);
-        }}
-      />
-
-      {/* Work Order Detail Dialog */}
-      <Dialog open={showWorkOrderDialog} onOpenChange={setShowWorkOrderDialog}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Factory className="h-5 w-5" />
-              Work Order Details
-            </DialogTitle>
-            <DialogDescription>
-              {selectedWorkOrder?.workOrderNumber || `WO-${selectedWorkOrder?.id}`}
-            </DialogDescription>
-          </DialogHeader>
-          {selectedWorkOrder && (
-            <div className="space-y-4">
-              {/* Status and Basic Info */}
-              <div className="flex items-center justify-between">
-                <Badge className={cn(
-                  selectedWorkOrder.status === "completed" ? "bg-green-500" :
-                  selectedWorkOrder.status === "in_progress" ? "bg-blue-500" :
-                  selectedWorkOrder.status === "cancelled" ? "bg-red-500" :
-                  "bg-yellow-500"
-                )}>
-                  {selectedWorkOrder.status}
-                </Badge>
-                <span className="text-sm text-muted-foreground">
-                  Created: {new Date(selectedWorkOrder.createdAt).toLocaleDateString()}
-                </span>
-              </div>
-
-              {/* Product Information */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-muted/50 rounded-lg p-3">
-                  <p className="text-xs text-muted-foreground">Product</p>
-                  <p className="font-medium">{selectedWorkOrder.product?.name || selectedWorkOrder.bom?.product?.name || "Unknown"}</p>
-                </div>
-                <div className="bg-muted/50 rounded-lg p-3">
-                  <p className="text-xs text-muted-foreground">Quantity</p>
-                  <p className="font-medium">{selectedWorkOrder.quantity} {selectedWorkOrder.unit || "EA"}</p>
-                </div>
-                <div className="bg-muted/50 rounded-lg p-3">
-                  <p className="text-xs text-muted-foreground">Start Date</p>
-                  <p className="font-medium">{selectedWorkOrder.startDate ? new Date(selectedWorkOrder.startDate).toLocaleDateString() : "Not started"}</p>
-                </div>
-                <div className="bg-muted/50 rounded-lg p-3">
-                  <p className="text-xs text-muted-foreground">Due Date</p>
-                  <p className="font-medium">{selectedWorkOrder.dueDate ? new Date(selectedWorkOrder.dueDate).toLocaleDateString() : "Not set"}</p>
-                </div>
-              </div>
-
-              {/* Progress */}
-              {selectedWorkOrder.completedQuantity > 0 && (
-                <div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span>Progress</span>
-                    <span>{Math.round((selectedWorkOrder.completedQuantity / selectedWorkOrder.quantity) * 100)}%</span>
-                  </div>
-                  <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-green-500 rounded-full transition-all"
-                      style={{ width: `${(selectedWorkOrder.completedQuantity / selectedWorkOrder.quantity) * 100}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* BOM Components */}
-              {selectedWorkOrder.bom?.components && selectedWorkOrder.bom.components.length > 0 && (
-                <div>
-                  <h4 className="font-medium mb-2">Bill of Materials</h4>
-                  <div className="border rounded-lg overflow-hidden">
-                    <table className="w-full text-sm">
-                      <thead className="bg-muted">
-                        <tr>
-                          <th className="text-left p-2">Component</th>
-                          <th className="text-right p-2">Required Qty</th>
-                          <th className="text-right p-2">Unit</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedWorkOrder.bom.components.map((comp: any, idx: number) => (
-                          <tr key={idx} className="border-t">
-                            <td className="p-2">{comp.rawMaterial?.name || comp.name || "Component"}</td>
-                            <td className="text-right p-2">{comp.quantity}</td>
-                            <td className="text-right p-2">{comp.unit || "LB"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Notes */}
-              {selectedWorkOrder.notes && (
-                <div>
-                  <h4 className="font-medium mb-1">Notes</h4>
-                  <p className="text-sm text-muted-foreground bg-muted/30 p-2 rounded">{selectedWorkOrder.notes}</p>
-                </div>
-              )}
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowWorkOrderDialog(false)}>Close</Button>
-            {selectedWorkOrder?.status === "pending" && (
-              <Button onClick={() => { updateWorkOrder.mutate({ id: selectedWorkOrder.id, status: "in_progress" }); setShowWorkOrderDialog(false); }}>
-                <Play className="h-4 w-4 mr-1" /> Start Production
-              </Button>
-            )}
-            {selectedWorkOrder?.status === "in_progress" && (
-              <Button onClick={() => { updateWorkOrder.mutate({ id: selectedWorkOrder.id, status: "completed" }); setShowWorkOrderDialog(false); }}>
-                <CheckCircle className="h-4 w-4 mr-1" /> Complete
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* QC Hold Dialog */}
       <Dialog open={showQcHoldDialog} onOpenChange={setShowQcHoldDialog}>
@@ -1770,7 +948,7 @@ export default function InventoryHub() {
               Place on QC Hold
             </DialogTitle>
             <DialogDescription>
-              Place {selectedItem?.product?.name || selectedItem?.rawMaterial?.name || "item"} on quality control hold
+              Place {selectedItem?.productName || "item"} on quality control hold
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -1800,213 +978,6 @@ export default function InventoryHub() {
               <Shield className="h-4 w-4 mr-1" />
               Place on Hold
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Exception Reporting Dialog */}
-      <Dialog open={showExceptionDialog} onOpenChange={setShowExceptionDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-orange-500" />
-              Report Exception
-            </DialogTitle>
-            <DialogDescription>
-              Report an issue with {selectedWorkOrderForException?.workOrderNumber || `WO-${selectedWorkOrderForException?.id}`}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label>Exception Type *</Label>
-              <Select value={exceptionType} onValueChange={setExceptionType}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="yield_variance">Yield Variance</SelectItem>
-                  <SelectItem value="blocked_production">Blocked Production</SelectItem>
-                  <SelectItem value="qc_hold">Quality Issue</SelectItem>
-                  <SelectItem value="equipment_failure">Equipment Failure</SelectItem>
-                  <SelectItem value="material_shortage">Material Shortage</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Description *</Label>
-              <Textarea
-                value={exceptionDescription}
-                onChange={(e) => setExceptionDescription(e.target.value)}
-                placeholder="Describe the issue in detail..."
-                rows={4}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowExceptionDialog(false)}>Cancel</Button>
-            <Button
-              onClick={submitException}
-              disabled={createAlert.isPending}
-              className="bg-orange-500 hover:bg-orange-600"
-            >
-              {createAlert.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              <AlertTriangle className="h-4 w-4 mr-1" />
-              Report Exception
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Transfer Detail Dialog */}
-      <Dialog open={showTransferDetailDialog} onOpenChange={setShowTransferDetailDialog}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Truck className="h-5 w-5" />
-              Transfer Details
-            </DialogTitle>
-            <DialogDescription>
-              {selectedTransfer?.transferNumber}
-            </DialogDescription>
-          </DialogHeader>
-          {selectedTransfer && (() => {
-            const fromWarehouse = warehouses?.find((w: any) => w.id === selectedTransfer.fromWarehouseId);
-            const toWarehouse = warehouses?.find((w: any) => w.id === selectedTransfer.toWarehouseId);
-            const freightBooking = getFreightBookingForTransfer(selectedTransfer);
-            return (
-              <div className="space-y-4">
-                {/* Transfer Status */}
-                <div className="flex items-center justify-between">
-                  <Badge className={cn(
-                    selectedTransfer.status === "completed" ? "bg-green-500" :
-                    selectedTransfer.status === "in_transit" ? "bg-blue-500" :
-                    "bg-yellow-500"
-                  )}>
-                    {selectedTransfer.status?.replace(/_/g, " ")}
-                  </Badge>
-                  {selectedTransfer.expectedArrival && (
-                    <span className="text-sm text-muted-foreground">
-                      ETA: {new Date(selectedTransfer.expectedArrival).toLocaleDateString()}
-                    </span>
-                  )}
-                </div>
-
-                {/* Route Information */}
-                <div className="bg-muted/50 rounded-lg p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="text-center">
-                      <p className="text-xs text-muted-foreground">From</p>
-                      <p className="font-medium">{fromWarehouse?.name || "Unknown"}</p>
-                      <Badge variant="outline" className="mt-1 text-xs">{fromWarehouse?.type}</Badge>
-                    </div>
-                    <ArrowRight className="h-6 w-6 text-muted-foreground" />
-                    <div className="text-center">
-                      <p className="text-xs text-muted-foreground">To</p>
-                      <p className="font-medium">{toWarehouse?.name || "Unknown"}</p>
-                      <Badge variant="outline" className="mt-1 text-xs">{toWarehouse?.type}</Badge>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Freight Information */}
-                {freightBooking && (
-                  <div className="border rounded-lg p-4">
-                    <h4 className="font-medium mb-3 flex items-center gap-2">
-                       {freightBooking.quote?.shippingMode === "ocean" ? <Ship className="h-4 w-4" /> :
-                        freightBooking.quote?.shippingMode === "air" ? <Plane className="h-4 w-4" /> :
-                        <Truck className="h-4 w-4" />}
-                      Freight Information
-                    </h4>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="bg-muted/30 rounded p-2">
-                        <p className="text-xs text-muted-foreground">Carrier</p>
-                        <p className="font-medium">{freightBooking.carrier?.name || "TBD"}</p>
-                      </div>
-                      <div className="bg-muted/30 rounded p-2">
-                        <p className="text-xs text-muted-foreground">Mode</p>
-                        <p className="font-medium capitalize">{freightBooking.quote?.shippingMode || "Ground"}</p>
-                      </div>
-                      {freightBooking.trackingNumber && (
-                        <div className="bg-muted/30 rounded p-2">
-                          <p className="text-xs text-muted-foreground">Tracking Number</p>
-                          <p className="font-medium font-mono">{freightBooking.trackingNumber}</p>
-                        </div>
-                      )}
-                      <div className="bg-muted/30 rounded p-2">
-                        <p className="text-xs text-muted-foreground">Freight Status</p>
-                        <Badge className={cn(
-                          "mt-1",
-                          freightBooking.status === "in_transit" ? "bg-purple-500" :
-                          freightBooking.status === "delivered" ? "bg-green-500" :
-                          "bg-gray-500"
-                        )}>
-                          {freightBooking.status?.replace(/_/g, " ")}
-                        </Badge>
-                      </div>
-                    </div>
-                    <div className="mt-3">
-                      <Link href={`/freight/bookings/${freightBooking.id}`}>
-                        <Button variant="outline" size="sm" className="w-full">
-                          <ExternalLink className="h-4 w-4 mr-1" />
-                          View Full Freight Details
-                        </Button>
-                      </Link>
-                    </div>
-                  </div>
-                )}
-
-                {/* Transfer Items */}
-                {selectedTransfer.items && selectedTransfer.items.length > 0 && (
-                  <div>
-                    <h4 className="font-medium mb-2">Transfer Items</h4>
-                    <div className="border rounded-lg overflow-hidden">
-                      <table className="w-full text-sm">
-                        <thead className="bg-muted">
-                          <tr>
-                            <th className="text-left p-2">Item</th>
-                            <th className="text-right p-2">Requested</th>
-                            <th className="text-right p-2">Shipped</th>
-                            <th className="text-right p-2">Received</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {selectedTransfer.items.map((item: any, idx: number) => (
-                            <tr key={idx} className="border-t">
-                              <td className="p-2">{item.product?.name || "Item"}</td>
-                              <td className="text-right p-2">{item.requestedQuantity}</td>
-                              <td className="text-right p-2">{item.shippedQuantity || "-"}</td>
-                              <td className="text-right p-2">{item.receivedQuantity || "-"}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-
-                {/* Notes */}
-                {selectedTransfer.notes && (
-                  <div>
-                    <h4 className="font-medium mb-1">Notes</h4>
-                    <p className="text-sm text-muted-foreground bg-muted/30 p-2 rounded">{selectedTransfer.notes}</p>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowTransferDetailDialog(false)}>Close</Button>
-            {selectedTransfer?.status === "in_transit" && (
-              <Button
-                onClick={() => { handleReceiveShipment(selectedTransfer.id); setShowTransferDetailDialog(false); }}
-                disabled={receiveTransfer.isPending}
-                className="bg-green-600 hover:bg-green-700"
-              >
-                {receiveTransfer.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                <CheckCircle className="h-4 w-4 mr-1" />
-                Receive Shipment
-              </Button>
-            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
