@@ -39,6 +39,7 @@ import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, create
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType, downloadDriveFile } from "./_core/googleDrive";
 import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems } from "./_core/quickbooks";
 import { listAllTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
+import { queueFirefliesActionItemsForApproval } from "./firefliesSyncService";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
 import type { InsertDataRoomDriveSyncConfig } from "../drizzle/schema";
 import { collectERPData, autoPopulateFields, generateApplicationNarrative, reviewApplication, generateApplicationDocument, DEFAULT_SECTIONS, searchOpportunities, evaluateOpportunityFit, analyzeWebFormFields, generateAutoFillScript, generateCopyPasteGuide, generateApiPayload } from "./grantBidService";
@@ -545,8 +546,29 @@ export const appRouter = router({
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, "-")
             .replace(/(^-|-$)/g, "") || "product";
+          const companyPrefixes = [
+            "Shenzhen",
+            "Guangzhou",
+            "Ningbo",
+            "Dongguan",
+            "Wenzhou",
+            "Yiwu",
+            "Qingdao",
+            "Foshan",
+          ];
+          const companyTypes = [
+            "Industrial",
+            "Trading",
+            "Technology",
+            "Manufacturing",
+            "Supply Chain",
+            "Commerce",
+            "Export",
+            "Materials",
+          ];
+          const firstWord = query.split(" ")[0] || "Global";
           return {
-            companyName: `Shenzhen ${query.split(" ")[0] || "Global"} Sourcing Co., Ltd.`,
+            companyName: `${companyPrefixes[i]} ${firstWord} ${companyTypes[i]} Co., Ltd.`,
             productName: `${query} - Model ${String.fromCharCode(65 + i)}`,
             priceRange: `$${priceFloor} - $${priceCeil}`,
             minOrder: `${moq} Pieces`,
@@ -18384,7 +18406,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       let skipped = 0;
       let dealsCreated = 0;
       let contactsCreated = 0;
-      let actionItemNotifications = 0;
+      let tasksSuggested = 0;
       for (const t of transcripts) {
         const existing = await db.getFirefliesMeetingByFirefliesId(t.id);
         if (existing) {
@@ -18472,23 +18494,19 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             }
           }
 
-          // Auto-create notifications from action items
-          for (const item of actionItems) {
-            try {
-              await db.createNotification({
-                userId: ctx.user.id,
-                type: "reminder",
-                title: `Meeting Action Item: ${typeof item === "string" ? item.substring(0, 100) : String(item).substring(0, 100)}`,
-                message: `From meeting: ${fullTranscript?.title || t.title || "Unknown"}`,
-              });
-              actionItemNotifications++;
-            } catch { /* skip failed notification */ }
-          }
+          const suggested = await queueFirefliesActionItemsForApproval({
+            userId: ctx.user.id,
+            meetingTitle: fullTranscript?.title || t.title || "Unknown meeting",
+            firefliesId: t.id,
+            actionItems: parseActionItems(actionItems),
+            participants,
+          });
+          tasksSuggested += suggested;
         } catch (e) {
           console.warn("[CRM Auto-Deal] Failed to create deal from meeting:", e);
         }
       }
-      return { synced, skipped, dealsCreated, contactsCreated, actionItemNotifications };
+      return { synced, skipped, dealsCreated, contactsCreated, tasksSuggested };
     }),
     processMeeting: protectedProcedure
       .input(z.object({
@@ -18538,18 +18556,19 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           projectId = project.id;
         }
 
-        // Create tasks from action items
+        // Queue tasks from action items for approval
         if (input.createTasks && meeting.actionItems) {
-          for (const item of (meeting.actionItems ? JSON.parse(meeting.actionItems) : []) as Array<{ text: string }>) {
-            if (projectId) {
-              await db.createProjectTask({
-                projectId,
-                name: item.text,
-                status: 'todo',
-              } as any);
-              tasksCreated++;
-            }
-          }
+          const parsedParticipants: Array<{ name: string; email: string }> =
+            typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
+            Array.isArray(meeting.participants) ? meeting.participants : [];
+          tasksCreated += await queueFirefliesActionItemsForApproval({
+            userId: ctx.user.id,
+            meetingId: meeting.id,
+            meetingTitle: meeting.title || 'Untitled meeting',
+            actionItems: (meeting.actionItems ? JSON.parse(meeting.actionItems) : []) as Array<{ text: string; assignee?: string; dueDate?: string }>,
+            participants: parsedParticipants,
+            preferredProjectId: projectId,
+          });
         }
 
         const status: 'fully_processed' | 'contacts_created' | 'tasks_created' | 'pending' =
@@ -18618,16 +18637,17 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             projectId = project.id;
             projectsCreated++;
           }
-          for (const item of items) {
-            if (projectId) {
-              await db.createProjectTask({
-                projectId,
-                name: item.text,
-                status: 'todo',
-              } as any);
-              tasksCreated++;
-            }
-          }
+          const parsedParticipants: Array<{ name: string; email: string }> =
+            typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
+            Array.isArray(meeting.participants) ? meeting.participants : [];
+          tasksCreated += await queueFirefliesActionItemsForApproval({
+            userId: ctx.user.id,
+            meetingId: meeting.id,
+            meetingTitle: meeting.title || 'Untitled meeting',
+            actionItems: items as Array<{ text: string; assignee?: string; dueDate?: string }>,
+            participants: parsedParticipants,
+            preferredProjectId: projectId,
+          });
         }
         await db.updateFirefliesMeeting(meeting.id, { processingStatus: 'fully_processed' });
         processed++;

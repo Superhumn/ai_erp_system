@@ -17,8 +17,10 @@ import {
   getTranscript,
   extractParticipants,
   parseActionItems,
+  type FirefliesActionItem,
 } from "./_core/fireflies";
 import * as db from "./db";
+import { invokeLLM } from "./_core/llm";
 
 export interface FirefliesSyncResult {
   totalSynced: number;
@@ -26,7 +28,142 @@ export interface FirefliesSyncResult {
   contactsCreated: number;
   dealsCreated: number;
   notificationsCreated: number;
+  tasksSuggested: number;
   errors: string[];
+}
+
+const ALLOWED_TASK_DOMAINS = new Set(["fundraising", "sales", "legal"]);
+
+function classifyTaskDomain(text: string): "fundraising" | "sales" | "legal" | null {
+  const t = text.toLowerCase();
+  if (/\b(fundrais|investor|pitch|seed|series a|series b|term sheet|cap table|runway|valuation)\b/.test(t)) return "fundraising";
+  if (/\b(sales|lead|prospect|demo|pipeline|quote|proposal|renewal|close|customer)\b/.test(t)) return "sales";
+  if (/\b(legal|contract|nda|msa|dpa|compliance|policy|terms|counsel|regulatory)\b/.test(t)) return "legal";
+  return null;
+}
+
+async function routeTaskProjectAndAssignee(params: {
+  taskText: string;
+  domain: "fundraising" | "sales" | "legal";
+  meetingTitle: string;
+  participants: Array<{ name: string; email: string }>;
+  preferredProjectId?: number;
+  preferredAssigneeHint?: string;
+}) {
+  const projects = await db.getProjects();
+  const teamMembers = await db.getTeamMembers();
+  const projectIndex = new Map((projects || []).map((p: any) => [p.id, p]));
+  const userIndex = new Map((teamMembers || []).map((u: any) => [u.id, u]));
+
+  if (params.preferredProjectId && projectIndex.has(params.preferredProjectId)) {
+    const assigneeId = (teamMembers || []).find((u: any) => {
+      const hint = (params.preferredAssigneeHint || "").toLowerCase();
+      if (!hint) return false;
+      return (u.name || "").toLowerCase().includes(hint) || (u.email || "").toLowerCase().includes(hint);
+    })?.id ?? null;
+    return { projectId: params.preferredProjectId, assigneeId };
+  }
+
+  const domainProject = (projects || []).find((p: any) =>
+    `${p.name || ""} ${p.description || ""}`.toLowerCase().includes(params.domain)
+  );
+  if (domainProject) return { projectId: domainProject.id, assigneeId: null as number | null };
+
+  if (!projects?.length) return { projectId: null as number | null, assigneeId: null as number | null };
+
+  try {
+    const response = await invokeLLM({
+      messages: [
+        { role: "system", content: "Route this action item to a project and optional assignee. Return JSON only: {\"projectId\":number|null,\"assigneeId\":number|null}." },
+        {
+          role: "user",
+          content: JSON.stringify({
+            taskText: params.taskText,
+            domain: params.domain,
+            meetingTitle: params.meetingTitle,
+            participants: params.participants,
+            assigneeHint: params.preferredAssigneeHint || null,
+            projects: (projects || []).map((p: any) => ({ id: p.id, name: p.name, description: p.description })),
+            assignees: (teamMembers || []).map((u: any) => ({ id: u.id, name: u.name, email: u.email })),
+          }),
+        },
+      ],
+    });
+    const text = typeof response.choices?.[0]?.message?.content === "string" ? response.choices[0].message.content : "";
+    const parsed = JSON.parse(text.replace(/```json\n?|\n?```/g, "").trim() || "{}");
+    const projectId = typeof parsed.projectId === "number" && projectIndex.has(parsed.projectId) ? parsed.projectId : null;
+    const assigneeId = typeof parsed.assigneeId === "number" && userIndex.has(parsed.assigneeId) ? parsed.assigneeId : null;
+    return { projectId, assigneeId };
+  } catch {
+    return { projectId: null as number | null, assigneeId: null as number | null };
+  }
+}
+
+export async function queueFirefliesActionItemsForApproval(params: {
+  userId: number;
+  meetingId?: number;
+  meetingTitle: string;
+  firefliesId?: string;
+  actionItems: FirefliesActionItem[];
+  participants: Array<{ name: string; email: string }>;
+  preferredProjectId?: number;
+}): Promise<number> {
+  let created = 0;
+  for (const item of params.actionItems) {
+    const taskText = item.text?.trim();
+    if (!taskText) continue;
+    const domain = classifyTaskDomain(taskText);
+    if (!domain || !ALLOWED_TASK_DOMAINS.has(domain)) continue;
+
+    const routing = await routeTaskProjectAndAssignee({
+      taskText,
+      domain,
+      meetingTitle: params.meetingTitle,
+      participants: params.participants,
+      preferredProjectId: params.preferredProjectId,
+      preferredAssigneeHint: item.assignee,
+    });
+    if (!routing.projectId) continue;
+
+    const taskPayload = {
+      action: "create_project_task",
+      projectId: routing.projectId,
+      name: taskText,
+      description: `From Fireflies meeting: ${params.meetingTitle}`,
+      assigneeId: routing.assigneeId,
+      dueDate: item.dueDate || null,
+      priority: "medium",
+      source: "fireflies",
+      sourceMeeting: {
+        firefliesId: params.firefliesId || null,
+        meetingId: params.meetingId || null,
+        title: params.meetingTitle,
+      },
+      domain,
+    };
+
+    const suggested = await db.createAiAgentTask({
+      taskType: "query" as any,
+      priority: "medium",
+      status: "pending_approval",
+      taskData: JSON.stringify(taskPayload),
+      aiReasoning: `Suggested ${domain} task extracted from Fireflies action item`,
+      aiConfidence: "75.00",
+      relatedEntityType: "project",
+      relatedEntityId: routing.projectId,
+      requiresApproval: true,
+    } as any);
+
+    await db.createAiAgentLog({
+      taskId: suggested.id,
+      action: "fireflies_task_suggested",
+      status: "info",
+      message: `Fireflies task queued for approval: ${taskText.substring(0, 120)}`,
+      details: JSON.stringify(taskPayload),
+    } as any);
+    created++;
+  }
+  return created;
 }
 
 /**
@@ -42,6 +179,7 @@ export async function syncFirefliesMeetingsForUser(
     contactsCreated: 0,
     dealsCreated: 0,
     notificationsCreated: 0,
+    tasksSuggested: 0,
     errors: [],
   };
 
@@ -156,20 +294,14 @@ export async function syncFirefliesMeetingsForUser(
           }
         }
 
-        // Auto-create notifications from action items
-        for (const item of actionItems) {
-          try {
-            await db.createNotification({
-              userId,
-              type: "reminder",
-              title: `Meeting Action Item: ${typeof item === "string" ? item.substring(0, 100) : String(item).substring(0, 100)}`,
-              message: `From meeting: ${fullTranscript?.title || t.title || "Unknown"}`,
-            });
-            result.notificationsCreated++;
-          } catch {
-            /* skip failed notification */
-          }
-        }
+        const suggested = await queueFirefliesActionItemsForApproval({
+          userId,
+          meetingTitle: fullTranscript?.title || t.title || "Unknown meeting",
+          firefliesId: t.id,
+          actionItems: parseActionItems(actionItems),
+          participants,
+        });
+        result.tasksSuggested += suggested;
       } catch (meetingErr) {
         result.errors.push(
           `Failed to sync meeting ${t.id}: ${meetingErr instanceof Error ? meetingErr.message : String(meetingErr)}`
@@ -196,6 +328,7 @@ export async function syncAllFirefliesMeetings(): Promise<FirefliesSyncResult> {
     contactsCreated: 0,
     dealsCreated: 0,
     notificationsCreated: 0,
+    tasksSuggested: 0,
     errors: [],
   };
 
@@ -214,6 +347,7 @@ export async function syncAllFirefliesMeetings(): Promise<FirefliesSyncResult> {
         aggregate.contactsCreated += result.contactsCreated;
         aggregate.dealsCreated += result.dealsCreated;
         aggregate.notificationsCreated += result.notificationsCreated;
+        aggregate.tasksSuggested += result.tasksSuggested;
         aggregate.errors.push(...result.errors);
       } catch (userErr) {
         aggregate.errors.push(

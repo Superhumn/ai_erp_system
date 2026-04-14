@@ -282,12 +282,13 @@ export default function Meetings() {
                 onChange={(e) => setDateTo(e.target.value)}
               />
             </div>
-            {(search || statusFilter !== "all" || dateFrom || dateTo) && (
+            {(search || listView !== "all" || statusFilter !== "all" || dateFrom || dateTo) && (
               <Button
                 variant="ghost"
                 className="w-full"
                 onClick={() => {
                   setSearch("");
+                  setListView("all");
                   setStatusFilter("all");
                   setDateFrom("");
                   setDateTo("");

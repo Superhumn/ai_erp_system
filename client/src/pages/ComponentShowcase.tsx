@@ -230,7 +230,7 @@ export default function ComponentsShowcase() {
     <div className="min-h-screen bg-background text-foreground">
       <main className="container max-w-6xl mx-auto">
         <div className="space-y-2 justify-between flex">
-          <h2 className="text-[1.875rem] font-semibold tracking-[-0.025em] mb-6">
+          <h2 className="text-lg font-semibold mb-6">
             Shadcn/ui Component Library
           </h2>
           <Button variant="outline" size="icon" onClick={toggleTheme}>
