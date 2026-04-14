@@ -1,6 +1,7 @@
 import { z } from "zod";
 import * as db from "../db";
 import * as manufacturingDb from "../db/manufacturing";
+import * as ingredientQuoteService from "../ingredientQuoteService";
 import { router, protectedProcedure, createAuditLog } from "./middleware";
 
 export const manufacturingRouter = router({
@@ -450,6 +451,150 @@ export const manufacturingRouter = router({
     costHistory: protectedProcedure
       .input(z.object({ id: z.number() }))
       .query(async ({ input }) => manufacturingDb.getIngredientCostHistory(input.id)),
+
+    // ── Ingredient Quoting ──────────────────────────────────────────
+    quoting: router({
+      // Ingredient vendor management
+      vendors: router({
+        list: protectedProcedure
+          .input(z.object({ ingredientId: z.number() }))
+          .query(async ({ input }) => manufacturingDb.getIngredientVendors(input.ingredientId)),
+        add: protectedProcedure
+          .input(z.object({
+            ingredientId: z.number(),
+            vendorId: z.number(),
+            isPrimary: z.boolean().optional(),
+            unitPrice: z.string().optional(),
+            costUnit: z.enum(["per_lb", "per_kg", "per_oz", "per_each"]).optional(),
+            contractStartDate: z.date().optional(),
+            contractEndDate: z.date().optional(),
+            minimumOrderQty: z.string().optional(),
+            leadTimeDays: z.number().optional(),
+            paymentTerms: z.string().optional(),
+            notes: z.string().optional(),
+          }))
+          .mutation(async ({ input }) => manufacturingDb.createIngredientVendor(input)),
+        update: protectedProcedure
+          .input(z.object({
+            id: z.number(),
+            unitPrice: z.string().optional(),
+            costUnit: z.enum(["per_lb", "per_kg", "per_oz", "per_each"]).optional(),
+            contractStartDate: z.date().optional(),
+            contractEndDate: z.date().optional(),
+            minimumOrderQty: z.string().optional(),
+            leadTimeDays: z.number().optional(),
+            paymentTerms: z.string().optional(),
+            status: z.enum(["active", "inactive", "pending_quote"]).optional(),
+            notes: z.string().optional(),
+          }))
+          .mutation(async ({ input }) => {
+            const { id, ...data } = input;
+            await manufacturingDb.updateIngredientVendor(id, data);
+            return { success: true };
+          }),
+        remove: protectedProcedure
+          .input(z.object({ id: z.number() }))
+          .mutation(async ({ input }) => {
+            await manufacturingDb.deleteIngredientVendor(input.id);
+            return { success: true };
+          }),
+        setPrimary: protectedProcedure
+          .input(z.object({ ingredientId: z.number(), vendorId: z.number() }))
+          .mutation(async ({ input }) => {
+            await manufacturingDb.setPrimaryVendor(input.ingredientId, input.vendorId);
+            return { success: true };
+          }),
+      }),
+
+      // Quote request lifecycle
+      requests: router({
+        list: protectedProcedure
+          .input(z.object({
+            ingredientId: z.number().optional(),
+            status: z.string().optional(),
+            triggerType: z.string().optional(),
+          }).optional())
+          .query(async ({ input }) => manufacturingDb.getIngredientQuoteRequests(input)),
+        get: protectedProcedure
+          .input(z.object({ id: z.number() }))
+          .query(async ({ input }) => manufacturingDb.getIngredientQuoteRequestById(input.id)),
+        create: protectedProcedure
+          .input(z.object({
+            ingredientId: z.number(),
+            targetVendorIds: z.array(z.number()).optional(),
+          }))
+          .mutation(async ({ input }) => {
+            const stats = await manufacturingDb.getIngredientCostStats(input.ingredientId);
+            const vendorIds = input.targetVendorIds || (await manufacturingDb.getIngredientVendors(input.ingredientId)).map(v => v.vendorId);
+            const qr = await manufacturingDb.createIngredientQuoteRequest({
+              ingredientId: input.ingredientId,
+              triggerType: "manual",
+              currentCostPerUnit: stats?.currentCost.toFixed(4),
+              historicalAvgCost: stats?.historicalAvg.toFixed(4),
+              targetVendorIds: JSON.stringify(vendorIds),
+              status: "pending",
+              costUpdated: false,
+            });
+            const result = await ingredientQuoteService.sendIngredientRfqToVendors(qr.id);
+            return { quoteRequestId: qr.id, ...result };
+          }),
+        analyze: protectedProcedure
+          .input(z.object({ id: z.number() }))
+          .mutation(async ({ input }) => ingredientQuoteService.analyzeIngredientQuotes(input.id)),
+        accept: protectedProcedure
+          .input(z.object({
+            quoteRequestId: z.number(),
+            quoteId: z.number(),
+            autoUpdateCost: z.boolean().default(false),
+          }))
+          .mutation(async ({ input }) => ingredientQuoteService.acceptIngredientQuote(
+            input.quoteRequestId, input.quoteId, input.autoUpdateCost,
+          )),
+      }),
+
+      // Cost alerts
+      alerts: router({
+        list: protectedProcedure
+          .input(z.object({
+            ingredientId: z.number().optional(),
+            alertType: z.string().optional(),
+            isRead: z.boolean().optional(),
+            severity: z.string().optional(),
+          }).optional())
+          .query(async ({ input }) => manufacturingDb.getIngredientCostAlerts(input)),
+        markRead: protectedProcedure
+          .input(z.object({ id: z.number() }))
+          .mutation(async ({ input }) => { await manufacturingDb.markAlertRead(input.id); return { success: true }; }),
+        dismiss: protectedProcedure
+          .input(z.object({ id: z.number() }))
+          .mutation(async ({ input }) => { await manufacturingDb.dismissAlert(input.id); return { success: true }; }),
+      }),
+
+      // Cost analysis
+      costAnalysis: protectedProcedure
+        .input(z.object({ ingredientId: z.number() }))
+        .query(async ({ input }) => manufacturingDb.getIngredientCostStats(input.ingredientId)),
+
+      // Invoice price variance check
+      checkInvoiceVariance: protectedProcedure
+        .input(z.object({
+          vendorId: z.number(),
+          ingredientId: z.number(),
+          invoiceUnitPrice: z.number(),
+          invoiceQuantity: z.number(),
+          purchaseOrderId: z.number().optional(),
+          invoiceNumber: z.string().optional(),
+        }))
+        .mutation(async ({ input }) => ingredientQuoteService.checkInvoicePriceVariance(input)),
+
+      // Manual trigger for cost monitoring
+      runCostMonitor: protectedProcedure
+        .input(z.object({
+          priceSpikePct: z.number().optional(),
+          contractExpiryDays: z.number().optional(),
+        }).optional())
+        .mutation(async ({ input }) => ingredientQuoteService.monitorIngredientCosts(input)),
+    }),
   }),
   recipes: router({
     list: protectedProcedure
@@ -537,7 +682,7 @@ export const manufacturingRouter = router({
             quantityGramsDry: line.quantityGramsDry,
             isProteinLine: line.isProteinLine,
             isWaterLine: line.isWaterLine,
-          });
+          }, { skipCycleCheck: true });
         }
         for (const step of oldProcedures) {
           await manufacturingDb.createRecipeProcedure({
