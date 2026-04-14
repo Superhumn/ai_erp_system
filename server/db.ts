@@ -10399,7 +10399,6 @@ export async function updateCogsPeriodSummaryRecord(id: number, data: Partial<In
   return { id };
 }
 
-<<<<<<< claude/rd-tax-credit-feature-IEATs
 // ============================================
 // R&D TAX CREDIT OPERATIONS
 // ============================================
@@ -12138,5 +12137,4 @@ export async function updateInvestmentCommitment(id: number, data: Partial<Inser
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(investmentCommitments).set({ ...data, updatedAt: new Date() } as any).where(eq(investmentCommitments.id, id));
->>>>>>> main
 }
