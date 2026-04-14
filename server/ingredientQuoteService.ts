@@ -173,16 +173,17 @@ export async function sendIngredientRfqToVendors(quoteRequestId: number): Promis
       rfqId,
       vendorId,
       status: "sent",
-      sentAt: new Date(),
+      invitedAt: new Date(),
       reminderCount: 0,
     });
 
     try {
       const emailContent = await generateIngredientRfqEmail(ingredient, vendor, qr);
-      await emailService.sendTransactionalEmail({
-        to: vendor.email,
+      await emailService.queueEmail({
+        templateName: "GENERAL",
+        to: { email: vendor.email, name: vendor.name },
         subject: emailContent.subject,
-        html: emailContent.htmlBody,
+        payload: { htmlBody: emailContent.htmlBody },
       });
       invitationsSent++;
     } catch {
@@ -217,7 +218,10 @@ The HTML should be simple and professional. Keep it under 200 words.`,
   });
 
   try {
-    const text = result.choices[0].message.content;
+    const rawContent = result.choices[0].message.content;
+    const text = typeof rawContent === "string"
+      ? rawContent
+      : rawContent.filter((c) => c.type === "text").map((c) => (c as import("./_core/llm").TextContent).text).join("");
     const match = text.match(/\{[\s\S]*\}/);
     if (match) return JSON.parse(match[0]);
   } catch { /* fall through to default */ }
@@ -284,7 +288,10 @@ Provide a concise 2-3 sentence recommendation. Plain text only.`,
       }],
       maxTokens: 200,
     });
-    analysisText = llmResult.choices[0].message.content;
+    const rawAnalysis = llmResult.choices[0].message.content;
+    analysisText = typeof rawAnalysis === "string"
+      ? rawAnalysis
+      : rawAnalysis.filter((c) => c.type === "text").map((c) => (c as import("./_core/llm").TextContent).text).join("");
   } catch {
     analysisText = `Best quote is $${bestQuote.unitPrice} (${bestQuote.pctVsCurrent.toFixed(1)}% vs current). ${savings > 0 ? `Potential savings of $${savings.toFixed(4)}/unit.` : "No savings vs current cost."}`;
   }

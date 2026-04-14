@@ -6174,9 +6174,6 @@ export const codeExecutions = mysqlTable("codeExecutions", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
-export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
-export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
-
 // ============================================
 // R&D TAX CREDIT (IRC SECTION 41)
 // ============================================
