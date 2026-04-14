@@ -35,7 +35,7 @@ import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
-import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType, downloadDriveFile } from "./_core/googleDrive";
+import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType, downloadDriveFile } from "./_core/googleDrive";
 import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems } from "./_core/quickbooks";
 import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
@@ -13094,6 +13094,108 @@ Ask if they received the original request and if they can provide a quote.`;
             totalFolders: syncResult.folders.length,
             totalFiles: syncResult.files.length,
           };
+        }),
+
+      // List files (non-folders) inside a Google Drive folder
+      listFiles: protectedProcedure
+        .input(z.object({
+          folderId: z.string(),
+        }))
+        .query(async ({ ctx, input }) => {
+          const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+          if (error) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+          }
+
+          const result = await listDriveFiles(accessToken, input.folderId);
+          if (result.error) {
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
+          }
+
+          return { files: result.files };
+        }),
+
+      // Sync a single Google Drive file to a data room
+      syncFile: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          googleDriveFileId: z.string(),
+          folderId: z.number().nullable().optional(),
+        }))
+        .mutation(async ({ ctx, input }) => {
+          const room = await db.getDataRoomById(input.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
+          const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+          if (error) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+          }
+
+          // Fetch file metadata
+          const { file: driveFile, error: metaError } = await getFileMetadata(accessToken, input.googleDriveFileId);
+          if (metaError || !driveFile) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: metaError || 'File not found in Google Drive' });
+          }
+
+          // Check if already synced
+          const existingDocs = await db.getDataRoomDocuments(input.dataRoomId);
+          if (existingDocs.some(d => d.googleDriveFileId === driveFile.id)) {
+            throw new TRPCError({ code: 'CONFLICT', message: 'This file has already been synced to this data room' });
+          }
+
+          const downloaded = await downloadDriveFile(accessToken, driveFile.id, driveFile.mimeType);
+
+          const isGoogleWorkspaceFile = driveFile.mimeType.startsWith('application/vnd.google-apps.');
+          const displayName = isGoogleWorkspaceFile ? `${driveFile.name}.pdf` : driveFile.name;
+
+          const effectiveMimeType = ('exportedMimeType' in downloaded) ? downloaded.exportedMimeType : driveFile.mimeType;
+          const fileType = getSimpleFileType(effectiveMimeType);
+
+          let storageType: 'google_drive' | 's3' = 'google_drive';
+          let storageUrl: string | undefined;
+          let storageKey: string | undefined;
+          let fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
+            ? parseInt(driveFile.size)
+            : undefined;
+
+          if ('buffer' in downloaded) {
+            fileSize = downloaded.buffer.length;
+            try {
+              const fileKey = `dataroom/${input.dataRoomId}/${nanoid()}-${displayName}`;
+              const result = await storagePut(fileKey, downloaded.buffer, downloaded.exportedMimeType);
+              storageUrl = result.url;
+              storageKey = result.key;
+              storageType = 's3';
+            } catch {
+              if (downloaded.buffer.length < 5 * 1024 * 1024) {
+                storageUrl = `data:${downloaded.exportedMimeType};base64,${downloaded.buffer.toString('base64')}`;
+                storageType = 's3';
+              }
+            }
+          } else {
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: `Failed to download file: ${downloaded.error}` });
+          }
+
+          await db.createDataRoomDocument({
+            dataRoomId: input.dataRoomId,
+            folderId: input.folderId ?? null,
+            name: displayName,
+            fileType,
+            mimeType: effectiveMimeType,
+            fileSize,
+            storageType,
+            storageUrl,
+            storageKey,
+            googleDriveFileId: driveFile.id,
+            googleDriveWebViewLink: driveFile.webViewLink,
+            thumbnailUrl: driveFile.thumbnailLink,
+            uploadedBy: ctx.user.id,
+          });
+
+          return { success: true, fileName: displayName };
         }),
     }),
 
