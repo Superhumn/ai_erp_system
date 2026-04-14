@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "strictNullChecks": true,
+    "noImplicitAny": true
+  },
+  "include": [
+    "shared/**/*",
+    "server/_core/env.ts",
+    "server/_core/trpc.ts",
+    "server/_core/context.ts",
+    "server/_core/cookies.ts",
+    "server/_core/crypto.ts",
+    "server/agent/types.ts",
+    "server/agent/logger.ts",
+    "server/db/connection.ts"
+  ]
+}
