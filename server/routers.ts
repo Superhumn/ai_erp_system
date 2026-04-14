@@ -13236,16 +13236,31 @@ Ask if they received the original request and if they can provide a quote.`;
             return { requiresInfo: true, requiredFields: ['email'], dataRoomId: null, visitorId: null };
           }
 
-          // Check password
           if (link.password) {
             if (!input.password) {
               return { requiresPassword: true, dataRoomId: null, visitorId: null };
             }
-            const matches = link.password.includes(':')
-              ? verifyPassword(input.password, link.password)
-              : false;
+
+            let matches: boolean;
+            let needsUpgrade = false;
+
+            if (link.password.includes(':')) {
+              matches = verifyPassword(input.password, link.password);
+            } else {
+              const computed = createHash('sha256').update(input.password).digest();
+              const storedBuf = Buffer.from(link.password, 'hex');
+              matches = computed.length === storedBuf.length
+                && require('crypto').timingSafeEqual(computed, storedBuf);
+              needsUpgrade = matches;
+            }
+
             if (!matches) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid password' });
+            }
+
+            if (needsUpgrade) {
+              const upgradedHash = hashPassword(input.password);
+              await db.updateDataRoomLink(link.id, { password: upgradedHash });
             }
           }
 
