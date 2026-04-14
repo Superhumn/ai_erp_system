@@ -1,0 +1,247 @@
+client/src/pages/sales/CRMInvestors.tsx
+  a4537c253fc65a92 115
+client/src/pages/finance/Payments.tsx
+  a4537c253fc65a92 94
+client/src/pages/hr/Employees.tsx
+  a4537c253fc65a92 511
+client/src/pages/legal/Disputes.tsx
+  a4537c253fc65a92 136
+client/src/pages/DataRooms.tsx
+  a4537c253fc65a92 132
+client/src/pages/operations/Inventory.tsx
+  a4537c253fc65a92 386
+client/src/pages/settings/TransactionalEmails.tsx
+  a4537c253fc65a92 158
+server/routers.ts
+  a4537c253fc65a92 41,535-561,585-612,635,655-656,17995-17996,18002
+client/src/pages/operations/OperationsHub.tsx
+  a4537c253fc65a92 424
+client/src/pages/sales/CRMDashboard.tsx
+  a4537c253fc65a92 73
+client/src/App.tsx
+  a4537c253fc65a92 103-111,290-298
+client/src/pages/finance/Banking.tsx
+  a4537c253fc65a92 64
+client/src/pages/hr/Recruiting.tsx
+  a4537c253fc65a92 1-280
+client/src/pages/legal/Documents.tsx
+  a4537c253fc65a92 117
+client/src/pages/finance/Transactions.tsx
+  a4537c253fc65a92 66
+drizzle/0030_recipe_costing_module.sql
+  a4537c253fc65a92 1-183
+client/src/pages/sales/Orders.tsx
+  a4537c253fc65a92 110
+client/src/pages/projects/InvestmentGrantChecklist.tsx
+  a4537c253fc65a92 374
+client/src/pages/operations/Vendors.tsx
+  2e6333c85f7c10c9 67,125,127-131,133,482-489,500-504
+client/src/pages/operations/Recipes.tsx
+  a4537c253fc65a92 1-234
+client/src/pages/operations/InventoryHub.tsx
+  a4537c253fc65a92 550
+client/src/pages/sales/SalesHub.tsx
+  a4537c253fc65a92 392
+client/src/pages/Meetings.tsx
+  280a65dc79dcfd69 10,24,35,95-96,116-120,303,309-320,346-354,356-368,370-382,384,386-417,420,422-424,426
+  9d397b5487e97b32 123-129,131-135,137-141
+client/src/pages/legal/Contracts.tsx
+  a4537c253fc65a92 105
+client/src/pages/projects/Projects.tsx
+  06e459a9aa6c0681 1,9-10,36-38,82-85,95-102,104-107,112-114,123-128,131-137,142-144,192,199,208-210,214-225,227,231-235,237,249-254,256-260,262,266-268,270-271,276-292,294-295,297,309,329,331-333,337-338,344-345,353-354,360-367,369-383,385,387-391,394-437,440-445,449-473,475,477-478,480,482-484,489,491-494,497-528,532-541,546-587,589-661,669-676,679,682-683,686,689,691-705,710,712-714,719,721,724,728-729,732-735,741-751,753-769,772-792,801,806-807,820,825-827,834-836,838,840,845-847,849-856,858-860,863-864,868,870,873-887,889-890,892-894,896-897,900-917,920-921
+client/src/pages/operations/ProductDetail.tsx
+  d139de5a10094a88 1,7-10,14,24-35,37-47,82-100,115-202,242-245
+client/src/pages/Messaging.tsx
+  a4537c253fc65a92 223
+client/src/pages/Notifications.tsx
+  a4537c253fc65a92 35
+client/src/pages/operations/Logistics.tsx
+  a4537c253fc65a92 28
+client/src/pages/GlobalSearch.tsx
+  a4537c253fc65a92 30
+client/src/pages/operations/Products.tsx
+  d139de5a10094a88 42,50,82,96-99,106-110,120,183-199,302-310,334,352-353
+client/src/pages/settings/Integrations.tsx
+  a4537c253fc65a92 235
+client/src/pages/sales/FundraisingCampaigns.tsx
+  a4537c253fc65a92 170,200
+client/src/pages/settings/QuickBooksIntegration.tsx
+  a4537c253fc65a92 128
+drizzle/schema.ts
+  d139de5a10094a88 271
+server/routers/operations.ts
+  d139de5a10094a88 24,42-43
+client/src/pages/cx/CustomerSupport.tsx
+  a4537c253fc65a92 1-246
+server/routers/ai.ts
+  19e27a3f8fa1cdc8 749-776
+client/src/pages/operations/PurchaseOrders.tsx
+  a4537c253fc65a92 260
+server/routers/manufacturing.ts
+  a4537c253fc65a92 3,375-703
+client/src/components/DashboardLayout.tsx
+  a4537c253fc65a92 77-79,122-123,142
+client/src/pages/freight/FreightDashboard.tsx
+  a4537c253fc65a92 45
+client/src/pages/AIAssistant.tsx
+  a4537c253fc65a92 90
+client/src/pages/operations/ProcurementHub.tsx
+  a4537c253fc65a92 1378
+client/src/pages/operations/InventoryManagementHub.tsx
+  a4537c253fc65a92 187
+client/src/pages/settings/ShopifySettings.tsx
+  a4537c253fc65a92 96,156,168
+client/src/pages/legal/LegalHub.tsx
+  a4537c253fc65a92 27
+server/_core/emailInboxScanner.ts
+  19e27a3f8fa1cdc8 104-193,333-337,348-393
+client/src/pages/ai/ApprovalQueue.tsx
+  19e27a3f8fa1cdc8 22-27,91,124-125,186-195,218-221,233,299-305,784-829
+client/src/pages/Settings.tsx
+  a4537c253fc65a92 64
+client/src/pages/operations/Procurement.tsx
+  a4537c253fc65a92 31
+client/src/pages/operations/ReconciliationReport.tsx
+  a4537c253fc65a92 55
+drizzle/0031_product_manufacturing_stage.sql
+  d139de5a10094a88 1-2
+client/src/pages/Projects.tsx
+  a33d500b9c46a55c 676-677
+client/src/pages/marketing/ContentHub.tsx
+  a4537c253fc65a92 1-209
+client/src/pages/finance/Accounts.tsx
+  a4537c253fc65a92 84
+client/src/pages/operations/Shipments.tsx
+  a4537c253fc65a92 115
+client/src/pages/SOPs.tsx
+  a4537c253fc65a92 955
+client/src/pages/freight/FDAPriorNotice.tsx
+  a4537c253fc65a92 230,443
+client/src/pages/sales/Customers.tsx
+  a4537c253fc65a92 142
+client/src/pages/finance/Invoices.tsx
+  a4537c253fc65a92 413
+server/_core/fireflies.ts
+  9d397b5487e97b32 113-118,120-121,147,151-186,236-250
+server/db/manufacturing.ts
+  a4537c253fc65a92 8-10,770-1069
+client/src/pages/hr/Payroll.tsx
+  a4537c253fc65a92 80
+client/src/pages/operations/ManufacturingHub.tsx
+  a4537c253fc65a92 208
+client/src/pages/operations/LogisticsHub.tsx
+  a4537c253fc65a92 380
+client/src/pages/settings/Fireflies.tsx
+  9d397b5487e97b32 146-160,162-163,165-167,197
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "01e6be726a790f702da989ac7bebe6e3f2d6b203",
+  "prompts": {
+    "06e459a9aa6c0681": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "2a2dad43-6df0-448b-87d8-8a1347b411dc",
+        "model": "default"
+      },
+      "human_author": "Jade Cheng",
+      "messages": [],
+      "total_additions": 585,
+      "total_deletions": 465,
+      "accepted_lines": 559,
+      "overriden_lines": 0
+    },
+    "19e27a3f8fa1cdc8": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "be715f57-5227-4af8-b2ff-697f489bcbd8",
+        "model": "default"
+      },
+      "human_author": "Jade Cheng",
+      "messages": [],
+      "total_additions": 249,
+      "total_deletions": 21,
+      "accepted_lines": 249,
+      "overriden_lines": 0
+    },
+    "280a65dc79dcfd69": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "9264c904-aabe-4c77-84dd-39e7c6cc711d",
+        "model": "default"
+      },
+      "human_author": "Jade Cheng",
+      "messages": [],
+      "total_additions": 102,
+      "total_deletions": 41,
+      "accepted_lines": 99,
+      "overriden_lines": 0
+    },
+    "2e6333c85f7c10c9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "bc6bb5c6-f319-40d8-ac93-58aba1015573",
+        "model": "default"
+      },
+      "human_author": "Jade Cheng",
+      "messages": [],
+      "total_additions": 21,
+      "total_deletions": 6,
+      "accepted_lines": 21,
+      "overriden_lines": 0
+    },
+    "9d397b5487e97b32": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "b0e5ed30-e217-46dd-a744-5acaaff6fe88",
+        "model": "default"
+      },
+      "human_author": "Jade Cheng",
+      "messages": [],
+      "total_additions": 104,
+      "total_deletions": 50,
+      "accepted_lines": 101,
+      "overriden_lines": 0
+    },
+    "a33d500b9c46a55c": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "a63950be-1204-443f-8cbc-f45ec49f549c",
+        "model": "default"
+      },
+      "human_author": "Jade Cheng",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 3,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    },
+    "a4537c253fc65a92": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "24d42b8f-d7fb-43ad-afe5-e3bce469a227",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Jade Cheng",
+      "messages": [],
+      "total_additions": 1921,
+      "total_deletions": 65,
+      "accepted_lines": 1921,
+      "overriden_lines": 0
+    },
+    "d139de5a10094a88": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "0cff5e04-6b61-4aa9-a597-7ddf303f0d14",
+        "model": "default"
+      },
+      "human_author": "Jade Cheng",
+      "messages": [],
+      "total_additions": 195,
+      "total_deletions": 3,
+      "accepted_lines": 195,
+      "overriden_lines": 0
+    }
+  }
+}
