@@ -780,11 +780,21 @@ function toPerGram(costPerUnit: number, costUnit: string): number {
       return costPerUnit / GRAMS_PER_KG;
     case "per_oz":
       return costPerUnit / GRAMS_PER_OZ;
-    case "per_each":
-      return costPerUnit;
     default:
-      return costPerUnit;
+      return costPerUnit / GRAMS_PER_KG;
   }
+}
+
+/**
+ * Calculate the cost for an ingredient line.
+ * For weight-based units (per_lb, per_kg, per_oz), `quantity` is grams.
+ * For per_each, `quantity` is item count (stored in quantityGrams by convention).
+ */
+function ingredientLineCost(quantity: number, costPerUnit: number, costUnit: string): number {
+  if (costUnit === "per_each") {
+    return quantity * costPerUnit;
+  }
+  return quantity * toPerGram(costPerUnit, costUnit);
 }
 
 type RecipeCostLine = {
@@ -808,10 +818,17 @@ async function computeSubRecipeCost(
   recipeId: number,
   quantityGrams: number,
   formulation: "wet" | "dry",
-  depth = 0,
+  visitedIds: Set<number> = new Set(),
 ): Promise<{ total: number; breakdown: RecipeCostLine[] }> {
-  // Guard against cyclic recipe references.
-  if (depth > 8) return { total: 0, breakdown: [] };
+  if (visitedIds.has(recipeId)) {
+    throw new Error(`Cyclic sub-recipe reference detected: recipe ${recipeId} is already an ancestor in this cost tree`);
+  }
+  if (visitedIds.size > 50) {
+    throw new Error(`Sub-recipe nesting too deep (>${visitedIds.size} levels) when processing recipe ${recipeId}`);
+  }
+  const visited = new Set(visitedIds);
+  visited.add(recipeId);
+
   const subRecipe = await getRecipeById(recipeId);
   if (!subRecipe) return { total: 0, breakdown: [] };
   const lines = await getRecipeLines(recipeId);
@@ -826,7 +843,7 @@ async function computeSubRecipeCost(
     const baseGrams = formulation === "dry" && dryGrams > 0 ? dryGrams : wetGrams;
     const grams = baseGrams * scaleFactor;
     if (line.subRecipeId) {
-      const nested = await computeSubRecipeCost(line.subRecipeId, grams, formulation, depth + 1);
+      const nested = await computeSubRecipeCost(line.subRecipeId, grams, formulation, visited);
       breakdown.push({
         lineId: line.id,
         lineNumber: line.lineNumber,
@@ -839,7 +856,8 @@ async function computeSubRecipeCost(
     const ingredient = await getIngredientById(line.ingredientId);
     if (!ingredient) continue;
     const unitCost = parseFloat(ingredient.costPerUnit?.toString() || "0");
-    const cost = grams * toPerGram(unitCost, ingredient.costUnit || "per_kg");
+    const costUnit = ingredient.costUnit || "per_kg";
+    const cost = ingredientLineCost(grams, unitCost, costUnit);
     breakdown.push({
       lineId: line.id,
       lineNumber: line.lineNumber,
@@ -946,9 +964,45 @@ export async function updateRecipe(id: number, data: Partial<InsertRecipe>) {
   await db.update(recipes).set({ ...data, updatedAt: new Date() }).where(eq(recipes.id, id));
 }
 
+export async function getRecipeLineById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(recipeLines).where(eq(recipeLines.id, id)).limit(1);
+  return result[0];
+}
+
+/**
+ * Detect whether adding `subRecipeId` as a sub-recipe of `parentRecipeId`
+ * would introduce a cycle in the recipe graph.
+ */
+export async function detectSubRecipeCycle(parentRecipeId: number, subRecipeId: number): Promise<boolean> {
+  if (subRecipeId === parentRecipeId) return true;
+  const visited = new Set<number>();
+  const stack = [subRecipeId];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current === parentRecipeId) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const lines = await getRecipeLines(current);
+    for (const line of lines) {
+      if (line.subRecipeId) {
+        stack.push(line.subRecipeId);
+      }
+    }
+  }
+  return false;
+}
+
 export async function createRecipeLine(data: Omit<InsertRecipeLine, "id" | "createdAt" | "updatedAt">) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  if (data.subRecipeId) {
+    const isCyclic = await detectSubRecipeCycle(data.recipeRowId, data.subRecipeId);
+    if (isCyclic) {
+      throw new Error(`Adding sub-recipe ${data.subRecipeId} to recipe ${data.recipeRowId} would create a cyclic reference`);
+    }
+  }
   const result = await db.insert(recipeLines).values(data).$returningId();
   return { id: result[0].id };
 }
@@ -956,6 +1010,15 @@ export async function createRecipeLine(data: Omit<InsertRecipeLine, "id" | "crea
 export async function updateRecipeLine(id: number, data: Partial<InsertRecipeLine>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  if (data.subRecipeId) {
+    const existing = await getRecipeLineById(id);
+    if (existing) {
+      const isCyclic = await detectSubRecipeCycle(existing.recipeRowId, data.subRecipeId);
+      if (isCyclic) {
+        throw new Error(`Updating line ${id} with sub-recipe ${data.subRecipeId} would create a cyclic reference`);
+      }
+    }
+  }
   await db.update(recipeLines).set({ ...data, updatedAt: new Date() }).where(eq(recipeLines.id, id));
 }
 
@@ -995,9 +1058,11 @@ export async function calculateRecipeBatchCost(input: {
   const targetFromLbs = input.targetLbs ? input.targetLbs * GRAMS_PER_LB : undefined;
   const requestedBatch = targetFromLbs || input.batchGrams || (input.scaleFactor ? baseBatch * input.scaleFactor : baseBatch);
   const effectiveScale = baseBatch > 0 ? requestedBatch / baseBatch : 1;
+  const visitedIds = new Set<number>([input.recipeId]);
   const lines = await getRecipeLines(input.recipeId);
   const resultLines: RecipeCostLine[] = [];
   const subRecipeCosts: Array<{ recipe: string; grams: number; cost: number; lineCosts: RecipeCostLine[] }> = [];
+  const perEachLineIds = new Set<number>();
 
   for (const line of lines) {
     const wetGrams = parseFloat(line.quantityGrams?.toString() || "0");
@@ -1005,7 +1070,7 @@ export async function calculateRecipeBatchCost(input: {
     const baseGrams = input.formulation === "dry" && dryGrams > 0 ? dryGrams : wetGrams;
     const grams = baseGrams * effectiveScale;
     if (line.subRecipeId) {
-      const nested = await computeSubRecipeCost(line.subRecipeId, grams, input.formulation);
+      const nested = await computeSubRecipeCost(line.subRecipeId, grams, input.formulation, visitedIds);
       const subRecipe = await getRecipeById(line.subRecipeId);
       subRecipeCosts.push({
         recipe: subRecipe?.name || `Sub-recipe ${line.subRecipeId}`,
@@ -1025,7 +1090,11 @@ export async function calculateRecipeBatchCost(input: {
     if (!line.ingredientId) continue;
     const ingredient = await getIngredientById(line.ingredientId);
     if (!ingredient) continue;
-    const cost = grams * toPerGram(parseFloat(ingredient.costPerUnit?.toString() || "0"), ingredient.costUnit || "per_kg");
+    const costUnit = ingredient.costUnit || "per_kg";
+    const cost = ingredientLineCost(grams, parseFloat(ingredient.costPerUnit?.toString() || "0"), costUnit);
+    if (costUnit === "per_each") {
+      perEachLineIds.add(line.id);
+    }
     resultLines.push({
       lineId: line.id,
       lineNumber: line.lineNumber,
@@ -1036,7 +1105,8 @@ export async function calculateRecipeBatchCost(input: {
   }
 
   const totalCost = resultLines.reduce((sum, l) => sum + l.cost, 0);
-  const totalGrams = resultLines.reduce((sum, l) => sum + l.grams, 0);
+  // Exclude per_each lines from gram totals — their quantity is item count, not weight
+  const totalGrams = resultLines.reduce((sum, l) => perEachLineIds.has(l.lineId) ? sum : sum + l.grams, 0);
   const yieldPct = parseFloat(recipe.expectedYieldPct?.toString() || "1");
   const yieldGrams = totalGrams * yieldPct;
   return {
