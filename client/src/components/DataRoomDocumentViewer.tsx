@@ -36,6 +36,7 @@ interface DocumentViewerProps {
   documentName: string;
   visitorId: number;
   sessionId?: number;
+  sessionToken?: string;
   linkId?: number;
   allowDownload?: boolean;
   onClose?: () => void;
@@ -57,6 +58,7 @@ export default function DataRoomDocumentViewer({
   documentName,
   visitorId,
   sessionId,
+  sessionToken,
   linkId,
   allowDownload = false,
   onClose,
@@ -93,10 +95,11 @@ export default function DataRoomDocumentViewer({
   // Start tracking a page view
   const startPageTracking = useCallback(async (pageNum: number) => {
     // Save previous page tracking data
-    if (currentPageTracking.current && currentPageTracking.current.pageViewId) {
+    if (currentPageTracking.current && currentPageTracking.current.pageViewId && sessionToken) {
       const duration = Date.now() - currentPageTracking.current.startTime;
       updatePageViewMutation.mutate({
         id: currentPageTracking.current.pageViewId,
+        sessionToken,
         durationMs: duration,
         scrollDepth: currentPageTracking.current.scrollDepth,
         mouseMovements: currentPageTracking.current.mouseMovements,
@@ -126,7 +129,7 @@ export default function DataRoomDocumentViewer({
       clicks: 0,
       pageViewId: result.id,
     };
-  }, [documentId, visitorId, sessionId, linkId, scale, getDeviceInfo, recordPageViewMutation, updatePageViewMutation]);
+  }, [documentId, visitorId, sessionId, linkId, scale, sessionToken, getDeviceInfo, recordPageViewMutation, updatePageViewMutation]);
 
   // Track scroll depth
   const handleScroll = useCallback(() => {
@@ -210,10 +213,11 @@ export default function DataRoomDocumentViewer({
   useEffect(() => {
     return () => {
       // Save final tracking data
-      if (currentPageTracking.current && currentPageTracking.current.pageViewId) {
+      if (currentPageTracking.current && currentPageTracking.current.pageViewId && sessionToken) {
         const duration = Date.now() - currentPageTracking.current.startTime;
         updatePageViewMutation.mutate({
           id: currentPageTracking.current.pageViewId,
+          sessionToken,
           durationMs: duration,
           scrollDepth: currentPageTracking.current.scrollDepth,
           mouseMovements: currentPageTracking.current.mouseMovements,
@@ -221,7 +225,7 @@ export default function DataRoomDocumentViewer({
         });
       }
     };
-  }, [updatePageViewMutation]);
+  }, [sessionToken, updatePageViewMutation]);
 
   // Add event listeners
   useEffect(() => {
@@ -335,10 +339,7 @@ export default function DataRoomDocumentViewer({
             <Page
               pageNumber={currentPage}
               scale={scale}
-              rotate={rotation}
               className="shadow-2xl"
-              renderTextLayer={false}
-              renderAnnotationLayer={false}
             />
             {/* Watermark overlay */}
             {watermark && (

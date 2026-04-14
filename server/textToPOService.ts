@@ -115,8 +115,8 @@ export async function findVendorForMaterial(materialName: string) {
     }
   }
 
-  // Try fuzzy match using a DB LIKE query to avoid loading all materials into memory
-  const matchedMaterials = await db.getRawMaterials({ searchTerm: materialName, limit: 10 } as any);
+  // Try fuzzy match using a DB LIKE query
+  const matchedMaterials = await db.getRawMaterials({ searchTerm: materialName, limit: 10 });
 
   for (const material of matchedMaterials) {
     if (material.preferredVendorId) {

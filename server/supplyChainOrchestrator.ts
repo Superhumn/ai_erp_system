@@ -1,13 +1,14 @@
 import { getDb } from "./db";
 import { getWorkflowEngine } from "./autonomousWorkflowEngine";
 import {
+  users,
   supplyChainWorkflows,
   workflowRuns,
   workflowApprovalQueue,
   supplyChainEvents,
   approvalThresholds,
   workflowNotifications,
-  users,
+  exceptionLog,
 } from "../drizzle/schema";
 import { eq, and, lt, lte, gte, desc, asc, sql, isNull, or, inArray } from "drizzle-orm";
 import { sendEmail } from "./_core/email";
@@ -40,9 +41,22 @@ class SupplyChainOrchestrator {
   private escalationInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
   private activeWorkflows = 0;
+  // Cache parsed JSON configs to avoid repeated JSON.parse on every check cycle
+  private parsedConfigCache = new Map<string, { value: any; raw: string }>();
 
   constructor(config: Partial<OrchestratorConfig> = {}) {
     this.config = { ...defaultConfig, ...config };
+  }
+
+  private parseJsonCached(raw: unknown): any {
+    if (!raw) return null;
+    // Drizzle JSON columns may return already-parsed objects
+    if (typeof raw !== "string") return raw;
+    const cached = this.parsedConfigCache.get(raw);
+    if (cached && cached.raw === raw) return cached.value;
+    const parsed = JSON.parse(raw);
+    this.parsedConfigCache.set(raw, { value: parsed, raw });
+    return parsed;
   }
 
   // ============================================
@@ -239,11 +253,11 @@ class SupplyChainOrchestrator {
         );
 
       for (const workflow of triggeredWorkflows) {
-        const triggerEvents = workflow.triggerEvents ? JSON.parse(workflow.triggerEvents) : [];
+        const triggerEvents = this.parseJsonCached(workflow.triggerEvents) || [];
 
         if (triggerEvents.includes(event.eventType)) {
           // Trigger the workflow
-          const eventData = event.eventData ? JSON.parse(event.eventData) : {};
+          const eventData = event.eventData ? (typeof event.eventData === "string" ? JSON.parse(event.eventData) : event.eventData) : {};
           this.executeWorkflowAsync(workflow, "event", {
             eventId: event.id,
             eventType: event.eventType,
@@ -280,7 +294,7 @@ class SupplyChainOrchestrator {
       );
 
     for (const workflow of thresholdWorkflows) {
-      const thresholdConfig = workflow.thresholdConfig ? JSON.parse(workflow.thresholdConfig) : null;
+      const thresholdConfig = this.parseJsonCached(workflow.thresholdConfig);
       if (!thresholdConfig) continue;
 
       const shouldTrigger = await this.evaluateThreshold(thresholdConfig);
@@ -299,12 +313,13 @@ class SupplyChainOrchestrator {
       case "inventory_below":
         // Check if any inventory is below threshold
         const { inventory } = await import("../drizzle/schema");
-        const [lowStock] = await db.execute(sql`
+        const lowStockResult = await db.execute(sql`
           SELECT COUNT(*) as count
           FROM inventory
           WHERE CAST(quantity AS DECIMAL) - CAST(reservedQuantity AS DECIMAL) < CAST(reorderLevel AS DECIMAL)
         `);
-        return ((lowStock as unknown as any[])[0]?.count || 0) > 0;
+        const lowStockRows = (lowStockResult as unknown as any[][])[0];
+        return ((lowStockRows?.[0]?.count || 0) > 0);
 
       case "pending_approvals":
         // Check pending approval count
@@ -315,8 +330,6 @@ class SupplyChainOrchestrator {
         return (pendingCount?.count || 0) >= (config.threshold || 10);
 
       case "exception_count":
-        // Check open exception count
-        const { exceptionLog } = await import("../drizzle/schema");
         const [exceptionCount] = await db
           .select({ count: sql<number>`COUNT(*)` })
           .from(exceptionLog)
@@ -375,7 +388,7 @@ class SupplyChainOrchestrator {
       .where(eq(supplyChainWorkflows.isActive, true));
 
     for (const workflow of dependentWorkflows) {
-      const dependencies = workflow.dependsOnWorkflows ? JSON.parse(workflow.dependsOnWorkflows) : [];
+      const dependencies = this.parseJsonCached(workflow.dependsOnWorkflows) || [];
 
       if (dependencies.includes(completedWorkflowId)) {
         console.log(`[Orchestrator] Triggering dependent workflow: ${workflow.name}`);
@@ -518,14 +531,14 @@ class SupplyChainOrchestrator {
       actionLabel: "Review Now",
     });
 
-    // Send escalation email
-    for (const user of escalationUsers) {
-      if (user.email) {
-        try {
-          await sendEmail({
-            to: user.email,
-            subject: `[ESCALATED] Approval Required: ${approval.title}`,
-            text: `An approval request has been escalated to you and requires immediate attention.
+    // Send escalation emails in parallel
+    await Promise.allSettled(
+      escalationUsers
+        .filter(user => user.email)
+        .map(user => sendEmail({
+          to: user.email!,
+          subject: `[ESCALATED] Approval Required: ${approval.title}`,
+          text: `An approval request has been escalated to you and requires immediate attention.
 
 Title: ${approval.title}
 Description: ${approval.description || "N/A"}
@@ -533,12 +546,8 @@ Value: $${approval.monetaryValue}
 Escalation Level: ${newLevel}
 
 Please review and approve/reject at your earliest convenience.`,
-          });
-        } catch (err) {
-          console.error(`Failed to send escalation email to ${user.email}:`, err);
-        }
-      }
-    }
+        }).catch(err => console.error(`Failed to send escalation email to ${user.email}:`, err)))
+    );
 
     console.log(`[Orchestrator] Escalated approval ${approval.id} to level ${newLevel}`);
   }
@@ -708,6 +717,100 @@ Please review and approve/reject at your earliest convenience.`,
         thresholdConfig: JSON.stringify({ type: "exception_count", threshold: 3 }),
         requiresApproval: false,
       },
+      // Finance, Sales, HR, Legal, Communication workflows use "custom" type
+      // with specific behavior defined in executionConfig
+      {
+        name: "Expense Categorization",
+        workflowType: "custom" as const,
+        description: "Auto-categorize uncategorized transactions using AI",
+        triggerType: "scheduled" as const,
+        cronSchedule: "0 9 * * *",
+        executionConfig: JSON.stringify({ subtype: "expense_categorization" }),
+        requiresApproval: false,
+      },
+      {
+        name: "AR Collections Follow-Up",
+        workflowType: "custom" as const,
+        description: "Send payment reminders for overdue invoices",
+        triggerType: "scheduled" as const,
+        cronSchedule: "0 9 * * 1,4",
+        executionConfig: JSON.stringify({ subtype: "ar_collections" }),
+        requiresApproval: true,
+        autoApproveThreshold: "5000",
+      },
+      {
+        name: "Bank Reconciliation",
+        workflowType: "custom" as const,
+        description: "Reconcile bank transactions against internal records",
+        triggerType: "scheduled" as const,
+        cronSchedule: "0 6 * * *",
+        executionConfig: JSON.stringify({ subtype: "bank_reconciliation" }),
+        requiresApproval: false,
+      },
+      {
+        name: "Deal Follow-Up",
+        workflowType: "custom" as const,
+        description: "Send follow-up emails for stale deals in pipeline",
+        triggerType: "scheduled" as const,
+        cronSchedule: "0 8 * * 1-5",
+        executionConfig: JSON.stringify({ subtype: "deal_follow_up" }),
+        requiresApproval: true,
+        autoApproveThreshold: "0",
+      },
+      {
+        name: "Sales Order Processing",
+        workflowType: "custom" as const,
+        description: "Auto-confirm pending orders and trigger fulfillment",
+        triggerType: "event" as const,
+        triggerEvents: JSON.stringify(["order_created"]),
+        executionConfig: JSON.stringify({ subtype: "order_processing" }),
+        requiresApproval: false,
+      },
+      {
+        name: "Equity Vesting Updates",
+        workflowType: "custom" as const,
+        description: "Calculate and record monthly equity vesting for all grants",
+        triggerType: "scheduled" as const,
+        cronSchedule: "0 1 1 * *",
+        executionConfig: JSON.stringify({ subtype: "equity_vesting" }),
+        requiresApproval: false,
+      },
+      {
+        name: "Contract Renewal Tracking",
+        workflowType: "custom" as const,
+        description: "Alert on contracts expiring within 60 days",
+        triggerType: "scheduled" as const,
+        cronSchedule: "0 8 * * 1",
+        executionConfig: JSON.stringify({ subtype: "contract_renewal" }),
+        requiresApproval: false,
+      },
+      {
+        name: "Dispute Auto-Escalation",
+        workflowType: "custom" as const,
+        description: "Escalate unresolved disputes older than 30 days",
+        triggerType: "scheduled" as const,
+        cronSchedule: "0 9 * * 1",
+        executionConfig: JSON.stringify({ subtype: "dispute_escalation" }),
+        requiresApproval: false,
+      },
+      {
+        name: "KPI Report Generation",
+        workflowType: "custom" as const,
+        description: "Generate weekly KPI summary and update actuals",
+        triggerType: "scheduled" as const,
+        cronSchedule: "0 7 * * 1",
+        executionConfig: JSON.stringify({ subtype: "kpi_reporting" }),
+        requiresApproval: false,
+      },
+      {
+        name: "Email Triage & Routing",
+        workflowType: "custom" as const,
+        description: "Classify inbound emails and route to appropriate team",
+        triggerType: "event" as const,
+        triggerEvents: JSON.stringify(["email_received"]),
+        executionConfig: JSON.stringify({ subtype: "email_triage" }),
+        requiresApproval: false,
+      },
     ];
 
     for (const wf of defaultWorkflows) {
@@ -824,7 +927,6 @@ Please review and approve/reject at your earliest convenience.`,
         )
       );
 
-    const { exceptionLog } = await import("../drizzle/schema");
     const [exceptionCount] = await db
       .select({ count: sql<number>`COUNT(*)` })
       .from(exceptionLog)
@@ -887,6 +989,16 @@ export function getOrchestrator(): SupplyChainOrchestrator {
 }
 
 export async function startOrchestrator(): Promise<void> {
+  // The supply chain workflow tables were removed from the schema.
+  // Check if the table exists before attempting to start.
+  const db = await getDb();
+  if (!db) return;
+  try {
+    await db.execute(sql`SELECT 1 FROM supply_chain_workflows LIMIT 1`);
+  } catch {
+    console.log("[Orchestrator] Supply chain workflow tables not found — orchestrator disabled (this is expected)");
+    return;
+  }
   const orchestrator = getOrchestrator();
   await orchestrator.configureDefaultWorkflows();
   await orchestrator.start();

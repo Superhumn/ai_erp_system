@@ -136,7 +136,7 @@ export async function sendQueuedEmail(emailMessageId: number): Promise<SendEmail
     // Get the template
     const template = await db.getTransactionalEmailTemplateByName((message as any).templateName);
     if (!template) {
-      await db.updateEmailMessageStatus(emailMessageId, "failed", {
+      await db.updateEmailMessageStatus(emailMessageId, "failed", undefined, {
         message: `Template ${(message as any).templateName} not found`,
         code: "TEMPLATE_NOT_FOUND",
       });
@@ -148,7 +148,7 @@ export async function sendQueuedEmail(emailMessageId: number): Promise<SendEmail
     }
 
     if (!template.isActive) {
-      await db.updateEmailMessageStatus(emailMessageId, "failed", {
+      await db.updateEmailMessageStatus(emailMessageId, "failed", undefined, {
         message: `Template ${(message as any).templateName} is not active`,
         code: "TEMPLATE_INACTIVE",
       });
@@ -215,7 +215,7 @@ export async function sendQueuedEmail(emailMessageId: number): Promise<SendEmail
         };
       } else {
         // Permanent error - mark as failed
-        await db.updateEmailMessageStatus(emailMessageId, "failed", sendResult.error);
+        await db.updateEmailMessageStatus(emailMessageId, "failed", undefined, sendResult.error);
 
         return {
           success: false,

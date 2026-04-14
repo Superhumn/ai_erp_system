@@ -219,11 +219,10 @@ export function SentEmailsTab() {
                     <div className="p-3 bg-muted rounded-lg max-h-[200px] overflow-y-auto">
                       {emailDetail.bodyHtml ? (
                         <iframe
-                          srcDoc={emailDetail.bodyHtml}
+                          className="w-full min-h-[180px] border-0"
                           sandbox=""
-                          title="Email preview"
-                          className="w-full border-0"
-                          style={{ minHeight: '180px' }}
+                          srcDoc={emailDetail.bodyHtml}
+                          title="Email body"
                         />
                       ) : (
                         <p className="text-sm whitespace-pre-wrap">{emailDetail.bodyText}</p>

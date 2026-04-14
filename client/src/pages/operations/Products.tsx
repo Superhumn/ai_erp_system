@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -33,18 +33,13 @@ import {
 import { Package, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "wouter";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
+import { getStatusColor } from "@/lib/statusColors";
 
 export default function Products() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [classificationFilter, setClassificationFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
   const [formData, setFormData] = useState({
     sku: "",
@@ -52,45 +47,66 @@ export default function Products() {
     description: "",
     category: "",
     type: "physical" as "physical" | "digital" | "service",
+    manufacturingStage: "finished_product" as "raw_material" | "semi_finished_good" | "finished_product",
     unitPrice: "",
     costPrice: "",
     unit: "each",
   });
 
-  const { data: products, isLoading, refetch } = trpc.products.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: products, isLoading } = trpc.products.list.useQuery();
+  const { data: boms } = (trpc as any).boms?.list?.useQuery?.() ?? { data: undefined };
+
+  // Map productId to BOM info
+  const bomByProduct = useMemo(() => {
+    const map = new Map<number, { id: number; name: string; componentCount: number }>();
+    if (boms) {
+      for (const bom of boms as any[]) {
+        if (bom.productId) {
+          map.set(bom.productId, {
+            id: bom.id,
+            name: bom.name || `BOM-${bom.id}`,
+            componentCount: bom.components?.length || 0,
+          });
+        }
+      }
+    }
+    return map;
+  }, [boms]);
   const createProduct = trpc.products.create.useMutation({
     onSuccess: () => {
       toast.success("Product created successfully");
       setIsOpen(false);
       setFormData({
         sku: "", name: "", description: "", category: "",
-        type: "physical", unitPrice: "", costPrice: "", unit: "each",
+        type: "physical", manufacturingStage: "finished_product", unitPrice: "", costPrice: "", unit: "each",
       });
-      refetch();
+      utils.products.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
     },
   });
 
-  const filteredProducts = products?.filter((product) => {
+  const filteredProducts = useMemo(() => products?.filter((product) => {
     const matchesSearch =
       product.name.toLowerCase().includes(search.toLowerCase()) ||
       product.sku.toLowerCase().includes(search.toLowerCase());
     const matchesStatus = statusFilter === "all" || product.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
-
-  const statusColors: Record<string, string> = {
-    active: "bg-green-500/10 text-green-600",
-    inactive: "bg-gray-500/10 text-gray-600",
-    discontinued: "bg-red-500/10 text-red-600",
-  };
+    const matchesClassification =
+      classificationFilter === "all" || (product.manufacturingStage || "finished_product") === classificationFilter;
+    return matchesSearch && matchesStatus && matchesClassification;
+  }), [products, search, statusFilter, classificationFilter]);
 
   const typeColors: Record<string, string> = {
     physical: "bg-blue-500/10 text-blue-600",
     digital: "bg-purple-500/10 text-purple-600",
     service: "bg-amber-500/10 text-amber-600",
+  };
+  const manufacturingStageLabels: Record<string, string> = {
+    raw_material: "Raw Material",
+    semi_finished_good: "Semi-Finished Good",
+    finished_product: "Product",
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -101,6 +117,7 @@ export default function Products() {
       description: formData.description || undefined,
       category: formData.category || undefined,
       type: formData.type,
+      manufacturingStage: formData.manufacturingStage,
       unitPrice: formData.unitPrice,
       costPrice: formData.costPrice || undefined,
       
@@ -111,7 +128,7 @@ export default function Products() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
             <Package className="h-8 w-8" />
             Products
           </h1>
@@ -162,6 +179,24 @@ export default function Products() {
                       </SelectContent>
                     </Select>
                   </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="manufacturingStage">Manufacturing Classification</Label>
+                  <Select
+                    value={formData.manufacturingStage}
+                    onValueChange={(value: "raw_material" | "semi_finished_good" | "finished_product") =>
+                      setFormData({ ...formData, manufacturingStage: value })
+                    }
+                  >
+                    <SelectTrigger id="manufacturingStage">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="raw_material">Raw Material</SelectItem>
+                      <SelectItem value="semi_finished_good">Semi-Finished Good</SelectItem>
+                      <SelectItem value="finished_product">Product</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="name">Name *</Label>
@@ -264,6 +299,17 @@ export default function Products() {
                 <SelectItem value="discontinued">Discontinued</SelectItem>
               </SelectContent>
             </Select>
+            <Select value={classificationFilter} onValueChange={setClassificationFilter}>
+              <SelectTrigger className="w-[220px]">
+                <SelectValue placeholder="Classification" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Classifications</SelectItem>
+                <SelectItem value="raw_material">Raw Material</SelectItem>
+                <SelectItem value="semi_finished_good">Semi-Finished Good</SelectItem>
+                <SelectItem value="finished_product">Product</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </CardHeader>
         <CardContent>
@@ -285,6 +331,7 @@ export default function Products() {
                   <TableHead>Name</TableHead>
                   <TableHead>Category</TableHead>
                   <TableHead>Type</TableHead>
+                  <TableHead>Classification</TableHead>
                   <TableHead className="text-right">Unit Price</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
@@ -302,11 +349,14 @@ export default function Products() {
                     <TableCell>
                       <Badge className={typeColors[product.type]}>{product.type}</Badge>
                     </TableCell>
+                    <TableCell>
+                      {manufacturingStageLabels[product.manufacturingStage || "finished_product"]}
+                    </TableCell>
                     <TableCell className="text-right font-mono">
                       {formatCurrency(product.unitPrice)}
                     </TableCell>
                     <TableCell>
-                      <Badge className={statusColors[product.status]}>{product.status}</Badge>
+                      <Badge className={getStatusColor(product.status)}>{product.status}</Badge>
                     </TableCell>
                   </TableRow>
                 ))}

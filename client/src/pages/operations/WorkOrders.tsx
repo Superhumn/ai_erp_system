@@ -24,17 +24,17 @@ export default function WorkOrders() {
     notes: "",
   });
 
-  const { data: workOrders, isLoading, refetch } = trpc.workOrders.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: workOrders, isLoading } = trpc.workOrders.list.useQuery();
   const { data: boms } = trpc.bom.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
   const { data: warehouses } = trpc.warehouses.list.useQuery();
-  const utils = trpc.useUtils();
 
   const createMutation = trpc.workOrders.create.useMutation({
     onSuccess: () => {
       toast.success("Work order created");
       setIsCreateOpen(false);
-      refetch();
+      utils.workOrders.list.invalidate();
       setNewWorkOrder({ bomId: 0, productId: 0, warehouseId: 0, quantity: "", priority: "normal", notes: "" });
     },
     onError: (err) => toast.error(err.message),
@@ -43,7 +43,7 @@ export default function WorkOrders() {
   const startMutation = trpc.workOrders.startProduction.useMutation({
     onSuccess: () => {
       toast.success("Production started");
-      refetch();
+      utils.workOrders.list.invalidate();
     },
   });
 

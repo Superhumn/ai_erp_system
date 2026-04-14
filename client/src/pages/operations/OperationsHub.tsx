@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
+import { formatCurrency } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -32,12 +33,6 @@ const poStatusOptions = [
   { value: "received", label: "Received", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
   { value: "cancelled", label: "Cancelled", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
 ];
-
-function formatCurrency(value: string | number | null | undefined) {
-  const num = typeof value === "string" ? parseFloat(value) : value;
-  if (!num) return "-";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(num);
-}
 
 function formatDate(value: string | Date | null | undefined) {
   if (!value) return "-";
@@ -426,7 +421,7 @@ export default function OperationsHub() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Operations Hub</h1>
+          <h1 className="text-lg font-semibold">Operations Hub</h1>
           <p className="text-muted-foreground">
             Procurement, Manufacturing, and Inventory Management
           </p>
@@ -622,7 +617,7 @@ export default function OperationsHub() {
                     renderExpanded={(workOrder) => (
                       <WorkOrderDetailPanel 
                         workOrder={workOrder} 
-                        onStatusChange={(id, status) => updateWorkOrderStatus.mutate({ id, status } as any)}
+                        onStatusChange={(id, status) => updateWorkOrderStatus.mutate({ id, status: status as any })}
                         onStartProduction={(id) => startProduction.mutate({ id })}
                         onCompleteProduction={(id, completedQuantity) => completeProduction.mutate({ id, completedQuantity })}
                       />
@@ -662,7 +657,7 @@ export default function OperationsHub() {
                     showSearch
                     expandedRowId={expandedLocationId}
                     onExpandChange={setExpandedLocationId}
-                    renderExpanded={(location: any) => (
+                    renderExpanded={(location) => (
                       <LocationDetailPanel location={location} />
                     )}
                   />

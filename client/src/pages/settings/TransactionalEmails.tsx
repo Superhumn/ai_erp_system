@@ -155,7 +155,7 @@ export default function TransactionalEmailsPage() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Transactional Emails</h1>
+          <h1 className="text-lg font-semibold">Transactional Emails</h1>
           <p className="text-muted-foreground mt-1">
             Manage SendGrid templates, view email logs, and monitor delivery
           </p>
@@ -195,7 +195,7 @@ export default function TransactionalEmailsPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Delivered</CardDescription>
-            <CardTitle className="text-2xl text-green-500">{stats?.delivered || 0}</CardTitle>
+            <CardTitle className="text-2xl text-green-500">{((stats as any)?.delivered) || 0}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
@@ -207,7 +207,7 @@ export default function TransactionalEmailsPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Bounced</CardDescription>
-            <CardTitle className="text-2xl text-orange-500">{stats?.bounced || 0}</CardTitle>
+            <CardTitle className="text-2xl text-orange-500">{((stats as any)?.bounced) || 0}</CardTitle>
           </CardHeader>
         </Card>
       </div>
@@ -565,7 +565,7 @@ export default function TransactionalEmailsPage() {
                         </TableCell>
                         <TableCell>{event.email || "-"}</TableCell>
                         <TableCell className="font-mono text-xs">{event.providerMessageId}</TableCell>
-                        <TableCell className="max-w-xs truncate text-sm">{event.reason || "-"}</TableCell>
+                        <TableCell className="max-w-xs truncate text-sm">{(event.metadata as any)?.reason || "-"}</TableCell>
                         <TableCell className="text-sm">
                           {event.providerTimestamp ? new Date(event.providerTimestamp).toLocaleString() : (event.createdAt ? new Date(event.createdAt).toLocaleString() : "-")}
                         </TableCell>

@@ -29,7 +29,6 @@ import {
   freightCarriers,
   invoices,
   payments,
-  supplierPerformance,
   vendorRfqs,
   vendorQuotes,
   vendorRfqInvitations,
@@ -37,6 +36,7 @@ import {
 } from "../drizzle/schema";
 import { eq, and, lt, lte, gte, gt, desc, asc, sql, isNull, or, inArray, between } from "drizzle-orm";
 import type { WorkflowEngine, WorkflowContext, WorkflowResult, StepResult } from "./autonomousWorkflowEngine";
+import { supplierPerformance, exceptionLog } from "../drizzle/schema";
 
 // ============================================
 // WORKFLOW PROCESSOR INTERFACE
@@ -272,7 +272,7 @@ const productionPlanningProcessor: WorkflowProcessor = {
             .where(
               and(
                 eq(billOfMaterials.productId, forecast.productId),
-                eq(billOfMaterials.status, "active")
+                eq(billOfMaterials.status, 'active')
               )
             );
 
@@ -499,7 +499,7 @@ const materialRequirementsProcessor: WorkflowProcessor = {
 
       const suggestedPOs: any[] = [];
 
-      for (const [vendorId, items] of Array.from(vendorReqs)) {
+      for (const [vendorId, items] of Array.from(vendorReqs.entries())) {
         const poTotal = items.reduce((sum, item) => sum + item.cost, 0);
         const suggestedPoNumber = `SPO-${Date.now().toString(36).toUpperCase()}`;
 
@@ -857,7 +857,7 @@ Consider demand trends and storage capacity.`,
 
       const createdPOs: any[] = [];
 
-      for (const [vendorId, items] of Array.from(vendorGroups)) {
+      for (const [vendorId, items] of Array.from(vendorGroups.entries())) {
         const poTotal = items.reduce((sum, item) => sum + item.value, 0);
 
         // Request approval for each PO
@@ -945,7 +945,7 @@ const inventoryTransferProcessor: WorkflowProcessor = {
 
       const transferRecommendations: any[] = [];
 
-      for (const [productId, locations] of Array.from(productDistribution)) {
+      for (const [productId, locations] of Array.from(productDistribution.entries())) {
         if (locations.length < 2) continue;
 
         // Find locations with excess and shortage
@@ -2219,7 +2219,6 @@ const exceptionHandlingProcessor: WorkflowProcessor = {
 
     // Step 1: Get open exceptions
     const step1 = await engine.recordStep(context, 1, "Fetch Open Exceptions", "data_fetch", async () => {
-      const { exceptionLog } = await import("../drizzle/schema");
       const openExceptions = await db
         .select()
         .from(exceptionLog)
@@ -2263,8 +2262,6 @@ Decide: resolve with specific action, or escalate to human?`,
             additionalProperties: false,
           }
         );
-
-        const { exceptionLog } = await import("../drizzle/schema");
 
         if (aiDecision.confidence > 75 && aiDecision.decision.action === "resolve") {
           await db
@@ -2386,7 +2383,7 @@ const vendorQuoteAnalysisProcessor: WorkflowProcessor = {
         .from(vendors)
         .where(inArray(vendors.id, vendorIds));
 
-      const vendorMap = new Map(vendorDetails.map((v: any) => [v.id, v]));
+      const vendorMap = new Map<number, { name?: string }>(vendorDetails.map((v: any) => [v.id, v]));
 
       // Prepare quote data for AI analysis
       const quoteData = quotes.map((q: any) => {

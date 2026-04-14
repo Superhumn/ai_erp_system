@@ -67,7 +67,7 @@
   --chart-3: oklch(0.55 0.18 280);
   --chart-4: oklch(0.60 0.14 200);
   --chart-5: oklch(0.50 0.12 300);
-  --radius: 0.625rem;
+  --radius: 1.25rem;
   /* Light mode: Clean whites with warm undertones */
   --background: oklch(0.988 0.001 264);
   --foreground: oklch(0.145 0.015 264);
@@ -165,11 +165,11 @@
   input[type="radio"]:not(:disabled) {
     @apply cursor-pointer;
   }
-  /* Lightfield typography scale */
-  h1 { @apply text-[1.75rem] font-semibold tracking-[-0.025em] leading-tight; }
+  /* Typography scale */
+  h1 { @apply text-[1.875rem] font-bold tracking-[-0.03em] leading-tight; }
   h2 { @apply text-xl font-semibold tracking-[-0.02em] leading-tight; }
-  h3 { @apply text-base font-semibold tracking-[-0.01em] leading-snug; }
-  h4 { @apply text-sm font-medium tracking-[-0.006em] leading-snug; }
+  h3 { @apply text-lg font-semibold tracking-[-0.01em] leading-snug; }
+  h4 { @apply text-base font-medium tracking-[-0.006em] leading-snug; }
 }
 
 @layer components {
@@ -233,11 +233,11 @@
 }
 
 .data-table th {
-  @apply text-left font-medium text-muted-foreground px-4 py-3 border-b text-xs tracking-wide;
+  @apply text-left font-medium text-muted-foreground px-5 py-3.5 border-b text-xs tracking-wide;
 }
 
 .data-table td {
-  @apply px-4 py-3.5 border-b border-border/50;
+  @apply px-5 py-4 border-b border-border/40;
 }
 
 .data-table tr {
@@ -273,7 +273,7 @@
    Clean metrics, strong value hierarchy
    ============================================ */
 .kpi-card {
-  @apply p-5 rounded-xl border bg-card;
+  @apply p-3 rounded-2xl border border-border/40 bg-card shadow-[0_1px_6px_-2px_rgba(0,0,0,0.04)];
 }
 
 .kpi-card-title {
@@ -281,7 +281,7 @@
 }
 
 .kpi-card-value {
-  @apply text-2xl font-semibold mt-2 tracking-[-0.02em];
+  @apply text-xl font-semibold mt-1.5 tracking-[-0.02em];
 }
 
 .kpi-card-change {
@@ -305,16 +305,16 @@
 }
 
 .module-title {
-  @apply text-[1.75rem] font-semibold tracking-[-0.025em];
+  @apply text-[1.875rem] font-bold tracking-[-0.03em];
 }
 
 .module-description {
-  @apply text-muted-foreground mt-1 text-sm;
+  @apply text-muted-foreground mt-1;
 }
 
 /* Form sections */
 .form-section {
-  @apply space-y-5 p-6 rounded-xl border bg-card;
+  @apply space-y-3 p-4 rounded-2xl border border-border/40 bg-card shadow-[0_1px_6px_-2px_rgba(0,0,0,0.04)];
 }
 
 .form-section-title {
@@ -531,7 +531,7 @@
 }
 
 .lf-page-title {
-  @apply text-[1.75rem] font-semibold tracking-[-0.025em] leading-none;
+  @apply text-[1.875rem] font-bold tracking-[-0.03em] leading-none;
 }
 
 .lf-page-subtitle {
@@ -550,7 +550,7 @@
 
 /* List item pattern */
 .lf-list-item {
-  @apply flex items-center justify-between py-3 px-4 rounded-lg hover:bg-accent/50 transition-colors duration-100 cursor-pointer;
+  @apply flex items-center justify-between py-4 px-6 rounded-2xl hover:bg-accent/50 transition-colors duration-100 cursor-pointer;
 }
 
 /* Inline stat */
@@ -559,7 +559,7 @@
 }
 
 .lf-stat-value {
-  @apply text-2xl font-semibold tracking-[-0.02em] tabular-nums;
+  @apply text-xl font-semibold tracking-[-0.02em] tabular-nums;
 }
 
 .lf-stat-label {
@@ -581,4 +581,139 @@
 
 .lf-empty-description {
   @apply text-xs text-muted-foreground/70 mt-1 max-w-sm;
+}
+
+/* ============================================
+   DATA ROOM PUBLIC VIEWER ANIMATIONS
+   Premium, DocSend-quality investor experience
+   ============================================ */
+
+/* Fade in on mount */
+.dr-fade-in {
+  animation: drFadeIn 0.4s ease-out;
+}
+@keyframes drFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Slide in from right (document viewer open) */
+.dr-slide-in {
+  animation: drSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes drSlideIn {
+  from { opacity: 0; transform: scale(0.96) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* Slide out (document viewer close) */
+.dr-slide-out {
+  animation: drSlideOut 0.25s ease-in forwards;
+}
+@keyframes drSlideOut {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.96) translateY(10px); }
+}
+
+/* Page flip left (next page) */
+.dr-page-left {
+  animation: drPageLeft 0.3s ease-out;
+}
+@keyframes drPageLeft {
+  from { opacity: 0; transform: translateX(40px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* Page flip right (previous page) */
+.dr-page-right {
+  animation: drPageRight 0.3s ease-out;
+}
+@keyframes drPageRight {
+  from { opacity: 0; transform: translateX(-40px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* Folder expand */
+.dr-expand {
+  animation: drExpand 0.2s ease-out;
+  overflow: hidden;
+}
+@keyframes drExpand {
+  from { opacity: 0; max-height: 0; }
+  to { opacity: 1; max-height: 500px; }
+}
+
+/* Subtle hover lift */
+.dr-hover-lift {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.dr-hover-lift:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* ── Mobile-compact: fit each page on screen without scrolling ── */
+@media (max-width: 768px) {
+  /* Shrink page titles */
+  h1[class*="text-[1.75rem]"], h1[class*="text-xl"] {
+    font-size: 1.125rem !important;
+    line-height: 1.4 !important;
+  }
+
+  /* Compact stat cards */
+  .grid[class*="grid-cols-2"],
+  .grid[class*="grid-cols-4"],
+  .grid[class*="grid-cols-5"] {
+    gap: 0.5rem !important;
+  }
+  .grid[class*="grid-cols-4"] {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  .grid[class*="grid-cols-5"] {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* Tighter card padding on mobile */
+  [class*="CardContent"][class*="pt-4"] {
+    padding-top: 0.5rem !important;
+    padding-bottom: 0.5rem !important;
+  }
+
+  /* Smaller stat numbers */
+  .text-2xl {
+    font-size: 1.25rem !important;
+  }
+  .text-xl {
+    font-size: 1rem !important;
+  }
+
+  /* Reduce spacing between sections */
+  .space-y-6 > * + * {
+    margin-top: 0.75rem !important;
+  }
+  .space-y-4 > * + * {
+    margin-top: 0.5rem !important;
+  }
+
+  /* Hide subtitle text on mobile to save space */
+  h1 + p[class*="text-muted-foreground"] {
+    display: none !important;
+  }
+
+  /* Compact table cells */
+  td, th {
+    padding: 0.375rem 0.5rem !important;
+    font-size: 0.75rem !important;
+  }
+
+  /* Make header row compact */
+  .flex.items-center.justify-between {
+    gap: 0.5rem !important;
+  }
+
+  /* Autonomous agent bar: slimmer on mobile */
+  [class*="bg-gradient-to-r"][class*="from-slate-900"] {
+    height: 2rem !important;
+    font-size: 0.625rem !important;
+  }
 }
