@@ -42,18 +42,17 @@ export default function Meetings() {
   const [processCreateProject, setProcessCreateProject] = useState(false);
   const [processProjectName, setProcessProjectName] = useState("");
 
-  const { data: meetingsRaw, isLoading, refetch, error: meetingsError } = trpc.fireflies.meetings.list.useQuery({
-    status: statusFilter !== "all" ? statusFilter : undefined,
-  });
+  const { data: meetingsRaw, isLoading, refetch, error: meetingsError } = trpc.fireflies.meetings.list.useQuery({});
   const meetings = (meetingsRaw as any[] | undefined) || [];
 
-  const { data: statsRaw } = trpc.fireflies.meetings.getStats.useQuery();
-  const stats = statsRaw as any;
+  const { data: statsRaw, refetch: refetchStats } = trpc.fireflies.meetings.getStats.useQuery();
+  const stats = statsRaw as { total?: number; pending?: number; processed?: number; thisWeek?: number } | undefined;
 
   const syncMutation = trpc.fireflies.syncMeetings.useMutation({
     onSuccess: (data) => {
       toast.success(`Synced ${data.synced} new meetings`);
       refetch();
+      refetchStats();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -66,6 +65,7 @@ export default function Meetings() {
       setShowProcessDialog(false);
       setSelectedMeetingId(null);
       refetch();
+      refetchStats();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -94,6 +94,7 @@ export default function Meetings() {
     .filter((m: any) => {
       if (listView === "pending" && m.processingStatus !== "pending") return false;
       if (listView === "processed" && m.processingStatus !== "fully_processed") return false;
+      if (statusFilter !== "all" && m.processingStatus !== statusFilter) return false;
       if (!search) return true;
       const q = search.toLowerCase();
       const title = (m.title || "").toLowerCase();
@@ -162,6 +163,12 @@ export default function Meetings() {
         return <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Contacts Created</Badge>;
       case "tasks_created":
         return <Badge className="bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">Tasks Created</Badge>;
+      case "project_created":
+        return <Badge className="bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400">Project Created</Badge>;
+      case "skipped":
+        return <Badge variant="outline" className="text-muted-foreground">Skipped</Badge>;
+      case "error":
+        return <Badge variant="destructive">Error</Badge>;
       default:
         return <Badge variant="secondary">{status}</Badge>;
     }
@@ -223,17 +230,7 @@ export default function Meetings() {
             </div>
             <div className="rounded-xl border border-white/15 bg-white/10 p-3">
               <p className="text-xs text-white/70">This Week</p>
-              <p className="mt-1 text-2xl font-semibold">
-                {
-                  meetings.filter((m: any) => {
-                    if (!m.date) return false;
-                    const d = new Date(m.date);
-                    const now = new Date();
-                    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-                    return d >= weekAgo;
-                  }).length
-                }
-              </p>
+              <p className="mt-1 text-2xl font-semibold">{stats?.thisWeek ?? 0}</p>
             </div>
           </div>
         </CardContent>
@@ -256,7 +253,13 @@ export default function Meetings() {
             </div>
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Status</Label>
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <Select
+                value={statusFilter}
+                onValueChange={(v) => {
+                  setStatusFilter(v);
+                  setListView("all");
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Status" />
                 </SelectTrigger>
@@ -292,6 +295,7 @@ export default function Meetings() {
                   setStatusFilter("all");
                   setDateFrom("");
                   setDateTo("");
+                  setExpandedId(null);
                 }}
               >
                 Clear Filters
@@ -309,7 +313,13 @@ export default function Meetings() {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <Tabs value={listView} onValueChange={setListView}>
+              <Tabs
+                value={listView}
+                onValueChange={(v) => {
+                  setListView(v);
+                  setStatusFilter("all");
+                }}
+              >
                 <TabsList className="grid w-[240px] grid-cols-3">
                   <TabsTrigger value="all">All</TabsTrigger>
                   <TabsTrigger value="pending">Pending</TabsTrigger>
@@ -404,8 +414,7 @@ export default function Meetings() {
                           {meeting.processingStatus === "pending" && (
                             <Button
                               size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
+                              onClick={() => {
                                 setSelectedMeetingId(meeting.id);
                                 setProcessProjectName("");
                                 setProcessCreateProject(false);
@@ -420,10 +429,9 @@ export default function Meetings() {
                       </div>
                     </div>
 
-                    <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
-                      <span>Expand for full transcript summary and extracted tasks</span>
-                      <ExternalLink className="h-3 w-3 opacity-70" />
-                    </div>
+                    <p className="mt-2 text-[11px] text-muted-foreground">
+                      Expand for full transcript summary and extracted tasks.
+                    </p>
                   </div>
 
                   {isExpanded && (
@@ -516,8 +524,7 @@ export default function Meetings() {
                         {meeting.processingStatus === "pending" && (
                           <Button
                             size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
+                            onClick={() => {
                               setSelectedMeetingId(meeting.id);
                               setProcessProjectName("");
                               setProcessCreateProject(false);

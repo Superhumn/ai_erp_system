@@ -1621,6 +1621,10 @@ export const recipes = mysqlTable("recipes", {
   baseBatchGrams: decimal("baseBatchGrams", { precision: 12, scale: 2 }).default("0").notNull(),
   expectedYieldPct: decimal("expectedYieldPct", { precision: 5, scale: 4 }).default("1.0000").notNull(),
   hasMoistureVariants: boolean("hasMoistureVariants").default(false).notNull(),
+  /** Linked BOM built from this recipe (sync via syncRecipeToBom). */
+  bomId: int("bomId").references(() => billOfMaterials.id),
+  /** Finished good this recipe produces when synced to a BOM. */
+  outputProductId: int("outputProductId").references(() => products.id),
   notes: text("notes"),
   createdBy: int("createdBy").references(() => users.id),
   approvedBy: int("approvedBy").references(() => users.id),

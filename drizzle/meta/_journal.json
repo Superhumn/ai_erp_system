@@ -218,6 +218,13 @@
       "when": 1776110400000,
       "tag": "0030_recipe_costing_module",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "5",
+      "when": 1776200000000,
+      "tag": "0031_recipe_bom_link",
+      "breakpoints": true
     }
   ]
 }

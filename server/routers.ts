@@ -9007,6 +9007,18 @@ Provide a brief status summary, any missing documents, and next steps.`;
           snapshotDate: new Date(),
         });
       }),
+    syncToBom: protectedProcedure
+      .input(z.object({
+        recipeId: z.number(),
+        productId: z.number(),
+        formulation: z.enum(["wet", "dry"]).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.syncRecipeToBom(input.recipeId, input.productId, {
+          userId: ctx.user?.id,
+          formulation: input.formulation,
+        });
+      }),
   }),
 
   moisture: router({
@@ -9042,7 +9054,8 @@ Provide a brief status summary, any missing documents, and next steps.`;
       }),
     create: protectedProcedure
       .input(z.object({
-        bomId: z.number(),
+        bomId: z.number().optional(),
+        recipeId: z.number().optional(),
         productId: z.number(),
         warehouseId: z.number().optional(),
         quantity: z.string(),
@@ -9052,11 +9065,43 @@ Provide a brief status summary, any missing documents, and next steps.`;
         scheduledEndDate: z.date().optional(),
         notes: z.string().optional(),
         assignedTo: z.number().optional(),
+      }).refine((d) => d.bomId != null || d.recipeId != null, {
+        message: "Provide bomId or recipeId (recipe must be synced to a BOM first).",
       }))
       .mutation(async ({ input, ctx }) => {
-        const result = await db.createWorkOrder({ ...input, createdBy: ctx.user?.id });
-        // Auto-generate material requirements from BOM
-        await db.generateWorkOrderMaterialsFromBom(result.id, input.bomId, parseFloat(input.quantity));
+        let bomId = input.bomId;
+        let productId = input.productId;
+        if (input.recipeId != null) {
+          const recipe = await manufacturingDb.getRecipeById(input.recipeId);
+          if (!recipe) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "Recipe not found" });
+          }
+          if (!recipe.bomId) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "Recipe has no BOM. Run recipes.syncToBom with a finished product first.",
+            });
+          }
+          bomId = recipe.bomId;
+          if (recipe.outputProductId) productId = recipe.outputProductId;
+        }
+        if (bomId == null) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "bomId is required" });
+        }
+        const result = await db.createWorkOrder({
+          bomId,
+          productId,
+          warehouseId: input.warehouseId,
+          quantity: input.quantity,
+          unit: input.unit,
+          priority: input.priority,
+          scheduledStartDate: input.scheduledStartDate,
+          scheduledEndDate: input.scheduledEndDate,
+          notes: input.notes,
+          assignedTo: input.assignedTo,
+          createdBy: ctx.user?.id,
+        });
+        await db.generateWorkOrderMaterialsFromBom(result.id, bomId, parseFloat(input.quantity));
         return result;
       }),
     update: protectedProcedure
@@ -11283,6 +11328,18 @@ Ask if they received the original request and if they can provide a quote.`;
         const attachments = await db.getEmailAttachments(input.id);
         const documents = await db.getParsedDocuments({ emailId: input.id });
         
+        return { ...email, attachments, documents };
+      }),
+
+    /** Resolve by RFC Message-ID (approval queue source links). */
+    getByMessageId: protectedProcedure
+      .input(z.object({ messageId: z.string().min(1) }))
+      .query(async ({ input }) => {
+        const email = await db.findInboundEmailByMessageId(input.messageId);
+        if (!email) return null;
+        const id = (email as { id: number }).id;
+        const attachments = await db.getEmailAttachments(id);
+        const documents = await db.getParsedDocuments({ emailId: id });
         return { ...email, attachments, documents };
       }),
 
@@ -18415,7 +18472,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         }
         const fullTranscript = await getTranscript(config.apiKey, t.id);
         const participants = fullTranscript ? extractParticipants(fullTranscript) : [];
-        await db.createFirefliesMeeting({
+        const createdMeeting = await db.createFirefliesMeeting({
           firefliesId: t.id,
           title: t.title || 'Untitled Meeting',
           date: t.date ? new Date(t.date) : new Date(),
@@ -18427,6 +18484,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           actionItems: fullTranscript ? JSON.stringify(parseActionItems(fullTranscript?.summary?.action_items || [])) : null,
           processingStatus: 'pending',
         });
+        const newMeetingDbId = Number(createdMeeting.id);
         synced++;
 
         // Auto-create CRM deals from meeting notes
@@ -18496,6 +18554,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
 
           const suggested = await queueFirefliesActionItemsForApproval({
             userId: ctx.user.id,
+            meetingId: newMeetingDbId,
             meetingTitle: fullTranscript?.title || t.title || "Unknown meeting",
             firefliesId: t.id,
             actionItems: parseActionItems(actionItems),
@@ -18658,6 +18717,26 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       list: protectedProcedure
         .input(z.object({ status: z.string().optional() }).optional())
         .query(({ input }) => db.getFirefliesMeetings(input || undefined)),
+      get: protectedProcedure
+        .input(
+          z
+            .object({
+              id: z.number().optional(),
+              firefliesId: z.string().optional(),
+            })
+            .refine((i) => i.id != null || (i.firefliesId != null && i.firefliesId.length > 0), {
+              message: "Provide id or firefliesId",
+            }),
+        )
+        .query(async ({ input }) => {
+          if (input.id != null) {
+            return db.getFirefliesMeetingById(input.id);
+          }
+          if (input.firefliesId) {
+            return db.getFirefliesMeetingByFirefliesId(input.firefliesId);
+          }
+          return null;
+        }),
       getStats: protectedProcedure.query(async () => {
         const stats = await db.getFirefliesMeetingStats();
         return { ...stats, contactsCreated: 0, tasksCreated: 0 };

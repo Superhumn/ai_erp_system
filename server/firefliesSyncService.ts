@@ -200,7 +200,7 @@ export async function syncFirefliesMeetingsForUser(
           : [];
 
         // Save meeting to database
-        await db.createFirefliesMeeting({
+        const createdMeeting = await db.createFirefliesMeeting({
           firefliesId: t.id,
           title: t.title,
           date: t.date ? new Date(t.date) : new Date(),
@@ -216,6 +216,7 @@ export async function syncFirefliesMeetingsForUser(
               )
             : null,
         });
+        const newMeetingDbId = Number(createdMeeting.id);
         result.totalSynced++;
 
         // Auto-create CRM deals from meeting notes
@@ -296,6 +297,7 @@ export async function syncFirefliesMeetingsForUser(
 
         const suggested = await queueFirefliesActionItemsForApproval({
           userId,
+          meetingId: newMeetingDbId,
           meetingTitle: fullTranscript?.title || t.title || "Unknown meeting",
           firefliesId: t.id,
           actionItems: parseActionItems(actionItems),

@@ -540,6 +540,18 @@ export const emailRouter = router({
         return { ...email, attachments, documents };
       }),
 
+    /** Resolve stored inbound email by RFC Message-ID (for approval-queue source links). */
+    getByMessageId: protectedProcedure
+      .input(z.object({ messageId: z.string().min(1) }))
+      .query(async ({ input }) => {
+        const email = await db.findInboundEmailByMessageId(input.messageId);
+        if (!email) return null;
+        const id = (email as { id: number }).id;
+        const attachments = await db.getEmailAttachments(id);
+        const documents = await db.getParsedDocuments({ emailId: id });
+        return { ...email, attachments, documents };
+      }),
+
     // Submit email for parsing (manual forward)
     submitEmail: protectedProcedure
       .input(z.object({

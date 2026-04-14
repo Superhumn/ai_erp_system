@@ -19,6 +19,7 @@ import {
   inventoryTransfers, inventoryTransferItems,
   teamInvitations, userPermissions,
   billOfMaterials, bomComponents, rawMaterials, bomVersionHistory,
+  recipes, recipeLines, recipeIngredients,
   workOrders, workOrderMaterials, rawMaterialInventory, rawMaterialTransactions,
   purchaseOrderRawMaterials, poReceivingRecords, poReceivingItems,
   demandForecasts, productionPlans, materialRequirements, suggestedPurchaseOrders, suggestedPoItems, forecastAccuracy,
@@ -3089,6 +3090,151 @@ export async function calculateBomCosts(bomId: number) {
   });
   
   return { totalMaterialCost, laborCost, overheadCost, totalCost };
+}
+
+function rawMaterialUnitFromIngredientUom(uom: string): string {
+  switch (uom) {
+    case "g":
+      return "g";
+    case "kg":
+      return "kg";
+    case "lb":
+      return "lb";
+    case "oz":
+      return "oz";
+    case "ml":
+      return "ml";
+    case "l":
+      return "l";
+    case "each":
+      return "EA";
+    default:
+      return "g";
+  }
+}
+
+/**
+ * Build or refresh a BOM from a recipe's ingredient lines so work orders can consume raw material inventory.
+ * Maps each recipe ingredient to a raw material (match by SKU/name, or create one).
+ */
+export async function syncRecipeToBom(
+  recipeId: number,
+  productId: number,
+  opts?: { userId?: number; formulation?: "wet" | "dry" },
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const recipeRow = await db.select().from(recipes).where(eq(recipes.id, recipeId)).limit(1);
+  const recipe = recipeRow[0];
+  if (!recipe) throw new Error("Recipe not found");
+
+  const productRow = await db.select().from(products).where(eq(products.id, productId)).limit(1);
+  if (!productRow[0]) throw new Error("Product not found");
+
+  const formulation = opts?.formulation ?? "wet";
+
+  const lines = await db
+    .select()
+    .from(recipeLines)
+    .where(eq(recipeLines.recipeRowId, recipeId))
+    .orderBy(asc(recipeLines.lineNumber));
+
+  let bomId = recipe.bomId ?? undefined;
+
+  if (bomId) {
+    await db.delete(bomComponents).where(eq(bomComponents.bomId, bomId));
+    await updateBom(bomId, {
+      productId,
+      name: `${recipe.name} (${recipe.recipeId} v${recipe.version})`,
+      batchSize: recipe.baseBatchGrams,
+      batchUnit: "g",
+      status: "active",
+      notes: `Synced from recipe id ${recipe.id}`,
+    });
+  } else {
+    const bomResult = await createBom({
+      productId,
+      name: `${recipe.name} (${recipe.recipeId} v${recipe.version})`,
+      version: String(recipe.version),
+      status: "active",
+      batchSize: recipe.baseBatchGrams,
+      batchUnit: "g",
+      laborCost: "0",
+      overheadCost: "0",
+      notes: `Created from recipe id ${recipe.id}`,
+      createdBy: opts?.userId,
+    });
+    bomId = bomResult.id;
+    await createBomVersionHistory({
+      bomId,
+      version: String(recipe.version),
+      changeType: "created",
+      changeDescription: "Recipe → BOM sync",
+      changedBy: opts?.userId,
+    });
+  }
+
+  let componentCount = 0;
+  for (const line of lines) {
+    if (line.subRecipeId) continue;
+    if (!line.ingredientId) continue;
+
+    const ingRows = await db
+      .select()
+      .from(recipeIngredients)
+      .where(eq(recipeIngredients.id, line.ingredientId))
+      .limit(1);
+    const ing = ingRows[0];
+    if (!ing) continue;
+
+    let rm = await getRawMaterialByNameOrSku(ing.name, ing.sku);
+    if (!rm) {
+      await createRawMaterial({
+        name: ing.name,
+        sku: ing.sku,
+        unit: rawMaterialUnitFromIngredientUom(ing.unitOfMeasure),
+        unitCost: ing.costPerUnit?.toString() || "0",
+        category: ing.category,
+        status: "active",
+      });
+      rm = await getRawMaterialByNameOrSku(ing.name, ing.sku);
+    }
+    if (!rm) continue;
+
+    const gramsWet = parseFloat(line.quantityGrams?.toString() || "0");
+    const gramsDry = parseFloat(line.quantityGramsDry?.toString() || "0");
+    const qty = formulation === "dry" && gramsDry > 0 ? gramsDry : gramsWet;
+    if (qty <= 0) continue;
+
+    const unitCost = parseFloat(ing.costPerUnit?.toString() || "0");
+    componentCount += 1;
+    await createBomComponent({
+      bomId,
+      componentType: "raw_material",
+      rawMaterialId: rm.id,
+      name: ing.name,
+      sku: ing.sku ?? undefined,
+      quantity: qty.toFixed(4),
+      unit: "g",
+      wastagePercent: "0",
+      unitCost: unitCost > 0 ? unitCost.toFixed(4) : undefined,
+      sortOrder: componentCount,
+    });
+  }
+
+  await db
+    .update(recipes)
+    .set({
+      bomId,
+      outputProductId: productId,
+      updatedAt: new Date(),
+    })
+    .where(eq(recipes.id, recipeId));
+
+  await calculateBomCosts(bomId);
+
+  return { bomId, productId, componentCount };
 }
 
 
@@ -9284,10 +9430,11 @@ export async function getChecklistWithItems(checklistId: number) {
   // Group items by category
   const categories: Record<string, typeof items> = {};
   items.forEach(item => {
-    if (!categories[item.categoryName]) {
-      categories[item.categoryName] = [];
+    const key = item.categoryName ?? "uncategorized";
+    if (!categories[key]) {
+      categories[key] = [];
     }
-    categories[item.categoryName].push(item);
+    categories[key].push(item);
   });
 
   // Get linked documents for each item
@@ -10003,13 +10150,14 @@ export async function getChecklistSummary(dataRoomId: number) {
   // Group by category and status
   const byCategory: Record<string, { total: number; complete: number; partial: number; missing: number }> = {};
   items.forEach(item => {
-    if (!byCategory[item.categoryName]) {
-      byCategory[item.categoryName] = { total: 0, complete: 0, partial: 0, missing: 0 };
+    const key = item.categoryName ?? "uncategorized";
+    if (!byCategory[key]) {
+      byCategory[key] = { total: 0, complete: 0, partial: 0, missing: 0 };
     }
-    byCategory[item.categoryName].total++;
-    if (item.status === 'complete') byCategory[item.categoryName].complete++;
-    else if (item.status === 'partial') byCategory[item.categoryName].partial++;
-    else if (item.status === 'missing') byCategory[item.categoryName].missing++;
+    byCategory[key].total++;
+    if (item.status === 'complete') byCategory[key].complete++;
+    else if (item.status === 'partial') byCategory[key].partial++;
+    else if (item.status === 'missing') byCategory[key].missing++;
   });
 
   return {
@@ -10155,14 +10303,20 @@ export async function getFirefliesMeetingByFirefliesId(firefliesId: string) {
 
 export async function getFirefliesMeetingStats() {
   const db = await getDb();
-  if (!db) return { total: 0, pending: 0, processed: 0 };
+  if (!db) return { total: 0, pending: 0, processed: 0, thisWeek: 0 };
   const all = await db.select({ count: count() }).from(firefliesMeetings);
   const pending = await db.select({ count: count() }).from(firefliesMeetings).where(eq(firefliesMeetings.processingStatus, 'pending'));
   const processed = await db.select({ count: count() }).from(firefliesMeetings).where(eq(firefliesMeetings.processingStatus, 'fully_processed'));
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const thisWeekRows = await db
+    .select({ count: count() })
+    .from(firefliesMeetings)
+    .where(gte(firefliesMeetings.date, weekAgo));
   return {
     total: all[0]?.count || 0,
     pending: pending[0]?.count || 0,
     processed: processed[0]?.count || 0,
+    thisWeek: thisWeekRows[0]?.count || 0,
   };
 }
 
