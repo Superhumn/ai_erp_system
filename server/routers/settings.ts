@@ -600,6 +600,110 @@ export const settingsRouter = router({
         
         return results;
       }),
+
+    // Auto-sync CRM data from Google Drive spreadsheets
+    syncGoogleDrive: protectedProcedure
+      .mutation(async ({ ctx }) => {
+        const token = await db.getGoogleOAuthToken(ctx.user.id);
+        if (!token?.accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Google account not connected' });
+        }
+
+        let accessToken = token.accessToken;
+        // Refresh token if expired
+        if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
+          const clientId = process.env.GOOGLE_CLIENT_ID;
+          const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+          if (clientId && clientSecret) {
+            const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({
+                client_id: clientId,
+                client_secret: clientSecret,
+                refresh_token: token.refreshToken,
+                grant_type: 'refresh_token',
+              }),
+            });
+            if (refreshResponse.ok) {
+              const refreshData = await refreshResponse.json();
+              accessToken = refreshData.access_token;
+              await db.upsertGoogleOAuthToken({
+                userId: ctx.user.id,
+                accessToken: refreshData.access_token,
+                expiresAt: new Date(Date.now() + refreshData.expires_in * 1000),
+              });
+            }
+          }
+        }
+
+        // List all spreadsheets
+        const listUrl = `https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.spreadsheet'&fields=files(id,name)&orderBy=modifiedTime desc&pageSize=50`;
+        const listResponse = await fetch(listUrl, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!listResponse.ok) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list spreadsheets from Google Drive' });
+        }
+        const listData = await listResponse.json();
+        const spreadsheets = listData.files || [];
+
+        // Match CRM-related spreadsheets by name
+        const crmPatterns = [
+          { pattern: /contact/i, type: 'crm_contacts' },
+          { pattern: /deal|pipeline|opportunity/i, type: 'crm_deals' },
+          { pattern: /fundrais|investor|donor|campaign/i, type: 'fundraising' },
+        ];
+
+        const results: Array<{ type: string; name: string; imported: number }> = [];
+
+        for (const sheet of spreadsheets) {
+          const matched = crmPatterns.find(p => p.pattern.test(sheet.name));
+          if (!matched) continue;
+
+          try {
+            // Fetch sheet data
+            const sheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${sheet.id}/values/A:ZZ`;
+            const sheetResponse = await fetch(sheetUrl, {
+              headers: { Authorization: `Bearer ${accessToken}` },
+            });
+            if (!sheetResponse.ok) continue;
+
+            const sheetData = await sheetResponse.json();
+            const rows = sheetData.values || [];
+            if (rows.length < 2) continue;
+
+            const headers = (rows[0] as string[]).map((h: string) => h.toLowerCase().trim());
+            let imported = 0;
+
+            if (matched.type === 'crm_contacts') {
+              const nameIdx = headers.findIndex((h: string) => h.includes('name'));
+              const emailIdx = headers.findIndex((h: string) => h.includes('email'));
+              if (nameIdx === -1) continue;
+
+              for (let i = 1; i < rows.length; i++) {
+                const row = rows[i] as string[];
+                const fullName = row[nameIdx]?.trim();
+                if (!fullName) continue;
+                const parts = fullName.split(' ');
+                try {
+                  await db.createCrmContact({
+                    firstName: parts[0] || fullName,
+                    lastName: parts.slice(1).join(' ') || null,
+                    email: emailIdx >= 0 ? row[emailIdx]?.trim() || null : null,
+                    source: 'google_sheets_sync',
+                  } as any);
+                  imported++;
+                } catch { /* skip duplicates */ }
+              }
+            }
+
+            results.push({ type: matched.type, name: sheet.name, imported });
+          } catch { /* skip failed sheets */ }
+        }
+
+        return { results };
+      }),
   }),
   // ============================================
   // GOOGLE WORKSPACE (DOCS & SHEETS)

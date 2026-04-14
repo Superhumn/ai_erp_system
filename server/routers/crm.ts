@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
+import { invokeLLM } from "../_core/llm";
 import { router, protectedProcedure, createAuditLog } from "./middleware";
 
 export const crmRouter = router({
@@ -113,6 +114,18 @@ export const crmRouter = router({
           await db.deleteCrmContact(input.id);
           await createAuditLog(ctx.user.id, 'delete', 'crm_contact', input.id, existing?.fullName);
           return { success: true };
+        }),
+
+      deleteAll: protectedProcedure
+        .mutation(async ({ ctx }) => {
+          const contacts = await db.getCrmContacts();
+          let deleted = 0;
+          for (const contact of contacts) {
+            await db.deleteCrmContact(contact.id);
+            deleted++;
+          }
+          await createAuditLog(ctx.user.id, 'delete', 'crm_contacts_all', 0, `Deleted ${deleted} contacts`);
+          return { deleted };
         }),
 
       getStats: protectedProcedure.query(() => db.getCrmContactStats()),
@@ -489,6 +502,49 @@ export const crmRouter = router({
       getStats: protectedProcedure
         .input(z.object({ pipelineId: z.number().optional() }).optional())
         .query(({ input }) => db.getCrmDealStats(input?.pipelineId)),
+
+      getNextSteps: protectedProcedure
+        .input(z.object({ dealId: z.number() }))
+        .query(async ({ input }) => {
+          const deal = await db.getCrmDealById(input.dealId);
+          if (!deal) throw new TRPCError({ code: 'NOT_FOUND', message: 'Deal not found' });
+
+          const interactions = await db.getCrmInteractions({ contactId: (deal as any).contactId, limit: 10 });
+
+          try {
+            const result = await invokeLLM({
+              messages: [{
+                role: "user",
+                content: `Given this CRM deal, suggest 2-4 concrete next steps.
+
+Deal: ${deal.name}
+Stage: ${deal.stage}
+Amount: ${deal.amount || "N/A"}
+Status: ${deal.status}
+Notes: ${deal.notes || "None"}
+Recent interactions: ${interactions?.slice(0, 5).map((i: any) => `${i.type}: ${i.subject || i.notes || ""}`).join("; ") || "None"}
+
+Return JSON array: [{"action":"...", "priority":"high|medium|low", "suggestedDate":"...", "reasoning":"..."}]
+Only output the JSON array, no other text.`,
+              }],
+              maxTokens: 400,
+            });
+
+            const rawContent = result.choices[0]?.message?.content;
+            const text = typeof rawContent === "string"
+              ? rawContent
+              : Array.isArray(rawContent)
+                ? rawContent.filter((c) => c.type === "text").map((c) => (c as any).text).join("")
+                : "";
+            const match = text.match(/\[[\s\S]*\]/);
+            if (match) {
+              const steps = JSON.parse(match[0]);
+              return { steps };
+            }
+          } catch { /* fall through */ }
+
+          return { steps: [] };
+        }),
 
       moveStage: protectedProcedure
         .input(z.object({

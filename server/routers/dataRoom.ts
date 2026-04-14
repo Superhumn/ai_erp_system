@@ -2008,4 +2008,146 @@ export const dataRoomRouter = router({
         }),
     }),
   }),
+
+  // ============================================
+  // INVESTMENT COMMITMENTS
+  // ============================================
+
+  listCommitments: protectedProcedure
+    .input(z.object({ dataRoomId: z.number() }))
+    .query(async ({ input }) => {
+      return db.getInvestmentCommitments({ dataRoomId: input.dataRoomId });
+    }),
+
+  updateCommitmentStatus: protectedProcedure
+    .input(z.object({
+      id: z.number(),
+      status: z.enum(["interested", "committed", "docs_sent", "signed", "funded", "completed", "declined"]),
+    }))
+    .mutation(async ({ input }) => {
+      const updates: Record<string, any> = { status: input.status };
+      if (input.status === "funded") {
+        updates.fundedAt = new Date();
+      }
+      await db.updateInvestmentCommitment(input.id, updates);
+      return { success: true };
+    }),
+
+  finalizeInvestment: protectedProcedure
+    .input(z.object({
+      commitmentId: z.number(),
+      shareClassId: z.number(),
+      shares: z.string(),
+      pricePerShare: z.string(),
+    }))
+    .mutation(async ({ input }) => {
+      const commitment = await db.getInvestmentCommitmentById(input.commitmentId);
+      if (!commitment) throw new TRPCError({ code: 'NOT_FOUND', message: 'Commitment not found' });
+
+      // Create stakeholder entry on the cap table
+      const stakeholder = await db.createStakeholder({
+        name: commitment.investorName,
+        email: commitment.investorEmail,
+        type: "investor",
+        shareClassId: input.shareClassId,
+        shares: input.shares,
+        pricePerShare: input.pricePerShare,
+        investmentAmount: commitment.investmentAmount?.toString(),
+      } as any);
+
+      // Mark commitment as completed and linked to cap table
+      await db.updateInvestmentCommitment(input.commitmentId, {
+        status: "completed",
+        addedToCapTable: true,
+        stakeholderId: stakeholder.id,
+      });
+
+      return { success: true, stakeholderId: stakeholder.id };
+    }),
+
+  // ============================================
+  // SYNC FROM DRIVE (shortcut)
+  // ============================================
+
+  syncFromDrive: protectedProcedure
+    .input(z.object({ dataRoomId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      const room = await db.getDataRoomById(input.dataRoomId);
+      if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+      if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+      }
+
+      // Get the saved drive sync config
+      const config = await db.getDriveSyncConfig(input.dataRoomId);
+      if (!config?.googleDriveFolderId) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'No Google Drive folder configured. Set up sync in data room settings first.',
+        });
+      }
+
+      const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+      if (error) {
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+      }
+
+      const syncResult = await syncDriveFolder(accessToken, config.googleDriveFolderId);
+      if (!syncResult.success) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: syncResult.error || 'Sync failed' });
+      }
+
+      // Get existing folders/docs to avoid duplicates
+      const existingFolders = await db.getDataRoomFolders(input.dataRoomId, null);
+      const existingDocs = await db.getDataRoomDocuments(input.dataRoomId, null);
+      const existingFoldersByDriveId = new Map(
+        existingFolders
+          .filter(f => f.googleDriveFolderId)
+          .map(f => [f.googleDriveFolderId!, f.id])
+      );
+      const existingDocsByDriveId = new Set(
+        existingDocs.filter(d => d.googleDriveFileId).map(d => d.googleDriveFileId)
+      );
+
+      let foldersCreated = 0;
+      let filesCreated = 0;
+
+      // Sync folders
+      if (syncResult.folders) {
+        for (const folder of syncResult.folders) {
+          if (!existingFoldersByDriveId.has(folder.id)) {
+            const result = await db.createDataRoomFolder({
+              dataRoomId: input.dataRoomId,
+              name: folder.name,
+              googleDriveFolderId: folder.id,
+            } as any);
+            existingFoldersByDriveId.set(folder.id, result.id);
+            foldersCreated++;
+          }
+        }
+      }
+
+      // Sync files
+      if (syncResult.files) {
+        for (const file of syncResult.files) {
+          if (!existingDocsByDriveId.has(file.id)) {
+            const parentDriveId = file.parents?.[0];
+            const parentFolderId = parentDriveId ? existingFoldersByDriveId.get(parentDriveId) : null;
+            await db.createDataRoomDocument({
+              dataRoomId: input.dataRoomId,
+              folderId: parentFolderId ?? null,
+              name: file.name,
+              fileType: getSimpleFileType(file.mimeType || ""),
+              fileSize: parseInt(file.size || "0", 10),
+              googleDriveFileId: file.id,
+              googleDriveUrl: file.webViewLink,
+              uploadedBy: ctx.user.id,
+            } as any);
+            filesCreated++;
+          }
+        }
+      }
+
+      return { filesCreated, foldersCreated };
+    }),
 });
