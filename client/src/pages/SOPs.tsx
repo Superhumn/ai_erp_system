@@ -952,7 +952,7 @@ export default function SOPs() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.875rem] font-bold tracking-[-0.03em]">SOPs</h1>
+          <h1 className="text-lg font-semibold">SOPs</h1>
           <p className="text-muted-foreground text-sm">{sops.length} procedures — select to expand</p>
         </div>
       </div>

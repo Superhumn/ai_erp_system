@@ -389,7 +389,7 @@ export default function SalesHub() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em]">Orders &amp; Sales</h1>
+          <h1 className="text-lg font-semibold">Orders &amp; Sales</h1>
           <p className="text-muted-foreground">Unified view of orders, invoices, payments, and shipments</p>
         </div>
 

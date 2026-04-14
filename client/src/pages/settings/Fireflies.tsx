@@ -101,12 +101,12 @@ export default function FirefliesPage() {
   });
 
   const handleConfigure = () => {
-    if (!apiKey.trim()) {
+    if (!config?.configured && !apiKey.trim()) {
       toast.error("Please enter your Fireflies API key");
       return;
     }
     configureMutation.mutate({
-      apiKey: apiKey.trim(),
+      apiKey: apiKey.trim() || undefined,
       autoCreateContacts,
       autoCreateTasks,
       autoCreateProjects,
@@ -143,11 +143,28 @@ export default function FirefliesPage() {
     }
   };
 
-  const formatDuration = (seconds?: number | null) => {
+  const normalizeDurationSeconds = (raw?: number | string | null) => {
+    if (raw == null) return null;
+    const value = typeof raw === "string" ? Number(raw) : raw;
+    if (!Number.isFinite(value) || value <= 0) return null;
+
+    // Fireflies payloads may arrive in minutes for some accounts.
+    if (value <= 120 && Number.isInteger(value)) return value * 60;
+    // Also support decimal-minute values (e.g., 42.5).
+    if (value < 10 && !Number.isInteger(value)) return Math.round(value * 60);
+
+    return Math.round(value);
+  };
+
+  const formatDuration = (raw?: number | string | null) => {
+    const seconds = normalizeDurationSeconds(raw);
     if (!seconds) return "—";
-    const mins = Math.floor(seconds / 60);
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
-    return `${mins}m ${secs}s`;
+    if (hours > 0) return `${hours}h ${mins}m`;
+    if (mins > 0) return `${mins}m ${secs}s`;
+    return `${secs}s`;
   };
 
   const formatDate = (date?: string | Date | null) => {
@@ -177,7 +194,7 @@ export default function FirefliesPage() {
           <div className="flex gap-2">
             <Button
               variant="outline"
-              onClick={() => (syncMutation.mutate as any)({})}
+              onClick={() => (syncMutation.mutate as any)({ limit: 500 })}
               disabled={syncMutation.isPending}
             >
               {syncMutation.isPending ? (
@@ -207,42 +224,6 @@ export default function FirefliesPage() {
           </div>
         )}
       </div>
-
-      {/* Stats Cards */}
-      {config?.configured && stats && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="text-sm text-muted-foreground">Total Meetings</div>
-              <div className="text-xl font-semibold tracking-[-0.02em]">{stats.total}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="text-sm text-muted-foreground">Pending</div>
-              <div className="text-xl font-semibold tracking-[-0.02em] text-yellow-600">{stats.pending}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="text-sm text-muted-foreground">Processed</div>
-              <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{stats.processed}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="text-sm text-muted-foreground flex items-center gap-1"><Users className="h-3 w-3" /> Contacts Created</div>
-              <div className="text-xl font-semibold tracking-[-0.02em] text-blue-600">{stats.contactsCreated}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="text-sm text-muted-foreground flex items-center gap-1"><ListTodo className="h-3 w-3" /> Tasks Created</div>
-              <div className="text-xl font-semibold tracking-[-0.02em] text-purple-600">{stats.tasksCreated}</div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
 
       <Tabs defaultValue={config?.configured ? "meetings" : "setup"}>
         <TabsList>
@@ -305,13 +286,18 @@ export default function FirefliesPage() {
                       value={apiKey}
                       onChange={(e) => setApiKey(e.target.value)}
                     />
-                    <Button onClick={handleConfigure} disabled={configureMutation.isPending || !apiKey.trim()}>
+                    <Button onClick={handleConfigure} disabled={configureMutation.isPending || (!config?.configured && !apiKey.trim())}>
                       {configureMutation.isPending ? (
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                       ) : null}
                       {config?.configured ? "Update" : "Connect"}
                     </Button>
                   </div>
+                  {config?.configured && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Leave blank to keep your existing API key and save only settings changes.
+                    </p>
+                  )}
                 </div>
 
                 <div className="border rounded-lg p-4 space-y-4">
@@ -338,6 +324,14 @@ export default function FirefliesPage() {
                     <Switch checked={autoCreateProjects} onCheckedChange={setAutoCreateProjects} />
                   </div>
                 </div>
+                {config?.configured && (
+                  <Button onClick={handleConfigure} disabled={configureMutation.isPending}>
+                    {configureMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : null}
+                    Save Settings
+                  </Button>
+                )}
 
                 {config?.configured && (
                   <div className="pt-4 border-t">

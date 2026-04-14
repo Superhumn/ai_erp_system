@@ -39,6 +39,7 @@ import { getStatusColor } from "@/lib/statusColors";
 export default function Products() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [classificationFilter, setClassificationFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
   const [formData, setFormData] = useState({
     sku: "",
@@ -46,6 +47,7 @@ export default function Products() {
     description: "",
     category: "",
     type: "physical" as "physical" | "digital" | "service",
+    manufacturingStage: "finished_product" as "raw_material" | "semi_finished_good" | "finished_product",
     unitPrice: "",
     costPrice: "",
     unit: "each",
@@ -77,7 +79,7 @@ export default function Products() {
       setIsOpen(false);
       setFormData({
         sku: "", name: "", description: "", category: "",
-        type: "physical", unitPrice: "", costPrice: "", unit: "each",
+        type: "physical", manufacturingStage: "finished_product", unitPrice: "", costPrice: "", unit: "each",
       });
       utils.products.list.invalidate();
     },
@@ -91,13 +93,20 @@ export default function Products() {
       product.name.toLowerCase().includes(search.toLowerCase()) ||
       product.sku.toLowerCase().includes(search.toLowerCase());
     const matchesStatus = statusFilter === "all" || product.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  }), [products, search, statusFilter]);
+    const matchesClassification =
+      classificationFilter === "all" || (product.manufacturingStage || "finished_product") === classificationFilter;
+    return matchesSearch && matchesStatus && matchesClassification;
+  }), [products, search, statusFilter, classificationFilter]);
 
   const typeColors: Record<string, string> = {
     physical: "bg-blue-500/10 text-blue-600",
     digital: "bg-purple-500/10 text-purple-600",
     service: "bg-amber-500/10 text-amber-600",
+  };
+  const manufacturingStageLabels: Record<string, string> = {
+    raw_material: "Raw Material",
+    semi_finished_good: "Semi-Finished Good",
+    finished_product: "Product",
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -108,6 +117,7 @@ export default function Products() {
       description: formData.description || undefined,
       category: formData.category || undefined,
       type: formData.type,
+      manufacturingStage: formData.manufacturingStage,
       unitPrice: formData.unitPrice,
       costPrice: formData.costPrice || undefined,
       
@@ -118,7 +128,7 @@ export default function Products() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
             <Package className="h-8 w-8" />
             Products
           </h1>
@@ -169,6 +179,24 @@ export default function Products() {
                       </SelectContent>
                     </Select>
                   </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="manufacturingStage">Manufacturing Classification</Label>
+                  <Select
+                    value={formData.manufacturingStage}
+                    onValueChange={(value: "raw_material" | "semi_finished_good" | "finished_product") =>
+                      setFormData({ ...formData, manufacturingStage: value })
+                    }
+                  >
+                    <SelectTrigger id="manufacturingStage">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="raw_material">Raw Material</SelectItem>
+                      <SelectItem value="semi_finished_good">Semi-Finished Good</SelectItem>
+                      <SelectItem value="finished_product">Product</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="name">Name *</Label>
@@ -271,6 +299,17 @@ export default function Products() {
                 <SelectItem value="discontinued">Discontinued</SelectItem>
               </SelectContent>
             </Select>
+            <Select value={classificationFilter} onValueChange={setClassificationFilter}>
+              <SelectTrigger className="w-[220px]">
+                <SelectValue placeholder="Classification" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Classifications</SelectItem>
+                <SelectItem value="raw_material">Raw Material</SelectItem>
+                <SelectItem value="semi_finished_good">Semi-Finished Good</SelectItem>
+                <SelectItem value="finished_product">Product</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </CardHeader>
         <CardContent>
@@ -292,6 +331,7 @@ export default function Products() {
                   <TableHead>Name</TableHead>
                   <TableHead>Category</TableHead>
                   <TableHead>Type</TableHead>
+                  <TableHead>Classification</TableHead>
                   <TableHead className="text-right">Unit Price</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
@@ -308,6 +348,9 @@ export default function Products() {
                     <TableCell>{product.category || "-"}</TableCell>
                     <TableCell>
                       <Badge className={typeColors[product.type]}>{product.type}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      {manufacturingStageLabels[product.manufacturingStage || "finished_product"]}
                     </TableCell>
                     <TableCell className="text-right font-mono">
                       {formatCurrency(product.unitPrice)}

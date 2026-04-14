@@ -5,6 +5,9 @@ import {
   workOrders, InsertWorkOrder, workOrderMaterials, InsertWorkOrderMaterial,
   rawMaterialInventory, InsertRawMaterialInventory, rawMaterialTransactions, InsertRawMaterialTransaction,
   purchaseOrderRawMaterials,
+  recipeIngredients, InsertRecipeIngredient, ingredientCostHistory, InsertIngredientCostHistory,
+  recipes, InsertRecipe, recipeLines, InsertRecipeLine, recipeProcedures, InsertRecipeProcedure,
+  batchCostSnapshots, InsertBatchCostSnapshot,
   demandForecasts, InsertDemandForecast, productionPlans, InsertProductionPlan,
   materialRequirements, InsertMaterialRequirement,
   suggestedPurchaseOrders, InsertSuggestedPurchaseOrder, suggestedPoItems, InsertSuggestedPoItem,
@@ -763,4 +766,305 @@ export async function getAllRawMaterials() {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(rawMaterials).orderBy(rawMaterials.name);
+}
+
+const GRAMS_PER_LB = 453.592;
+const GRAMS_PER_KG = 1000;
+const GRAMS_PER_OZ = 28.3495;
+
+function toPerGram(costPerUnit: number, costUnit: string): number {
+  switch (costUnit) {
+    case "per_lb":
+      return costPerUnit / GRAMS_PER_LB;
+    case "per_kg":
+      return costPerUnit / GRAMS_PER_KG;
+    case "per_oz":
+      return costPerUnit / GRAMS_PER_OZ;
+    case "per_each":
+      return costPerUnit;
+    default:
+      return costPerUnit;
+  }
+}
+
+type RecipeCostLine = {
+  lineId: number;
+  lineNumber: number;
+  grams: number;
+  cost: number;
+  ingredient?: {
+    id: number;
+    name: string;
+    sku: string;
+  };
+  subRecipe?: {
+    id: number;
+    name: string;
+    recipeId: string;
+  };
+};
+
+async function computeSubRecipeCost(
+  recipeId: number,
+  quantityGrams: number,
+  formulation: "wet" | "dry",
+  depth = 0,
+): Promise<{ total: number; breakdown: RecipeCostLine[] }> {
+  // Guard against cyclic recipe references.
+  if (depth > 8) return { total: 0, breakdown: [] };
+  const subRecipe = await getRecipeById(recipeId);
+  if (!subRecipe) return { total: 0, breakdown: [] };
+  const lines = await getRecipeLines(recipeId);
+  const scaleFactor = parseFloat(subRecipe.baseBatchGrams?.toString() || "1") > 0
+    ? quantityGrams / parseFloat(subRecipe.baseBatchGrams.toString())
+    : 1;
+  const breakdown: RecipeCostLine[] = [];
+
+  for (const line of lines) {
+    const wetGrams = parseFloat(line.quantityGrams?.toString() || "0");
+    const dryGrams = parseFloat(line.quantityGramsDry?.toString() || "0");
+    const baseGrams = formulation === "dry" && dryGrams > 0 ? dryGrams : wetGrams;
+    const grams = baseGrams * scaleFactor;
+    if (line.subRecipeId) {
+      const nested = await computeSubRecipeCost(line.subRecipeId, grams, formulation, depth + 1);
+      breakdown.push({
+        lineId: line.id,
+        lineNumber: line.lineNumber,
+        grams,
+        cost: nested.total,
+      });
+      continue;
+    }
+    if (!line.ingredientId) continue;
+    const ingredient = await getIngredientById(line.ingredientId);
+    if (!ingredient) continue;
+    const unitCost = parseFloat(ingredient.costPerUnit?.toString() || "0");
+    const cost = grams * toPerGram(unitCost, ingredient.costUnit || "per_kg");
+    breakdown.push({
+      lineId: line.id,
+      lineNumber: line.lineNumber,
+      grams,
+      cost,
+      ingredient: { id: ingredient.id, name: ingredient.name, sku: ingredient.sku },
+    });
+  }
+
+  const total = breakdown.reduce((sum, b) => sum + b.cost, 0);
+  return { total, breakdown };
+}
+
+export async function getIngredients(filters?: { category?: string; active?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.category) conditions.push(eq(recipeIngredients.category, filters.category as any));
+  if (typeof filters?.active === "boolean") conditions.push(eq(recipeIngredients.isActive, filters.active));
+  const query = db.select().from(recipeIngredients).orderBy(recipeIngredients.name);
+  return conditions.length > 0 ? query.where(and(...conditions)) : query;
+}
+
+export async function getIngredientById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(recipeIngredients).where(eq(recipeIngredients.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getIngredientCostHistory(ingredientId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(ingredientCostHistory)
+    .where(eq(ingredientCostHistory.ingredientId, ingredientId))
+    .orderBy(desc(ingredientCostHistory.effectiveDate));
+}
+
+export async function createIngredient(data: Omit<InsertRecipeIngredient, "id" | "createdAt" | "updatedAt">) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(recipeIngredients).values(data).$returningId();
+  return { id: result[0].id };
+}
+
+export async function updateIngredient(id: number, data: Partial<InsertRecipeIngredient>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(recipeIngredients).set({ ...data, updatedAt: new Date() }).where(eq(recipeIngredients.id, id));
+}
+
+export async function addIngredientCostEntry(data: Omit<InsertIngredientCostHistory, "id" | "createdAt">) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ingredientCostHistory).values(data).$returningId();
+  await updateIngredient(data.ingredientId, {
+    costPerUnit: data.costPerUnit,
+    costUnit: data.costUnit,
+    supplierId: data.supplierId,
+  });
+  return { id: result[0].id };
+}
+
+export async function getRecipes(filters?: { category?: string; status?: string; isSubRecipe?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.category) conditions.push(eq(recipes.category, filters.category as any));
+  if (filters?.status) conditions.push(eq(recipes.status, filters.status as any));
+  if (typeof filters?.isSubRecipe === "boolean") conditions.push(eq(recipes.isSubRecipe, filters.isSubRecipe));
+  const query = db.select().from(recipes).orderBy(desc(recipes.updatedAt));
+  return conditions.length > 0 ? query.where(and(...conditions)) : query;
+}
+
+export async function getRecipeById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(recipes).where(eq(recipes.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getRecipeLines(recipeId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(recipeLines).where(eq(recipeLines.recipeRowId, recipeId)).orderBy(recipeLines.lineNumber);
+}
+
+export async function getRecipeProcedures(recipeId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(recipeProcedures).where(eq(recipeProcedures.recipeRowId, recipeId)).orderBy(recipeProcedures.stepNumber);
+}
+
+export async function createRecipe(data: Omit<InsertRecipe, "id" | "createdAt" | "updatedAt">) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(recipes).values(data).$returningId();
+  return { id: result[0].id };
+}
+
+export async function updateRecipe(id: number, data: Partial<InsertRecipe>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(recipes).set({ ...data, updatedAt: new Date() }).where(eq(recipes.id, id));
+}
+
+export async function createRecipeLine(data: Omit<InsertRecipeLine, "id" | "createdAt" | "updatedAt">) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(recipeLines).values(data).$returningId();
+  return { id: result[0].id };
+}
+
+export async function updateRecipeLine(id: number, data: Partial<InsertRecipeLine>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(recipeLines).set({ ...data, updatedAt: new Date() }).where(eq(recipeLines.id, id));
+}
+
+export async function deleteRecipeLine(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(recipeLines).where(eq(recipeLines.id, id));
+}
+
+export async function reorderRecipeLines(recipeId: number, lineIds: number[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  for (let idx = 0; idx < lineIds.length; idx++) {
+    await db.update(recipeLines).set({ lineNumber: idx + 1 }).where(eq(recipeLines.id, lineIds[idx]));
+  }
+  await db.update(recipes).set({ updatedAt: new Date() }).where(eq(recipes.id, recipeId));
+}
+
+export async function createRecipeProcedure(data: Omit<InsertRecipeProcedure, "id" | "createdAt">) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(recipeProcedures).values(data).$returningId();
+  return { id: result[0].id };
+}
+
+export async function calculateRecipeBatchCost(input: {
+  recipeId: number;
+  formulation: "wet" | "dry";
+  batchGrams?: number;
+  scaleFactor?: number;
+  targetLbs?: number;
+}) {
+  const recipe = await getRecipeById(input.recipeId);
+  if (!recipe) return null;
+
+  const baseBatch = parseFloat(recipe.baseBatchGrams?.toString() || "0");
+  const targetFromLbs = input.targetLbs ? input.targetLbs * GRAMS_PER_LB : undefined;
+  const requestedBatch = targetFromLbs || input.batchGrams || (input.scaleFactor ? baseBatch * input.scaleFactor : baseBatch);
+  const effectiveScale = baseBatch > 0 ? requestedBatch / baseBatch : 1;
+  const lines = await getRecipeLines(input.recipeId);
+  const resultLines: RecipeCostLine[] = [];
+  const subRecipeCosts: Array<{ recipe: string; grams: number; cost: number; lineCosts: RecipeCostLine[] }> = [];
+
+  for (const line of lines) {
+    const wetGrams = parseFloat(line.quantityGrams?.toString() || "0");
+    const dryGrams = parseFloat(line.quantityGramsDry?.toString() || "0");
+    const baseGrams = input.formulation === "dry" && dryGrams > 0 ? dryGrams : wetGrams;
+    const grams = baseGrams * effectiveScale;
+    if (line.subRecipeId) {
+      const nested = await computeSubRecipeCost(line.subRecipeId, grams, input.formulation);
+      const subRecipe = await getRecipeById(line.subRecipeId);
+      subRecipeCosts.push({
+        recipe: subRecipe?.name || `Sub-recipe ${line.subRecipeId}`,
+        grams,
+        cost: nested.total,
+        lineCosts: nested.breakdown,
+      });
+      resultLines.push({
+        lineId: line.id,
+        lineNumber: line.lineNumber,
+        grams,
+        cost: nested.total,
+        subRecipe: subRecipe ? { id: subRecipe.id, name: subRecipe.name, recipeId: subRecipe.recipeId } : undefined,
+      });
+      continue;
+    }
+    if (!line.ingredientId) continue;
+    const ingredient = await getIngredientById(line.ingredientId);
+    if (!ingredient) continue;
+    const cost = grams * toPerGram(parseFloat(ingredient.costPerUnit?.toString() || "0"), ingredient.costUnit || "per_kg");
+    resultLines.push({
+      lineId: line.id,
+      lineNumber: line.lineNumber,
+      grams,
+      cost,
+      ingredient: { id: ingredient.id, name: ingredient.name, sku: ingredient.sku },
+    });
+  }
+
+  const totalCost = resultLines.reduce((sum, l) => sum + l.cost, 0);
+  const totalGrams = resultLines.reduce((sum, l) => sum + l.grams, 0);
+  const yieldPct = parseFloat(recipe.expectedYieldPct?.toString() || "1");
+  const yieldGrams = totalGrams * yieldPct;
+  return {
+    recipeId: recipe.id,
+    recipeName: recipe.name,
+    formulation: input.formulation,
+    totalBatchGrams: totalGrams,
+    totalCost,
+    costPerGram: totalGrams > 0 ? totalCost / totalGrams : 0,
+    costPerLb: totalGrams > 0 ? totalCost / (totalGrams / GRAMS_PER_LB) : 0,
+    costPerKg: totalGrams > 0 ? totalCost / (totalGrams / GRAMS_PER_KG) : 0,
+    yieldAdjustedCostPerLb: yieldGrams > 0 ? totalCost / (yieldGrams / GRAMS_PER_LB) : 0,
+    lines: resultLines.map((l) => ({ ...l, pctOfTotal: totalCost > 0 ? l.cost / totalCost : 0 })),
+    subRecipeCosts,
+  };
+}
+
+export async function saveBatchCostSnapshot(data: Omit<InsertBatchCostSnapshot, "id" | "createdAt">) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(batchCostSnapshots).values(data).$returningId();
+  return { id: result[0].id };
+}
+
+export async function getRecipeCostHistory(recipeId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(batchCostSnapshots)
+    .where(eq(batchCostSnapshots.recipeId, recipeId))
+    .orderBy(desc(batchCostSnapshots.snapshotDate));
 }

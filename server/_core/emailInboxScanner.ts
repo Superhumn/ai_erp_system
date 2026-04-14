@@ -101,6 +101,96 @@ export const IMAP_PRESETS: Record<string, Partial<EmailInboxConfig>> = {
   },
 };
 
+const ALLOWED_EMAIL_TASK_DOMAINS = new Set(["fundraising", "sales", "legal"]);
+
+function normalizeEmailTaskDomain(value?: string): "fundraising" | "sales" | "legal" | null {
+  const normalized = (value || "").trim().toLowerCase();
+  if (normalized === "fundraising" || normalized === "sales" || normalized === "legal") {
+    return normalized;
+  }
+  if (normalized.includes("fund")) return "fundraising";
+  if (normalized.includes("sale")) return "sales";
+  if (normalized.includes("legal")) return "legal";
+  return null;
+}
+
+function normalizeTaskPriority(value?: string): "low" | "medium" | "high" | "urgent" {
+  const normalized = (value || "").trim().toLowerCase();
+  if (normalized === "urgent") return "urgent";
+  if (normalized === "high") return "high";
+  if (normalized === "low") return "low";
+  return "medium";
+}
+
+async function routeSuggestedTaskToProject(params: {
+  task: string;
+  domain: "fundraising" | "sales" | "legal";
+  fromAddress: string;
+  subject: string;
+}) {
+  const db = await import("../db");
+  const projects = await db.getProjects();
+  if (!Array.isArray(projects) || projects.length === 0) {
+    return { projectId: null as number | null, assigneeId: null as number | null };
+  }
+
+  const teamMembers = (await db.getTeamMembers?.()) || [];
+  const projectIndex = new Map(projects.map((p: any) => [p.id, p]));
+  const teamIndex = new Map((teamMembers as any[]).map((u: any) => [u.id, u]));
+
+  // Prefer explicit domain projects before using AI routing.
+  const domainProject = projects.find((p: any) => {
+    const haystack = `${p.name || ""} ${p.description || ""}`.toLowerCase();
+    return haystack.includes(params.domain);
+  });
+  if (domainProject) {
+    return { projectId: domainProject.id, assigneeId: null as number | null };
+  }
+
+  try {
+    const { invokeLLM } = await import("./llm");
+    const response = await invokeLLM({
+      messages: [
+        {
+          role: "system",
+          content:
+            "Route this email task to the best existing project and optional assignee. Return JSON only: {\"projectId\":number|null,\"assigneeId\":number|null}. Use projectId/assigneeId only from lists. If unsure, return nulls.",
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            task: params.task,
+            domain: params.domain,
+            from: params.fromAddress,
+            subject: params.subject,
+            projects: projects.map((p: any) => ({
+              id: p.id,
+              name: p.name,
+              description: p.description,
+              status: p.status,
+            })),
+            assignees: (teamMembers as any[]).map((u: any) => ({
+              id: u.id,
+              name: u.name,
+              email: u.email,
+              role: u.role,
+              isActive: u.isActive,
+            })),
+          }),
+        },
+      ],
+    });
+
+    const text = typeof response.choices?.[0]?.message?.content === "string" ? response.choices[0].message.content : "";
+    const parsed = JSON.parse(text.replace(/```json\n?|\n?```/g, "").trim() || "{}");
+    const projectId = typeof parsed.projectId === "number" && projectIndex.has(parsed.projectId) ? parsed.projectId : null;
+    const assigneeId = typeof parsed.assigneeId === "number" && teamIndex.has(parsed.assigneeId) ? parsed.assigneeId : null;
+    return { projectId, assigneeId };
+  } catch {
+    return { projectId: null as number | null, assigneeId: null as number | null };
+  }
+}
+
 /**
  * Connect to IMAP server and scan inbox for emails
  */
@@ -240,7 +330,11 @@ export async function scanInbox(
                 if (emailText && emailText.length > 50) {
                   const response = await invokeLLM({
                     messages: [
-                      { role: "system", content: "Extract action items from this email. Return JSON: {\"actionItems\":[{\"task\":\"desc\",\"priority\":\"high|medium|low\"}],\"hasTasks\":true/false}. JSON only." },
+                      {
+                        role: "system",
+                        content:
+                          "Extract action items from this email. Return JSON only: {\"actionItems\":[{\"task\":\"desc\",\"priority\":\"urgent|high|medium|low\",\"domain\":\"fundraising|sales|legal|other\"}],\"hasTasks\":true|false}. Keep task text short and actionable.",
+                      },
                       { role: "user", content: `From: ${scannedEmail.from.name || ""} <${scannedEmail.from.address}>\nSubject: ${scannedEmail.subject}\n\n${emailText.substring(0, 1500)}` },
                     ],
                   });
@@ -249,27 +343,54 @@ export async function scanInbox(
                     const parsed = JSON.parse(text.replace(/```json\n?|\n?```/g, "").trim());
                     if (parsed.hasTasks && parsed.actionItems?.length > 0) {
                       const db = await import("../db");
-                      // Find or create "Email Tasks" project
-                      let projectId: number | null = null;
-                      try {
-                        const projects = await db.getProjects();
-                        let project = projects.find((p: any) => p.name === "Email Tasks");
-                        if (!project) {
-                          const r = await db.createProject({ name: "Email Tasks", projectNumber: `PRJ-EMAIL`, description: "Tasks extracted from emails", status: "active", createdBy: 1 });
-                          projectId = r.id;
-                        } else {
-                          projectId = project.id;
-                        }
-                      } catch { /* skip */ }
-
                       for (const item of parsed.actionItems) {
                         try {
-                          // Create project task
-                          if (projectId) {
-                            await db.createProjectTask?.({ projectId, name: item.task, description: `From: ${scannedEmail.from.name || scannedEmail.from.address} — ${scannedEmail.subject}`, priority: item.priority === "high" ? "high" : "medium", status: "todo" } as any);
-                          }
-                          // Also create notification
-                          await db.createNotification({ userId: 1, type: "reminder" as const, title: `📧 ${item.task}`, message: `From: ${scannedEmail.from.name || scannedEmail.from.address}` });
+                          const domain = normalizeEmailTaskDomain(item.domain);
+                          if (!domain || !ALLOWED_EMAIL_TASK_DOMAINS.has(domain)) continue;
+
+                          const routing = await routeSuggestedTaskToProject({
+                            task: item.task,
+                            domain,
+                            fromAddress: scannedEmail.from.address,
+                            subject: scannedEmail.subject,
+                          });
+                          if (!routing.projectId) continue;
+
+                          const taskPayload = {
+                            action: "create_project_task",
+                            projectId: routing.projectId,
+                            name: item.task,
+                            description: `From: ${scannedEmail.from.name || scannedEmail.from.address} — ${scannedEmail.subject}`,
+                            priority: normalizeTaskPriority(item.priority),
+                            assigneeId: routing.assigneeId,
+                            source: "email_scan",
+                            sourceEmail: {
+                              from: scannedEmail.from.address,
+                              subject: scannedEmail.subject,
+                              messageId: scannedEmail.messageId,
+                            },
+                            domain,
+                          };
+
+                          const suggestedTask = await db.createAiAgentTask({
+                            taskType: "query" as any,
+                            priority: normalizeTaskPriority(item.priority),
+                            status: "pending_approval",
+                            taskData: JSON.stringify(taskPayload),
+                            aiReasoning: `Suggested ${domain} task extracted from inbound email`,
+                            aiConfidence: "78.00",
+                            relatedEntityType: "project",
+                            relatedEntityId: routing.projectId,
+                            requiresApproval: true,
+                          } as any);
+
+                          await db.createAiAgentLog?.({
+                            taskId: suggestedTask.id,
+                            action: "email_task_suggested",
+                            status: "info",
+                            message: `Email task queued for approval: ${item.task}`,
+                            details: JSON.stringify(taskPayload),
+                          } as any);
                         } catch { /* skip */ }
                       }
                     }

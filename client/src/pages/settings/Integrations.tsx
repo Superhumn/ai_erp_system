@@ -232,7 +232,7 @@ export default function IntegrationsPage() {
     <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em]">Integration Settings</h1>
+            <h1 className="text-lg font-semibold">Integration Settings</h1>
             <p className="text-muted-foreground mt-1">
               Manage API connections, sync configurations, and external services
             </p>

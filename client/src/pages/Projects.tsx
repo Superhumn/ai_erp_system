@@ -673,8 +673,8 @@ export default function Projects() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
-              <FolderKanban className="h-8 w-8" />
+            <h1 className="text-lg font-semibold flex items-center gap-2">
+              <FolderKanban className="h-4 w-4" />
               Projects & Tasks
             </h1>
             <p className="text-muted-foreground mt-1">

@@ -547,7 +547,7 @@ export default function InventoryHub() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em]">Products & Inventory</h1>
+          <h1 className="text-lg font-semibold">Products & Inventory</h1>
           <div className="flex items-center gap-2 mt-1">
             <p className="text-muted-foreground">Unified view — inventory, POs, shipments, costing, vendors</p>
             <a href="/operations/work-orders" className="text-xs text-primary hover:underline font-medium">Work Orders →</a>

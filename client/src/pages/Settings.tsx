@@ -61,7 +61,7 @@ export default function Settings() {
   return (
     <div className="space-y-4 animate-fade-in">
       <div>
-        <h1 className="text-[1.875rem] font-bold tracking-[-0.03em] flex items-center gap-2">
+        <h1 className="text-lg font-semibold flex items-center gap-2">
           <SettingsIcon className="h-7 w-7" />
           Settings
         </h1>

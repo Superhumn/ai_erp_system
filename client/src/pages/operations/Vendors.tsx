@@ -64,6 +64,7 @@ export default function Vendors() {
   const [isAlibabaOpen, setIsAlibabaOpen] = useState(false);
   const [alibabaForm, setAlibabaForm] = useState({ query: "", category: "", country: "" });
   const [alibabaResults, setAlibabaResults] = useState<any[]>([]);
+  const [alibabaUsedFallback, setAlibabaUsedFallback] = useState(false);
   const [expandedVendorId, setExpandedVendorId] = useState<number | null>(null);
   const [newMaterialName, setNewMaterialName] = useState("");
   const [newMaterialUnit, setNewMaterialUnit] = useState("kg");
@@ -121,9 +122,15 @@ export default function Vendors() {
   const alibabaSearch = trpc.vendors.searchAlibaba.useMutation({
     onSuccess: (data: any) => {
       setAlibabaResults(data.suppliers || []);
+      setAlibabaUsedFallback(Boolean(data.usedFallback));
       if (data.suppliers?.length > 0) {
-        toast.success(`Found ${data.suppliers.length} suppliers on Alibaba`);
+        if (data.usedFallback) {
+          toast.info(`Showing ${data.suppliers.length} backup results while Alibaba search is busy.`);
+        } else {
+          toast.success(`Found ${data.suppliers.length} suppliers on Alibaba`);
+        }
       } else {
+        setAlibabaUsedFallback(false);
         toast.info("No suppliers found. Try different search terms.");
       }
     },
@@ -274,7 +281,7 @@ export default function Vendors() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
             <Building2 className="h-8 w-8" />
             Vendors
           </h1>
@@ -472,11 +479,14 @@ export default function Vendors() {
               </div>
             </div>
             <Button
-              onClick={() => alibabaSearch.mutate({
-                query: alibabaForm.query,
-                category: alibabaForm.category || undefined,
-                country: alibabaForm.country || undefined,
-              })}
+              onClick={() => {
+                setAlibabaUsedFallback(false);
+                alibabaSearch.mutate({
+                  query: alibabaForm.query,
+                  category: alibabaForm.category || undefined,
+                  country: alibabaForm.country || undefined,
+                });
+              }}
               disabled={alibabaSearch.isPending || !alibabaForm.query.trim()}
               className="w-full"
             >
@@ -487,6 +497,11 @@ export default function Vendors() {
             {/* Results */}
             {alibabaResults.length > 0 && (
               <div className="space-y-2">
+                {alibabaUsedFallback && (
+                  <div className="rounded-md border border-amber-300/50 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    Live Alibaba lookup is temporarily overloaded. Showing backup AI-generated supplier matches.
+                  </div>
+                )}
                 <div className="flex items-center justify-between">
                   <Label className="text-xs text-muted-foreground uppercase tracking-wider">Found {alibabaResults.length} Suppliers</Label>
                 </div>

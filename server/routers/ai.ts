@@ -746,6 +746,34 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
                 result = { created: true, workOrderId: workOrder.id, workOrderNumber: workOrder.workOrderNumber };
                 break;
               }
+
+              case 'query': {
+                // Generic "query" tasks can carry structured actions from other automations.
+                if (taskData.action === 'create_project_task') {
+                  if (!taskData.projectId || !taskData.name) {
+                    throw new Error('Project task suggestion missing projectId or name');
+                  }
+                  const created = await db.createProjectTask({
+                    projectId: Number(taskData.projectId),
+                    name: String(taskData.name),
+                    description: taskData.description ? String(taskData.description) : undefined,
+                    priority: (taskData.priority || 'medium') as any,
+                    status: 'todo',
+                    assigneeId: taskData.assigneeId ? Number(taskData.assigneeId) : undefined,
+                    createdBy: ctx.user.id,
+                  } as any);
+                  result = {
+                    created: true,
+                    action: 'create_project_task',
+                    projectTaskId: created.id,
+                    projectId: Number(taskData.projectId),
+                    assigneeId: taskData.assigneeId ? Number(taskData.assigneeId) : null,
+                  };
+                  break;
+                }
+                result = { executed: true, taskType: task.taskType };
+                break;
+              }
               
               default:
                 result = { executed: true, taskType: task.taskType };

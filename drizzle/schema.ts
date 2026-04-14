@@ -268,6 +268,7 @@ export const products = mysqlTable("products", {
   description: text("description"),
   category: varchar("category", { length: 128 }),
   type: mysqlEnum("type", ["physical", "digital", "service"]).default("physical").notNull(),
+  manufacturingStage: mysqlEnum("manufacturingStage", ["raw_material", "semi_finished_good", "finished_product"]).default("finished_product").notNull(),
   unitPrice: decimal("unitPrice", { precision: 15, scale: 2 }).notNull(),
   costPrice: decimal("costPrice", { precision: 15, scale: 2 }),
   currency: varchar("currency", { length: 3 }).default("USD"),
@@ -1577,6 +1578,110 @@ export const rawMaterials = mysqlTable("rawMaterials", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+// Recipe costing ingredients
+export const recipeIngredients = mysqlTable("recipeIngredients", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  sku: varchar("sku", { length: 64 }).notNull().unique(),
+  category: mysqlEnum("category", ["protein", "spice", "liquid", "produce", "packaging", "other"]).default("other").notNull(),
+  unitOfMeasure: mysqlEnum("unitOfMeasure", ["g", "kg", "lb", "oz", "ml", "l", "each"]).default("g").notNull(),
+  costPerUnit: decimal("costPerUnit", { precision: 12, scale: 4 }).default("0").notNull(),
+  costUnit: mysqlEnum("costUnit", ["per_lb", "per_kg", "per_oz", "per_each"]).default("per_kg").notNull(),
+  supplierId: int("supplierId").references(() => vendors.id),
+  leadTimeDays: int("leadTimeDays"),
+  moistureContent: decimal("moistureContent", { precision: 5, scale: 4 }),
+  shelfLifeDays: int("shelfLifeDays"),
+  isAllergen: boolean("isAllergen").default(false).notNull(),
+  allergenType: varchar("allergenType", { length: 100 }),
+  notes: text("notes"),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const ingredientCostHistory = mysqlTable("ingredientCostHistory", {
+  id: int("id").autoincrement().primaryKey(),
+  ingredientId: int("ingredientId").notNull().references(() => recipeIngredients.id),
+  costPerUnit: decimal("costPerUnit", { precision: 12, scale: 4 }).notNull(),
+  costUnit: mysqlEnum("costUnit", ["per_lb", "per_kg", "per_oz", "per_each"]).default("per_kg").notNull(),
+  effectiveDate: timestamp("effectiveDate").defaultNow().notNull(),
+  supplierId: int("supplierId").references(() => vendors.id),
+  source: varchar("source", { length: 100 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export const recipes = mysqlTable("recipes", {
+  id: int("id").autoincrement().primaryKey(),
+  recipeId: varchar("recipeId", { length: 32 }).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  category: mysqlEnum("category", ["beef", "pork", "chicken", "seafood", "dairy", "blend", "other"]).default("other").notNull(),
+  status: mysqlEnum("status", ["development", "production", "discontinued"]).default("development").notNull(),
+  version: int("version").default(1).notNull(),
+  isSubRecipe: boolean("isSubRecipe").default(false).notNull(),
+  baseBatchGrams: decimal("baseBatchGrams", { precision: 12, scale: 2 }).default("0").notNull(),
+  expectedYieldPct: decimal("expectedYieldPct", { precision: 5, scale: 4 }).default("1.0000").notNull(),
+  hasMoistureVariants: boolean("hasMoistureVariants").default(false).notNull(),
+  notes: text("notes"),
+  createdBy: int("createdBy").references(() => users.id),
+  approvedBy: int("approvedBy").references(() => users.id),
+  approvedAt: timestamp("approvedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  recipeVersionIdx: uniqueIndex("recipes_recipe_version_idx").on(table.recipeId, table.version),
+}));
+
+export const recipeLines = mysqlTable("recipeLines", {
+  id: int("id").autoincrement().primaryKey(),
+  recipeRowId: int("recipeRowId").notNull().references(() => recipes.id),
+  lineNumber: int("lineNumber").default(1).notNull(),
+  ingredientId: int("ingredientId").references(() => recipeIngredients.id),
+  subRecipeId: int("subRecipeId").references(() => recipes.id),
+  quantityGrams: decimal("quantityGrams", { precision: 12, scale: 2 }).default("0").notNull(),
+  quantityGramsDry: decimal("quantityGramsDry", { precision: 12, scale: 2 }),
+  isProteinLine: boolean("isProteinLine").default(false).notNull(),
+  isWaterLine: boolean("isWaterLine").default(false).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const recipeProcedures = mysqlTable("recipeProcedures", {
+  id: int("id").autoincrement().primaryKey(),
+  recipeRowId: int("recipeRowId").notNull().references(() => recipes.id),
+  stepNumber: int("stepNumber").default(1).notNull(),
+  instruction: text("instruction").notNull(),
+  durationMinutes: int("durationMinutes"),
+  temperatureF: int("temperatureF"),
+  appliesTo: mysqlEnum("appliesTo", ["both", "dry_only", "wet_only"]).default("both").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export const moistureProfiles = mysqlTable("moistureProfiles", {
+  id: int("id").autoincrement().primaryKey(),
+  ingredientId: int("ingredientId").notNull().references(() => recipeIngredients.id),
+  profileName: varchar("profileName", { length: 50 }).notNull(),
+  moistureContent: decimal("moistureContent", { precision: 5, scale: 4 }).notNull(),
+  isDefault: boolean("isDefault").default(false).notNull(),
+  testedDate: timestamp("testedDate"),
+  coaReference: varchar("coaReference", { length: 100 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export const batchCostSnapshots = mysqlTable("batchCostSnapshots", {
+  id: int("id").autoincrement().primaryKey(),
+  recipeId: int("recipeId").notNull().references(() => recipes.id),
+  snapshotDate: timestamp("snapshotDate").defaultNow().notNull(),
+  formulationType: mysqlEnum("formulationType", ["wet", "dry"]).default("wet").notNull(),
+  totalBatchGrams: decimal("totalBatchGrams", { precision: 12, scale: 2 }).notNull(),
+  totalBatchCost: decimal("totalBatchCost", { precision: 12, scale: 4 }).notNull(),
+  costPerGram: decimal("costPerGram", { precision: 12, scale: 6 }).notNull(),
+  costPerLb: decimal("costPerLb", { precision: 12, scale: 4 }).notNull(),
+  costPerKg: decimal("costPerKg", { precision: 12, scale: 4 }).notNull(),
+  yieldAdjustedCostPerLb: decimal("yieldAdjustedCostPerLb", { precision: 12, scale: 4 }).notNull(),
+  ingredientCosts: json("ingredientCosts"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
 // BOM version history for tracking changes
 export const bomVersionHistory = mysqlTable("bomVersionHistory", {
   id: int("id").autoincrement().primaryKey(),
@@ -1596,6 +1701,20 @@ export type BomComponent = typeof bomComponents.$inferSelect;
 export type InsertBomComponent = typeof bomComponents.$inferInsert;
 export type RawMaterial = typeof rawMaterials.$inferSelect;
 export type InsertRawMaterial = typeof rawMaterials.$inferInsert;
+export type RecipeIngredient = typeof recipeIngredients.$inferSelect;
+export type InsertRecipeIngredient = typeof recipeIngredients.$inferInsert;
+export type IngredientCostHistory = typeof ingredientCostHistory.$inferSelect;
+export type InsertIngredientCostHistory = typeof ingredientCostHistory.$inferInsert;
+export type Recipe = typeof recipes.$inferSelect;
+export type InsertRecipe = typeof recipes.$inferInsert;
+export type RecipeLine = typeof recipeLines.$inferSelect;
+export type InsertRecipeLine = typeof recipeLines.$inferInsert;
+export type RecipeProcedure = typeof recipeProcedures.$inferSelect;
+export type InsertRecipeProcedure = typeof recipeProcedures.$inferInsert;
+export type MoistureProfile = typeof moistureProfiles.$inferSelect;
+export type InsertMoistureProfile = typeof moistureProfiles.$inferInsert;
+export type BatchCostSnapshot = typeof batchCostSnapshots.$inferSelect;
+export type InsertBatchCostSnapshot = typeof batchCostSnapshots.$inferInsert;
 export type BomVersionHistory = typeof bomVersionHistory.$inferSelect;
 export type InsertBomVersionHistory = typeof bomVersionHistory.$inferInsert;
 

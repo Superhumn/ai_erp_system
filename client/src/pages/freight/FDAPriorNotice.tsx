@@ -227,7 +227,7 @@ export default function FDAPriorNotice() {
           <Button variant="ghost" size="sm" onClick={() => setEditing(null)}>
             <ArrowLeft className="h-4 w-4 mr-1" /> Back
           </Button>
-          <h1 className="text-[1.875rem] font-bold tracking-[-0.03em]">FDA Prior Notice</h1>
+          <h1 className="text-lg font-semibold">FDA Prior Notice</h1>
           <div className="ml-auto">
             <Button variant="outline" size="sm" onClick={() => scanRef.current?.click()} disabled={scanningDoc}>
               {scanningDoc ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <FileText className="h-4 w-4 mr-1" />}
@@ -440,7 +440,7 @@ export default function FDAPriorNotice() {
     <div className="space-y-4 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.875rem] font-bold tracking-[-0.03em] flex items-center gap-2">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
             <Shield className="h-7 w-7" />
             FDA Prior Notice
           </h1>

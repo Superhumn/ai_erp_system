@@ -78,6 +78,9 @@ import {
   Banknote,
   TrendingUp,
   Code2,
+  Headphones,
+  PenTool,
+  UserPlus,
 } from "lucide-react";
 import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -153,6 +156,8 @@ function getMenuGroups(role: string = "user") {
     items: [
       ...(hasOps || isAdmin ? [{ icon: ShoppingCart, label: "Orders", path: "/sales/orders" }] : []),
       { icon: UserCircle, label: "CRM", path: "/crm/hub" },
+      { icon: Headphones, label: "Support", path: "/cx/support" },
+      ...(isAdmin ? [{ icon: PenTool, label: "Marketing", path: "/marketing" }] : []),
       ...(hasFinance || isAdmin ? [{ icon: BarChart3, label: "Financials", path: "/finance/reports" }] : []),
       ...(isAdmin ? [{ icon: TrendingUp, label: "Fundraising", path: "/crm/campaigns" }] : []),
     ],
@@ -161,6 +166,7 @@ function getMenuGroups(role: string = "user") {
     label: "_ops",
     items: [
       { icon: Warehouse, label: "Inventory", path: "/operations/inventory-hub" },
+      { icon: Factory, label: "Recipes", path: "/operations/recipes" },
       { icon: Truck, label: "Freight", path: "/freight" },
       { icon: Users, label: "Vendors", path: "/operations/vendors" },
     ],
@@ -170,6 +176,7 @@ function getMenuGroups(role: string = "user") {
     items: [
       ...(isAdmin ? [
         { icon: Users, label: "People", path: "/hr/employees" },
+        { icon: UserPlus, label: "Recruiting", path: "/hr/recruiting" },
         { icon: FileBarChart, label: "Investors", path: "/hr/investors" },
       ] : [
         { icon: Clock, label: "Time Tracking", path: "/hr/time-tracking" },

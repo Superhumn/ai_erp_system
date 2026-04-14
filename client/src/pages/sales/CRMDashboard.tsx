@@ -70,7 +70,7 @@ export default function CRMDashboard() {
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.875rem] font-semibold tracking-[-0.025em]">Fundraising CRM Dashboard</h1>
+          <h1 className="text-lg font-semibold">Fundraising CRM Dashboard</h1>
           <p className="text-muted-foreground">Overview of your fundraising pipeline and investor relationships</p>
         </div>
         <div className="flex gap-2">

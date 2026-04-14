@@ -42,7 +42,7 @@ export default function FreightDashboard() {
       {/* Header + KPIs inline */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.875rem] font-bold tracking-[-0.03em]">Freight & Logistics</h1>
+          <h1 className="text-lg font-semibold">Freight & Logistics</h1>
           <p className="text-muted-foreground text-sm">Shipments, quotes, carriers, and customs</p>
         </div>
         <div className="flex gap-2">

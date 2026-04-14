@@ -53,6 +53,7 @@ const Locations = lazy(() => import("./pages/operations/Locations"));
 const Transfers = lazy(() => import("./pages/operations/Transfers"));
 const TransferDetail = lazy(() => import("./pages/operations/TransferDetail"));
 const BOM = lazy(() => import("./pages/operations/BOM"));
+const Recipes = lazy(() => import("./pages/operations/Recipes"));
 const BOMDetail = lazy(() => import("./pages/operations/BOMDetail"));
 const RawMaterials = lazy(() => import("./pages/operations/RawMaterials"));
 const WorkOrders = lazy(() => import("./pages/operations/WorkOrders"));
@@ -99,6 +100,15 @@ const EquityPortal = lazy(() => import("./pages/hr/EquityPortal"));
 const EquityReports = lazy(() => import("./pages/hr/EquityReports"));
 const InvestorsHub = lazy(() => import("./pages/hr/InvestorsHub"));
 const TimeTracking = lazy(() => import("./pages/hr/TimeTracking"));
+
+// CX
+const CustomerSupport = lazy(() => import("./pages/cx/CustomerSupport"));
+
+// Marketing
+const ContentHub = lazy(() => import("./pages/marketing/ContentHub"));
+
+// Recruiting
+const Recruiting = lazy(() => import("./pages/hr/Recruiting"));
 
 // Legal
 const LegalHub = lazy(() => import("./pages/legal/LegalHub"));
@@ -239,6 +249,7 @@ function Router() {
           <Route path="/operations/transfers" component={Transfers} />
           <Route path="/operations/transfers/:id" component={TransferDetail} />
           <Route path="/operations/bom" component={BOM} />
+          <Route path="/operations/recipes" component={Recipes} />
           <Route path="/operations/bom/:id" component={BOMDetail} />
           <Route path="/operations/raw-materials" component={RawMaterials} />
           <Route path="/operations/work-orders" component={WorkOrders} />
@@ -277,6 +288,15 @@ function Router() {
           <Route path="/freight/rfqs/:id" component={RFQDetail} />
           <Route path="/freight/customs" component={CustomsClearance} />
           <Route path="/freight/customs/:id" component={CustomsDetail} />
+
+          {/* CX */}
+          <Route path="/cx/support" component={CustomerSupport} />
+
+          {/* Marketing */}
+          <Route path="/marketing" component={ContentHub} />
+
+          {/* Recruiting */}
+          <Route path="/hr/recruiting" component={Recruiting} />
 
           {/* HR */}
           <Route path="/hr/investors" component={InvestorsHub} />

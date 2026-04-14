@@ -167,7 +167,7 @@ export default function FundraisingCampaigns() {
       <div className="space-y-6 animate-fade-in">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-[1.875rem] font-bold tracking-[-0.03em]">Fundraising</h1>
+            <h1 className="text-lg font-semibold">Fundraising</h1>
             <p className="text-muted-foreground">Set up your current fundraising round</p>
           </div>
           {createDialog}
@@ -197,7 +197,7 @@ export default function FundraisingCampaigns() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.875rem] font-bold tracking-[-0.03em]">Fundraising</h1>
+          <h1 className="text-lg font-semibold">Fundraising</h1>
           <p className="text-muted-foreground text-sm">{round.name}</p>
         </div>
         <div className="flex items-center gap-2">
