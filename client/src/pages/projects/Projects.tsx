@@ -25,7 +25,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  FolderKanban,
   Plus,
   Search,
   Loader2,
@@ -34,7 +33,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock3,
-  CheckCircle,
+  Check,
   AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -79,10 +78,10 @@ type UserRecord = {
 };
 
 const PRIORITY_BADGE: Record<string, { label: string; className: string }> = {
-  critical: { label: "Critical", className: "bg-red-500/15 text-red-600 border-red-300" },
-  high: { label: "High", className: "bg-orange-500/15 text-orange-600 border-orange-300" },
-  medium: { label: "Medium", className: "bg-amber-500/15 text-amber-600 border-amber-300" },
-  low: { label: "Low", className: "bg-emerald-500/15 text-emerald-600 border-emerald-300" },
+  critical: { label: "Critical", className: "bg-muted text-foreground border-border" },
+  high: { label: "High", className: "bg-muted text-foreground border-border" },
+  medium: { label: "Medium", className: "bg-muted text-foreground border-border" },
+  low: { label: "Low", className: "bg-muted text-foreground border-border" },
 };
 
 const PRIORITY_ORDER: Record<string, number> = {
@@ -93,18 +92,18 @@ const PRIORITY_ORDER: Record<string, number> = {
 };
 
 const STATUS_META = {
-  todo: { label: "To Do", accent: "border-slate-300", badge: "bg-slate-500/10 text-slate-600" },
-  in_progress: { label: "In Progress", accent: "border-blue-300", badge: "bg-blue-500/10 text-blue-600" },
-  review: { label: "In Review", accent: "border-violet-300", badge: "bg-violet-500/10 text-violet-600" },
-  completed: { label: "Completed", accent: "border-emerald-300", badge: "bg-emerald-500/10 text-emerald-600" },
-  cancelled: { label: "Cancelled", accent: "border-zinc-300", badge: "bg-zinc-500/10 text-zinc-600" },
+  todo: { label: "To Do", accent: "border-border", badge: "bg-muted text-foreground" },
+  in_progress: { label: "In Progress", accent: "border-border", badge: "bg-muted text-foreground" },
+  review: { label: "In Review", accent: "border-border", badge: "bg-muted text-foreground" },
+  completed: { label: "Completed", accent: "border-border", badge: "bg-muted text-foreground" },
+  cancelled: { label: "Cancelled", accent: "border-border", badge: "bg-muted text-foreground" },
 } as const;
 
 const BOARD_COLUMNS = [
-  { key: "todo", label: "To Do", accent: "border-slate-300" },
-  { key: "in_progress", label: "In Progress", accent: "border-blue-300" },
-  { key: "review", label: "In Review", accent: "border-violet-300" },
-  { key: "completed", label: "Completed", accent: "border-emerald-300" },
+  { key: "todo", label: "To Do", accent: "border-border" },
+  { key: "in_progress", label: "In Progress", accent: "border-border" },
+  { key: "review", label: "In Review", accent: "border-border" },
+  { key: "completed", label: "Completed", accent: "border-border" },
 ] as const;
 
 function getUserName(users: UserRecord[] | undefined, id: number | null): string {
@@ -131,9 +130,9 @@ function daysUntilDate(d: string | Date | null | undefined): number | null {
 function dueDateColor(d: string | Date | null | undefined): string {
   const days = daysUntilDate(d);
   if (days === null) return "text-muted-foreground";
-  if (days < 0) return "text-red-600";
-  if (days <= 3) return "text-amber-600";
-  return "text-emerald-600";
+  if (days < 0) return "text-foreground";
+  if (days <= 3) return "text-foreground";
+  return "text-muted-foreground";
 }
 
 export default function Projects() {
@@ -560,7 +559,7 @@ export default function Projects() {
         </Card>
         <Card>
           <CardContent className="flex h-full items-center gap-3 p-4">
-            <Clock3 className="h-5 w-5 text-blue-600" />
+            <Clock3 className="h-5 w-5 text-muted-foreground" />
             <div>
               <p className="text-xs text-muted-foreground">In Progress</p>
               <p className="text-xl font-semibold">{metrics.inProgress}</p>
@@ -569,19 +568,19 @@ export default function Projects() {
         </Card>
         <Card>
           <CardContent className="flex h-full items-center gap-3 p-4">
-            <CheckCircle className="h-5 w-5 text-violet-600" />
+            <Check className="h-5 w-5 text-muted-foreground" />
             <div>
               <p className="text-xs text-muted-foreground">In Review</p>
               <p className="text-xl font-semibold">{metrics.review}</p>
             </div>
           </CardContent>
         </Card>
-        <Card className={cn(metrics.overdue > 0 && "border-red-300")}>
+        <Card className={cn(metrics.overdue > 0 && "border-border")}>
           <CardContent className="flex h-full items-center gap-3 p-4">
-            <AlertTriangle className={cn("h-5 w-5", metrics.overdue > 0 ? "text-red-600" : "text-muted-foreground")} />
+            <AlertTriangle className="h-5 w-5 text-muted-foreground" />
             <div>
               <p className="text-xs text-muted-foreground">Overdue</p>
-              <p className={cn("text-xl font-semibold", metrics.overdue > 0 && "text-red-600")}>{metrics.overdue}</p>
+              <p className="text-xl font-semibold">{metrics.overdue}</p>
             </div>
           </CardContent>
         </Card>
@@ -695,7 +694,6 @@ export default function Projects() {
                       ) : (
                         <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
                       )}
-                      <FolderKanban className="h-4 w-4 shrink-0 text-muted-foreground" />
                       <span className="truncate font-semibold">{project?.name || `Project #${projectId}`}</span>
                       <Badge variant="secondary">{tasks.length} tasks</Badge>
                     </div>
@@ -753,7 +751,7 @@ export default function Projects() {
                             </div>
                             <div className="flex flex-wrap items-center gap-2 md:justify-end">
                               <Badge className={cn("border text-[10px] font-normal", status.badge)}>{status.label}</Badge>
-                              <Badge variant="outline" className={cn("text-[10px]", priority.className)}>
+                              <Badge variant="outline" className={cn("text-[10px] font-normal", priority.className)}>
                                 {priority.label}
                               </Badge>
                               {task.dueDate && (
