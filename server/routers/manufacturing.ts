@@ -537,7 +537,7 @@ export const manufacturingRouter = router({
             quantityGramsDry: line.quantityGramsDry,
             isProteinLine: line.isProteinLine,
             isWaterLine: line.isWaterLine,
-          });
+          }, { skipCycleCheck: true });
         }
         for (const step of oldProcedures) {
           await manufacturingDb.createRecipeProcedure({

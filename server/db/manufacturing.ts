@@ -431,78 +431,94 @@ export async function receivePurchaseOrderItems(
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const receiving = await createPoReceivingRecord({ purchaseOrderId, shipmentId, receivedDate: new Date(), receivedBy, warehouseId });
-  for (const item of items) {
-    await createPoReceivingItem({
-      receivingRecordId: receiving.id, purchaseOrderItemId: item.purchaseOrderItemId,
-      rawMaterialId: item.rawMaterialId, productId: item.productId,
-      receivedQuantity: item.quantity.toString(), unit: item.unit,
-      lotNumber: item.lotNumber, expirationDate: item.expirationDate, condition: 'good',
+  return db.transaction(async (tx) => {
+    const recResult = await tx.insert(poReceivingRecords).values({
+      purchaseOrderId, shipmentId, receivedDate: new Date(), receivedBy, warehouseId,
     });
-    if (item.rawMaterialId) {
-      const currentInv = await getRawMaterialInventoryByLocation(item.rawMaterialId, warehouseId);
-      const currentQty = parseFloat(currentInv?.quantity?.toString() || '0');
-      const newQty = currentQty + item.quantity;
-      await upsertRawMaterialInventory(item.rawMaterialId, warehouseId, {
-        quantity: newQty.toFixed(4), availableQuantity: newQty.toFixed(4),
-        unit: item.unit, lastReceivedDate: new Date(),
-        lotNumber: item.lotNumber, expirationDate: item.expirationDate,
+    const receivingId = recResult[0].insertId;
+
+    for (const item of items) {
+      await tx.insert(poReceivingItems).values({
+        receivingRecordId: receivingId, purchaseOrderItemId: item.purchaseOrderItemId,
+        rawMaterialId: item.rawMaterialId, productId: item.productId,
+        receivedQuantity: item.quantity.toString(), unit: item.unit,
+        lotNumber: item.lotNumber, expirationDate: item.expirationDate, condition: 'good',
       });
-      await createRawMaterialTransaction({
-        rawMaterialId: item.rawMaterialId, warehouseId, transactionType: 'receive',
-        quantity: item.quantity.toFixed(4), previousQuantity: currentQty.toFixed(4),
-        newQuantity: newQty.toFixed(4), unit: item.unit,
-        referenceType: 'purchase_order', referenceId: purchaseOrderId,
-        lotNumber: item.lotNumber, performedBy: receivedBy,
-      });
-    }
-    const poItem = await db.select().from(purchaseOrderItems)
-      .where(eq(purchaseOrderItems.id, item.purchaseOrderItemId)).limit(1);
-    if (poItem[0]) {
-      const prevReceived = parseFloat(poItem[0].receivedQuantity?.toString() || '0');
-      await db.update(purchaseOrderItems)
-        .set({ receivedQuantity: (prevReceived + item.quantity).toFixed(4) })
-        .where(eq(purchaseOrderItems.id, item.purchaseOrderItemId));
-    }
-  }
-  const poItems = await db.select().from(purchaseOrderItems)
-    .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
-  let allReceived = true;
-  let anyReceived = false;
-  for (const poi of poItems) {
-    const ordered = parseFloat(poi.quantity?.toString() || '0');
-    const received = parseFloat(poi.receivedQuantity?.toString() || '0');
-    if (received >= ordered) { anyReceived = true; }
-    else if (received > 0) { anyReceived = true; allReceived = false; }
-    else { allReceived = false; }
-  }
-  if (allReceived) {
-    await db.update(purchaseOrders).set({ status: 'received', receivedDate: new Date() })
-      .where(eq(purchaseOrders.id, purchaseOrderId));
-  } else if (anyReceived) {
-    await db.update(purchaseOrders).set({ status: 'partial' })
-      .where(eq(purchaseOrders.id, purchaseOrderId));
-  }
-  let shipmentToUpdate = shipmentId;
-  if (!shipmentToUpdate) {
-    const linkedShipment = await db.select().from(shipments)
-      .where(eq(shipments.purchaseOrderId, purchaseOrderId)).limit(1);
-    if (linkedShipment[0]) { shipmentToUpdate = linkedShipment[0].id; }
-  }
-  if (shipmentToUpdate) {
-    if (allReceived) {
-      await db.update(shipments).set({ status: 'delivered', deliveryDate: new Date() })
-        .where(eq(shipments.id, shipmentToUpdate));
-    } else if (anyReceived) {
-      const currentShipment = await db.select().from(shipments)
-        .where(eq(shipments.id, shipmentToUpdate)).limit(1);
-      if (currentShipment[0]?.status === 'pending') {
-        await db.update(shipments).set({ status: 'in_transit' })
-          .where(eq(shipments.id, shipmentToUpdate));
+      if (item.rawMaterialId) {
+        const invResult = await tx.select().from(rawMaterialInventory)
+          .where(and(eq(rawMaterialInventory.rawMaterialId, item.rawMaterialId), eq(rawMaterialInventory.warehouseId, warehouseId)))
+          .limit(1);
+        const currentInv = invResult[0];
+        const currentQty = parseFloat(currentInv?.quantity?.toString() || '0');
+        const newQty = currentQty + item.quantity;
+        const invData = {
+          quantity: newQty.toFixed(4), availableQuantity: newQty.toFixed(4),
+          unit: item.unit, lastReceivedDate: new Date(),
+          lotNumber: item.lotNumber, expirationDate: item.expirationDate,
+        };
+        if (currentInv) {
+          await tx.update(rawMaterialInventory).set(invData).where(eq(rawMaterialInventory.id, currentInv.id));
+        } else {
+          await tx.insert(rawMaterialInventory).values({
+            rawMaterialId: item.rawMaterialId, warehouseId, ...invData,
+          });
+        }
+        await tx.insert(rawMaterialTransactions).values({
+          rawMaterialId: item.rawMaterialId, warehouseId, transactionType: 'receive',
+          quantity: item.quantity.toFixed(4), previousQuantity: currentQty.toFixed(4),
+          newQuantity: newQty.toFixed(4), unit: item.unit,
+          referenceType: 'purchase_order', referenceId: purchaseOrderId,
+          lotNumber: item.lotNumber, performedBy: receivedBy,
+        });
+      }
+      const poItem = await tx.select().from(purchaseOrderItems)
+        .where(eq(purchaseOrderItems.id, item.purchaseOrderItemId)).limit(1);
+      if (poItem[0]) {
+        const prevReceived = parseFloat(poItem[0].receivedQuantity?.toString() || '0');
+        await tx.update(purchaseOrderItems)
+          .set({ receivedQuantity: (prevReceived + item.quantity).toFixed(4) })
+          .where(eq(purchaseOrderItems.id, item.purchaseOrderItemId));
       }
     }
-  }
-  return receiving;
+    const poItems = await tx.select().from(purchaseOrderItems)
+      .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
+    let allReceived = true;
+    let anyReceived = false;
+    for (const poi of poItems) {
+      const ordered = parseFloat(poi.quantity?.toString() || '0');
+      const received = parseFloat(poi.receivedQuantity?.toString() || '0');
+      if (received >= ordered) { anyReceived = true; }
+      else if (received > 0) { anyReceived = true; allReceived = false; }
+      else { allReceived = false; }
+    }
+    if (allReceived) {
+      await tx.update(purchaseOrders).set({ status: 'received', receivedDate: new Date() })
+        .where(eq(purchaseOrders.id, purchaseOrderId));
+    } else if (anyReceived) {
+      await tx.update(purchaseOrders).set({ status: 'partial' })
+        .where(eq(purchaseOrders.id, purchaseOrderId));
+    }
+    let shipmentToUpdate = shipmentId;
+    if (!shipmentToUpdate) {
+      const linkedShipment = await tx.select().from(shipments)
+        .where(eq(shipments.purchaseOrderId, purchaseOrderId)).limit(1);
+      if (linkedShipment[0]) { shipmentToUpdate = linkedShipment[0].id; }
+    }
+    if (shipmentToUpdate) {
+      if (allReceived) {
+        await tx.update(shipments).set({ status: 'delivered', deliveryDate: new Date() })
+          .where(eq(shipments.id, shipmentToUpdate));
+      } else if (anyReceived) {
+        const currentShipment = await tx.select().from(shipments)
+          .where(eq(shipments.id, shipmentToUpdate)).limit(1);
+        if (currentShipment[0]?.status === 'pending') {
+          await tx.update(shipments).set({ status: 'in_transit' })
+            .where(eq(shipments.id, shipmentToUpdate));
+        }
+      }
+    }
+    return { id: receivingId };
+  });
 }
 
 export async function consumeWorkOrderMaterials(workOrderId: number, performedBy?: number) {
@@ -510,42 +526,59 @@ export async function consumeWorkOrderMaterials(workOrderId: number, performedBy
   if (!db) throw new Error("Database not available");
   const workOrder = await getWorkOrderById(workOrderId);
   if (!workOrder) throw new Error("Work order not found");
-  const materials = await getWorkOrderMaterials(workOrderId);
-  for (const mat of materials) {
-    if (!mat.rawMaterialId) continue;
-    const requiredQty = parseFloat(mat.requiredQuantity?.toString() || '0');
-    const inv = await getRawMaterialInventoryByLocation(mat.rawMaterialId, workOrder.warehouseId || 0);
-    if (!inv) { await updateWorkOrderMaterial(mat.id, { status: 'shortage' }); continue; }
-    const currentQty = parseFloat(inv.quantity?.toString() || '0');
-    const consumeQty = Math.min(requiredQty, currentQty);
-    const newQty = currentQty - consumeQty;
-    await upsertRawMaterialInventory(mat.rawMaterialId, workOrder.warehouseId || 0, {
-      quantity: newQty.toFixed(4), availableQuantity: newQty.toFixed(4),
-    });
-    await createRawMaterialTransaction({
-      rawMaterialId: mat.rawMaterialId, warehouseId: workOrder.warehouseId || 0,
-      transactionType: 'consume', quantity: (-consumeQty).toFixed(4),
-      previousQuantity: currentQty.toFixed(4), newQuantity: newQty.toFixed(4),
-      unit: mat.unit, referenceType: 'work_order', referenceId: workOrderId, performedBy,
-    });
-    await updateWorkOrderMaterial(mat.id, {
-      consumedQuantity: consumeQty.toFixed(4),
-      status: consumeQty >= requiredQty ? 'consumed' : 'partial',
-    });
-  }
-  const updatedMaterials = await getWorkOrderMaterials(workOrderId);
-  const allFullyConsumed = updatedMaterials.every(
-    m => m.status === 'consumed' || m.status === 'pending'
-  );
-  const hasShortageOrPartial = updatedMaterials.some(
-    m => m.status === 'shortage' || m.status === 'partial'
-  );
+  const whId = workOrder.warehouseId || 0;
 
-  if (allFullyConsumed) {
-    await updateWorkOrder(workOrderId, { status: 'completed', actualEndDate: new Date() });
-  } else if (hasShortageOrPartial) {
-    await updateWorkOrder(workOrderId, { status: 'in_progress' });
-  }
+  await db.transaction(async (tx) => {
+    const materials = await tx.select().from(workOrderMaterials)
+      .where(eq(workOrderMaterials.workOrderId, workOrderId));
+
+    for (const mat of materials) {
+      if (!mat.rawMaterialId) continue;
+      const requiredQty = parseFloat(mat.requiredQuantity?.toString() || '0');
+      const invResult = await tx.select().from(rawMaterialInventory)
+        .where(and(eq(rawMaterialInventory.rawMaterialId, mat.rawMaterialId), eq(rawMaterialInventory.warehouseId, whId)))
+        .limit(1);
+      const inv = invResult[0];
+      if (!inv) {
+        await tx.update(workOrderMaterials).set({ status: 'shortage' })
+          .where(eq(workOrderMaterials.id, mat.id));
+        continue;
+      }
+      const currentQty = parseFloat(inv.quantity?.toString() || '0');
+      const consumeQty = Math.min(requiredQty, currentQty);
+      const newQty = currentQty - consumeQty;
+      await tx.update(rawMaterialInventory).set({
+        quantity: newQty.toFixed(4), availableQuantity: newQty.toFixed(4),
+      }).where(eq(rawMaterialInventory.id, inv.id));
+      await tx.insert(rawMaterialTransactions).values({
+        rawMaterialId: mat.rawMaterialId, warehouseId: whId,
+        transactionType: 'consume', quantity: (-consumeQty).toFixed(4),
+        previousQuantity: currentQty.toFixed(4), newQuantity: newQty.toFixed(4),
+        unit: mat.unit, referenceType: 'work_order', referenceId: workOrderId, performedBy,
+      });
+      await tx.update(workOrderMaterials).set({
+        consumedQuantity: consumeQty.toFixed(4),
+        status: consumeQty >= requiredQty ? 'consumed' : 'partial',
+      }).where(eq(workOrderMaterials.id, mat.id));
+    }
+
+    const updatedMaterials = await tx.select().from(workOrderMaterials)
+      .where(eq(workOrderMaterials.workOrderId, workOrderId));
+    const allFullyConsumed = updatedMaterials.every(
+      m => m.status === 'consumed' || !m.rawMaterialId
+    );
+    const hasShortageOrPartial = updatedMaterials.some(
+      m => m.status === 'shortage' || m.status === 'partial'
+    );
+
+    if (allFullyConsumed) {
+      await tx.update(workOrders).set({ status: 'completed', actualEndDate: new Date() })
+        .where(eq(workOrders.id, workOrderId));
+    } else if (hasShortageOrPartial) {
+      await tx.update(workOrders).set({ status: 'in_progress' })
+        .where(eq(workOrders.id, workOrderId));
+    }
+  });
 }
 
 // ============================================
@@ -994,10 +1027,13 @@ export async function detectSubRecipeCycle(parentRecipeId: number, subRecipeId: 
   return false;
 }
 
-export async function createRecipeLine(data: Omit<InsertRecipeLine, "id" | "createdAt" | "updatedAt">) {
+export async function createRecipeLine(
+  data: Omit<InsertRecipeLine, "id" | "createdAt" | "updatedAt">,
+  opts?: { skipCycleCheck?: boolean },
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  if (data.subRecipeId) {
+  if (data.subRecipeId && !opts?.skipCycleCheck) {
     const isCyclic = await detectSubRecipeCycle(data.recipeRowId, data.subRecipeId);
     if (isCyclic) {
       throw new Error(`Adding sub-recipe ${data.subRecipeId} to recipe ${data.recipeRowId} would create a cyclic reference`);
