@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json, bigint, uniqueIndex, serial } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json, bigint, uniqueIndex, serial, type AnyMySqlColumn } from "drizzle-orm/mysql-core";
 import { relations } from "drizzle-orm";
 
 // ============================================
@@ -297,7 +297,7 @@ export const accounts = mysqlTable("accounts", {
   balance: decimal("balance", { precision: 15, scale: 2 }).default("0"),
   currency: varchar("currency", { length: 3 }).default("USD"),
   isActive: boolean("isActive").default(true),
-  parentAccountId: int("parentAccountId").references(() => accounts.id),
+  parentAccountId: int("parentAccountId").references((): AnyMySqlColumn => accounts.id),
   quickbooksAccountId: varchar("quickbooksAccountId", { length: 64 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -4509,6 +4509,9 @@ export const investmentGrantItems = mysqlTable("investment_grant_items", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
+export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
+
 // ============================================
 // EDI (ELECTRONIC DATA INTERCHANGE) MODULE
 // ============================================
@@ -4744,8 +4747,6 @@ export const ediSettings = mysqlTable("edi_settings", {
 
 export type EdiSettings = typeof ediSettings.$inferSelect;
 export type InsertEdiSettings = typeof ediSettings.$inferInsert;
-export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
-export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
 
 // ============================================
 // FIREFLIES INTEGRATION
@@ -6099,9 +6100,6 @@ export const codeExecutions = mysqlTable("codeExecutions", {
   status: mysqlEnum("status", ["pending", "running", "completed", "failed", "timeout"]).default("pending").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
-
-export type InvestmentGrantItem = typeof investmentGrantItems.$inferSelect;
-export type InsertInvestmentGrantItem = typeof investmentGrantItems.$inferInsert;
 
 // ============================================
 // R&D TAX CREDIT (IRC SECTION 41)

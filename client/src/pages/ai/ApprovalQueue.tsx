@@ -121,7 +121,7 @@ export default function ApprovalQueue() {
   const { data: pendingTasks, isLoading: pendingLoading } = trpc.aiAgent.tasks.pendingApprovals.useQuery();
   const { data: allTasks, isLoading: allLoading } = trpc.aiAgent.tasks.list.useQuery({});
   const { data: logs } = trpc.aiAgent.logs.list.useQuery({ limit: 50 });
-  const { data: teamMembers } = trpc.settings.team.list.useQuery(undefined, { retry: false });
+  const { data: teamMembers } = trpc.team.list.useQuery(undefined, { retry: false });
   const { data: projects } = trpc.projects.list.useQuery();
   
   const approveMutation = trpc.aiAgent.tasks.approve.useMutation({

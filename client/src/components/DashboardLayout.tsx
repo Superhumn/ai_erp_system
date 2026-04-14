@@ -81,6 +81,9 @@ import {
   Headphones,
   PenTool,
   UserPlus,
+  Bot,
+  Heart,
+  Building2,
 } from "lucide-react";
 import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";

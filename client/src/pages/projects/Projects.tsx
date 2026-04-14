@@ -35,6 +35,7 @@ import {
   Clock3,
   Check,
   AlertTriangle,
+  FolderKanban,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
