@@ -1,0 +1,36 @@
+client/src/pages/projects/Projects.tsx
+  06e459a9aa6c0681 36,81-84,95-99,103-106,133-135,562,571,578,580,583,754
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "e26e2b5ccae98187026d103761001eec3c367ccc",
+  "prompts": {
+    "06e459a9aa6c0681": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "2a2dad43-6df0-448b-87d8-8a1347b411dc",
+        "model": "default"
+      },
+      "human_author": "Jade Cheng",
+      "messages": [],
+      "total_additions": 23,
+      "total_deletions": 25,
+      "accepted_lines": 23,
+      "overriden_lines": 0
+    },
+    "a4537c253fc65a92": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "24d42b8f-d7fb-43ad-afe5-e3bce469a227",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Jade Cheng",
+      "messages": [],
+      "total_additions": 23,
+      "total_deletions": 27,
+      "accepted_lines": 29525,
+      "overriden_lines": 0
+    }
+  }
+}
