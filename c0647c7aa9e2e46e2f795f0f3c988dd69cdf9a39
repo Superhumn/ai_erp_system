@@ -1,0 +1,23 @@
+server/db.ts
+  a4537c253fc65a92 10524-10525
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "c0647c7aa9e2e46e2f795f0f3c988dd69cdf9a39",
+  "prompts": {
+    "a4537c253fc65a92": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "24d42b8f-d7fb-43ad-afe5-e3bce469a227",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Jade Cheng",
+      "messages": [],
+      "total_additions": 29529,
+      "total_deletions": 4,
+      "accepted_lines": 29529,
+      "overriden_lines": 0
+    }
+  }
+}
