@@ -227,12 +227,20 @@ function hashPassword(password: string): string {
   return `${salt}:${hash}`;
 }
 
-function verifyPassword(password: string, stored: string): boolean {
+function verifyPassword(password: string, stored: string): { valid: boolean; needsUpgrade: boolean } {
   const crypto = require('crypto');
-  const [salt, hash] = stored.split(':');
-  if (!salt || !hash) return false;
-  const verifyHash = crypto.scryptSync(password, salt, 64).toString('hex');
-  return crypto.timingSafeEqual(Buffer.from(verifyHash, 'hex'), Buffer.from(hash, 'hex'));
+  if (stored.includes(':')) {
+    const [salt, hash] = stored.split(':');
+    if (!salt || !hash) return { valid: false, needsUpgrade: false };
+    const computed = crypto.scryptSync(password, salt, 64);
+    const storedBuf = Buffer.from(hash, 'hex');
+    const valid = computed.length === storedBuf.length && crypto.timingSafeEqual(computed, storedBuf);
+    return { valid, needsUpgrade: false };
+  }
+  const computed = crypto.createHash('sha256').update(password).digest();
+  const storedBuf = Buffer.from(stored, 'hex');
+  const valid = computed.length === storedBuf.length && crypto.timingSafeEqual(computed, storedBuf);
+  return { valid, needsUpgrade: valid };
 }
 
 
@@ -13241,15 +13249,9 @@ Ask if they received the original request and if they can provide a quote.`;
               return { requiresPassword: true, dataRoomId: null, visitorId: null };
             }
 
-            let matches: boolean;
-            let needsUpgrade = false;
+            const { valid, needsUpgrade } = verifyPassword(input.password, link.password);
 
-            matches = verifyPassword(input.password, link.password);
-            if (matches && !link.password.includes(':')) {
-              needsUpgrade = true;
-            }
-
-            if (!matches) {
+            if (!valid) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid password' });
             }
 
