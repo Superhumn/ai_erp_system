@@ -75,6 +75,10 @@ export default function DataRoomDetail() {
   });
   const [googleDriveSyncOpen, setGoogleDriveSyncOpen] = useState(false);
   const [selectedDriveFolderId, setSelectedDriveFolderId] = useState("");
+  const [driveSyncTab, setDriveSyncTab] = useState<"folder" | "file">("folder");
+  const [driveFileBrowseFolderId, setDriveFileBrowseFolderId] = useState("");
+  const [driveFileBrowseInput, setDriveFileBrowseInput] = useState("");
+  const [selectedDriveFileId, setSelectedDriveFileId] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: room, isLoading: roomLoading, refetch: refetchRoom } = trpc.dataRoom.getById.useQuery({ id: roomId });
@@ -176,10 +180,29 @@ export default function DataRoomDetail() {
     onSuccess: (data) => {
       toast.success(`Synced ${data.foldersCreated} new folders and ${data.filesCreated} new files from Google Drive`);
       setGoogleDriveSyncOpen(false);
-      setSelectedDriveFolderId(""); // Clear the input
+      setSelectedDriveFolderId("");
       refetchFolders();
       refetchDocuments();
       refetchRoom();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const { data: driveFilesData, isLoading: driveFilesLoading } = trpc.dataRoom.googleDrive.listFiles.useQuery(
+    { folderId: driveFileBrowseFolderId },
+    { enabled: !!driveFileBrowseFolderId }
+  );
+
+  const syncDriveFileMutation = trpc.dataRoom.googleDrive.syncFile.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Imported "${data.fileName}" from Google Drive`);
+      setGoogleDriveSyncOpen(false);
+      setSelectedDriveFileId("");
+      setDriveFileBrowseFolderId("");
+      setDriveFileBrowseInput("");
+      refetchDocuments();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -1330,61 +1353,143 @@ export default function DataRoomDetail() {
         </Tabs>
 
         {/* Google Drive Sync Dialog */}
-        <Dialog open={googleDriveSyncOpen} onOpenChange={setGoogleDriveSyncOpen}>
-          <DialogContent>
+        <Dialog open={googleDriveSyncOpen} onOpenChange={(open) => {
+          setGoogleDriveSyncOpen(open);
+          if (!open) {
+            setSelectedDriveFolderId("");
+            setDriveFileBrowseFolderId("");
+            setDriveFileBrowseInput("");
+            setSelectedDriveFileId("");
+            setDriveSyncTab("folder");
+          }
+        }}>
+          <DialogContent className="max-w-lg">
             <DialogHeader>
-              <DialogTitle>Sync Google Drive Folder</DialogTitle>
+              <DialogTitle>Import from Google Drive</DialogTitle>
               <DialogDescription>
-                Connect this data room to an existing Google Drive folder. All files and folders will be imported with the security and access controls configured for this data room.
+                Import a full folder or a single file from Google Drive into this data room.
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="driveFolderId">Google Drive Folder ID</Label>
-                <Input
-                  id="driveFolderId"
-                  placeholder="Paste Google Drive folder ID here"
-                  value={selectedDriveFolderId}
-                  onChange={(e) => setSelectedDriveFolderId(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  To get the folder ID, open the folder in Google Drive and copy the ID from the URL (the part after /folders/)
-                </p>
-              </div>
-              <div className="bg-muted p-4 rounded-lg space-y-2">
-                <p className="text-sm font-medium">Security & Access Controls</p>
-                <p className="text-xs text-muted-foreground">
-                  All synced files will have:
-                </p>
-                <ul className="text-xs text-muted-foreground list-disc list-inside space-y-1">
-                  {room.requiresNda && <li>NDA requirement before access</li>}
-                  {room.password && <li>Password protection</li>}
-                  {!room.allowDownload && <li>Download disabled</li>}
-                  {!room.allowPrint && <li>Print disabled</li>}
-                  {room.watermarkEnabled && <li>Watermarked with visitor email</li>}
-                </ul>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setGoogleDriveSyncOpen(false)}>
-                Cancel
-              </Button>
-              <Button
-                onClick={() => {
-                  if (!selectedDriveFolderId) {
-                    toast.error("Please enter a Google Drive folder ID");
-                    return;
-                  }
-                  syncGoogleDriveMutation.mutate({
-                    dataRoomId: roomId,
-                    googleDriveFolderId: selectedDriveFolderId,
-                  });
-                }}
-                disabled={syncGoogleDriveMutation.isPending}
-              >
-                {syncGoogleDriveMutation.isPending ? "Syncing..." : "Sync Folder"}
-              </Button>
-            </DialogFooter>
+
+            <Tabs value={driveSyncTab} onValueChange={(v) => setDriveSyncTab(v as "folder" | "file")}>
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="folder">Sync Folder</TabsTrigger>
+                <TabsTrigger value="file">Import Single File</TabsTrigger>
+              </TabsList>
+
+              {/* ── Sync Folder tab ── */}
+              <TabsContent value="folder" className="space-y-4 pt-2">
+                <div className="space-y-2">
+                  <Label htmlFor="driveFolderId">Google Drive Folder ID</Label>
+                  <Input
+                    id="driveFolderId"
+                    placeholder="Paste folder ID here"
+                    value={selectedDriveFolderId}
+                    onChange={(e) => setSelectedDriveFolderId(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Open the folder in Google Drive and copy the ID from the URL (the part after /folders/)
+                  </p>
+                </div>
+                <div className="bg-muted p-3 rounded-lg space-y-1 text-xs text-muted-foreground">
+                  <p className="font-medium text-foreground">What gets synced:</p>
+                  <p>All files and subfolders are imported recursively (up to 5 levels deep). Folders named "private", "confidential", or starting with "_" are skipped. Google Docs/Sheets/Slides are exported as PDF.</p>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setGoogleDriveSyncOpen(false)}>Cancel</Button>
+                  <Button
+                    onClick={() => {
+                      if (!selectedDriveFolderId) {
+                        toast.error("Please enter a Google Drive folder ID");
+                        return;
+                      }
+                      syncGoogleDriveMutation.mutate({ dataRoomId: roomId, googleDriveFolderId: selectedDriveFolderId });
+                    }}
+                    disabled={syncGoogleDriveMutation.isPending}
+                  >
+                    {syncGoogleDriveMutation.isPending ? "Syncing..." : "Sync Folder"}
+                  </Button>
+                </DialogFooter>
+              </TabsContent>
+
+              {/* ── Import Single File tab ── */}
+              <TabsContent value="file" className="space-y-4 pt-2">
+                <div className="space-y-2">
+                  <Label htmlFor="driveFileBrowse">Google Drive Folder ID to browse</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="driveFileBrowse"
+                      placeholder="Paste folder ID to list its files"
+                      value={driveFileBrowseInput}
+                      onChange={(e) => setDriveFileBrowseInput(e.target.value)}
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        if (!driveFileBrowseInput.trim()) {
+                          toast.error("Enter a folder ID first");
+                          return;
+                        }
+                        setSelectedDriveFileId("");
+                        setDriveFileBrowseFolderId(driveFileBrowseInput.trim());
+                      }}
+                    >
+                      Browse
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Open the parent folder in Google Drive and copy the ID from the URL.
+                  </p>
+                </div>
+
+                {driveFileBrowseFolderId && (
+                  <div className="space-y-2">
+                    <Label>Select a file</Label>
+                    {driveFilesLoading ? (
+                      <p className="text-sm text-muted-foreground">Loading files…</p>
+                    ) : !driveFilesData?.files?.length ? (
+                      <p className="text-sm text-muted-foreground">No files found in this folder.</p>
+                    ) : (
+                      <ScrollArea className="h-48 rounded-md border p-2">
+                        <div className="space-y-1">
+                          {driveFilesData.files.map((f) => (
+                            <div
+                              key={f.id}
+                              className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-sm hover:bg-muted transition-colors ${selectedDriveFileId === f.id ? "bg-muted font-medium" : ""}`}
+                              onClick={() => setSelectedDriveFileId(f.id)}
+                            >
+                              <File className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              <span className="truncate flex-1">{f.name}</span>
+                              {selectedDriveFileId === f.id && <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" />}
+                            </div>
+                          ))}
+                        </div>
+                      </ScrollArea>
+                    )}
+                  </div>
+                )}
+
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setGoogleDriveSyncOpen(false)}>Cancel</Button>
+                  <Button
+                    onClick={() => {
+                      if (!selectedDriveFileId) {
+                        toast.error("Please select a file");
+                        return;
+                      }
+                      syncDriveFileMutation.mutate({
+                        dataRoomId: roomId,
+                        googleDriveFileId: selectedDriveFileId,
+                        folderId: currentFolderId,
+                      });
+                    }}
+                    disabled={syncDriveFileMutation.isPending || !selectedDriveFileId}
+                  >
+                    {syncDriveFileMutation.isPending ? "Importing…" : "Import File"}
+                  </Button>
+                </DialogFooter>
+              </TabsContent>
+            </Tabs>
           </DialogContent>
         </Dialog>
       </div>

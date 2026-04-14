@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
+import sanitizeHtml from "sanitize-html";
 import {
   Mail,
   FileText,
@@ -712,8 +713,39 @@ export default function EmailInbox() {
                               </Button>
                             </div>
                           </div>
-                          <div className="text-sm whitespace-pre-wrap leading-relaxed max-h-[50vh] overflow-y-auto">
-                            {cleanEmailBody(email.bodyText || "(No content)")}
+
+                          {/* Body — prefer HTML content (strip tags), fall back to plain text */}
+                          <div className="p-3 bg-background rounded-md border text-sm whitespace-pre-wrap max-h-[70vh] overflow-y-auto leading-relaxed">
+                            {emailDetailLoading && expandedEmail === email.id ? (
+                              <span className="flex items-center gap-2 text-muted-foreground">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                Loading…
+                              </span>
+                            ) : (
+                              (() => {
+                                const detail = emailDetail && emailDetail.id === email.id ? emailDetail : null;
+                                // Prefer the richer HTML body from the detail query; fall back to
+                                // the list-level bodyHtml, then bodyText from either source.
+                                const raw =
+                                  detail?.bodyHtml ||
+                                  email.bodyHtml ||
+                                  detail?.bodyText ||
+                                  email.bodyText ||
+                                  "(No content)";
+                                // Strip HTML if it contains tags
+                                if (raw.includes("<") && raw.includes(">")) {
+                                  const sanitized = sanitizeHtml(raw, {
+                                    allowedTags: [],
+                                    allowedAttributes: {},
+                                  })
+                                    .replace(/&nbsp;/g, " ")
+                                    .replace(/\n{3,}/g, "\n\n")
+                                    .trim();
+                                  return sanitized;
+                                }
+                                return raw;
+                              })()
+                            )}
                           </div>
                           {/* Reply box with snippet support */}
                           <div className="mt-3 pt-3 border-t border-border/30 relative">

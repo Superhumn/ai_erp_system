@@ -42,6 +42,7 @@ import { ENV, validateEmailConfig, validateCriticalConfig } from "./env";
 import * as sendgridProvider from "./sendgridProvider";
 import * as emailService from "./emailService";
 import * as db from "../db";
+import { getValidGoogleToken } from "../routers/middleware";
 import { startEmailQueueWorker } from "../emailQueueWorker";
 import { startOrchestrator } from "../supplyChainOrchestrator";
 import { startScheduler } from "../aiAgentScheduler";
@@ -1161,10 +1162,10 @@ async function startServer() {
             const rooms = await db.getDataRooms();
             for (const room of rooms) {
               if (room.googleDriveFolderId) {
-                const token = await db.getGoogleOAuthTokenByUserId(room.ownerId);
-                if (token?.accessToken) {
+                const { accessToken: roomAccessToken, error: tokenErr } = await getValidGoogleToken(room.ownerId);
+                if (roomAccessToken && !tokenErr) {
                   try {
-                    const syncResult = await syncDriveFolder(token.accessToken, room.googleDriveFolderId);
+                    const syncResult = await syncDriveFolder(roomAccessToken, room.googleDriveFolderId);
                     if (syncResult.success && syncResult.files.length > 0) {
                       // Check for new files not yet in the data room
                       const existingDocs = await db.getDataRoomDocuments(room.id);
@@ -1177,7 +1178,7 @@ async function startServer() {
                         if (existingDriveIds.has(driveFile.id)) continue;
 
                         // Download actual file content
-                        const downloaded = await downloadDriveFile(token.accessToken, driveFile.id, driveFile.mimeType);
+                        const downloaded = await downloadDriveFile(roomAccessToken, driveFile.id, driveFile.mimeType);
                         const isGoogleWorkspaceFile = driveFile.mimeType.startsWith('application/vnd.google-apps.');
                         const displayName = isGoogleWorkspaceFile ? `${driveFile.name}.pdf` : driveFile.name;
                         const effectiveMimeType = ('exportedMimeType' in downloaded) ? downloaded.exportedMimeType : driveFile.mimeType;
