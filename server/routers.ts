@@ -46,7 +46,7 @@ import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound
 import { purchaseOrderTextEndpoints, shipmentTextEndpoints, paymentTextEndpoints, workOrderTextEndpoints, inventoryTextEndpoints } from "./naturalLanguageRouterExtensions";
 import { encrypt, decrypt } from "./_core/crypto";
 import { ENV } from "./_core/env";
-import { createHash, createDecipheriv } from "crypto";
+import { createDecipheriv } from "crypto";
 
 // Decrypts a stored password supporting both the current AES-256-GCM format
 // (iv:authTag:ciphertext) and the legacy AES-256-CBC format (plain hex ciphertext).
@@ -13244,14 +13244,9 @@ Ask if they received the original request and if they can provide a quote.`;
             let matches: boolean;
             let needsUpgrade = false;
 
-            if (link.password.includes(':')) {
-              matches = verifyPassword(input.password, link.password);
-            } else {
-              const computed = createHash('sha256').update(input.password).digest();
-              const storedBuf = Buffer.from(link.password, 'hex');
-              matches = computed.length === storedBuf.length
-                && require('crypto').timingSafeEqual(computed, storedBuf);
-              needsUpgrade = matches;
+            matches = verifyPassword(input.password, link.password);
+            if (matches && !link.password.includes(':')) {
+              needsUpgrade = true;
             }
 
             if (!matches) {
