@@ -126,11 +126,9 @@ import {
   // Investment grant checklists
   investmentGrantChecklists, investmentGrantItems,
   InsertInvestmentGrantChecklist, InsertInvestmentGrantItem,
-<<<<<<< claude/rd-tax-credit-feature-IEATs
   // R&D Tax Credit
   rdTaxCreditStudies, rdProjects, rdExpenses,
   InsertRdTaxCreditStudy, InsertRdProject, InsertRdExpense,
-=======
   // Grant & Bid submitter
   grantBidTemplates, grantBidApplications, grantBidDocuments, grantBidFieldMappings, grantBidSubmissionLogs,
   grantBidOpportunities, grantBidWebFormMappings,
@@ -169,7 +167,6 @@ import {
   financialModel, InsertFinancialModel,
   // KPI Goals
   kpiGoals, InsertKpiGoal,
->>>>>>> main
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -10402,7 +10399,6 @@ export async function updateCogsPeriodSummaryRecord(id: number, data: Partial<In
   return { id };
 }
 
-<<<<<<< claude/rd-tax-credit-feature-IEATs
 // ============================================
 // R&D TAX CREDIT OPERATIONS
 // ============================================
@@ -10524,7 +10520,8 @@ export async function deleteRdExpense(id: number) {
   if (!db) throw new Error("Database not available");
   await db.delete(rdExpenses).where(eq(rdExpenses.id, id));
   return { success: true };
-=======
+}
+
 export async function getCogsSummary(filters?: { companyId?: number; productId?: number; periodType?: string; startDate?: Date; endDate?: Date }) {
   const db = await getDb();
   if (!db) return [];
@@ -12140,5 +12137,4 @@ export async function updateInvestmentCommitment(id: number, data: Partial<Inser
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(investmentCommitments).set({ ...data, updatedAt: new Date() } as any).where(eq(investmentCommitments.id, id));
->>>>>>> main
 }
