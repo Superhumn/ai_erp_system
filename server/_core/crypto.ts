@@ -119,3 +119,16 @@ export function decrypt(encryptedText: string, secret?: string): string {
   decrypted += decipher.final('utf8');
   return decrypted;
 }
+
+/**
+ * Safely decrypts a token that was encrypted with encrypt().
+ * Returns null instead of throwing if the value is missing or decryption fails.
+ */
+export function safeDecryptToken(encryptedText: string | null | undefined): string | null {
+  if (!encryptedText) return null;
+  try {
+    return decrypt(encryptedText);
+  } catch {
+    return null;
+  }
+}

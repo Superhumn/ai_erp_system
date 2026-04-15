@@ -26,7 +26,7 @@ import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage,
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems } from "./_core/quickbooks";
-import { createSignedOAuthState } from "./_core/crypto";
+import { createSignedOAuthState, safeDecryptToken } from "./_core/crypto";
 import { listTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
 import type { InsertDataRoomDriveSyncConfig } from "../drizzle/schema";
@@ -40,6 +40,43 @@ const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
   }
   return next({ ctx });
 });
+
+// ---------------------------------------------------------------------------
+// Data-room password helpers (scrypt with per-password random salt)
+// Stored format: "scrypt$<salt-hex>$<hash-hex>"
+// Falls back to bare SHA-256 comparison for passwords migrated from old format.
+// ---------------------------------------------------------------------------
+import crypto_node from 'crypto';
+
+function hashDataRoomPassword(password: string): string {
+  const salt = crypto_node.randomBytes(16).toString('hex');
+  const hash = crypto_node.scryptSync(password, salt, 32).toString('hex');
+  return `scrypt$${salt}$${hash}`;
+}
+
+function verifyDataRoomPassword(password: string, stored: string): boolean {
+  try {
+    if (stored.startsWith('scrypt$')) {
+      const parts = stored.split('$');
+      if (parts.length !== 3) return false;
+      const [, salt, hash] = parts;
+      const derived = crypto_node.scryptSync(password, salt, 32).toString('hex');
+      const derivedBuf = Buffer.from(derived, 'hex');
+      const storedBuf = Buffer.from(hash, 'hex');
+      if (derivedBuf.length !== storedBuf.length) return false;
+      return crypto_node.timingSafeEqual(derivedBuf, storedBuf);
+    }
+    // Legacy: bare SHA-256 (no salt) — kept for backward compatibility
+    const legacy = crypto_node.createHash('sha256').update(password).digest('hex');
+    const legacyBuf = Buffer.from(legacy, 'hex');
+    const storedBuf = Buffer.from(stored, 'hex');
+    if (legacyBuf.length !== storedBuf.length) return false;
+    return crypto_node.timingSafeEqual(legacyBuf, storedBuf);
+  } catch {
+    return false;
+  }
+}
+
 
 export const financeProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (!['admin', 'finance', 'exec'].includes(ctx.user.role)) {
@@ -2449,7 +2486,7 @@ export const appRouter = router({
           configured: activeShopifyStores.length > 0,
           status: activeShopifyStores.length > 0 ? 'connected' : 'not_configured',
           storeCount: activeShopifyStores.length,
-          stores: shopifyStores,
+          stores: shopifyStores.map(({ accessToken: _a, webhookSecret: _w, ...s }) => s),
         },
         google: {
           configured: googleConnected,
@@ -2929,7 +2966,7 @@ export const appRouter = router({
           }
         }
         
-        const url = `https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.spreadsheet'&fields=files(id,name,modifiedTime,owners)&orderBy=modifiedTime desc&pageSize=50${input?.pageToken ? `&pageToken=${input.pageToken}` : ''}`;
+        const url = `https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.spreadsheet'&fields=files(id,name,modifiedTime,owners)&orderBy=modifiedTime desc&pageSize=50${input?.pageToken ? `&pageToken=${encodeURIComponent(input.pageToken)}` : ''}`;
         
         const response = await fetch(url, {
           headers: { Authorization: `Bearer ${accessToken}` },
@@ -7810,7 +7847,8 @@ Ask if they received the original request and if they can provide a quote.`;
   shopify: router({
     stores: router({
       list: protectedProcedure.query(async () => {
-        return db.getShopifyStores();
+        const stores = await db.getShopifyStores();
+        return stores.map(({ accessToken: _a, webhookSecret: _w, ...s }) => s);
       }),
       getById: protectedProcedure
         .input(z.object({ id: z.number() }))
@@ -7983,7 +8021,7 @@ Ask if they received the original request and if they can provide a quote.`;
             try {
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/orders.json?status=any&limit=50`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': safeDecryptToken(store.accessToken) ?? '',
                   'Content-Type': 'application/json',
                 },
               });
@@ -8070,7 +8108,7 @@ Ask if they received the original request and if they can provide a quote.`;
             try {
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/products.json?limit=100`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': safeDecryptToken(store.accessToken) ?? '',
                   'Content-Type': 'application/json',
                 },
               });
@@ -8147,7 +8185,7 @@ Ask if they received the original request and if they can provide a quote.`;
               // Get inventory levels from Shopify
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/inventory_levels.json?limit=100`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': safeDecryptToken(store.accessToken) ?? '',
                   'Content-Type': 'application/json',
                 },
               });
@@ -8217,7 +8255,7 @@ Ask if they received the original request and if they can provide a quote.`;
             try {
               const response = await fetch(`https://${store.storeDomain}/admin/api/2024-01/customers.json?limit=100`, {
                 headers: {
-                  'X-Shopify-Access-Token': store.accessToken!,
+                  'X-Shopify-Access-Token': safeDecryptToken(store.accessToken) ?? '',
                   'Content-Type': 'application/json',
                 },
               });
@@ -9319,8 +9357,7 @@ Ask if they received the original request and if they can provide a quote.`;
         // Hash password if provided
         let hashedPassword = null;
         if (input.password) {
-          const crypto = await import('crypto');
-          hashedPassword = crypto.createHash('sha256').update(input.password).digest('hex');
+          hashedPassword = hashDataRoomPassword(input.password);
         }
 
         const { id } = await db.createDataRoom({
@@ -9361,8 +9398,7 @@ Ask if they received the original request and if they can provide a quote.`;
           if (password === null) {
             hashedPassword = null;
           } else {
-            const crypto = await import('crypto');
-            hashedPassword = crypto.createHash('sha256').update(password).digest('hex');
+            hashedPassword = hashDataRoomPassword(password);
           }
         }
 
@@ -9550,8 +9586,7 @@ Ask if they received the original request and if they can provide a quote.`;
           const linkCode = nanoid(12);
           let hashedPassword = null;
           if (input.password) {
-            const crypto = await import('crypto');
-            hashedPassword = crypto.createHash('sha256').update(input.password).digest('hex');
+            hashedPassword = hashDataRoomPassword(input.password);
           }
 
           const { id } = await db.createDataRoomLink({
@@ -9969,9 +10004,7 @@ Ask if they received the original request and if they can provide a quote.`;
             if (!input.password) {
               return { requiresPassword: true, dataRoomId: null, visitorId: null };
             }
-            const crypto = await import('crypto');
-            const hashedPassword = crypto.createHash('sha256').update(input.password).digest('hex');
-            if (hashedPassword !== link.password) {
+            if (!verifyDataRoomPassword(input.password, link.password)) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid password' });
             }
           }
@@ -10608,16 +10641,25 @@ Ask if they received the original request and if they can provide a quote.`;
           signerTitle: z.string().optional(),
           signerCompany: z.string().optional(),
           signatureType: z.enum(['typed', 'drawn']),
-          signatureData: z.string(), // Base64 for drawn, typed name for typed
-          consentCheckbox: z.boolean(),
+          signatureData: z.string().max(5_000_000), // ~3.75 MB base64-encoded image
+          consentCheckbox: z.literal(true),
         }))
         .mutation(async ({ input, ctx }) => {
           // Get the NDA document
           const ndaDoc = await db.getNdaDocumentById(input.ndaDocumentId);
           if (!ndaDoc) throw new TRPCError({ code: 'NOT_FOUND', message: 'NDA document not found' });
 
-          // Get IP address from request
-          const ipAddress = ctx.req.headers['x-forwarded-for'] as string || ctx.req.socket.remoteAddress || 'unknown';
+          // Ensure the NDA belongs to the requested data room
+          if (ndaDoc.dataRoomId !== input.dataRoomId) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'NDA does not belong to this data room' });
+          }
+
+          // Extract only the first IP from a potentially comma-separated x-forwarded-for header
+          const rawForwardedFor = ctx.req.headers['x-forwarded-for'];
+          const forwardedFor = Array.isArray(rawForwardedFor) ? rawForwardedFor[0] : rawForwardedFor;
+          const ipAddress = (forwardedFor ? forwardedFor.split(',')[0].trim() : null)
+            || ctx.req.socket.remoteAddress
+            || 'unknown';
           const userAgent = ctx.req.headers['user-agent'] || '';
 
           // Store signature image if drawn
@@ -12072,7 +12114,7 @@ Ask if they received the original request and if they can provide a quote.`;
           : `'root' in parents`;
         const query = `mimeType='application/vnd.google-apps.folder' and ${parentQuery} and trashed=false`;
         
-        const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,modifiedTime)&orderBy=name&pageSize=100${input?.pageToken ? `&pageToken=${input.pageToken}` : ''}`;
+        const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,modifiedTime)&orderBy=name&pageSize=100${input?.pageToken ? `&pageToken=${encodeURIComponent(input.pageToken)}` : ''}`;
         
         const response = await fetch(url, {
           headers: { Authorization: `Bearer ${accessToken}` },
@@ -12147,7 +12189,7 @@ Ask if they received the original request and if they can provide a quote.`;
         ].join(' or ');
         const query = `'${input.folderId}' in parents and (${mimeTypes}) and trashed=false`;
         
-        const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,modifiedTime,webViewLink)&orderBy=name&pageSize=100${input.pageToken ? `&pageToken=${input.pageToken}` : ''}`;
+        const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,modifiedTime,webViewLink)&orderBy=name&pageSize=100${input.pageToken ? `&pageToken=${encodeURIComponent(input.pageToken)}` : ''}`;
         
         const response = await fetch(url, {
           headers: { Authorization: `Bearer ${accessToken}` },

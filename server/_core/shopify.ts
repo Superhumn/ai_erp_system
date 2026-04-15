@@ -22,8 +22,11 @@ export function verifyWebhookSignature(
       .createHmac('sha256', secret)
       .update(body, 'utf8')
       .digest('base64');
-    
-    return hash === hmacHeader;
+
+    const hashBuf = Buffer.from(hash);
+    const headerBuf = Buffer.from(hmacHeader);
+    if (hashBuf.length !== headerBuf.length) return false;
+    return crypto.timingSafeEqual(hashBuf, headerBuf);
   } catch (error) {
     console.error("Webhook signature verification failed:", error);
     return false;
