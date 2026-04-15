@@ -47,6 +47,25 @@ const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
 // Falls back to bare SHA-256 comparison for passwords migrated from old format.
 // ---------------------------------------------------------------------------
 import crypto_node from 'crypto';
+import type { Request as ExpressRequest } from 'express';
+
+/** Strip sensitive credential fields before sending a store record to the client. */
+function stripShopifyStoreSecrets<T extends { accessToken?: any; webhookSecret?: any }>(
+  store: T
+): Omit<T, 'accessToken' | 'webhookSecret'> {
+  const { accessToken: _a, webhookSecret: _w, ...safe } = store;
+  return safe;
+}
+
+/**
+ * Extract the client IP from an HTTP request.
+ * Takes the first address from a potentially comma-separated x-forwarded-for header.
+ */
+function extractClientIp(req: ExpressRequest): string {
+  const forwarded = req.headers['x-forwarded-for'];
+  const raw = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  return (raw ? raw.split(',')[0].trim() : null) || req.socket.remoteAddress || 'unknown';
+}
 
 function hashDataRoomPassword(password: string): string {
   const salt = crypto_node.randomBytes(16).toString('hex');
@@ -56,22 +75,15 @@ function hashDataRoomPassword(password: string): string {
 
 function verifyDataRoomPassword(password: string, stored: string): boolean {
   try {
-    if (stored.startsWith('scrypt$')) {
-      const parts = stored.split('$');
-      if (parts.length !== 3) return false;
-      const [, salt, hash] = parts;
-      const derived = crypto_node.scryptSync(password, salt, 32).toString('hex');
-      const derivedBuf = Buffer.from(derived, 'hex');
-      const storedBuf = Buffer.from(hash, 'hex');
-      if (derivedBuf.length !== storedBuf.length) return false;
-      return crypto_node.timingSafeEqual(derivedBuf, storedBuf);
-    }
-    // Legacy: bare SHA-256 (no salt) — kept for backward compatibility
-    const legacy = crypto_node.createHash('sha256').update(password).digest('hex');
-    const legacyBuf = Buffer.from(legacy, 'hex');
-    const storedBuf = Buffer.from(stored, 'hex');
-    if (legacyBuf.length !== storedBuf.length) return false;
-    return crypto_node.timingSafeEqual(legacyBuf, storedBuf);
+    if (!stored.startsWith('scrypt$')) return false;
+    const parts = stored.split('$');
+    if (parts.length !== 3) return false;
+    const [, salt, hash] = parts;
+    const derived = crypto_node.scryptSync(password, salt, 32).toString('hex');
+    const derivedBuf = Buffer.from(derived, 'hex');
+    const storedBuf = Buffer.from(hash, 'hex');
+    if (derivedBuf.length !== storedBuf.length) return false;
+    return crypto_node.timingSafeEqual(derivedBuf, storedBuf);
   } catch {
     return false;
   }
@@ -2486,7 +2498,7 @@ export const appRouter = router({
           configured: activeShopifyStores.length > 0,
           status: activeShopifyStores.length > 0 ? 'connected' : 'not_configured',
           storeCount: activeShopifyStores.length,
-          stores: shopifyStores.map(({ accessToken: _a, webhookSecret: _w, ...s }) => s),
+          stores: shopifyStores.map(stripShopifyStoreSecrets),
         },
         google: {
           configured: googleConnected,
@@ -7848,7 +7860,7 @@ Ask if they received the original request and if they can provide a quote.`;
     stores: router({
       list: protectedProcedure.query(async () => {
         const stores = await db.getShopifyStores();
-        return stores.map(({ accessToken: _a, webhookSecret: _w, ...s }) => s);
+        return stores.map(stripShopifyStoreSecrets);
       }),
       getById: protectedProcedure
         .input(z.object({ id: z.number() }))
@@ -10641,7 +10653,7 @@ Ask if they received the original request and if they can provide a quote.`;
           signerTitle: z.string().optional(),
           signerCompany: z.string().optional(),
           signatureType: z.enum(['typed', 'drawn']),
-          signatureData: z.string().max(5_000_000), // ~3.75 MB base64-encoded image
+          signatureData: z.string().max(5_000_000), // 5 MB base64 character limit (~3.75 MB decoded)
           consentCheckbox: z.literal(true),
         }))
         .mutation(async ({ input, ctx }) => {
@@ -10655,11 +10667,7 @@ Ask if they received the original request and if they can provide a quote.`;
           }
 
           // Extract only the first IP from a potentially comma-separated x-forwarded-for header
-          const rawForwardedFor = ctx.req.headers['x-forwarded-for'];
-          const forwardedFor = Array.isArray(rawForwardedFor) ? rawForwardedFor[0] : rawForwardedFor;
-          const ipAddress = (forwardedFor ? forwardedFor.split(',')[0].trim() : null)
-            || ctx.req.socket.remoteAddress
-            || 'unknown';
+          const ipAddress = extractClientIp(ctx.req);
           const userAgent = ctx.req.headers['user-agent'] || '';
 
           // Store signature image if drawn
