@@ -11,28 +11,13 @@ import {
   dataRoomVisitorSessions, InsertDataRoomVisitorSession,
   ndaDocuments, InsertNdaDocument, ndaSignatures, InsertNdaSignature,
   ndaSignatureAuditLog, InsertNdaSignatureAuditLog,
+  dueDiligenceTemplates, InsertDueDiligenceTemplate,
+  dueDiligenceCategories, InsertDueDiligenceCategory,
+  dueDiligenceItems, InsertDueDiligenceItem,
+  dataRoomChecklists, InsertDataRoomChecklist,
+  dataRoomChecklistItems, InsertDataRoomChecklistItem,
 } from "../../drizzle/schema";
 import { getDb } from "./connection";
-
-// ----- Placeholder types for tables not yet added to the Drizzle schema -----
-// These stubs allow the due-diligence / checklist code to compile.
-// Replace with real imports once the corresponding schema tables are created.
-type InsertDueDiligenceTemplate = Record<string, unknown>;
-type InsertDueDiligenceCategory = Record<string, unknown>;
-type InsertDueDiligenceItem = Record<string, unknown>;
-type InsertDataRoomChecklist = Record<string, unknown>;
-type InsertDataRoomChecklistItem = Record<string, unknown>;
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const dueDiligenceTemplates: any = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const dueDiligenceCategories: any = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const dueDiligenceItems: any = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const dataRoomChecklists: any = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const dataRoomChecklistItems: any = null;
 
 interface DDCategory { name: string; items: Array<{ name: string; keywords?: string[] }> }
 const STANDARD_DD_CATEGORIES: Record<string, DDCategory> = {};
@@ -1587,7 +1572,7 @@ export async function createChecklistFromTemplate(
         categoryName: category.name,
         itemName: item.name,
         itemDescription: item.description,
-        requirement: item.requirement,
+        requirement: (item.requirement ?? "required") as "required" | "optional" | "conditional",
         matchKeywords: item.matchKeywords,
         matchFileTypes: item.matchFileTypes,
         sortOrder: sortOrder++,

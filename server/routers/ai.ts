@@ -59,13 +59,18 @@ Current Business Metrics:
 - Pending Purchase Orders: ${metrics?.pendingPurchaseOrders || 0}
 - Open Disputes: ${metrics?.openDisputes || 0}
 
-You can help users with:
+You have FULL access to create, read, update, and delete all data in the ERP system. You can help users with:
 1. Answering questions about business metrics and KPIs
 2. Providing insights on financial health, cash flow, and revenue
 3. Summarizing operations status and inventory levels
 4. Identifying risks and anomalies
-5. Drafting invoices, contracts, reports, and memos
-6. Explaining workflows and processes
+5. Creating and managing purchase orders, invoices, products, vendors, customers, work orders, shipments, and BOMs
+6. Updating inventory levels, recording payments, and managing approvals
+7. Sending emails and following up with vendors or customers
+8. Drafting invoices, contracts, reports, and memos
+9. Explaining workflows and processes
+
+CRITICAL: When a user asks you to create something, DO IT. If required data is missing (e.g., no vendor exists), create it or ask the user ONLY for the specific missing detail (vendor name, unit price). Never list manual steps. Never say "you need to first...". Just do it or ask one question, then do it.
 
 Be concise, professional, and data-driven in your responses. When discussing financial figures, always format them properly with currency symbols.`;
 
@@ -739,6 +744,34 @@ Provide a concise, data-driven answer. If you need to calculate something, show 
                 });
                 
                 result = { created: true, workOrderId: workOrder.id, workOrderNumber: workOrder.workOrderNumber };
+                break;
+              }
+
+              case 'query': {
+                // Generic "query" tasks can carry structured actions from other automations.
+                if (taskData.action === 'create_project_task') {
+                  if (!taskData.projectId || !taskData.name) {
+                    throw new Error('Project task suggestion missing projectId or name');
+                  }
+                  const created = await db.createProjectTask({
+                    projectId: Number(taskData.projectId),
+                    name: String(taskData.name),
+                    description: taskData.description ? String(taskData.description) : undefined,
+                    priority: (taskData.priority || 'medium') as any,
+                    status: 'todo',
+                    assigneeId: taskData.assigneeId ? Number(taskData.assigneeId) : undefined,
+                    createdBy: ctx.user.id,
+                  } as any);
+                  result = {
+                    created: true,
+                    action: 'create_project_task',
+                    projectTaskId: created.id,
+                    projectId: Number(taskData.projectId),
+                    assigneeId: taskData.assigneeId ? Number(taskData.assigneeId) : null,
+                  };
+                  break;
+                }
+                result = { executed: true, taskType: task.taskType };
                 break;
               }
               

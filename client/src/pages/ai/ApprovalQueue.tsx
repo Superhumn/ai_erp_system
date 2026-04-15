@@ -19,6 +19,13 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   CheckCircle,
   XCircle,
   Clock,
@@ -81,6 +88,7 @@ const taskTypeLabels: Record<string, string> = {
   reconcile_payment: "Reconcile Payment",
   reorder_materials: "Reorder Materials",
   vendor_followup: "Vendor Follow-up",
+  query: "Suggested Task",
 };
 
 const priorityColors: Record<string, string> = {
@@ -113,6 +121,8 @@ export default function ApprovalQueue() {
   const { data: pendingTasks, isLoading: pendingLoading } = trpc.aiAgent.tasks.pendingApprovals.useQuery();
   const { data: allTasks, isLoading: allLoading } = trpc.aiAgent.tasks.list.useQuery({});
   const { data: logs } = trpc.aiAgent.logs.list.useQuery({ limit: 50 });
+  const { data: teamMembers } = trpc.team.list.useQuery(undefined, { retry: false });
+  const { data: projects } = trpc.projects.list.useQuery();
   
   const approveMutation = trpc.aiAgent.tasks.approve.useMutation({
     onSuccess: () => {
@@ -173,6 +183,16 @@ export default function ApprovalQueue() {
     setEditedTaskData(task.taskData || "{}");
     setIsDetailDialogOpen(true);
   };
+
+  const updateTaskDataField = (field: string, value: unknown) => {
+    try {
+      const parsed = JSON.parse(editedTaskData || "{}");
+      parsed[field] = value;
+      setEditedTaskData(JSON.stringify(parsed, null, 2));
+    } catch {
+      // ignore malformed JSON edits until user fixes them
+    }
+  };
   
   const handleSaveTaskData = () => {
     if (selectedTask) {
@@ -195,6 +215,10 @@ export default function ApprovalQueue() {
     try {
       taskData = JSON.parse(task.taskData || "{}");
     } catch {}
+    const isSuggestedProjectTask = task.taskType === "query" && taskData.action === "create_project_task";
+    const projectName = projects?.find((p: any) => p.id === taskData.projectId)?.name;
+    const assigneeName = teamMembers?.find((u: any) => u.id === taskData.assigneeId)?.name;
+    const title = isSuggestedProjectTask ? "Suggested Project Task" : (taskTypeLabels[task.taskType] || task.taskType);
     
     return (
       <Card key={task.id} className="mb-4">
@@ -206,7 +230,7 @@ export default function ApprovalQueue() {
               </div>
               <div>
                 <div className="flex items-center gap-2 mb-1">
-                  <h3 className="font-semibold">{taskTypeLabels[task.taskType] || task.taskType}</h3>
+                  <h3 className="font-semibold">{title}</h3>
                   <Badge className={priorityColors[task.priority]}>
                     {task.priority}
                   </Badge>
@@ -270,6 +294,15 @@ export default function ApprovalQueue() {
                         </Link>
                       </p>
                     )}
+                  </div>
+                )}
+
+                {isSuggestedProjectTask && (
+                  <div className="text-sm text-muted-foreground space-y-1">
+                    <p><strong>Task:</strong> {taskData.name || "Untitled task"}</p>
+                    <p><strong>Project:</strong> {projectName || `Project #${taskData.projectId || "Unassigned"}`}</p>
+                    <p><strong>Assignee:</strong> {assigneeName || "Unassigned"}</p>
+                    {taskData.domain && <p><strong>Domain:</strong> {taskData.domain}</p>}
                   </div>
                 )}
                 
@@ -748,6 +781,52 @@ export default function ApprovalQueue() {
                   </pre>
                 )}
               </div>
+
+              {selectedTask.taskType === "query" && (() => {
+                try {
+                  const parsed = JSON.parse(editedTaskData || "{}");
+                  if (parsed.action !== "create_project_task") return null;
+                  return (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-sm font-medium mb-1 block">Project</label>
+                        <Select
+                          value={parsed.projectId ? String(parsed.projectId) : ""}
+                          onValueChange={(v) => updateTaskDataField("projectId", Number(v))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select project" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {projects?.map((p: any) => (
+                              <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium mb-1 block">Assignee</label>
+                        <Select
+                          value={parsed.assigneeId ? String(parsed.assigneeId) : "unassigned"}
+                          onValueChange={(v) => updateTaskDataField("assigneeId", v === "unassigned" ? null : Number(v))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Unassigned" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="unassigned">Unassigned</SelectItem>
+                            {teamMembers?.map((u: any) => (
+                              <SelectItem key={u.id} value={String(u.id)}>{u.name || u.email || `User #${u.id}`}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  );
+                } catch {
+                  return null;
+                }
+              })()}
               
               {/* Execution Result - shown for completed tasks */}
               {selectedTask.executionResult && (

@@ -187,29 +187,43 @@
     {
       "idx": 26,
       "version": "5",
-      "when": 1771251257000,
-      "tag": "0026_local_auth_credentials",
+      "when": 1772376928000,
+      "tag": "0026_board_approvals_investor_updates",
       "breakpoints": true
     },
     {
       "idx": 27,
       "version": "5",
-      "when": 1771251258000,
-      "tag": "0027_add_cogs_tracking",
+      "when": 1773502601634,
+      "tag": "0027_fireflies_configs",
       "breakpoints": true
     },
     {
       "idx": 28,
       "version": "5",
-      "when": 1771251259000,
-      "tag": "0028_add_quickbooks_cogs_integration",
+      "when": 1773590400000,
+      "tag": "0028_fireflies_meeting_tables",
       "breakpoints": true
     },
     {
       "idx": 29,
       "version": "5",
-      "when": 1771251260000,
-      "tag": "0029_inventory_costing_vendor_negotiations",
+      "when": 1773676800000,
+      "tag": "0029_fix_fireflies_meetings_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "5",
+      "when": 1776110400000,
+      "tag": "0030_recipe_costing_module",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "5",
+      "when": 1776283200000,
+      "tag": "0031_local_auth_credentials",
       "breakpoints": true
     }
   ]

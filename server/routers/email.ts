@@ -1,5 +1,8 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { createHash, createDecipheriv } from "crypto";
+import { encrypt, decrypt } from "../_core/crypto";
+import { ENV } from "../_core/env";
 import { sendEmail } from "../_core/email";
 import * as emailService from "../_core/emailService";
 import * as db from "../db";
@@ -7,6 +10,25 @@ import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage,
 import { getGoogleFullAccessAuthUrl } from "../_core/googleDrive";
 import { testConnection } from "../ediTransportService";
 import { router, protectedProcedure, adminProcedure, createAuditLog, getValidGoogleToken } from "./middleware";
+
+// Decrypts a stored password supporting both the current AES-256-GCM format
+// (iv:authTag:ciphertext) and the legacy AES-256-CBC format (plain hex ciphertext).
+function decryptPassword(encryptedText: string): string {
+  if (encryptedText.split(":").length === 3) {
+    return decrypt(encryptedText);
+  }
+  // Legacy CBC fallback for passwords stored before the GCM migration.
+  // Uses ENV.cookieSecret which is validated at startup (no insecure fallback).
+  const key = ENV.cookieSecret;
+  const decipher = createDecipheriv(
+    "aes-256-cbc",
+    createHash("sha256").update(key).digest().slice(0, 32),
+    Buffer.alloc(16, 0),
+  );
+  let decrypted = decipher.update(encryptedText, "hex", "utf8");
+  decrypted += decipher.final("utf8");
+  return decrypted;
+}
 
 export const emailRouter = router({
   // ============================================
@@ -377,10 +399,10 @@ export const emailRouter = router({
         return { url: null, error: 'Google OAuth not configured' };
       }
       
-      const url = getGoogleFullAccessAuthUrl(ctx.user.id);
+      const url = getGoogleFullAccessAuthUrl(ctx.user.id, '/settings/integrations');
       return { url, error: null };
     }),
-    
+
     // Send email via Gmail
     sendEmail: protectedProcedure
       .input(z.object({
@@ -668,7 +690,149 @@ export const emailRouter = router({
           }
 
           await db.updateInboundEmailStatus(emailId, "parsed");
-          
+
+          // ── Automation #6: Auto-run email document linker ──
+          try {
+            const { linkParsedEmailToEntities } = await import("../emailDocumentLinker");
+            const linkData: Record<string, unknown> = {
+              category: result.categorization?.category,
+              vendorEmail: input.fromEmail,
+              fromEmail: input.fromEmail,
+            };
+            // Extract linking hints from first parsed document
+            if (result.documents.length > 0) {
+              const firstDoc = result.documents[0];
+              if (firstDoc.vendorName) linkData.vendorName = firstDoc.vendorName;
+              if (firstDoc.documentNumber) linkData.documentNumber = firstDoc.documentNumber;
+              if (firstDoc.trackingNumber) linkData.trackingNumber = firstDoc.trackingNumber;
+              if (firstDoc.totalAmount) linkData.totalAmount = firstDoc.totalAmount;
+            }
+            const linkResult = await linkParsedEmailToEntities(linkData as any);
+            if (linkResult.linkedPurchaseOrderId || linkResult.linkedShipmentId || linkResult.linkedInvoiceId) {
+              console.log(`[Email→DocumentLinker] Linked email ${emailId}: PO=${linkResult.linkedPurchaseOrderId}, Shipment=${linkResult.linkedShipmentId}, Invoice=${linkResult.linkedInvoiceId} (${linkResult.matchMethod}, ${linkResult.matchConfidence}%)`);
+            }
+          } catch (e) {
+            console.warn("[Email→DocumentLinker] Auto-link failed:", e);
+          }
+
+          // ── Automation #1: Auto-create draft invoice from parsed email ──
+          if (result.categorization?.category === "invoice" && result.documents.length > 0) {
+            try {
+              const invoiceDoc = result.documents.find(d => d.documentType === "invoice") || result.documents[0];
+              if (invoiceDoc.totalAmount) {
+                const vendorId = invoiceDoc.vendorEmail
+                  ? (await db.findVendorByEmailOrName(invoiceDoc.vendorEmail, invoiceDoc.vendorName))?.id ?? null
+                  : null;
+                const invoiceNumber = invoiceDoc.documentNumber || `DRAFT-EMAIL-${Date.now().toString(36).toUpperCase()}`;
+                const existing = await db.getInvoiceByNumber(invoiceNumber);
+                if (!existing) {
+                  const draftInvoice = await db.createInvoice({
+                    invoiceNumber,
+                    type: "bill",
+                    status: "draft",
+                    customerId: vendorId,
+                    issueDate: invoiceDoc.documentDate ? new Date(invoiceDoc.documentDate) : new Date(),
+                    dueDate: invoiceDoc.dueDate ? new Date(invoiceDoc.dueDate) : undefined,
+                    subtotal: invoiceDoc.subtotal?.toString() || invoiceDoc.totalAmount?.toString() || "0",
+                    taxAmount: invoiceDoc.taxAmount?.toString() || "0",
+                    totalAmount: invoiceDoc.totalAmount?.toString() || "0",
+                    currency: invoiceDoc.currency || "USD",
+                    notes: `Auto-created from email: ${input.subject}`,
+                  } as any);
+                  console.log(`[Email→Invoice] Auto-created draft invoice ${invoiceNumber} (id=${draftInvoice.id}) from email ${emailId}`);
+                  // Create line items if available
+                  if (invoiceDoc.lineItems?.length) {
+                    for (const item of invoiceDoc.lineItems) {
+                      await db.createInvoiceItem({
+                        invoiceId: draftInvoice.id,
+                        description: item.description || "Line item",
+                        quantity: item.quantity?.toString() || "1",
+                        unitPrice: item.unitPrice?.toString() || "0",
+                        totalAmount: item.totalPrice?.toString() || "0",
+                      } as any);
+                    }
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn("[Email→Invoice] Auto-creation failed:", e);
+            }
+          }
+
+          // ── Automation #2: Shipping email → auto-update shipment status ──
+          if (result.categorization?.category === "shipping_confirmation" && result.documents.length > 0) {
+            try {
+              const shippingDoc = result.documents.find(d => d.trackingNumber) || result.documents[0];
+              if (shippingDoc.trackingNumber) {
+                const shipment = await db.findShipmentByTracking(shippingDoc.trackingNumber);
+                if (shipment && shipment.status !== "delivered") {
+                  await db.updateShipment(shipment.id, {
+                    status: "in_transit" as any,
+                    carrier: shippingDoc.carrierName || shipment.carrier,
+                  });
+                  console.log(`[Email→Shipment] Auto-updated shipment ${shipment.id} to in_transit (tracking: ${shippingDoc.trackingNumber})`);
+                }
+              }
+            } catch (e) {
+              console.warn("[Email→Shipment] Auto-update failed:", e);
+            }
+          }
+
+          // ── Automation #3: Vendor quote email → auto-create freight quote ──
+          if (result.categorization?.category === "freight_quote" && result.documents.length > 0) {
+            try {
+              const quoteDoc = result.documents.find(d => d.totalAmount || (d as any).freightCost) || result.documents[0];
+              const senderEmail = input.fromEmail;
+              // Try to find a matching carrier by sender email
+              const carriers = await db.getFreightCarriers();
+              const matchedCarrier = carriers.find(
+                (c: any) => c.email && senderEmail && c.email.toLowerCase() === senderEmail.toLowerCase()
+              );
+              const carrierId = matchedCarrier?.id ?? 0;
+
+              // Check if there's an open RFQ we can link this quote to
+              const openRfqs = await db.getFreightRfqs({ status: "awaiting_quotes" });
+              const linkedRfq = openRfqs.length > 0 ? openRfqs[0] : null;
+              const rfqId = linkedRfq?.id ?? 0;
+
+              await db.createFreightQuote({
+                rfqId,
+                carrierId,
+                quoteNumber: quoteDoc.documentNumber || `QTE-EMAIL-${Date.now().toString(36).toUpperCase()}`,
+                status: "received",
+                freightCost: quoteDoc.totalAmount?.toString() || (quoteDoc as any).freightCost?.toString() || null,
+                totalCost: quoteDoc.totalAmount?.toString() || null,
+                currency: quoteDoc.currency || "USD",
+                transitDays: (quoteDoc as any).transitDays ?? null,
+                shippingMode: (quoteDoc as any).shippingMode || null,
+                receivedVia: "email",
+                rawEmailContent: input.bodyText?.substring(0, 5000) || null,
+                notes: `Auto-created from vendor quote email: ${input.subject}`,
+              } as any);
+              console.log(`[Email→Quote] Auto-created freight quote from email ${emailId} (carrier=${matchedCarrier?.name || 'unknown'}, rfq=${rfqId || 'standalone'})`);
+
+              // If linked to an RFQ, update its status
+              if (linkedRfq) {
+                await db.updateFreightRfq(linkedRfq.id, { status: "quotes_received" });
+              }
+            } catch (e) {
+              console.warn("[Email→Quote] Auto-creation failed:", e);
+            }
+          }
+
+          // ── Automation #5: Copacker email extractor → auto-trigger ──
+          if (result.categorization?.category === "inventory_report") {
+            try {
+              const { parseCopackerInventoryEmail } = await import("../copackerEmailExtractor");
+              const copackerResult = await parseCopackerInventoryEmail(input.bodyText, input.subject);
+              if (copackerResult.success && copackerResult.items.length > 0) {
+                console.log(`[Email→Copacker] Parsed ${copackerResult.items.length} inventory items from copacker email ${emailId}`);
+              }
+            } catch (e) {
+              console.warn("[Email→Copacker] Auto-extraction failed:", e);
+            }
+          }
+
           // Create audit log
           await db.createAuditLog({
             userId: ctx.user.id,
@@ -1193,6 +1357,121 @@ export const emailRouter = router({
               });
             }
 
+            // ── IMAP Automation #6: Auto-run email document linker ──
+            try {
+              const { linkParsedEmailToEntities } = await import("../emailDocumentLinker");
+              const firstDoc = parseResult?.documents?.[0];
+              await linkParsedEmailToEntities({
+                category: email.categorization?.category,
+                vendorEmail: email.from.address,
+                fromEmail: email.from.address,
+                vendorName: firstDoc?.vendorName,
+                documentNumber: firstDoc?.documentNumber,
+                trackingNumber: firstDoc?.trackingNumber,
+                totalAmount: firstDoc?.totalAmount,
+              });
+            } catch (e) {
+              console.warn("[IMAP→DocumentLinker] Auto-link failed:", e);
+            }
+
+            // ── IMAP Automation #1: Auto-create draft invoice ──
+            if (email.categorization?.category === "invoice" && parseResult?.documents?.length) {
+              try {
+                const invoiceDoc = parseResult.documents.find((d: any) => d.documentType === "invoice") || parseResult.documents[0];
+                if (invoiceDoc.totalAmount) {
+                  const invNum = invoiceDoc.documentNumber || `DRAFT-IMAP-${Date.now().toString(36).toUpperCase()}`;
+                  const existingInv = await db.getInvoiceByNumber(invNum);
+                  if (!existingInv) {
+                    const vendorMatch = invoiceDoc.vendorEmail
+                      ? (await db.findVendorByEmailOrName(invoiceDoc.vendorEmail, invoiceDoc.vendorName))?.id ?? null
+                      : null;
+                    await db.createInvoice({
+                      invoiceNumber: invNum,
+                      type: "bill",
+                      status: "draft",
+                      customerId: vendorMatch,
+                      issueDate: invoiceDoc.documentDate ? new Date(invoiceDoc.documentDate) : new Date(),
+                      subtotal: invoiceDoc.totalAmount?.toString() || "0",
+                      taxAmount: "0",
+                      totalAmount: invoiceDoc.totalAmount?.toString() || "0",
+                      currency: invoiceDoc.currency || "USD",
+                      notes: `Auto-created from IMAP email: ${email.subject}`,
+                    } as any);
+                    console.log(`[IMAP→Invoice] Auto-created draft invoice ${invNum} from email ${emailId}`);
+                  }
+                }
+              } catch (e) {
+                console.warn("[IMAP→Invoice] Auto-creation failed:", e);
+              }
+            }
+
+            // ── IMAP Automation #2: Shipping email → auto-update shipment ──
+            if (email.categorization?.category === "shipping_confirmation" && parseResult?.documents?.length) {
+              try {
+                const shipDoc = parseResult.documents.find((d: any) => d.trackingNumber);
+                if (shipDoc?.trackingNumber) {
+                  const shipment = await db.findShipmentByTracking(shipDoc.trackingNumber);
+                  if (shipment && shipment.status !== "delivered") {
+                    await db.updateShipment(shipment.id, { status: "in_transit" as any, carrier: shipDoc.carrierName || shipment.carrier });
+                    console.log(`[IMAP→Shipment] Auto-updated shipment ${shipment.id} to in_transit`);
+                  }
+                }
+              } catch (e) {
+                console.warn("[IMAP→Shipment] Auto-update failed:", e);
+              }
+            }
+
+            // ── IMAP Automation #3: Vendor quote email → auto-create freight quote ──
+            if (email.categorization?.category === "freight_quote" && parseResult?.documents?.length) {
+              try {
+                const quoteDoc: any = parseResult.documents.find((d: any) => d.totalAmount || d.freightCost) || parseResult.documents[0];
+                const senderEmail = email.from?.address;
+                const carriers = await db.getFreightCarriers();
+                const matchedCarrier = carriers.find(
+                  (c: any) => c.email && senderEmail && c.email.toLowerCase() === senderEmail.toLowerCase()
+                );
+                const carrierId = matchedCarrier?.id ?? 0;
+                const openRfqs = await db.getFreightRfqs({ status: "awaiting_quotes" });
+                const linkedRfq = openRfqs.length > 0 ? openRfqs[0] : null;
+                const rfqId = linkedRfq?.id ?? 0;
+
+                await db.createFreightQuote({
+                  rfqId,
+                  carrierId,
+                  quoteNumber: quoteDoc.documentNumber || `QTE-IMAP-${Date.now().toString(36).toUpperCase()}`,
+                  status: "received",
+                  freightCost: quoteDoc.totalAmount?.toString() || quoteDoc.freightCost?.toString() || null,
+                  totalCost: quoteDoc.totalAmount?.toString() || null,
+                  currency: quoteDoc.currency || "USD",
+                  transitDays: quoteDoc.transitDays ?? null,
+                  shippingMode: quoteDoc.shippingMode || null,
+                  receivedVia: "email",
+                  rawEmailContent: email.bodyText?.substring(0, 5000) || null,
+                  notes: `Auto-created from IMAP vendor quote email: ${email.subject}`,
+                } as any);
+                console.log(`[IMAP→Quote] Auto-created freight quote from email ${emailId} (carrier=${matchedCarrier?.name || 'unknown'}, rfq=${rfqId || 'standalone'})`);
+
+                if (linkedRfq) {
+                  await db.updateFreightRfq(linkedRfq.id, { status: "quotes_received" });
+                }
+              } catch (e) {
+                console.warn("[IMAP→Quote] Auto-creation failed:", e);
+              }
+            }
+
+            // ── IMAP Automation #5: Copacker email → auto-extract inventory ──
+            if (email.categorization?.category === "inventory_report") {
+              try {
+                const { parseCopackerInventoryEmail } = await import("../copackerEmailExtractor");
+                const copackerResult = await parseCopackerInventoryEmail(email.bodyText, email.subject);
+                if (copackerResult.success && copackerResult.items.length > 0) {
+                  console.log(`[IMAP→Copacker] Parsed ${copackerResult.items.length} inventory items from email ${emailId}`);
+                }
+              } catch (e) {
+                console.warn("[IMAP→Copacker] Auto-extraction failed:", e);
+              }
+            }
+
             imported++;
           } catch (error: any) {
             importErrors.push(`Failed to import ${email.messageId}: ${error.message}`);
@@ -1291,14 +1570,7 @@ export const emailRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         // Encrypt password
-        const crypto = await import('crypto');
-        const key = process.env.JWT_SECRET || 'default-key';
-        const cipher = crypto.createCipheriv('aes-256-cbc', 
-          crypto.createHash('sha256').update(key).digest().slice(0, 32),
-          Buffer.alloc(16, 0)
-        );
-        let encrypted = cipher.update(input.password, 'utf8', 'hex');
-        encrypted += cipher.final('hex');
+        const encrypted = encrypt(input.password);
 
         const { id } = await db.createImapCredential({
           ...input,
@@ -1351,14 +1623,7 @@ export const emailRouter = router({
         }
 
         // Decrypt password
-        const crypto = await import('crypto');
-        const key = process.env.JWT_SECRET || 'default-key';
-        const decipher = crypto.createDecipheriv('aes-256-cbc',
-          crypto.createHash('sha256').update(key).digest().slice(0, 32),
-          Buffer.alloc(16, 0)
-        );
-        let decrypted = decipher.update(credential.encryptedPassword, 'hex', 'utf8');
-        decrypted += decipher.final('utf8');
+        const decrypted = decryptPassword(credential.encryptedPassword);
 
         return {
           ...credential,
@@ -1405,14 +1670,7 @@ export const emailRouter = router({
         // Encrypt password if provided
         let encryptedPassword = input.imapPassword;
         if (input.imapPassword) {
-          const crypto = await import('crypto');
-          const key = process.env.JWT_SECRET || 'default-key';
-          const cipher = crypto.createCipheriv('aes-256-cbc',
-            crypto.createHash('sha256').update(key).digest().slice(0, 32),
-            Buffer.alloc(16, 0)
-          );
-          encryptedPassword = cipher.update(input.imapPassword, 'utf8', 'hex');
-          encryptedPassword += cipher.final('hex');
+          encryptedPassword = encrypt(input.imapPassword);
         }
 
         const { id } = await db.createEmailCredential({
@@ -1450,15 +1708,7 @@ export const emailRouter = router({
 
         // Encrypt new password if provided
         if (imapPassword) {
-          const crypto = await import('crypto');
-          const key = process.env.JWT_SECRET || 'default-key';
-          const cipher = crypto.createCipheriv('aes-256-cbc',
-            crypto.createHash('sha256').update(key).digest().slice(0, 32),
-            Buffer.alloc(16, 0)
-          );
-          let encrypted = cipher.update(imapPassword, 'utf8', 'hex');
-          encrypted += cipher.final('hex');
-          updateData.imapPassword = encrypted;
+          updateData.imapPassword = encrypt(imapPassword);
         }
 
         await db.updateEmailCredential(id, updateData);
@@ -1498,15 +1748,7 @@ export const emailRouter = router({
 
           // Decrypt password
           if (credential.imapPassword) {
-            const crypto = await import('crypto');
-            const key = process.env.JWT_SECRET || 'default-key';
-            const decipher = crypto.createDecipheriv('aes-256-cbc',
-              crypto.createHash('sha256').update(key).digest().slice(0, 32),
-              Buffer.alloc(16, 0)
-            );
-            let decrypted = decipher.update(credential.imapPassword, 'hex', 'utf8');
-            decrypted += decipher.final('utf8');
-            config = { ...credential, imapPassword: decrypted };
+            config = { ...credential, imapPassword: decryptPassword(credential.imapPassword) };
           }
         }
 

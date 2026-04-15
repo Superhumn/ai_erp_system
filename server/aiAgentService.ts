@@ -1,6 +1,7 @@
 import { invokeLLM, Tool, Message } from "./_core/llm";
 import { getDb } from "./db";
 import { sendEmail, formatEmailHtml } from "./_core/email";
+import { getValidGoogleToken } from "./routers/middleware";
 import {
   vendors,
   customers,
@@ -82,6 +83,29 @@ const AI_TOOLS: Tool[] = [
           },
         },
         required: ["dataType"],
+      },
+    },
+  },
+  // Google Drive Search
+  {
+    type: "function",
+    function: {
+      name: "search_google_drive",
+      description: "Search files and documents in the company's Google Drive. Use this to find vendors, products, specs, invoices, contracts, or any business document.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Search query — file name, content, or keyword to search for",
+          },
+          fileType: {
+            type: "string",
+            enum: ["all", "spreadsheet", "document", "pdf", "presentation", "folder"],
+            description: "Filter by file type",
+          },
+        },
+        required: ["query"],
       },
     },
   },
@@ -398,6 +422,26 @@ const AI_TOOLS: Tool[] = [
       },
     },
   },
+  // Google Calendar Tools
+  {
+    type: "function",
+    function: {
+      name: "manage_calendar",
+      description: "View upcoming calendar events or create new ones. Use to check availability, schedule meetings, or add reminders.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["list_events", "create_event"], description: "Action to perform" },
+          summary: { type: "string", description: "Event title (for create)" },
+          startDateTime: { type: "string", description: "Start time ISO format (for create)" },
+          endDateTime: { type: "string", description: "End time ISO format (for create)" },
+          attendees: { type: "array", items: { type: "string" }, description: "Attendee emails (for create)" },
+          description: { type: "string", description: "Event description (for create)" },
+        },
+        required: ["action"],
+      },
+    },
+  },
   // AI-Powered Analytics Tools
   {
     type: "function",
@@ -425,11 +469,99 @@ const AI_TOOLS: Tool[] = [
       },
     },
   },
+  // CRM Natural Language Query Tool
+  {
+    type: "function",
+    function: {
+      name: "query_crm",
+      description: "Query the CRM to answer questions about contacts, deals, pipeline, meetings, revenue, and customer relationships. Use for questions like 'What deals are closing this month?', 'Who did I meet with last week?', 'What's our pipeline value?', 'Show me all leads from conferences'",
+      parameters: {
+        type: "object",
+        properties: {
+          question: { type: "string", description: "The natural language question about CRM data" },
+        },
+        required: ["question"],
+      },
+    },
+  },
+  // Natural Language Query Tool for ALL Modules
+  {
+    type: "function",
+    function: {
+      name: "query_system",
+      description: "Query ANY module in the ERP system using natural language. Use this for questions about work orders, manufacturing, inventory, purchase orders, vendors, cap table, equity, data room, projects, tasks, banking, transactions, reports, copacker operations, invoices, payments, shipments, or any other business data.",
+      parameters: {
+        type: "object",
+        properties: {
+          question: { type: "string", description: "The natural language question about any business data" },
+          module: {
+            type: "string",
+            enum: ["inventory", "work_orders", "purchase_orders", "vendors", "customers", "orders", "invoices", "payments", "shipments", "cap_table", "equity", "data_room", "projects", "tasks", "banking", "manufacturing", "copacker", "reports", "employees", "contracts", "general"],
+            description: "Which module to query (helps narrow down the data)",
+          },
+        },
+        required: ["question"],
+      },
+    },
+  },
 ];
 
 // ============================================
 // TOOL EXECUTION FUNCTIONS
 // ============================================
+
+async function executeSearchGoogleDrive(params: any, ctx: AIAgentContext): Promise<any> {
+  try {
+    const { accessToken, error: tokenErr } = await getValidGoogleToken(ctx.userId);
+    if (tokenErr || !accessToken) {
+      return { error: "Google Drive not connected. Go to Settings → Integrations to connect." };
+    }
+
+    let query = `fullText contains '${params.query.replace(/'/g, "\\'")}'`;
+    if (params.fileType && params.fileType !== "all") {
+      const mimeMap: Record<string, string> = {
+        spreadsheet: "application/vnd.google-apps.spreadsheet",
+        document: "application/vnd.google-apps.document",
+        pdf: "application/pdf",
+        presentation: "application/vnd.google-apps.presentation",
+        folder: "application/vnd.google-apps.folder",
+      };
+      if (mimeMap[params.fileType]) {
+        query += ` and mimeType='${mimeMap[params.fileType]}'`;
+      }
+    }
+    query += " and trashed=false";
+
+    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,modifiedTime,webViewLink,size)&pageSize=20&supportsAllDrives=true&includeItemsFromAllDrives=true`;
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!response.ok) {
+      return { error: `Google Drive search failed: ${response.status}` };
+    }
+
+    const data = await response.json();
+    const files = (data.files || []).map((f: any) => ({
+      name: f.name,
+      type: f.mimeType?.includes("spreadsheet") ? "Sheet" : f.mimeType?.includes("document") ? "Doc" : f.mimeType?.includes("pdf") ? "PDF" : f.mimeType?.includes("presentation") ? "Slides" : "File",
+      modified: f.modifiedTime,
+      link: f.webViewLink,
+      size: f.size ? `${(parseInt(f.size) / 1024).toFixed(0)} KB` : "—",
+    }));
+
+    return {
+      results: files,
+      count: files.length,
+      query: params.query,
+      message: files.length > 0
+        ? `Found ${files.length} files matching "${params.query}" in Google Drive`
+        : `No files found matching "${params.query}" in Google Drive`,
+    };
+  } catch (e: any) {
+    return { error: `Google Drive search failed: ${e.message}` };
+  }
+}
 
 async function executeAnalyzeData(params: any, ctx: AIAgentContext): Promise<any> {
   const db = await getDb();
@@ -1238,11 +1370,254 @@ async function executeCreateTask(params: any, ctx: AIAgentContext): Promise<any>
 }
 
 // ============================================
+// CALENDAR TOOL EXECUTION
+// ============================================
+
+async function executeManageCalendar(params: any, ctx: AIAgentContext): Promise<any> {
+  const { accessToken, error: tokenErr } = await getValidGoogleToken(ctx.userId);
+  if (tokenErr || !accessToken) return { error: "Google Calendar not connected" };
+
+  const { getCalendarEvents, createCalendarEvent } = await import("./calendarService");
+
+  if (params.action === "list_events") {
+    const events = await getCalendarEvents(accessToken);
+    return {
+      events: events.items
+        ?.map((e: any) => ({
+          title: e.summary,
+          start: e.start?.dateTime || e.start?.date,
+          end: e.end?.dateTime || e.end?.date,
+          attendees: e.attendees?.map((a: any) => a.email),
+          location: e.location,
+        }))
+        .slice(0, 10),
+    };
+  }
+
+  if (params.action === "create_event") {
+    const event = await createCalendarEvent(accessToken, {
+      summary: params.summary,
+      description: params.description,
+      start: { dateTime: params.startDateTime },
+      end: { dateTime: params.endDateTime },
+      attendees: params.attendees?.map((e: string) => ({ email: e })),
+    });
+    return { created: true, eventId: event.id, link: event.htmlLink };
+  }
+
+  return { error: "Unknown calendar action" };
+}
+
+async function executeQueryCrm(params: any, _ctx: AIAgentContext): Promise<any> {
+  const dbModule = await import("./db");
+
+  // Gather all CRM data
+  const [contacts, deals, pipelines] = await Promise.all([
+    dbModule.getCrmContacts?.() || [],
+    dbModule.getCrmDeals?.() || [],
+    dbModule.getCrmPipelines?.() || [],
+  ]);
+
+  // Use AI to answer the question based on CRM data
+  const { invokeLLM } = await import("./_core/llm");
+  const response = await invokeLLM({
+    messages: [
+      {
+        role: "system",
+        content: `You are a CRM assistant. Answer questions about contacts, deals, and pipeline using this data. Be concise and specific.
+
+Contacts (${(contacts as any[]).length}):
+${(contacts as any[]).slice(0, 30).map((c: any) => `- ${c.fullName || c.firstName}: ${c.email || ''} | ${c.organization || ''} | ${c.jobTitle || ''} | Source: ${c.source || ''}`).join('\n')}
+
+Deals (${(deals as any[]).length}):
+${(deals as any[]).slice(0, 30).map((d: any) => `- ${d.name}: Stage=${d.stage} | Amount=$${d.amount || 0} | Source=${d.source || ''}`).join('\n')}
+
+Pipelines (${(pipelines as any[]).length}):
+${(pipelines as any[]).slice(0, 10).map((p: any) => `- ${p.name}: Type=${p.type}`).join('\n')}
+
+Answer the user's question based on this data. If specific data isn't available, say so.`
+      },
+      { role: "user", content: params.question },
+    ],
+  });
+
+  const answer = response.choices?.[0]?.message?.content;
+  return {
+    answer: typeof answer === 'string' ? answer : 'Unable to query CRM data',
+    contactCount: (contacts as any[]).length,
+    dealCount: (deals as any[]).length,
+  };
+}
+
+async function executeQuerySystem(params: any, ctx: AIAgentContext): Promise<any> {
+  const dbModule = await import("./db");
+  const module = params.module || "general";
+
+  // Gather data based on module
+  let contextData = "";
+
+  try {
+    switch (module) {
+      case "inventory": {
+        const inventory = await dbModule.getInventory();
+        const warehouses = await dbModule.getWarehouses();
+        contextData = `Inventory (${inventory.length} items):\n${inventory.slice(0, 50).map((i: any) => `- ${i.product?.name || i.sku || 'Item'}: Qty=${i.quantity}, Reserved=${i.reservedQuantity || 0}, Location=${i.warehouse?.name || 'N/A'}`).join('\n')}\n\nWarehouses: ${warehouses.map((w: any) => w.name).join(', ')}`;
+        break;
+      }
+      case "work_orders":
+      case "manufacturing": {
+        const workOrders = await dbModule.getWorkOrders();
+        contextData = `Work Orders (${workOrders.length}):\n${workOrders.slice(0, 30).map((wo: any) => `- ${wo.workOrderNumber}: ${wo.product?.name || 'Product'} | Status=${wo.status} | Qty=${wo.quantity} | Due=${wo.scheduledEndDate || 'N/A'}`).join('\n')}`;
+        break;
+      }
+      case "purchase_orders": {
+        const pos = await dbModule.getPurchaseOrders();
+        contextData = `Purchase Orders (${pos.length}):\n${pos.slice(0, 30).map((po: any) => `- ${po.poNumber}: Vendor=${po.vendor?.name || 'N/A'} | Total=$${po.totalAmount} | Status=${po.status} | Date=${po.orderDate}`).join('\n')}`;
+        break;
+      }
+      case "vendors": {
+        const vendors = await dbModule.getVendors();
+        contextData = `Vendors (${vendors.length}):\n${vendors.slice(0, 30).map((v: any) => `- ${v.name}: Email=${v.email || 'N/A'} | Type=${v.type || 'supplier'} | Terms=${v.paymentTerms || 'N/A'} days`).join('\n')}`;
+        break;
+      }
+      case "customers": {
+        const customers = await dbModule.getCustomers();
+        contextData = `Customers (${customers.length}):\n${customers.slice(0, 30).map((c: any) => `- ${c.name}: Email=${c.email || 'N/A'} | Phone=${c.phone || 'N/A'}`).join('\n')}`;
+        break;
+      }
+      case "orders": {
+        const orders = await dbModule.getOrders();
+        contextData = `Orders (${orders.length}):\n${orders.slice(0, 30).map((o: any) => `- ${o.orderNumber}: Customer=${o.customer?.name || 'N/A'} | Total=$${o.totalAmount} | Status=${o.status}`).join('\n')}`;
+        break;
+      }
+      case "invoices": {
+        const invoices = await dbModule.getInvoices();
+        contextData = `Invoices (${invoices.length}):\n${invoices.slice(0, 30).map((i: any) => `- ${i.invoiceNumber}: $${i.totalAmount} | Status=${i.status} | Due=${i.dueDate || 'N/A'}`).join('\n')}`;
+        break;
+      }
+      case "payments": {
+        const payments = await dbModule.getPayments();
+        contextData = `Payments (${payments.length}):\n${payments.slice(0, 30).map((p: any) => `- $${p.amount} | Method=${p.paymentMethod || 'N/A'} | Date=${p.paymentDate || 'N/A'}`).join('\n')}`;
+        break;
+      }
+      case "shipments": {
+        const shipments = await dbModule.getShipments();
+        contextData = `Shipments (${shipments.length}):\n${shipments.slice(0, 30).map((s: any) => `- ${s.trackingNumber || 'No tracking'}: Status=${s.status} | Carrier=${s.carrier || 'N/A'}`).join('\n')}`;
+        break;
+      }
+      case "cap_table":
+      case "equity": {
+        const stakeholders = await (dbModule as any).getStakeholders?.() || [];
+        const grants = await (dbModule as any).getEquityGrants?.() || [];
+        const shareClasses = await (dbModule as any).getShareClasses?.() || [];
+        contextData = `Share Classes: ${shareClasses.map((sc: any) => `${sc.name} (${sc.type})`).join(', ')}\n\nStakeholders (${stakeholders.length}):\n${stakeholders.slice(0, 30).map((s: any) => `- ${s.name}: Type=${s.type} | Email=${s.email || 'N/A'}`).join('\n')}\n\nGrants (${grants.length}):\n${grants.slice(0, 30).map((g: any) => `- Stakeholder=${g.stakeholderId} | Shares=${g.shares} | Type=${g.grantType} | Status=${g.status} | Vested=${g.sharesVested || 0}`).join('\n')}`;
+        break;
+      }
+      case "data_room": {
+        const rooms = await dbModule.getDataRooms();
+        contextData = `Data Rooms (${rooms.length}):\n${rooms.map((r: any) => `- ${r.name}: Status=${r.status} | Visitors=${r.visitorCount || 0}`).join('\n')}`;
+        // Also get visitors
+        try {
+          for (const room of rooms.slice(0, 3)) {
+            const visitors = await dbModule.getDataRoomVisitors(room.id);
+            if (visitors.length > 0) {
+              contextData += `\n\nVisitors for "${room.name}": ${visitors.slice(0, 10).map((v: any) => `${v.name || v.email} (${v.lastViewedAt || v.createdAt})`).join(', ')}`;
+            }
+          }
+        } catch {}
+        break;
+      }
+      case "projects":
+      case "tasks": {
+        const projects = await dbModule.getProjects();
+        contextData = `Projects (${projects.length}):\n${projects.slice(0, 20).map((p: any) => `- ${p.name}: Status=${p.status} | Priority=${p.priority || 'N/A'}`).join('\n')}`;
+        // Get tasks
+        try {
+          const tasks = await dbModule.getAllProjectTasks?.();
+          if (tasks) {
+            contextData += `\n\nTasks (${tasks.length}):\n${tasks.slice(0, 30).map((t: any) => `- ${t.name}: Status=${t.status} | Priority=${t.priority || 'N/A'} | Due=${t.dueDate || 'N/A'} | Project=${t.projectId}`).join('\n')}`;
+          }
+        } catch {}
+        break;
+      }
+      case "banking": {
+        const transactions = await (dbModule as any).getBankTransactions?.() || [];
+        contextData = `Bank Transactions (${transactions.length}):\n${transactions.slice(0, 30).map((t: any) => `- ${t.date}: ${t.type} $${t.amount} | ${t.counterpartyName || t.description} | Category=${t.category || 'uncategorized'}`).join('\n')}`;
+        break;
+      }
+      case "copacker": {
+        try {
+          const invoices = await (dbModule as any).getCopackerInvoices?.() || [];
+          const updates = await (dbModule as any).getCopackerInventoryUpdates?.() || [];
+          contextData = `Copacker Invoices: ${invoices.length}\nInventory Updates: ${updates.length}`;
+          if (invoices.length) {
+            contextData += `\n${invoices.slice(0, 10).map((i: any) => `- Invoice ${i.invoiceNumber}: $${i.totalAmount} | Status=${i.status}`).join('\n')}`;
+          }
+        } catch { contextData = "Copacker data not available"; }
+        break;
+      }
+      case "employees": {
+        const employees = await dbModule.getEmployees();
+        contextData = `Employees (${employees.length}):\n${employees.slice(0, 30).map((e: any) => `- ${e.firstName} ${e.lastName}: ${e.jobTitle || 'N/A'} | Dept=${e.departmentId || 'N/A'} | Status=${e.status || 'active'}`).join('\n')}`;
+        break;
+      }
+      case "contracts": {
+        const contracts = await dbModule.getContracts();
+        contextData = `Contracts (${contracts.length}):\n${contracts.slice(0, 20).map((c: any) => `- ${c.title}: Type=${c.type} | Status=${c.status} | Value=$${c.value || 'N/A'}`).join('\n')}`;
+        break;
+      }
+      case "reports":
+      default: {
+        // General query - gather summary data from multiple modules
+        const [orders, invoices, customers, vendors, employees, inventory, pos] = await Promise.all([
+          dbModule.getOrders(), dbModule.getInvoices(), dbModule.getCustomers(),
+          dbModule.getVendors(), dbModule.getEmployees(), dbModule.getInventory(),
+          dbModule.getPurchaseOrders(),
+        ]);
+        contextData = `System Summary:
+- Orders: ${orders.length}
+- Invoices: ${invoices.length} (Paid: ${invoices.filter((i: any) => i.status === 'paid').length}, Overdue: ${invoices.filter((i: any) => i.status === 'overdue').length})
+- Customers: ${customers.length}
+- Vendors: ${vendors.length}
+- Employees: ${employees.length}
+- Inventory items: ${inventory.length}
+- Purchase Orders: ${pos.length} (Open: ${pos.filter((p: any) => ['draft','sent','confirmed'].includes(p.status)).length})
+- Total Revenue: $${invoices.filter((i: any) => i.status === 'paid').reduce((s: number, i: any) => s + parseFloat(i.totalAmount || '0'), 0).toLocaleString()}`;
+        break;
+      }
+    }
+  } catch (e: any) {
+    contextData = `Error gathering ${module} data: ${e.message}`;
+  }
+
+  // Use AI to answer the question
+  const { invokeLLM: invokeLLMForQuery } = await import("./_core/llm");
+  const response = await invokeLLMForQuery({
+    messages: [
+      {
+        role: "system",
+        content: `You are an ERP assistant for Superhumn Inc. Answer the user's question based on this data. Be concise, specific, and use numbers when available. If data is limited, say so.\n\n${contextData}`
+      },
+      { role: "user", content: params.question },
+    ],
+  });
+
+  const answer = response.choices?.[0]?.message?.content;
+  return {
+    answer: typeof answer === 'string' ? answer : 'Unable to query system data',
+    module,
+    dataPoints: contextData.split('\n').length,
+  };
+}
+
+// ============================================
 // TOOL EXECUTION DISPATCHER
 // ============================================
 
 async function executeTool(toolName: string, params: any, ctx: AIAgentContext): Promise<any> {
   switch (toolName) {
+    case "search_google_drive":
+      return executeSearchGoogleDrive(params, ctx);
     case "analyze_data":
       return executeAnalyzeData(params, ctx);
     case "send_email":
@@ -1271,6 +1646,12 @@ async function executeTool(toolName: string, params: any, ctx: AIAgentContext): 
       return executeCreateTask(params, ctx);
     case "run_ai_analytics":
       return executeRunAiAnalytics(params, ctx);
+    case "manage_calendar":
+      return executeManageCalendar(params, ctx);
+    case "query_crm":
+      return executeQueryCrm(params, ctx);
+    case "query_system":
+      return executeQuerySystem(params, ctx);
     default:
       throw new Error(`Unknown tool: ${toolName}`);
   }
@@ -1389,29 +1770,31 @@ export async function processAIAgentRequest(
     db.select({ count: sql<number>`count(*)` }).from(purchaseOrders),
   ]);
 
-  const systemPrompt = `You are an AI assistant integrated into a comprehensive ERP system. You have access to tools that allow you to:
+  const systemPrompt = `You are an AI assistant for the Superhumn ERP system. You have FULL access to create, read, update, and delete all data in the system. You can perform ANY operation the user requests. Use the available tools to take action directly.
 
-1. **Analyze Data**: Query and analyze business data including sales, inventory, vendors, customers, finances, orders, procurement, and production.
+Your capabilities include:
 
-2. **Send Emails**: Send emails to vendors, customers, or team members. You can also draft emails for review.
+1. **Purchase Orders**: Create new POs, approve POs, send POs to vendors, update PO status, and track PO fulfillment.
+2. **Invoices**: Create invoices, send invoices to customers, record payments against invoices, and manage invoice status.
+3. **Products & Inventory**: Create new products, update stock levels, transfer inventory between warehouses, adjust quantities, and track inventory movements.
+4. **Vendors & Suppliers**: Create new vendors, update vendor information, evaluate vendor performance, and manage vendor relationships.
+5. **Customers**: Create new customers, update customer records, view order history, and manage customer relationships.
+6. **Sales Orders**: Create new orders, update order status, cancel orders, and fulfill orders.
+7. **Work Orders & Manufacturing**: Create work orders, start production, complete work orders, and track manufacturing progress.
+8. **Shipments & Freight**: Create shipments, book freight, create RFQs for carriers, get quotes, and track shipment status.
+9. **BOMs & Recipes**: Create and modify bills of materials and recipes for manufacturing.
+10. **Co-packers**: Create work orders for contract manufacturers, track co-packer production, and manage co-packer relationships.
+11. **Email & Communication**: Send emails to vendors, customers, or team members. Draft professional emails for review. Follow up on outstanding items.
+12. **Reports & Analytics**: Generate business reports, analyze sales trends, forecast demand, detect anomalies, and provide actionable insights.
+13. **Tasks & Approvals**: Create tasks, approve or reject pending items, and manage workflow approvals.
 
-3. **Track Items**: Track inventory, orders, shipments, purchase orders, and work orders.
-
-4. **Manage Suppliers/Vendors**: Create, update, search vendors, view vendor performance, and create purchase orders.
-
-5. **Manage Co-packers**: List co-packers, create work orders for contract manufacturing, and track production.
-
-6. **Manage Customers**: Create, update, search customers, and view order history.
-
-7. **Manage Orders**: View and track sales orders.
-
-8. **Manage Freight**: Create RFQs, get quotes, book shipments, and track freight.
-
-9. **Generate Reports**: Create various business reports.
-
-10. **Create Tasks**: Create tasks that require approval before execution.
-
-11. **Run AI Analytics**: Run AI-powered analytics including financial anomaly detection, revenue forecasting, cash flow prediction, HR attrition prediction, compensation benchmarking, workforce planning, manufacturing yield/quality prediction, production optimization, predictive maintenance, legal contract analysis, dispute prediction, compliance monitoring, project risk assessment, effort estimation, resource allocation, EDI anomaly detection, EDI error prediction, and supplier performance scoring.
+CRITICAL BEHAVIOR RULES:
+1. When a user asks you to create something, DO IT directly. Never tell them to do it manually.
+2. If required data is missing (e.g., no vendor exists), CREATE the missing entity first, then proceed with the original request. Ask the user only for info you truly cannot guess (e.g., "What vendor should I use?" or "What's the unit price?").
+3. If there are zero vendors/products/customers, that's fine — create them as part of fulfilling the request. For example, if the user says "create a PO for 5000kg mushrooms" and there's no vendor, ask "Which vendor should I create this PO for? And what's the unit price per kg?" Then create the vendor AND the PO.
+4. NEVER list steps for the user to follow. NEVER say "you need to first..." — just do it or ask for the specific missing detail.
+5. Use sensible defaults: auto-generate SKUs, use today's date, set status to "draft", etc.
+6. Be concise. Don't explain what you're doing — just do it and confirm the result.
 
 Current System Status:
 - Vendors: ${vendorCount[0]?.count || 0}
@@ -1425,12 +1808,26 @@ User Context:
 - Role: ${ctx.userRole}
 
 Guidelines:
-- For sensitive operations (creating POs, sending emails, updating inventory), create tasks that require approval unless explicitly told to execute immediately.
+- When a user asks to create something, call the appropriate tool immediately. Do not suggest they do it manually.
+- For sensitive operations (large bulk changes, deletes), confirm with the user before proceeding.
 - Provide clear, actionable responses.
 - When analyzing data, provide insights and recommendations.
 - Format currency values with $ symbol and 2 decimal places.
 - When listing items, limit to 10-20 unless more are requested.
-- Be proactive in suggesting relevant actions based on the data.`;
+- Be proactive in suggesting relevant actions based on the data.
+
+You can query ANY module in the system using the query_system tool. When a user asks about data in any module (inventory, work orders, POs, cap table, data room, projects, banking, etc.), use the query_system tool to fetch the data and answer their question.
+
+Examples:
+- "What work orders are in progress?" → query_system(question, module="work_orders")
+- "Show me overdue POs" → query_system(question, module="purchase_orders")
+- "What's my cap table breakdown?" → query_system(question, module="cap_table")
+- "Who viewed my data room this week?" → query_system(question, module="data_room")
+- "What tasks are overdue?" → query_system(question, module="tasks")
+- "How many employees do we have?" → query_system(question, module="employees")
+- "Show me all contracts" → query_system(question, module="contracts")
+- "What's our banking activity?" → query_system(question, module="banking")
+- "Give me an overview of the business" → query_system(question, module="general")`;
 
   const messages: Message[] = [
     { role: "system", content: systemPrompt },

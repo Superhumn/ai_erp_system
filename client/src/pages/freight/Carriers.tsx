@@ -57,8 +57,11 @@ const carrierTypeIcons: Record<string, React.ReactNode> = {
 
 export default function Carriers() {
   const [isOpen, setIsOpen] = useState(false);
+  const [isDiscoverOpen, setIsDiscoverOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [discoverForm, setDiscoverForm] = useState({ origin: "", destination: "", cargoType: "", shippingMode: "" as string, specialRequirements: "" });
+  const [discoveredCarriers, setDiscoveredCarriers] = useState<any[]>([]);
   const [formData, setFormData] = useState({
     name: "",
     type: "ocean" as "ocean" | "air" | "ground" | "rail" | "multimodal",
@@ -98,6 +101,33 @@ export default function Carriers() {
       toast.error(error.message || "Failed to update carrier");
     },
   });
+
+  const discoverMutation = (trpc.freight as any).discoverCarriers.useMutation({
+    onSuccess: (data: any) => {
+      setDiscoveredCarriers(data.carriers || []);
+      if (data.carriers?.length > 0) {
+        toast.success(`Found ${data.carriers.length} carriers`);
+      } else {
+        toast.info("No carriers found. Try different search criteria.");
+      }
+    },
+    onError: (error: any) => toast.error(error.message),
+  });
+
+  const handleAddDiscovered = (carrier: any) => {
+    createMutation.mutate({
+      name: carrier.name,
+      type: carrier.type || "ocean",
+      contactName: carrier.contactName || "",
+      email: carrier.email || "",
+      phone: carrier.phone || "",
+      country: carrier.country || "",
+      website: carrier.website || "",
+      notes: carrier.notes || "",
+      isPreferred: false,
+    });
+    setDiscoveredCarriers(prev => prev.filter(c => c.name !== carrier.name));
+  };
 
   const resetForm = () => {
     setFormData({
@@ -140,6 +170,11 @@ export default function Carriers() {
           <h1 className="text-xl font-semibold tracking-[-0.02em]">Carriers & Forwarders</h1>
           <p className="text-muted-foreground">Manage your freight carrier network</p>
         </div>
+        <div className="flex gap-2">
+        <Button variant="outline" onClick={() => setIsDiscoverOpen(true)}>
+          <Search className="h-4 w-4 mr-2" />
+          Discover Carriers
+        </Button>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button>
@@ -262,7 +297,101 @@ export default function Carriers() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
+
+      {/* Discover Carriers Dialog */}
+      <Dialog open={isDiscoverOpen} onOpenChange={setIsDiscoverOpen}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Discover Freight Carriers</DialogTitle>
+            <DialogDescription>AI-powered search for carriers matching your shipment needs</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Origin</Label>
+                <Input placeholder="City, Country" value={discoverForm.origin} onChange={(e) => setDiscoverForm({ ...discoverForm, origin: e.target.value })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Destination</Label>
+                <Input placeholder="City, Country" value={discoverForm.destination} onChange={(e) => setDiscoverForm({ ...discoverForm, destination: e.target.value })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Cargo Type</Label>
+                <Input placeholder="e.g. Food grade, Hazmat, General" value={discoverForm.cargoType} onChange={(e) => setDiscoverForm({ ...discoverForm, cargoType: e.target.value })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Shipping Mode</Label>
+                <Select value={discoverForm.shippingMode || "any"} onValueChange={(v) => setDiscoverForm({ ...discoverForm, shippingMode: v === "any" ? "" : v })}>
+                  <SelectTrigger><SelectValue placeholder="Any" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="any">Any Mode</SelectItem>
+                    <SelectItem value="ocean">Ocean</SelectItem>
+                    <SelectItem value="air">Air</SelectItem>
+                    <SelectItem value="ground">Ground</SelectItem>
+                    <SelectItem value="rail">Rail</SelectItem>
+                    <SelectItem value="multimodal">Multimodal</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Special Requirements</Label>
+              <Input placeholder="e.g. Temperature controlled, Oversized, DG certified" value={discoverForm.specialRequirements} onChange={(e) => setDiscoverForm({ ...discoverForm, specialRequirements: e.target.value })} />
+            </div>
+            <Button
+              onClick={() => discoverMutation.mutate(discoverForm as any)}
+              disabled={discoverMutation.isPending}
+              className="w-full"
+            >
+              {discoverMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Search className="h-4 w-4 mr-2" />}
+              {discoverMutation.isPending ? "Searching carriers..." : "Search Carriers"}
+            </Button>
+
+            {/* Results */}
+            {discoveredCarriers.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs text-muted-foreground uppercase tracking-wider">Found {discoveredCarriers.length} Carriers</Label>
+                  <Button variant="outline" size="sm" onClick={() => {
+                    discoveredCarriers.forEach(c => handleAddDiscovered(c));
+                  }}>
+                    <Plus className="h-3 w-3 mr-1" /> Add All
+                  </Button>
+                </div>
+                <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                  {discoveredCarriers.map((carrier: any, idx: number) => (
+                    <div key={idx} className="flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/50">
+                      <div className="shrink-0">{carrierTypeIcons[carrier.type] || <Layers className="h-4 w-4" />}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm">{carrier.name}</div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {carrier.country && `${carrier.country} · `}{carrier.notes}
+                        </div>
+                        <div className="flex gap-2 mt-0.5 text-xs text-muted-foreground">
+                          {carrier.email && <span className="flex items-center gap-0.5"><Mail className="h-2.5 w-2.5" />{carrier.email}</span>}
+                          {carrier.website && <span className="flex items-center gap-0.5"><Globe className="h-2.5 w-2.5" />{carrier.website}</span>}
+                        </div>
+                      </div>
+                      <div className="shrink-0 flex items-center gap-1">
+                        {carrier.rating && (
+                          <div className="flex items-center gap-0.5 text-xs text-amber-500">
+                            <Star className="h-3 w-3 fill-current" />{carrier.rating}
+                          </div>
+                        )}
+                        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleAddDiscovered(carrier)}>
+                          <Plus className="h-3 w-3 mr-1" /> Add
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Filters */}
       <Card>

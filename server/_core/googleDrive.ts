@@ -51,7 +51,7 @@ const GOOGLE_DOCS_EXPORT_TYPES: Record<string, { mimeType: string; extension: st
  */
 export function getGoogleDriveAuthUrl(userId: number): string {
   const clientId = ENV.googleClientId;
-  const redirectUri = ENV.googleRedirectUri || `${ENV.appUrl}/api/oauth/google/callback`;
+  const redirectUri = ENV.googleRedirectUri || `${process.env.VITE_APP_URL || ENV.appUrl}/api/oauth/google/callback`;
   
   // Request drive.readonly scope for reading files and folders
   const scope = encodeURIComponent(
@@ -67,11 +67,13 @@ export function getGoogleDriveAuthUrl(userId: number): string {
 /**
  * Get comprehensive OAuth URL for all Google services (Drive, Gmail, Workspace)
  */
-export function getGoogleFullAccessAuthUrl(userId: number): string {
+export function getGoogleFullAccessAuthUrl(userId: number, returnTo?: string): string {
   const clientId = ENV.googleClientId;
-  const redirectUri = ENV.googleRedirectUri || `${ENV.appUrl}/api/oauth/google/callback`;
-  
-  // Request all necessary scopes for Drive, Gmail, Docs, and Sheets
+  const redirectUri = ENV.googleRedirectUri || `${process.env.VITE_APP_URL || ENV.appUrl}/api/oauth/google/callback`;
+
+  // Request all necessary scopes for Drive, Gmail, Docs, Sheets, and Calendar
+  // NOTE: You must enable the Google Calendar API in your Google Cloud Console:
+  // https://console.cloud.google.com/apis/library/calendar-json.googleapis.com
   const scope = encodeURIComponent(
     "https://www.googleapis.com/auth/drive " +
     "https://www.googleapis.com/auth/drive.file " +
@@ -79,10 +81,14 @@ export function getGoogleFullAccessAuthUrl(userId: number): string {
     "https://www.googleapis.com/auth/documents " +
     "https://www.googleapis.com/auth/gmail.send " +
     "https://www.googleapis.com/auth/gmail.compose " +
-    "https://www.googleapis.com/auth/gmail.readonly"
+    "https://www.googleapis.com/auth/gmail.readonly " +
+    "https://www.googleapis.com/auth/calendar " +
+    "https://www.googleapis.com/auth/calendar.events"
   );
-  
-  const state = createSignedOAuthState({ userId, provider: 'google' });
+
+  const statePayload: Record<string, unknown> = { userId, provider: 'google' };
+  if (returnTo) statePayload.returnTo = returnTo;
+  const state = createSignedOAuthState(statePayload);
 
   return `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${encodeURIComponent(state)}`;
 }
@@ -100,7 +106,7 @@ export async function listDriveFolders(
       query += ` and '${parentFolderId}' in parents`;
     }
     
-    const url = `${GOOGLE_DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,webViewLink,parents)&orderBy=name`;
+    const url = `${GOOGLE_DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,webViewLink,parents)&orderBy=name&supportsAllDrives=true&includeItemsFromAllDrives=true`;
     
     const response = await fetch(url, {
       headers: {
@@ -132,7 +138,7 @@ export async function listDriveFiles(
   try {
     const query = `'${folderId}' in parents and trashed=false and mimeType!='${FOLDER_MIME_TYPE}'`;
     
-    const url = `${GOOGLE_DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,webViewLink,thumbnailLink,iconLink,createdTime,modifiedTime,parents)&orderBy=name`;
+    const url = `${GOOGLE_DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,webViewLink,thumbnailLink,iconLink,createdTime,modifiedTime,parents)&orderBy=name&supportsAllDrives=true&includeItemsFromAllDrives=true`;
     
     const response = await fetch(url, {
       headers: {
@@ -175,8 +181,14 @@ export async function syncDriveFolder(
       return;
     }
     
-    allFolders.push(...folders);
-    
+    // Skip folders named "Private" or starting with "_"
+    const filteredFolders = folders.filter(f =>
+      !f.name.toLowerCase().includes('private') &&
+      !f.name.startsWith('_') &&
+      !f.name.toLowerCase().includes('confidential')
+    );
+    allFolders.push(...filteredFolders);
+
     // Get files in current folder
     const { files, error: fileError } = await listDriveFiles(accessToken, currentFolderId);
     if (fileError) {
@@ -185,8 +197,8 @@ export async function syncDriveFolder(
       allFiles.push(...files);
     }
     
-    // Recursively sync subfolders
-    for (const folder of folders) {
+    // Recursively sync subfolders (only non-private ones)
+    for (const folder of filteredFolders) {
       await syncRecursive(folder.id, depth + 1);
     }
   }
@@ -303,6 +315,52 @@ export async function downloadFile(
 }
 
 /**
+ * Download a Drive file's content, exporting Google Workspace files as PDF.
+ * Returns the raw buffer and the effective MIME type after any export conversion.
+ */
+export async function downloadDriveFile(
+  accessToken: string,
+  fileId: string,
+  mimeType: string
+): Promise<{ buffer: Buffer; exportedMimeType: string } | { error: string }> {
+  try {
+    let url: string;
+    let exportedMimeType = mimeType;
+
+    // Google Workspace files need to be exported
+    if (mimeType === 'application/vnd.google-apps.spreadsheet') {
+      url = `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=application/pdf`;
+      exportedMimeType = 'application/pdf';
+    } else if (mimeType === 'application/vnd.google-apps.document') {
+      url = `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=application/pdf`;
+      exportedMimeType = 'application/pdf';
+    } else if (mimeType === 'application/vnd.google-apps.presentation') {
+      url = `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=application/pdf`;
+      exportedMimeType = 'application/pdf';
+    } else if (mimeType === 'application/vnd.google-apps.drawing') {
+      url = `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=image/png`;
+      exportedMimeType = 'image/png';
+    } else {
+      // Regular files — download directly
+      url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`;
+    }
+
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!response.ok) {
+      return { error: `Download failed: ${response.status}` };
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    return { buffer: Buffer.from(arrayBuffer), exportedMimeType };
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
+/**
  * Get folder info
  */
 export async function getFolderInfo(
@@ -310,7 +368,7 @@ export async function getFolderInfo(
   folderId: string
 ): Promise<{ folder: DriveFolder | null; error?: string }> {
   try {
-    const url = `${GOOGLE_DRIVE_API}/files/${folderId}?fields=id,name,mimeType,webViewLink,parents`;
+    const url = `${GOOGLE_DRIVE_API}/files/${folderId}?fields=id,name,mimeType,webViewLink,parents&supportsAllDrives=true&includeItemsFromAllDrives=true`;
     
     const response = await fetch(url, {
       headers: {
@@ -320,7 +378,8 @@ export async function getFolderInfo(
     
     if (!response.ok) {
       const error = await response.text();
-      return { folder: null, error: `Failed to get folder: ${response.status}` };
+      console.error("[GoogleDrive] getFolderInfo failed:", response.status, error);
+      return { folder: null, error: `Failed to get folder (${response.status}): ${error}. Make sure the folder is shared with your Google account and you've connected Google with full Drive access.` };
     }
     
     const folder = await response.json();

@@ -182,6 +182,24 @@ export const procurementRouter = router({
       .mutation(async ({ input, ctx }) => {
         await db.updatePurchaseOrder(input.id, { status: 'sent', approvedBy: ctx.user.id, approvedAt: new Date() });
         await createAuditLog(ctx.user.id, 'approve', 'purchaseOrder', input.id);
+
+        // Auto-send PO to vendor via email
+        try {
+          const po = await db.getPurchaseOrderById(input.id);
+          if (po?.vendorId) {
+            const { sendVendorEmail } = await import("../vendorEmailAutomation");
+            await sendVendorEmail({
+              vendorId: po.vendorId,
+              emailType: "order_confirmation",
+              purchaseOrderId: po.id,
+              subject: `Purchase Order ${po.poNumber}`,
+              triggeredBy: ctx.user.id,
+            });
+          }
+        } catch (e) {
+          console.warn("[PO Approval] Failed to auto-send PO to vendor:", e);
+        }
+
         return { success: true };
       }),
     // Parse text to PO preview
@@ -1241,14 +1259,14 @@ Ask if they received the original request and if they can provide a quote.`;
       .input(z.object({ token: z.string() }))
       .query(async ({ input }) => {
         const session = await db.getSupplierPortalSession(input.token);
-        if (!session) return [];
+        if (!session || session.status !== 'active' || new Date(session.expiresAt) < new Date()) return [];
         return db.getSupplierDocuments({ portalSessionId: session.id });
       }),
     getFreightInfo: publicProcedure
       .input(z.object({ token: z.string() }))
       .query(async ({ input }) => {
         const session = await db.getSupplierPortalSession(input.token);
-        if (!session) return null;
+        if (!session || session.status !== 'active' || new Date(session.expiresAt) < new Date()) return null;
         return db.getSupplierFreightInfo(session.purchaseOrderId);
       }),
     uploadDocument: publicProcedure

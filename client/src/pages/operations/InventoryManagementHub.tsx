@@ -37,6 +37,89 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+type EditableCellProps = {
+  item: any;
+  field: string;
+  value: any;
+  rawValue?: any;
+  type?: "text" | "select" | "date";
+  options?: string[];
+  editingCell: { id: number; field: string } | null;
+  editValue: string;
+  setEditValue: (v: string) => void;
+  onSave: (id: number, field: string) => void;
+  onCancel: () => void;
+  onStart: (id: number, field: string, currentValue: any) => void;
+};
+
+function EditableCell({
+  item,
+  field,
+  value,
+  rawValue,
+  type = "text",
+  options,
+  editingCell,
+  editValue,
+  setEditValue,
+  onSave,
+  onCancel,
+  onStart,
+}: EditableCellProps) {
+  const isEditing = editingCell?.id === item.id && editingCell?.field === field;
+
+  if (isEditing) {
+    return (
+      <div className="flex items-center gap-2">
+        {type === "select" && options ? (
+          <Select value={editValue} onValueChange={setEditValue}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Select status" />
+            </SelectTrigger>
+            <SelectContent>
+              {options.map((option) => (
+                <SelectItem key={option} value={option}>
+                  {option.replace(/_/g, " ")}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <Input
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            className="w-32"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                onSave(item.id, field);
+              } else if (e.key === "Escape") {
+                onCancel();
+              }
+            }}
+          />
+        )}
+        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onSave(item.id, field)}>
+          <Check className="h-4 w-4 text-green-600" />
+        </Button>
+        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={onCancel}>
+          <X className="h-4 w-4 text-red-600" />
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="flex items-center gap-2 cursor-pointer hover:bg-muted/50 px-2 py-1 rounded group"
+      onClick={() => onStart(item.id, field, rawValue !== undefined ? rawValue : value)}
+    >
+      <span>{value || "-"}</span>
+      <Edit2 className="h-3 w-3 opacity-0 group-hover:opacity-50" />
+    </div>
+  );
+}
+
 export default function InventoryManagementHub() {
   const [search, setSearch] = useState("");
   const [editingCell, setEditingCell] = useState<{ id: number; field: string } | null>(null);
@@ -98,89 +181,10 @@ export default function InventoryManagementHub() {
     );
   };
 
-  const EditableCell = ({ 
-    item, 
-    field, 
-    value, 
-    rawValue,
-    type = "text",
-    options 
-  }: { 
-    item: any; 
-    field: string; 
-    value: any;
-    rawValue?: any;
-    type?: "text" | "select" | "date";
-    options?: string[];
-  }) => {
-    const isEditing = editingCell?.id === item.id && editingCell?.field === field;
-    
-    if (isEditing) {
-      return (
-        <div className="flex items-center gap-2">
-          {type === "select" && options ? (
-            <Select value={editValue} onValueChange={setEditValue}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Select status" />
-              </SelectTrigger>
-              <SelectContent>
-                {options.map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {option.replace(/_/g, " ")}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
-            <Input
-              value={editValue}
-              onChange={(e) => setEditValue(e.target.value)}
-              className="w-32"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  saveEdit(item.id, field);
-                } else if (e.key === "Escape") {
-                  cancelEdit();
-                }
-              }}
-            />
-          )}
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-7 w-7"
-            onClick={() => saveEdit(item.id, field)}
-          >
-            <Check className="h-4 w-4 text-green-600" />
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-7 w-7"
-            onClick={cancelEdit}
-          >
-            <X className="h-4 w-4 text-red-600" />
-          </Button>
-        </div>
-      );
-    }
-    
-    return (
-      <div 
-        className="flex items-center gap-2 cursor-pointer hover:bg-muted/50 px-2 py-1 rounded group"
-        onClick={() => startEdit(item.id, field, rawValue !== undefined ? rawValue : value)}
-      >
-        <span>{value || "-"}</span>
-        <Edit2 className="h-3 w-3 opacity-0 group-hover:opacity-50" />
-      </div>
-    );
-  };
-
   return (
     <div className="space-y-6 animate-fade-in">
       <div>
-        <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+        <h1 className="text-lg font-semibold flex items-center gap-2">
           <Warehouse className="h-8 w-8" />
           Inventory Management Hub
         </h1>
@@ -326,6 +330,12 @@ export default function InventoryManagementHub() {
                               item={item}
                               field="forecastedQuantity"
                               value={item.forecastedQuantity ? `${parseFloat(item.forecastedQuantity).toFixed(0)} ${item.unit}` : "-"}
+                              editingCell={editingCell}
+                              editValue={editValue}
+                              setEditValue={setEditValue}
+                              onSave={saveEdit}
+                              onCancel={cancelEdit}
+                              onStart={startEdit}
                             />
                             {item.forecastPeriodStart && (
                               <div className="text-xs text-muted-foreground">
@@ -362,6 +372,12 @@ export default function InventoryManagementHub() {
                               rawValue={item.poStatus}
                               type="select"
                               options={["draft", "sent", "confirmed", "partial", "received", "cancelled"]}
+                              editingCell={editingCell}
+                              editValue={editValue}
+                              setEditValue={setEditValue}
+                              onSave={saveEdit}
+                              onCancel={cancelEdit}
+                              onStart={startEdit}
                             />
                             {item.poExpectedDate && (
                               <div className="text-xs text-muted-foreground flex items-center gap-1">
@@ -417,11 +433,23 @@ export default function InventoryManagementHub() {
                               rawValue={item.freightStatus}
                               type="select"
                               options={["pending", "confirmed", "in_transit", "arrived", "delivered", "cancelled"]}
+                              editingCell={editingCell}
+                              editValue={editValue}
+                              setEditValue={setEditValue}
+                              onSave={saveEdit}
+                              onCancel={cancelEdit}
+                              onStart={startEdit}
                             />
                             <EditableCell
                               item={item}
                               field="freightTrackingNumber"
                               value={item.freightTrackingNumber || "Add tracking"}
+                              editingCell={editingCell}
+                              editValue={editValue}
+                              setEditValue={setEditValue}
+                              onSave={saveEdit}
+                              onCancel={cancelEdit}
+                              onStart={startEdit}
                             />
                             {item.freightArrivalDate && (
                               <div className="text-xs text-muted-foreground flex items-center gap-1">

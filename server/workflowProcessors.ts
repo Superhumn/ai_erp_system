@@ -29,7 +29,6 @@ import {
   freightCarriers,
   invoices,
   payments,
-  supplierPerformance,
   vendorRfqs,
   vendorQuotes,
   vendorRfqInvitations,
@@ -37,6 +36,7 @@ import {
 } from "../drizzle/schema";
 import { eq, and, lt, lte, gte, gt, desc, asc, sql, isNull, or, inArray, between } from "drizzle-orm";
 import type { WorkflowEngine, WorkflowContext, WorkflowResult, StepResult } from "./autonomousWorkflowEngine";
+import { supplierPerformance, exceptionLog } from "../drizzle/schema";
 
 // ============================================
 // WORKFLOW PROCESSOR INTERFACE
@@ -2219,7 +2219,6 @@ const exceptionHandlingProcessor: WorkflowProcessor = {
 
     // Step 1: Get open exceptions
     const step1 = await engine.recordStep(context, 1, "Fetch Open Exceptions", "data_fetch", async () => {
-      const { exceptionLog } = await import("../drizzle/schema");
       const openExceptions = await db
         .select()
         .from(exceptionLog)
@@ -2263,8 +2262,6 @@ Decide: resolve with specific action, or escalate to human?`,
             additionalProperties: false,
           }
         );
-
-        const { exceptionLog } = await import("../drizzle/schema");
 
         if (aiDecision.confidence > 75 && aiDecision.decision.action === "resolve") {
           await db

@@ -20,6 +20,7 @@ export async function updateProjectMilestone(id: number, data: Partial<typeof pr
 export async function createProjectTask(data: typeof projectTasks.$inferInsert) { const db = await getDb(); if (!db) throw new Error("Database not available"); const result = await db.insert(projectTasks).values(data); return { id: result[0].insertId }; }
 export async function updateProjectTask(id: number, data: Partial<typeof projectTasks.$inferInsert>) { const db = await getDb(); if (!db) return; await db.update(projectTasks).set(data).where(eq(projectTasks.id, id)); }
 export async function getProjectTasks(projectId: number) { const db = await getDb(); if (!db) return []; return db.select().from(projectTasks).where(eq(projectTasks.projectId, projectId)).orderBy(desc(projectTasks.createdAt)); }
+export async function getAllProjectTasks() { const db = await getDb(); if (!db) return []; return db.select().from(projectTasks).orderBy(desc(projectTasks.createdAt)); }
 
 // ============================================
 // INVESTMENT GRANT CHECKLISTS

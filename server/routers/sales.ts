@@ -729,7 +729,36 @@ export const salesRouter = router({
             totalPrice: (parseFloat(line.quantity) * parseFloat(line.unitPrice)).toString(),
           });
         }
-        
+
+        // Auto-generate invoice from sales order
+        try {
+          const invoice = await db.createInvoice({
+            customerId: input.customerId,
+            invoiceNumber: `INV-${Date.now().toString(36).toUpperCase()}`,
+            issueDate: new Date(),
+            dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Net 30
+            subtotal: totalAmount.toString(),
+            taxAmount: "0",
+            totalAmount: totalAmount.toString(),
+            status: "draft",
+            type: "invoice",
+            notes: `Auto-generated from Sales Order #${orderId}`,
+            createdBy: ctx.user.id,
+          });
+          for (const line of input.lines) {
+            await db.createInvoiceItem({
+              invoiceId: invoice.id,
+              description: `Product ${line.productId}`,
+              productId: line.productId,
+              quantity: line.quantity,
+              unitPrice: line.unitPrice,
+              totalAmount: (parseFloat(line.quantity) * parseFloat(line.unitPrice)).toString(),
+            });
+          }
+        } catch (e) {
+          console.warn("[Auto-Invoice] Failed to auto-generate invoice from sales order:", e);
+        }
+
         return { id: orderId, orderNumber };
       }),
     updateStatus: protectedProcedure

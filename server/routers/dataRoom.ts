@@ -1,5 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { randomBytes, scryptSync, timingSafeEqual, createHash } from "crypto";
 import { sendEmail, isEmailConfigured, formatEmailHtml } from "../_core/email";
 import * as db from "../db";
 import { storagePut } from "../storage";
@@ -7,6 +8,39 @@ import { nanoid } from "nanoid";
 import { syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType } from "../_core/googleDrive";
 import { router, publicProcedure, protectedProcedure, getValidGoogleToken } from "./middleware";
 import type { InsertDataRoomDriveSyncConfig } from "../../drizzle/schema";
+
+// Hash a data-room/link password using scrypt (salted KDF).
+function hashDataRoomPassword(password: string): string {
+  const salt = randomBytes(16).toString('hex');
+  const hash = scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+// Verify a data-room/link password against a stored hash.
+// Supports legacy unsalted SHA-256 hashes (stored as plain 64-char hex) for backward compatibility.
+function verifyDataRoomPassword(password: string, stored: string): { valid: boolean; needsUpgrade: boolean } {
+  if (stored.includes(':')) {
+    // Current format: scrypt salt:hash
+    const [salt, hash] = stored.split(':');
+    if (!salt || !hash) return { valid: false, needsUpgrade: false };
+    const computed = scryptSync(password, salt, 64);
+    const storedBuf = Buffer.from(hash, 'hex');
+    const valid = computed.length === storedBuf.length && timingSafeEqual(computed, storedBuf);
+    return {
+      valid,
+      needsUpgrade: false,
+    };
+  }
+
+  // Legacy format: plain SHA-256 hex (no salt) — read-only backward-compat verification path.
+  // New passwords are always stored as scrypt above. SHA-256 is only used here to verify
+  // passwords that were hashed before the scrypt migration; no new SHA-256 hashes are created.
+  // lgtm[js/insufficient-password-hash]
+  const computed = createHash('sha256').update(password).digest();
+  const storedBuf = Buffer.from(stored, 'hex');
+  const valid = computed.length === storedBuf.length && timingSafeEqual(computed, storedBuf);
+  return { valid, needsUpgrade: valid };
+}
 
 export const dataRoomRouter = router({
   // ============================================
@@ -43,6 +77,11 @@ export const dataRoomRouter = router({
         allowDownload: z.boolean().default(true),
         allowPrint: z.boolean().default(true),
         googleDriveFolderId: z.string().optional(),
+        requiresEmail: z.boolean().default(false),
+        enableWatermark: z.boolean().default(false),
+        brandingLogo: z.string().optional(),
+        brandingColor: z.string().optional(),
+        brandingCompanyName: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         // Check if slug is unique
@@ -54,14 +93,15 @@ export const dataRoomRouter = router({
         // Hash password if provided
         let hashedPassword = null;
         if (input.password) {
-          const crypto = await import('crypto');
-          hashedPassword = crypto.createHash('sha256').update(input.password).digest('hex');
+          hashedPassword = hashDataRoomPassword(input.password);
         }
 
+        const { enableWatermark, ...rest } = input;
         const { id } = await db.createDataRoom({
-          ...input,
+          ...rest,
           password: hashedPassword,
           ownerId: ctx.user.id,
+          watermarkEnabled: enableWatermark ?? false,
         });
 
         return { id, slug: input.slug };
@@ -82,6 +122,11 @@ export const dataRoomRouter = router({
         welcomeMessage: z.string().optional(),
         status: z.enum(['active', 'archived', 'draft']).optional(),
         googleDriveFolderId: z.string().nullable().optional(),
+        requiresEmail: z.boolean().optional(),
+        enableWatermark: z.boolean().optional(),
+        brandingLogo: z.string().nullable().optional(),
+        brandingColor: z.string().nullable().optional(),
+        brandingCompanyName: z.string().nullable().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const room = await db.getDataRoomById(input.id);
@@ -90,20 +135,20 @@ export const dataRoomRouter = router({
           throw new TRPCError({ code: 'FORBIDDEN' });
         }
 
-        const { id, password, ...updateData } = input;
+        const { id, password, enableWatermark, ...updateData } = input;
         let hashedPassword = undefined;
         if (password !== undefined) {
           if (password === null) {
             hashedPassword = null;
           } else {
-            const crypto = await import('crypto');
-            hashedPassword = crypto.createHash('sha256').update(password).digest('hex');
+            hashedPassword = hashDataRoomPassword(password);
           }
         }
 
         await db.updateDataRoom(id, {
           ...updateData,
           ...(hashedPassword !== undefined && { password: hashedPassword }),
+          ...(enableWatermark !== undefined && { watermarkEnabled: enableWatermark }),
         });
 
         return { success: true };
@@ -285,8 +330,7 @@ export const dataRoomRouter = router({
           const linkCode = nanoid(12);
           let hashedPassword = null;
           if (input.password) {
-            const crypto = await import('crypto');
-            hashedPassword = crypto.createHash('sha256').update(input.password).digest('hex');
+            hashedPassword = hashDataRoomPassword(input.password);
           }
 
           const { id } = await db.createDataRoomLink({
@@ -699,15 +743,26 @@ export const dataRoomRouter = router({
             throw new TRPCError({ code: 'FORBIDDEN', message: 'Link view limit reached' });
           }
 
+          // Check data room level email gate
+          const dataRoom = await db.getDataRoomById(link.dataRoomId);
+          if (dataRoom?.requiresEmail && !input.visitorInfo?.email) {
+            return { requiresInfo: true, requiredFields: ['email'], dataRoomId: null, visitorId: null };
+          }
+
           // Check password
           if (link.password) {
             if (!input.password) {
               return { requiresPassword: true, dataRoomId: null, visitorId: null };
             }
-            const crypto = await import('crypto');
-            const hashedPassword = crypto.createHash('sha256').update(input.password).digest('hex');
-            if (hashedPassword !== link.password) {
+            const passwordCheck = verifyDataRoomPassword(input.password, link.password);
+            if (!passwordCheck.valid) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid password' });
+            }
+
+            // Seamlessly upgrade legacy SHA-256 hashes to salted scrypt after successful verification.
+            if (passwordCheck.needsUpgrade) {
+              const upgradedHash = hashDataRoomPassword(input.password);
+              await db.updateShareLink(link.id, { password: upgradedHash });
             }
           }
 
@@ -864,6 +919,10 @@ export const dataRoomRouter = router({
               invitationOnly: room.invitationOnly,
               watermarkEnabled: room.watermarkEnabled,
               watermarkText: room.watermarkText,
+              requiresEmail: room.requiresEmail,
+              brandingLogo: room.brandingLogo,
+              brandingColor: room.brandingColor,
+              brandingCompanyName: room.brandingCompanyName,
             },
             folders: folders.filter(f => !f.googleDriveFolderId || true),
             documents: documents.filter(d => !d.isHidden),
@@ -896,6 +955,51 @@ export const dataRoomRouter = router({
             downloaded: input.downloaded,
             deviceType: ctx.req.headers['user-agent']?.includes('Mobile') ? 'mobile' : 'desktop',
           });
+
+          // Update engagement scoring for the visitor
+          try {
+            const visitor = await db.getDataRoomVisitorById(input.visitorId);
+            if (visitor) {
+              const durationMinutes = Math.floor((input.duration || 0) / 60);
+              const newPagesViewed = (input.pagesViewed?.length || 0);
+              // +1 per document viewed, +1 per minute spent
+              const scoreIncrement = 1 + durationMinutes;
+              await db.updateDataRoomVisitor(visitor.id, {
+                engagementScore: (visitor.engagementScore || 0) + scoreIncrement,
+                pagesViewed: (visitor.pagesViewed || 0) + newPagesViewed,
+                totalTimeSpent: (visitor.totalTimeSpent || 0) + (input.duration || 0),
+                lastViewedAt: new Date(),
+              });
+            }
+          } catch (err) {
+            console.warn("[DataRoom] Failed to update engagement score:", err);
+          }
+
+          // Send real-time view notification to data room owner
+          try {
+            const document = await db.getDataRoomDocumentById(input.documentId);
+            if (document) {
+              const dataRoom = await db.getDataRoomById(document.dataRoomId);
+              if (dataRoom) {
+                const visitor = await db.getDataRoomVisitorById(input.visitorId);
+                const visitorName = visitor?.name || visitor?.email || 'Anonymous visitor';
+                const link = input.linkId ? await db.getDataRoomLinkByCode('') : null; // We have linkId not code
+                await db.createNotification({
+                  userId: dataRoom.ownerId,
+                  type: 'data_room_view',
+                  title: `${visitorName} is viewing "${dataRoom.name}"`,
+                  message: `Viewing document: ${document.name}`,
+                  entityType: 'data_room',
+                  entityId: dataRoom.id,
+                  severity: 'info',
+                  link: `/data-rooms/${dataRoom.id}`,
+                });
+              }
+            }
+          } catch (err) {
+            console.warn("[DataRoom] Failed to send view notification:", err);
+          }
+
           return { id };
         }),
     }),
@@ -1009,12 +1113,13 @@ export const dataRoomRouter = router({
           signerCompany: z.string().optional(),
           signatureType: z.enum(['typed', 'drawn']),
           signatureData: z.string(), // Base64 for drawn, typed name for typed
-          consentCheckbox: z.boolean(),
+          consentCheckbox: z.literal(true),
         }))
         .mutation(async ({ input, ctx }) => {
           // Get the NDA document
           const ndaDoc = await db.getNdaDocumentById(input.ndaDocumentId);
           if (!ndaDoc) throw new TRPCError({ code: 'NOT_FOUND', message: 'NDA document not found' });
+          if (ndaDoc.dataRoomId !== input.dataRoomId) throw new TRPCError({ code: 'BAD_REQUEST', message: 'NDA document does not belong to this data room' });
 
           // Get IP address from request
           const ipAddress = ctx.req.headers['x-forwarded-for'] as string || ctx.req.socket.remoteAddress || 'unknown';
@@ -1259,9 +1364,9 @@ export const dataRoomRouter = router({
           try {
             // Get Google OAuth token for the user configured for sync (or current user as fallback)
             const syncUserId = config.syncUserId || ctx.user.id;
-            const token = await db.getGoogleOAuthTokenByUserId(syncUserId);
-            if (!token) {
-              throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected. Please connect your Google account first.' });
+            const { accessToken: syncAccessToken, error: tokenError } = await getValidGoogleToken(syncUserId);
+            if (tokenError || !syncAccessToken) {
+              throw new TRPCError({ code: 'UNAUTHORIZED', message: tokenError || 'Google Drive not connected. Please connect your Google account first.' });
             }
 
             // Import Google Drive sync service
@@ -1270,8 +1375,7 @@ export const dataRoomRouter = router({
             const result = await syncGoogleDriveFolder({
               dataRoomId: input.dataRoomId,
               folderId: config.googleDriveFolderId,
-              accessToken: token.accessToken,
-              refreshToken: token.refreshToken || undefined,
+              accessToken: syncAccessToken,
               syncSubfolders: config.syncSubfolders,
               includeFileTypes: config.includeFileTypes ? JSON.parse(config.includeFileTypes) : undefined,
               excludeFileTypes: config.excludeFileTypes ? JSON.parse(config.excludeFileTypes) : undefined,
@@ -1320,13 +1424,13 @@ export const dataRoomRouter = router({
       listDriveFolders: protectedProcedure
         .input(z.object({ parentId: z.string().optional() }))
         .query(async ({ input, ctx }) => {
-          const token = await db.getGoogleOAuthTokenByUserId(ctx.user.id);
-          if (!token) {
-            throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected' });
+          const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
+          if (tokenError || !accessToken) {
+            throw new TRPCError({ code: 'UNAUTHORIZED', message: tokenError || 'Google Drive not connected' });
           }
 
           const { listGoogleDriveFolders } = await import('../googleDriveSyncService');
-          return listGoogleDriveFolders(token.accessToken, input.parentId);
+          return listGoogleDriveFolders(accessToken, input.parentId);
         }),
     }),
 

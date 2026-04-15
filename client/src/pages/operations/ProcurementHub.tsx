@@ -1375,7 +1375,7 @@ export default function ProcurementHub() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+            <h1 className="text-lg font-semibold flex items-center gap-2">
               <ShoppingCart className="h-8 w-8" />
               Procurement Hub
             </h1>

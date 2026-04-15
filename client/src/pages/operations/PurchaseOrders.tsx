@@ -257,7 +257,7 @@ export default function PurchaseOrders() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
             <ClipboardList className="h-8 w-8" />
             Purchase Orders
           </h1>
@@ -613,32 +613,45 @@ export default function PurchaseOrders() {
               <TableHeader>
                 <TableRow>
                   <TableHead>PO #</TableHead>
-                  <TableHead>Vendor</TableHead>
-                  <TableHead>Order Date</TableHead>
-                  <TableHead>Expected</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead>Vendor Name</TableHead>
+                  <TableHead className="text-right">Total Amount</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Order Date</TableHead>
+                  <TableHead>Expected Date</TableHead>
+                  <TableHead className="text-right">Items Count</TableHead>
+                  <TableHead>Notes</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredPOs.map((po) => (
-                  <TableRow key={po.id}>
-                    <TableCell className="font-mono">{po.poNumber}</TableCell>
-                    <TableCell className="font-medium">Vendor #{po.vendorId || "-"}</TableCell>
-                    <TableCell>
-                      {po.orderDate ? format(new Date(po.orderDate), "MMM d, yyyy") : "-"}
-                    </TableCell>
-                    <TableCell>
-                      {po.expectedDate ? format(new Date(po.expectedDate), "MMM d, yyyy") : "-"}
-                    </TableCell>
-                    <TableCell className="text-right font-mono">
-                      {formatCurrency(po.totalAmount)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={getStatusColor(po.status)}>{po.status}</Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {filteredPOs.map((po) => {
+                  const vendor = vendors?.find((v) => v.id === po.vendorId);
+                  return (
+                    <TableRow key={po.id}>
+                      <TableCell className="font-mono">{po.poNumber}</TableCell>
+                      <TableCell className="font-medium">
+                        {vendor?.name || (po.vendorId ? `Vendor #${po.vendorId}` : "-")}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {formatCurrency(po.totalAmount)}
+                      </TableCell>
+                      <TableCell>
+                        <Badge className={getStatusColor(po.status)}>{po.status}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        {po.orderDate ? format(new Date(po.orderDate), "MMM d, yyyy") : "-"}
+                      </TableCell>
+                      <TableCell>
+                        {po.expectedDate ? format(new Date(po.expectedDate), "MMM d, yyyy") : "-"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {(po as any).items?.length ?? "-"}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
+                        {po.notes || "-"}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}

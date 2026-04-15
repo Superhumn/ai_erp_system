@@ -9,7 +9,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -18,7 +17,7 @@ import { toast } from "sonner";
 import {
   Package, Truck, Upload, Warehouse, Edit2, Save, X, FileText,
   Plus, Send, Clock, AlertTriangle, CheckCircle, DollarSign,
-  Calendar, ChevronDown, ChevronUp, Eye, Trash2, ClipboardList,
+  Calendar, Eye, Trash2, ClipboardList, Search,
 } from "lucide-react";
 
 // ---- Helper types ----
@@ -73,7 +72,7 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
 
 export default function CopackerPortal() {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState("overview");
+  const [searchQuery, setSearchQuery] = useState("");
 
   // --- Inline inventory editing ---
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -105,6 +104,16 @@ export default function CopackerPortal() {
   const [shipDocShipmentId, setShipDocShipmentId] = useState<string>("");
   const [shipDocFile, setShipDocFile] = useState<File | null>(null);
 
+  // --- AI Invoice Upload ---
+  const [showUploadInvoice, setShowUploadInvoice] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadNotes, setUploadNotes] = useState("");
+  const [uploadResult, setUploadResult] = useState<{
+    id: number;
+    parsedData: any;
+    message: string;
+  } | null>(null);
+
   // --- Detail view ---
   const [viewUpdateId, setViewUpdateId] = useState<number | null>(null);
   const [viewInvoiceId, setViewInvoiceId] = useState<number | null>(null);
@@ -112,7 +121,7 @@ export default function CopackerPortal() {
   // ---- Queries ----
   const { data: warehouse } = trpc.copackerPortal.getWarehouse.useQuery();
   const { data: inventory, isLoading: loadingInventory, refetch: refetchInventory } = trpc.copackerPortal.getInventory.useQuery();
-  const { data: shipments, isLoading: loadingShipments } = trpc.copackerPortal.getShipments.useQuery();
+  const { data: shipments } = trpc.copackerPortal.getShipments.useQuery();
   const { data: currentPeriod } = (trpc.copackerPortal as any).getCurrentPeriod.useQuery();
   const { data: inventoryUpdates, refetch: refetchUpdates } = (trpc.copackerPortal as any).getInventoryUpdates.useQuery();
   const { data: invoices, refetch: refetchInvoices } = (trpc.copackerPortal as any).getInvoices.useQuery();
@@ -125,6 +134,10 @@ export default function CopackerPortal() {
     { id: viewInvoiceId! },
     { enabled: !!viewInvoiceId }
   );
+
+  // ---- Work Orders query ----
+  const { data: workOrdersList, refetch: refetchWorkOrders } = trpc.workOrders.list.useQuery();
+  const { data: productsList } = trpc.products.list.useQuery();
 
   // ---- Mutations ----
   const updateInventory = trpc.copackerPortal.updateInventory.useMutation({
@@ -143,7 +156,7 @@ export default function CopackerPortal() {
       resetUpdateForm();
       refetchUpdates();
     },
-    onError: (error) => toast.error("Failed to create inventory update", { description: error.message }),
+    onError: (error: any) => toast.error("Failed to create inventory update", { description: error.message }),
   });
 
   const submitInventoryUpdate = (trpc.copackerPortal as any).submitInventoryUpdate.useMutation({
@@ -152,7 +165,7 @@ export default function CopackerPortal() {
       refetchUpdates();
       refetchInventory();
     },
-    onError: (error) => toast.error("Failed to submit update", { description: error.message }),
+    onError: (error: any) => toast.error("Failed to submit update", { description: error.message }),
   });
 
   const createInvoice = (trpc.copackerPortal as any).createInvoice.useMutation({
@@ -162,7 +175,7 @@ export default function CopackerPortal() {
       resetInvoiceForm();
       refetchInvoices();
     },
-    onError: (error) => toast.error("Failed to submit invoice", { description: error.message }),
+    onError: (error: any) => toast.error("Failed to submit invoice", { description: error.message }),
   });
 
   const uploadShippingDoc = (trpc.copackerPortal as any).uploadShippingDocument.useMutation({
@@ -172,7 +185,25 @@ export default function CopackerPortal() {
       resetShipDocForm();
       refetchShipDocs();
     },
-    onError: (error) => toast.error("Failed to upload document", { description: error.message }),
+    onError: (error: any) => toast.error("Failed to upload document", { description: error.message }),
+  });
+
+  const uploadInvoiceMutation = (trpc.copackerPortal as any).uploadInvoice.useMutation({
+    onSuccess: (data: any) => {
+      setUploadResult(data);
+      toast.success("Invoice uploaded and sent to AP");
+      refetchInvoices();
+    },
+    onError: (error: any) => toast.error("Failed to upload invoice", { description: error.message }),
+  });
+
+  const completeProduction = trpc.workOrders.completeProduction.useMutation({
+    onSuccess: () => {
+      toast.success("Work order completed");
+      refetchWorkOrders();
+      refetchInventory();
+    },
+    onError: (error) => toast.error("Failed to complete work order", { description: error.message }),
   });
 
   // ---- Inline inventory edit handlers ----
@@ -264,7 +295,6 @@ export default function CopackerPortal() {
     setInvoiceItems((prev) => {
       const next = [...prev];
       next[index] = { ...next[index], [field]: value };
-      // Auto-calculate total
       if (field === "quantity" || field === "unitPrice") {
         const qty = parseFloat(next[index].quantity) || 0;
         const price = parseFloat(next[index].unitPrice) || 0;
@@ -352,6 +382,98 @@ export default function CopackerPortal() {
     return { totalProducts, pendingUpdates, totalInvoices, pendingInvoices, totalDocs };
   }, [inventory, inventoryUpdates, invoices, shippingDocs]);
 
+  // ---- Build work order lookup by productId (active WOs only) ----
+  const woByProduct = useMemo(() => {
+    const map: Record<number, any> = {};
+    if (workOrdersList?.length) {
+      for (const wo of workOrdersList) {
+        // Only show active (non-completed, non-cancelled) work orders
+        if (wo.status === "completed" || wo.status === "cancelled") continue;
+        if (wo.productId && !map[wo.productId]) {
+          map[wo.productId] = wo;
+        }
+      }
+    }
+    return map;
+  }, [workOrdersList]);
+
+  // ---- Build enriched inventory rows with invoice/shipment status ----
+  const enrichedInventory = useMemo(() => {
+    if (!inventory) return [];
+
+    // Build lookups for the latest inventory update item per product
+    const latestUpdateByProduct: Record<number, any> = {};
+    if (inventoryUpdates?.length) {
+      // inventoryUpdates are sorted newest-first typically
+      for (const update of inventoryUpdates) {
+        if (update.items) {
+          for (const item of update.items) {
+            if (!latestUpdateByProduct[item.productId]) {
+              latestUpdateByProduct[item.productId] = { ...item, updateStatus: update.status, period: `${new Date(update.periodStart).toLocaleDateString()} - ${new Date(update.periodEnd).toLocaleDateString()}` };
+            }
+          }
+        }
+      }
+    }
+
+    return inventory.map((item: any) => {
+      const productId = item.inventory.productId;
+      const latestUpdate = latestUpdateByProduct[productId];
+
+      // Find matching shipment for this product (simple: look for any recent shipment)
+      const productShipment = shipments?.find((s: any) =>
+        s.items?.some?.((si: any) => si.productId === productId)
+      );
+
+      // Find matching invoice
+      const productInvoice = invoices?.find((inv: any) =>
+        inv.items?.some?.((ii: any) => ii.productId === productId)
+      );
+
+      // Find active work order for this product
+      const wo = woByProduct[productId] || null;
+
+      return {
+        id: item.inventory.id,
+        _sku: item.product?.sku || "--",
+        _product: item.product?.name || "Unknown Product",
+        _previousQty: latestUpdate?.previousQuantity || "-",
+        _currentQty: parseFloat(item.inventory.quantity || "0"),
+        _received: latestUpdate?.quantityReceived || "-",
+        _shipped: latestUpdate?.quantityShipped || "-",
+        _damaged: latestUpdate?.quantityDamaged || "-",
+        _lastUpdate: item.inventory.updatedAt
+          ? new Date(item.inventory.updatedAt).toLocaleDateString()
+          : "--",
+        _period: latestUpdate?.period || currentPeriod?.periodLabel || "-",
+        _invoiceStatus: productInvoice?.status?.replace(/_/g, " ") || "-",
+        _shipmentStatus: productShipment?.status || "-",
+        _notes: latestUpdate?.notes || "",
+        // Work order fields
+        _woId: wo?.id || null,
+        _woNumber: wo?.workOrderNumber || null,
+        _woStatus: wo?.status || null,
+        _woQty: wo?.quantity || null,
+        _woDue: wo?.scheduledEndDate
+          ? new Date(wo.scheduledEndDate).toLocaleDateString()
+          : null,
+        _woWarehouseId: wo?.warehouseId || null,
+        // keep original for editing
+        _original: item,
+      };
+    });
+  }, [inventory, inventoryUpdates, invoices, shipments, shippingDocs, currentPeriod, woByProduct]);
+
+  // Filter by search
+  const filteredInventory = useMemo(() => {
+    if (!searchQuery) return enrichedInventory;
+    const q = searchQuery.toLowerCase();
+    return enrichedInventory.filter((row: any) =>
+      row._sku.toLowerCase().includes(q) ||
+      row._product.toLowerCase().includes(q)
+    );
+  }, [enrichedInventory, searchQuery]);
+
   // ---- Access check ----
   if (user?.role !== "copacker" && user?.role !== "admin" && user?.role !== "ops") {
     return (
@@ -372,18 +494,36 @@ export default function CopackerPortal() {
         <div>
           <h1 className="text-xl font-semibold tracking-[-0.02em]">Copacker Dashboard</h1>
           <p className="text-muted-foreground">
-            Manage inventory updates, invoices, and shipping documents
+            Inventory with invoice and shipment status
           </p>
         </div>
-        {warehouse && (
-          <Card className="px-4 py-2">
-            <div className="flex items-center gap-2">
-              <Warehouse className="h-4 w-4 text-muted-foreground" />
-              <span className="font-medium">{warehouse.name}</span>
-              <Badge variant="outline">{warehouse.type}</Badge>
-            </div>
-          </Card>
-        )}
+        <div className="flex items-center gap-2">
+          {warehouse && (
+            <Card className="px-4 py-2">
+              <div className="flex items-center gap-2">
+                <Warehouse className="h-4 w-4 text-muted-foreground" />
+                <span className="font-medium">{warehouse.name}</span>
+                <Badge variant="outline">{warehouse.type}</Badge>
+              </div>
+            </Card>
+          )}
+          <Button variant="outline" onClick={() => { setShowUploadInvoice(true); setUploadResult(null); setUploadFile(null); setUploadNotes(""); }}>
+            <FileText className="h-4 w-4 mr-1" />
+            Upload Invoice
+          </Button>
+          <Button variant="outline" onClick={() => setShowInvoiceForm(true)}>
+            <DollarSign className="h-4 w-4 mr-1" />
+            New Invoice
+          </Button>
+          <Button variant="outline" onClick={() => setShowShipDocUpload(true)}>
+            <Upload className="h-4 w-4 mr-1" />
+            Upload Doc
+          </Button>
+          <Button onClick={initUpdateForm} disabled={!inventory?.length}>
+            <ClipboardList className="h-4 w-4 mr-2" />
+            Inventory Update
+          </Button>
+        </div>
       </div>
 
       {/* Biweekly Prompt Banner */}
@@ -398,10 +538,7 @@ export default function CopackerPortal() {
               variant="outline"
               size="sm"
               className="ml-3 border-orange-500 text-orange-700 hover:bg-orange-100"
-              onClick={() => {
-                setActiveTab("inventory-updates");
-                initUpdateForm();
-              }}
+              onClick={initUpdateForm}
             >
               <ClipboardList className="h-3 w-3 mr-1" />
               Submit Now
@@ -469,514 +606,191 @@ export default function CopackerPortal() {
         </Card>
       </div>
 
-      {/* Main Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
-          <TabsTrigger value="overview">
-            <Warehouse className="h-4 w-4 mr-2" />
-            Overview
-          </TabsTrigger>
-          <TabsTrigger value="inventory">
-            <Package className="h-4 w-4 mr-2" />
-            Inventory
-          </TabsTrigger>
-          <TabsTrigger value="inventory-updates">
-            <ClipboardList className="h-4 w-4 mr-2" />
-            Biweekly Updates
-          </TabsTrigger>
-          <TabsTrigger value="invoices">
-            <DollarSign className="h-4 w-4 mr-2" />
-            Invoices
-          </TabsTrigger>
-          <TabsTrigger value="shipping-docs">
-            <FileText className="h-4 w-4 mr-2" />
-            Shipping Documents
-          </TabsTrigger>
-          <TabsTrigger value="shipments">
-            <Truck className="h-4 w-4 mr-2" />
-            Shipments
-          </TabsTrigger>
-        </TabsList>
-
-        {/* ============ OVERVIEW TAB ============ */}
-        <TabsContent value="overview" className="mt-4 space-y-4">
-          {/* Current Period */}
-          {currentPeriod && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Calendar className="h-5 w-5" />
-                  Current Reporting Period
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-lg font-semibold">{currentPeriod.periodLabel}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {currentPeriod.daysLeft} day{currentPeriod.daysLeft !== 1 ? "s" : ""} remaining
-                    </p>
-                  </div>
-                  <div className="w-48">
-                    <Progress
-                      value={Math.max(0, 100 - (currentPeriod.daysLeft / 15) * 100)}
-                      className="h-2"
-                    />
-                  </div>
-                  <Button onClick={() => { setActiveTab("inventory-updates"); initUpdateForm(); }}>
-                    <ClipboardList className="h-4 w-4 mr-2" />
-                    Start Update
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Recent activity cards */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Recent Inventory Updates */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Recent Inventory Updates</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {!inventoryUpdates?.length ? (
-                  <p className="text-sm text-muted-foreground text-center py-4">No updates submitted yet</p>
-                ) : (
-                  <div className="space-y-2">
-                    {inventoryUpdates.slice(0, 5).map((u: any) => (
-                      <div key={u.id} className="flex items-center justify-between py-2 border-b last:border-0">
-                        <div>
-                          <p className="text-sm font-medium">
-                            {new Date(u.periodStart).toLocaleDateString()} - {new Date(u.periodEnd).toLocaleDateString()}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            Created {new Date(u.createdAt).toLocaleDateString()}
-                          </p>
-                        </div>
-                        <Badge variant={statusVariant(u.status)}>{u.status}</Badge>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Recent Invoices */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Recent Invoices</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {!invoices?.length ? (
-                  <p className="text-sm text-muted-foreground text-center py-4">No invoices submitted yet</p>
-                ) : (
-                  <div className="space-y-2">
-                    {invoices.slice(0, 5).map((inv: any) => (
-                      <div key={inv.id} className="flex items-center justify-between py-2 border-b last:border-0">
-                        <div>
-                          <p className="text-sm font-medium">{inv.invoiceNumber}</p>
-                          <p className="text-xs text-muted-foreground">
-                            ${parseFloat(inv.totalAmount || "0").toLocaleString()}
-                          </p>
-                        </div>
-                        <Badge variant={statusVariant(inv.status)}>{inv.status.replace(/_/g, " ")}</Badge>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+      {/* Single Inventory Table */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Inventory</CardTitle>
+              <CardDescription>
+                Current stock levels with invoice and shipment status per item
+              </CardDescription>
+            </div>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search by SKU or product..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-8 w-[250px]"
+              />
+            </div>
           </div>
-        </TabsContent>
-
-        {/* ============ INVENTORY TAB ============ */}
-        <TabsContent value="inventory" className="mt-4">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Current Inventory</CardTitle>
-                  <CardDescription>
-                    View and make quick adjustments to stock levels
-                  </CardDescription>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {loadingInventory ? (
-                <div className="text-center py-8 text-muted-foreground">Loading...</div>
-              ) : !inventory?.length ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  No inventory items found for your facility
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Product</TableHead>
-                      <TableHead>SKU</TableHead>
-                      <TableHead>Current Quantity</TableHead>
-                      <TableHead>Unit</TableHead>
-                      <TableHead>Last Updated</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {inventory?.map((item: any) => (
-                      <TableRow key={item.inventory.id}>
-                        <TableCell className="font-medium">
-                          {item.product?.name || "Unknown Product"}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">{item.product?.sku || "--"}</TableCell>
-                        <TableCell>
-                          {editingId === item.inventory.id ? (
-                            <div className="flex items-center gap-2">
-                              <Input
-                                type="number"
-                                value={editQuantity}
-                                onChange={(e) => setEditQuantity(e.target.value)}
-                                className="w-24"
-                              />
-                              <Input
-                                placeholder="Notes (optional)"
-                                value={editNotes}
-                                onChange={(e) => setEditNotes(e.target.value)}
-                                className="w-40"
-                              />
-                            </div>
-                          ) : (
-                            <span className="font-mono">
-                              {parseFloat(item.inventory.quantity || "0").toLocaleString()}
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell>{item.product?.unit || "units"}</TableCell>
-                        <TableCell className="text-muted-foreground text-sm">
-                          {item.inventory.updatedAt
-                            ? new Date(item.inventory.updatedAt).toLocaleDateString()
-                            : "--"}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {editingId === item.inventory.id ? (
-                            <div className="flex justify-end gap-2">
+        </CardHeader>
+        <CardContent>
+          {loadingInventory ? (
+            <div className="text-center py-8 text-muted-foreground">Loading...</div>
+          ) : !filteredInventory.length ? (
+            <div className="text-center py-8 text-muted-foreground">
+              No inventory items found for your facility
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="min-w-[80px]">SKU</TableHead>
+                    <TableHead className="min-w-[160px]">Product</TableHead>
+                    <TableHead className="min-w-[80px] text-right">Prev Qty</TableHead>
+                    <TableHead className="min-w-[100px] text-right">Current Qty</TableHead>
+                    <TableHead className="min-w-[70px] text-right">Received</TableHead>
+                    <TableHead className="min-w-[70px] text-right">Shipped</TableHead>
+                    <TableHead className="min-w-[70px] text-right">Damaged</TableHead>
+                    <TableHead className="min-w-[90px]">Last Update</TableHead>
+                    <TableHead className="min-w-[140px]">Period</TableHead>
+                    <TableHead className="min-w-[100px]">Invoice</TableHead>
+                    <TableHead className="min-w-[100px]">Shipment</TableHead>
+                    <TableHead className="min-w-[90px]">WO#</TableHead>
+                    <TableHead className="min-w-[90px]">WO Status</TableHead>
+                    <TableHead className="min-w-[70px] text-right">WO Qty</TableHead>
+                    <TableHead className="min-w-[90px]">WO Due</TableHead>
+                    <TableHead className="min-w-[120px]">Notes</TableHead>
+                    <TableHead className="text-right min-w-[120px]">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredInventory.map((row: any) => (
+                    <TableRow key={row.id}>
+                      <TableCell className="text-muted-foreground text-sm font-mono">{row._sku}</TableCell>
+                      <TableCell className="font-medium text-sm">{row._product}</TableCell>
+                      <TableCell className="text-right font-mono text-sm text-muted-foreground">{row._previousQty}</TableCell>
+                      <TableCell className="text-right">
+                        {editingId === row.id ? (
+                          <div className="flex items-center gap-1 justify-end">
+                            <Input
+                              type="number"
+                              value={editQuantity}
+                              onChange={(e) => setEditQuantity(e.target.value)}
+                              className="w-20 h-7 text-sm"
+                            />
+                          </div>
+                        ) : (
+                          <span className="font-mono text-sm font-semibold">
+                            {row._currentQty.toLocaleString()}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">{row._received}</TableCell>
+                      <TableCell className="text-right font-mono text-sm">{row._shipped}</TableCell>
+                      <TableCell className="text-right font-mono text-sm">{row._damaged}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{row._lastUpdate}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{row._period}</TableCell>
+                      <TableCell>
+                        {row._invoiceStatus !== "-" ? (
+                          <Badge variant={statusVariant(row._invoiceStatus)} className="text-xs capitalize">
+                            {row._invoiceStatus}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {row._shipmentStatus !== "-" ? (
+                          <Badge variant="outline" className="text-xs capitalize">
+                            {row._shipmentStatus}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                      {/* Work Order columns */}
+                      <TableCell className="text-sm font-mono">
+                        {row._woNumber ? (
+                          <span className="text-xs">{row._woNumber}</span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {row._woStatus ? (
+                          <Badge
+                            variant={
+                              row._woStatus === "in_progress"
+                                ? "default"
+                                : row._woStatus === "scheduled"
+                                  ? "secondary"
+                                  : "outline"
+                            }
+                            className="text-xs capitalize"
+                          >
+                            {row._woStatus.replace(/_/g, " ")}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        {row._woQty ? parseFloat(row._woQty).toLocaleString() : "-"}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {row._woDue || "-"}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground max-w-[120px] truncate">
+                        {row._notes || "-"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          {editingId === row.id ? (
+                            <>
                               <Button
                                 size="sm"
-                                onClick={() => saveEdit(item.inventory.id)}
+                                className="h-7 text-xs"
+                                onClick={() => saveEdit(row.id)}
                                 disabled={updateInventory.isPending}
                               >
-                                <Save className="h-4 w-4 mr-1" />
+                                <Save className="h-3 w-3 mr-1" />
                                 Save
                               </Button>
-                              <Button size="sm" variant="ghost" onClick={cancelEdit}>
-                                <X className="h-4 w-4" />
+                              <Button size="sm" variant="ghost" className="h-7" onClick={cancelEdit}>
+                                <X className="h-3 w-3" />
                               </Button>
-                            </div>
+                            </>
                           ) : (
-                            <Button size="sm" variant="ghost" onClick={() => startEdit(item)}>
-                              <Edit2 className="h-4 w-4 mr-1" />
-                              Update
-                            </Button>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* ============ BIWEEKLY INVENTORY UPDATES TAB ============ */}
-        <TabsContent value="inventory-updates" className="mt-4 space-y-4">
-          {/* Period info & action button */}
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-semibold">Biweekly Inventory Updates</h2>
-              {currentPeriod && (
-                <p className="text-sm text-muted-foreground">
-                  Current period: {currentPeriod.periodLabel}
-                  {currentPeriod.isDue && (
-                    <span className="ml-2 text-orange-600 font-medium">
-                      -- Due in {currentPeriod.daysLeft} day{currentPeriod.daysLeft !== 1 ? "s" : ""}
-                    </span>
-                  )}
-                </p>
-              )}
-            </div>
-            <Button onClick={initUpdateForm} disabled={!inventory?.length}>
-              <Plus className="h-4 w-4 mr-2" />
-              New Inventory Update
-            </Button>
-          </div>
-
-          {/* History table */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Submission History</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {!inventoryUpdates?.length ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  No inventory updates submitted yet. Click "New Inventory Update" to get started.
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Period</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Submitted</TableHead>
-                      <TableHead>Notes</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {inventoryUpdates.map((u: any) => (
-                      <TableRow key={u.id}>
-                        <TableCell className="font-medium">
-                          {new Date(u.periodStart).toLocaleDateString()} - {new Date(u.periodEnd).toLocaleDateString()}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={statusVariant(u.status)}>{u.status}</Badge>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground text-sm">
-                          {new Date(u.createdAt).toLocaleDateString()}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground text-sm max-w-[200px] truncate">
-                          {u.notes || "--"}
-                        </TableCell>
-                        <TableCell className="text-right space-x-1">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setViewUpdateId(u.id)}
-                          >
-                            <Eye className="h-4 w-4 mr-1" />
-                            View
-                          </Button>
-                          {u.status === "draft" && (
-                            <Button
-                              size="sm"
-                              onClick={() => submitInventoryUpdate.mutate({ id: u.id })}
-                              disabled={submitInventoryUpdate.isPending}
-                            >
-                              <Send className="h-4 w-4 mr-1" />
-                              Submit
-                            </Button>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* ============ INVOICES TAB ============ */}
-        <TabsContent value="invoices" className="mt-4 space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-semibold">Invoices</h2>
-              <p className="text-sm text-muted-foreground">
-                Submit invoices for copacking services, storage, and handling
-              </p>
-            </div>
-            <Button onClick={() => setShowInvoiceForm(true)}>
-              <Plus className="h-4 w-4 mr-2" />
-              New Invoice
-            </Button>
-          </div>
-
-          <Card>
-            <CardContent className="pt-6">
-              {!invoices?.length ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  No invoices submitted yet. Click "New Invoice" to create one.
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Invoice #</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Due Date</TableHead>
-                      <TableHead>Amount</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>File</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {invoices.map((inv: any) => (
-                      <TableRow key={inv.id}>
-                        <TableCell className="font-medium">{inv.invoiceNumber}</TableCell>
-                        <TableCell className="text-muted-foreground text-sm">
-                          {new Date(inv.invoiceDate).toLocaleDateString()}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground text-sm">
-                          {inv.dueDate ? new Date(inv.dueDate).toLocaleDateString() : "--"}
-                        </TableCell>
-                        <TableCell className="font-mono">
-                          ${parseFloat(inv.totalAmount || "0").toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={statusVariant(inv.status)}>{inv.status.replace(/_/g, " ")}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          {inv.fileUrl ? (
-                            <a
-                              href={inv.fileUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-600 hover:underline text-sm"
-                            >
-                              {inv.fileName || "View"}
-                            </a>
-                          ) : (
-                            <span className="text-muted-foreground text-sm">--</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button size="sm" variant="ghost" onClick={() => setViewInvoiceId(inv.id)}>
-                            <Eye className="h-4 w-4 mr-1" />
-                            Details
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* ============ SHIPPING DOCUMENTS TAB ============ */}
-        <TabsContent value="shipping-docs" className="mt-4 space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-semibold">Shipping Documents</h2>
-              <p className="text-sm text-muted-foreground">
-                Upload BOLs, packing lists, proof of delivery, and other shipping docs
-              </p>
-            </div>
-            <Button onClick={() => setShowShipDocUpload(true)}>
-              <Upload className="h-4 w-4 mr-2" />
-              Upload Document
-            </Button>
-          </div>
-
-          <Card>
-            <CardContent className="pt-6">
-              {!shippingDocs?.length ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  No shipping documents uploaded yet.
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Document Name</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Shipment</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Uploaded</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {shippingDocs.map((doc: any) => (
-                      <TableRow key={doc.id}>
-                        <TableCell className="font-medium">{doc.name}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{doc.documentType.replace(/_/g, " ")}</Badge>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground text-sm">
-                          {doc.shipmentId ? `#${doc.shipmentId}` : "--"}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={statusVariant(doc.status)}>{doc.status}</Badge>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground text-sm">
-                          {new Date(doc.createdAt).toLocaleDateString()}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {doc.fileUrl && (
-                            <a
-                              href={doc.fileUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              <Button size="sm" variant="ghost">
-                                <Eye className="h-4 w-4 mr-1" />
-                                View
+                            <>
+                              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => startEdit(row._original)}>
+                                <Edit2 className="h-3 w-3 mr-1" />
+                                Edit
                               </Button>
-                            </a>
+                              {row._woId && row._woStatus === "in_progress" && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-xs"
+                                  disabled={completeProduction.isPending}
+                                  onClick={() =>
+                                    completeProduction.mutate({
+                                      id: row._woId,
+                                      completedQuantity: row._woQty,
+                                      warehouseId: row._woWarehouseId ?? undefined,
+                                    })
+                                  }
+                                >
+                                  <CheckCircle className="h-3 w-3 mr-1" />
+                                  Complete
+                                </Button>
+                              )}
+                            </>
                           )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* ============ SHIPMENTS TAB ============ */}
-        <TabsContent value="shipments" className="mt-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Shipments</CardTitle>
-              <CardDescription>View inbound and outbound shipments for your facility</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {loadingShipments ? (
-                <div className="text-center py-8 text-muted-foreground">Loading...</div>
-              ) : !shipments?.length ? (
-                <div className="text-center py-8 text-muted-foreground">No shipments found</div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Shipment #</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Carrier</TableHead>
-                      <TableHead>Tracking</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Ship Date</TableHead>
+                        </div>
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {shipments?.map((shipment: any) => (
-                      <TableRow key={shipment.id}>
-                        <TableCell className="font-medium">{shipment.shipmentNumber}</TableCell>
-                        <TableCell>
-                          <Badge variant={shipment.type === "inbound" ? "default" : "secondary"}>
-                            {shipment.type}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{shipment.carrier || "--"}</TableCell>
-                        <TableCell className="text-muted-foreground">{shipment.trackingNumber || "--"}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{shipment.status}</Badge>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground text-sm">
-                          {shipment.shipDate ? new Date(shipment.shipDate).toLocaleDateString() : "--"}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ============ DIALOGS ============ */}
 
@@ -1160,7 +974,7 @@ export default function CopackerPortal() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-[40%]">Description</TableHead>
+                    <TableHead className="w-[45%]">Product</TableHead>
                     <TableHead>Quantity</TableHead>
                     <TableHead>Unit Price</TableHead>
                     <TableHead>Total</TableHead>
@@ -1171,11 +985,36 @@ export default function CopackerPortal() {
                   {invoiceItems.map((item, idx) => (
                     <TableRow key={idx}>
                       <TableCell>
-                        <Input
+                        <Select
                           value={item.description}
-                          onChange={(e) => handleInvoiceItemChange(idx, "description", e.target.value)}
-                          placeholder="Service description..."
-                        />
+                          onValueChange={(val) => {
+                            const product = productsList?.find((p: any) => p.name === val);
+                            handleInvoiceItemChange(idx, "description", val);
+                            if (product) {
+                              handleInvoiceItemChange(idx, "unitPrice", String(product.costPrice || product.unitPrice || "0"));
+                            }
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select product..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {productsList?.map((p: any) => (
+                              <SelectItem key={p.id} value={p.name}>
+                                {p.name} {p.sku ? `(${p.sku})` : ""} — ${parseFloat(p.costPrice || p.unitPrice || "0").toFixed(2)}
+                              </SelectItem>
+                            ))}
+                            <SelectItem value="__custom__">Other (custom)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {item.description === "__custom__" && (
+                          <Input
+                            className="mt-1"
+                            value=""
+                            onChange={(e) => handleInvoiceItemChange(idx, "description", e.target.value)}
+                            placeholder="Custom description..."
+                          />
+                        )}
                       </TableCell>
                       <TableCell>
                         <Input
@@ -1520,6 +1359,191 @@ export default function CopackerPortal() {
               Close
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Upload Invoice Dialog (AI-parsed) */}
+      <Dialog open={showUploadInvoice} onOpenChange={setShowUploadInvoice}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Upload Invoice</DialogTitle>
+            <DialogDescription>
+              Upload a PDF or image of your invoice. It will be parsed by AI and emailed to accounts payable.
+            </DialogDescription>
+          </DialogHeader>
+
+          {uploadResult ? (
+            <div className="space-y-4 py-2">
+              <Alert>
+                <CheckCircle className="h-4 w-4" />
+                <AlertTitle>Invoice Submitted</AlertTitle>
+                <AlertDescription>{uploadResult.message}</AlertDescription>
+              </Alert>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                {uploadResult.parsedData?.invoiceNumber && (
+                  <div>
+                    <p className="text-muted-foreground">Invoice #</p>
+                    <p className="font-medium">{uploadResult.parsedData.invoiceNumber}</p>
+                  </div>
+                )}
+                {uploadResult.parsedData?.totalAmount && (
+                  <div>
+                    <p className="text-muted-foreground">Total Amount</p>
+                    <p className="font-medium font-mono">${uploadResult.parsedData.totalAmount}</p>
+                  </div>
+                )}
+                {uploadResult.parsedData?.vendorName && (
+                  <div>
+                    <p className="text-muted-foreground">Vendor</p>
+                    <p className="font-medium">{uploadResult.parsedData.vendorName}</p>
+                  </div>
+                )}
+                {uploadResult.parsedData?.invoiceDate && (
+                  <div>
+                    <p className="text-muted-foreground">Date</p>
+                    <p className="font-medium">{uploadResult.parsedData.invoiceDate}</p>
+                  </div>
+                )}
+              </div>
+              {uploadResult.parsedData?.lineItems?.length > 0 && (
+                <div>
+                  <p className="text-sm font-medium mb-2">Parsed Line Items</p>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Description</TableHead>
+                        <TableHead className="text-right">Qty</TableHead>
+                        <TableHead className="text-right">Rate</TableHead>
+                        <TableHead className="text-right">Amount</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {uploadResult.parsedData.lineItems.map((item: any, idx: number) => (
+                        <TableRow key={idx}>
+                          <TableCell>{item.description}</TableCell>
+                          <TableCell className="text-right font-mono">{item.quantity}</TableCell>
+                          <TableCell className="text-right font-mono">${item.unitPrice}</TableCell>
+                          <TableCell className="text-right font-mono">${item.totalAmount}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowUploadInvoice(false)}>
+                  Done
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <Label>Invoice File</Label>
+                <div
+                  className="border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 transition-colors"
+                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const file = e.dataTransfer.files?.[0];
+                    if (file) setUploadFile(file);
+                  }}
+                  onClick={() => document.getElementById('upload-invoice-input')?.click()}
+                >
+                  <input
+                    id="upload-invoice-input"
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) setUploadFile(file);
+                    }}
+                  />
+                  {uploadFile ? (
+                    <div className="flex items-center justify-center gap-2">
+                      <FileText className="h-5 w-5 text-muted-foreground" />
+                      <span className="font-medium">{uploadFile.name}</span>
+                      <span className="text-xs text-muted-foreground">
+                        ({(uploadFile.size / 1024).toFixed(0)} KB)
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0"
+                        onClick={(e) => { e.stopPropagation(); setUploadFile(null); }}
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <Upload className="h-8 w-8 mx-auto text-muted-foreground" />
+                      <p className="text-sm text-muted-foreground">
+                        Drag & drop or click to select
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        PDF, PNG, JPG (max 10MB)
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Notes (optional)</Label>
+                <Textarea
+                  placeholder="Any additional notes about this invoice..."
+                  value={uploadNotes}
+                  onChange={(e) => setUploadNotes(e.target.value)}
+                  rows={3}
+                />
+              </div>
+
+              {uploadInvoiceMutation.isPending && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Clock className="h-4 w-4 animate-spin" />
+                    Parsing invoice with AI and emailing to AP...
+                  </div>
+                  <Progress value={66} className="h-1" />
+                </div>
+              )}
+
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowUploadInvoice(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  disabled={!uploadFile || uploadInvoiceMutation.isPending}
+                  onClick={async () => {
+                    if (!uploadFile) return;
+                    const buffer = await uploadFile.arrayBuffer();
+                    const fileData = arrayBufferToBase64(buffer);
+                    uploadInvoiceMutation.mutate({
+                      fileName: uploadFile.name,
+                      fileData,
+                      mimeType: uploadFile.type,
+                      notes: uploadNotes || undefined,
+                    });
+                  }}
+                >
+                  {uploadInvoiceMutation.isPending ? (
+                    <>
+                      <Clock className="h-4 w-4 mr-1 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="h-4 w-4 mr-1" />
+                      Submit Invoice
+                    </>
+                  )}
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

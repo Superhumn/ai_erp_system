@@ -371,7 +371,7 @@ export default function InvestmentGrantChecklist() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
             <ClipboardCheck className="h-8 w-8" />
             Saudi Investment Grant Checklist
           </h1>

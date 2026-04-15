@@ -188,23 +188,23 @@ export default function AutonomousDashboard() {
           <CardContent>
             <div className="grid gap-4 md:grid-cols-5">
               <div className="text-center p-4 rounded-lg bg-muted/50">
-                <div className="text-[1.75rem] font-semibold tracking-[-0.025em] text-blue-600">{metricsQuery.data.totalRuns || 0}</div>
+                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-blue-600">{metricsQuery.data.totalRuns || 0}</div>
                 <div className="text-sm text-muted-foreground">Total Runs</div>
               </div>
               <div className="text-center p-4 rounded-lg bg-muted/50">
-                <div className="text-[1.75rem] font-semibold tracking-[-0.025em] text-green-600">{metricsQuery.data.successfulRuns || 0}</div>
+                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-green-600">{metricsQuery.data.successfulRuns || 0}</div>
                 <div className="text-sm text-muted-foreground">Successful</div>
               </div>
               <div className="text-center p-4 rounded-lg bg-muted/50">
-                <div className="text-[1.75rem] font-semibold tracking-[-0.025em] text-purple-600">{metricsQuery.data.aiDecisions || 0}</div>
+                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-purple-600">{metricsQuery.data.aiDecisions || 0}</div>
                 <div className="text-sm text-muted-foreground">AI Decisions</div>
               </div>
               <div className="text-center p-4 rounded-lg bg-muted/50">
-                <div className="text-[1.75rem] font-semibold tracking-[-0.025em] text-amber-600">{metricsQuery.data.itemsProcessed || 0}</div>
+                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-amber-600">{metricsQuery.data.itemsProcessed || 0}</div>
                 <div className="text-sm text-muted-foreground">Items Processed</div>
               </div>
               <div className="text-center p-4 rounded-lg bg-muted/50">
-                <div className="text-[1.75rem] font-semibold tracking-[-0.025em] text-emerald-600">
+                <div className="text-[1.875rem] font-semibold tracking-[-0.025em] text-emerald-600">
                   ${((metricsQuery.data.totalValue || 0) / 1000).toFixed(0)}k
                 </div>
                 <div className="text-sm text-muted-foreground">Value Processed</div>

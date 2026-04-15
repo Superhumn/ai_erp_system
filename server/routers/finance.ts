@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { sendEmail } from "../_core/email";
 import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSummary } from "../inventoryCostingService";
+import { invokeLLM } from "../_core/llm";
 import * as db from "../db";
 import { router, protectedProcedure, financeProcedure, opsProcedure, createAuditLog, generateNumber } from "./middleware";
 
@@ -819,6 +820,539 @@ export const financeRouter = router({
         .input(z.object({ companyId: z.number().optional() }).optional())
         .query(({ input }) => db.getCogsDashboardStats(input?.companyId)),
     }),
+  }),
+
+  // ============================================
+  // FINANCIAL REPORTS
+  // ============================================
+  financialReports: router({
+    generate: financeProcedure
+      .input(z.object({
+        reportType: z.string(),
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const start = input.startDate ? new Date(input.startDate) : new Date(new Date().getFullYear(), 0, 1);
+        const end = input.endDate ? new Date(input.endDate) : new Date();
+
+        const inRange = (d: Date | string | null | undefined): boolean => {
+          if (!d) return false;
+          const dt = typeof d === 'string' ? new Date(d) : d;
+          return dt >= start && dt <= end;
+        };
+
+        const toNum = (v: any): number => {
+          const n = Number(v);
+          return isNaN(n) ? 0 : n;
+        };
+
+        switch (input.reportType) {
+          // ---- Profit & Loss ----
+          case "profit_loss": {
+            const invoices = (await db.getInvoices({ status: 'paid' })).filter(i => inRange(i.issueDate));
+            const totalRevenue = invoices.reduce((s, i) => s + toNum(i.totalAmount), 0);
+            const cogsRecords = (await db.getCogsRecords()).filter((r: any) => inRange(r.soldAt || r.createdAt));
+            const totalCOGS = cogsRecords.reduce((s: number, r: any) => s + toNum(r.totalCost), 0);
+            const grossProfit = totalRevenue - totalCOGS;
+            const transactions = (await db.getTransactions({ type: 'expense' })).filter(t => inRange(t.date));
+            const expenseMap: Record<string, number> = {};
+            for (const t of transactions) {
+              const cat = (t as any).category || (t as any).accountName || 'Uncategorized';
+              expenseMap[cat] = (expenseMap[cat] || 0) + toNum(t.totalAmount);
+            }
+            const totalExpenses = Object.values(expenseMap).reduce((a, b) => a + b, 0);
+            const netIncome = grossProfit - totalExpenses;
+
+            const rows: any[] = [
+              { label: 'Total Revenue', amount: totalRevenue, type: 'header' },
+              { label: 'Cost of Goods Sold', amount: totalCOGS, type: 'item' },
+              { label: 'Gross Profit', amount: grossProfit, type: 'subtotal' },
+              ...Object.entries(expenseMap).map(([cat, amt]) => ({ label: cat, amount: amt, type: 'item' })),
+              { label: 'Total Operating Expenses', amount: totalExpenses, type: 'subtotal' },
+              { label: 'Net Income', amount: netIncome, type: 'total' },
+            ];
+            return {
+              title: 'Profit & Loss (Income Statement)',
+              headers: ['Category', 'Amount'],
+              rows,
+              generatedAt: new Date().toISOString(),
+              summary: `Revenue: $${totalRevenue.toFixed(2)} | COGS: $${totalCOGS.toFixed(2)} | Net Income: $${netIncome.toFixed(2)}`,
+            };
+          }
+
+          // ---- Balance Sheet ----
+          case "balance_sheet": {
+            const payments = await db.getPayments();
+            const cashIn = payments.filter(p => p.type === 'received' && p.status === 'completed').reduce((s, p) => s + toNum(p.amount), 0);
+            const cashOut = payments.filter(p => p.type === 'made' && p.status === 'completed').reduce((s, p) => s + toNum(p.amount), 0);
+            const cashBalance = cashIn - cashOut;
+
+            const allInvoices = await db.getInvoices();
+            const arBalance = allInvoices.filter(i => i.status !== 'paid' && i.status !== 'cancelled').reduce((s, i) => s + toNum(i.totalAmount), 0);
+
+            const inventory = await db.getInventory();
+            const products = await db.getProducts();
+            const productMap = new Map((products as any[]).map((p: any) => [p.id, p]));
+            const inventoryValue = inventory.reduce((s, inv) => {
+              const prod = productMap.get((inv as any).productId) as any;
+              return s + toNum(inv.quantity) * toNum(prod?.costPrice || 0);
+            }, 0);
+
+            const totalAssets = cashBalance + arBalance + inventoryValue;
+
+            const purchaseOrders = await db.getPurchaseOrders({ status: 'received' });
+            const apBalance = purchaseOrders.filter((po: any) => po.status !== 'paid').reduce((s: number, po: any) => s + toNum(po.totalAmount), 0);
+
+            const totalLiabilities = apBalance;
+            const equity = totalAssets - totalLiabilities;
+
+            const rows: any[] = [
+              { label: 'ASSETS', amount: null, type: 'header' },
+              { label: 'Cash & Bank Balances', amount: cashBalance, type: 'item' },
+              { label: 'Accounts Receivable', amount: arBalance, type: 'item' },
+              { label: 'Inventory', amount: inventoryValue, type: 'item' },
+              { label: 'Total Assets', amount: totalAssets, type: 'subtotal' },
+              { label: 'LIABILITIES', amount: null, type: 'header' },
+              { label: 'Accounts Payable', amount: apBalance, type: 'item' },
+              { label: 'Total Liabilities', amount: totalLiabilities, type: 'subtotal' },
+              { label: 'EQUITY', amount: null, type: 'header' },
+              { label: 'Retained Earnings', amount: equity, type: 'item' },
+              { label: 'Total Equity', amount: equity, type: 'subtotal' },
+            ];
+            return {
+              title: 'Balance Sheet',
+              headers: ['Account', 'Amount'],
+              rows,
+              generatedAt: new Date().toISOString(),
+              summary: `Assets: $${totalAssets.toFixed(2)} | Liabilities: $${totalLiabilities.toFixed(2)} | Equity: $${equity.toFixed(2)}`,
+            };
+          }
+
+          // ---- Cash Flow ----
+          case "cash_flow": {
+            const payments = (await db.getPayments()).filter(p => inRange(p.paymentDate) && p.status === 'completed');
+            const operatingIn = payments.filter(p => p.type === 'received').reduce((s, p) => s + toNum(p.amount), 0);
+            const operatingOut = payments.filter(p => p.type === 'made').reduce((s, p) => s + toNum(p.amount), 0);
+            const operatingNet = operatingIn - operatingOut;
+
+            const rows: any[] = [
+              { label: 'OPERATING ACTIVITIES', amount: null, type: 'header' },
+              { label: 'Cash Received from Customers', amount: operatingIn, type: 'item' },
+              { label: 'Cash Paid to Suppliers & Employees', amount: -operatingOut, type: 'item' },
+              { label: 'Net Cash from Operations', amount: operatingNet, type: 'subtotal' },
+              { label: 'INVESTING ACTIVITIES', amount: null, type: 'header' },
+              { label: 'Equipment & Capital Purchases', amount: 0, type: 'item' },
+              { label: 'Net Cash from Investing', amount: 0, type: 'subtotal' },
+              { label: 'FINANCING ACTIVITIES', amount: null, type: 'header' },
+              { label: 'Equity / Debt Raised', amount: 0, type: 'item' },
+              { label: 'Net Cash from Financing', amount: 0, type: 'subtotal' },
+              { label: 'Net Change in Cash', amount: operatingNet, type: 'total' },
+            ];
+            return {
+              title: 'Cash Flow Statement',
+              headers: ['Category', 'Amount'],
+              rows,
+              generatedAt: new Date().toISOString(),
+              summary: `Operating: $${operatingNet.toFixed(2)} | Investing: $0 | Financing: $0 | Net: $${operatingNet.toFixed(2)}`,
+            };
+          }
+
+          // ---- Runway & Burn Rate ----
+          case "runway": {
+            const sixMonthsAgo = new Date();
+            sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+            const recentPayments = (await db.getPayments()).filter(p => {
+              const d = p.paymentDate ? new Date(p.paymentDate) : null;
+              return d && d >= sixMonthsAgo && p.type === 'made' && p.status === 'completed';
+            });
+            const totalExpenses6m = recentPayments.reduce((s, p) => s + toNum(p.amount), 0);
+            const monthlyBurn = totalExpenses6m / 6;
+
+            const allPayments = await db.getPayments();
+            const totalCashIn = allPayments.filter(p => p.type === 'received' && p.status === 'completed').reduce((s, p) => s + toNum(p.amount), 0);
+            const totalCashOut = allPayments.filter(p => p.type === 'made' && p.status === 'completed').reduce((s, p) => s + toNum(p.amount), 0);
+            const cashOnHand = totalCashIn - totalCashOut;
+            const runwayMonths = monthlyBurn > 0 ? cashOnHand / monthlyBurn : Infinity;
+
+            const rows: any[] = [
+              { label: 'Cash on Hand', amount: cashOnHand, type: 'item' },
+              { label: 'Monthly Burn Rate (6-mo avg)', amount: monthlyBurn, type: 'item' },
+              { label: 'Runway (months)', amount: runwayMonths === Infinity ? 'N/A (no burn)' : runwayMonths.toFixed(1), type: 'total' },
+            ];
+            return {
+              title: 'Runway & Burn Rate',
+              headers: ['Metric', 'Value'],
+              rows,
+              generatedAt: new Date().toISOString(),
+              summary: `Cash: $${cashOnHand.toFixed(2)} | Burn: $${monthlyBurn.toFixed(2)}/mo | Runway: ${runwayMonths === Infinity ? 'N/A' : runwayMonths.toFixed(1)} months`,
+            };
+          }
+
+          // ---- Revenue by Customer ----
+          case "revenue_by_customer": {
+            const invoices = (await db.getInvoices({ status: 'paid' })).filter(i => inRange(i.issueDate));
+            const customers = await db.getCustomers();
+            const custMap = new Map(customers.map((c: any) => [c.id, c.name || c.email || `Customer ${c.id}`]));
+            const revenueMap: Record<string, number> = {};
+            for (const inv of invoices) {
+              const name = custMap.get((inv as any).customerId) || 'Unknown';
+              revenueMap[name] = (revenueMap[name] || 0) + toNum(inv.totalAmount);
+            }
+            const sorted = Object.entries(revenueMap).sort((a, b) => b[1] - a[1]);
+            const total = sorted.reduce((s, [, v]) => s + v, 0);
+            const rows = sorted.map(([name, amount]) => ({
+              label: name, amount, type: 'item', pct: total > 0 ? ((amount / total) * 100).toFixed(1) + '%' : '0%',
+            }));
+            rows.push({ label: 'Total', amount: total, type: 'total', pct: '100%' });
+            return {
+              title: 'Revenue by Customer',
+              headers: ['Customer', 'Revenue', '% of Total'],
+              rows,
+              generatedAt: new Date().toISOString(),
+              summary: `${sorted.length} customers | Total: $${total.toFixed(2)}`,
+            };
+          }
+
+          // ---- Revenue by Product ----
+          case "revenue_by_product": {
+            const orders = (await db.getOrders()).filter(o => inRange(o.orderDate));
+            const products = await db.getProducts();
+            const prodMap = new Map(products.map((p: any) => [p.id, p.name || p.sku || `Product ${p.id}`]));
+            const revenueMap: Record<string, number> = {};
+            for (const order of orders) {
+              try {
+                const items = await db.getOrderItems(order.id);
+                for (const item of items) {
+                  const name = String(prodMap.get((item as any).productId) || 'Unknown Product');
+                  revenueMap[name] = (revenueMap[name] || 0) + toNum((item as any).totalAmount);
+                }
+              } catch { /* skip */ }
+            }
+            const sorted = Object.entries(revenueMap).sort((a, b) => b[1] - a[1]);
+            const total = sorted.reduce((s, [, v]) => s + v, 0);
+            const rows = sorted.map(([name, amount]) => ({
+              label: name, amount, type: 'item', pct: total > 0 ? ((amount / total) * 100).toFixed(1) + '%' : '0%',
+            }));
+            rows.push({ label: 'Total', amount: total, type: 'total', pct: '100%' });
+            return {
+              title: 'Revenue by Product',
+              headers: ['Product', 'Revenue', '% of Total'],
+              rows,
+              generatedAt: new Date().toISOString(),
+              summary: `${sorted.length} products | Total: $${total.toFixed(2)}`,
+            };
+          }
+
+          // ---- Expenses by Category ----
+          case "expense_by_category": {
+            const transactions = (await db.getTransactions({ type: 'expense' })).filter(t => inRange(t.date));
+            const expenseMap: Record<string, number> = {};
+            for (const t of transactions) {
+              const cat = (t as any).category || (t as any).accountName || 'Uncategorized';
+              expenseMap[cat] = (expenseMap[cat] || 0) + toNum(t.totalAmount);
+            }
+            const sorted = Object.entries(expenseMap).sort((a, b) => b[1] - a[1]);
+            const total = sorted.reduce((s, [, v]) => s + v, 0);
+            const rows = sorted.map(([name, amount]) => ({
+              label: name, amount, type: 'item', pct: total > 0 ? ((amount / total) * 100).toFixed(1) + '%' : '0%',
+            }));
+            rows.push({ label: 'Total Expenses', amount: total, type: 'total', pct: '100%' });
+            return {
+              title: 'Expenses by Category',
+              headers: ['Category', 'Amount', '% of Total'],
+              rows,
+              generatedAt: new Date().toISOString(),
+              summary: `${sorted.length} categories | Total: $${total.toFixed(2)}`,
+            };
+          }
+
+          // ---- Expenses by Vendor ----
+          case "expense_by_vendor": {
+            const purchaseOrders = (await db.getPurchaseOrders()).filter((po: any) => inRange(po.orderDate || po.createdAt));
+            const vendors = await db.getVendors();
+            const vendMap = new Map(vendors.map((v: any) => [v.id, v.name || `Vendor ${v.id}`]));
+            const spendMap: Record<string, number> = {};
+            for (const po of purchaseOrders) {
+              const name = vendMap.get((po as any).vendorId) || 'Unknown Vendor';
+              spendMap[name] = (spendMap[name] || 0) + toNum((po as any).totalAmount);
+            }
+            const sorted = Object.entries(spendMap).sort((a, b) => b[1] - a[1]);
+            const total = sorted.reduce((s, [, v]) => s + v, 0);
+            const rows = sorted.map(([name, amount]) => ({
+              label: name, amount, type: 'item', pct: total > 0 ? ((amount / total) * 100).toFixed(1) + '%' : '0%',
+            }));
+            rows.push({ label: 'Total', amount: total, type: 'total', pct: '100%' });
+            return {
+              title: 'Expenses by Vendor',
+              headers: ['Vendor', 'Amount', '% of Total'],
+              rows,
+              generatedAt: new Date().toISOString(),
+              summary: `${sorted.length} vendors | Total: $${total.toFixed(2)}`,
+            };
+          }
+
+          // ---- Accounts Receivable Aging ----
+          case "accounts_receivable": {
+            const now = new Date();
+            const unpaidInvoices = (await db.getInvoices()).filter(i => i.status !== 'paid' && i.status !== 'cancelled');
+            const buckets: Record<string, { count: number; amount: number }> = {
+              'Current': { count: 0, amount: 0 },
+              '1-30 days': { count: 0, amount: 0 },
+              '31-60 days': { count: 0, amount: 0 },
+              '61-90 days': { count: 0, amount: 0 },
+              '90+ days': { count: 0, amount: 0 },
+            };
+            for (const inv of unpaidInvoices) {
+              const dueDate = inv.dueDate ? new Date(inv.dueDate) : new Date(inv.issueDate);
+              const daysOverdue = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
+              const amt = toNum(inv.totalAmount);
+              if (daysOverdue <= 0) { buckets['Current'].count++; buckets['Current'].amount += amt; }
+              else if (daysOverdue <= 30) { buckets['1-30 days'].count++; buckets['1-30 days'].amount += amt; }
+              else if (daysOverdue <= 60) { buckets['31-60 days'].count++; buckets['31-60 days'].amount += amt; }
+              else if (daysOverdue <= 90) { buckets['61-90 days'].count++; buckets['61-90 days'].amount += amt; }
+              else { buckets['90+ days'].count++; buckets['90+ days'].amount += amt; }
+            }
+            const total = Object.values(buckets).reduce((s, b) => s + b.amount, 0);
+            const rows = Object.entries(buckets).map(([label, b]) => ({
+              label, amount: b.amount, type: 'item', count: b.count,
+            }));
+            rows.push({ label: 'Total AR', amount: total, type: 'total', count: unpaidInvoices.length });
+            return {
+              title: 'Accounts Receivable Aging',
+              headers: ['Age Bucket', 'Amount', '# Invoices'],
+              rows,
+              generatedAt: new Date().toISOString(),
+              summary: `${unpaidInvoices.length} unpaid invoices | Total AR: $${total.toFixed(2)}`,
+            };
+          }
+
+          // ---- Accounts Payable Aging ----
+          case "accounts_payable": {
+            const now = new Date();
+            const unpaidPOs = (await db.getPurchaseOrders()).filter((po: any) => po.status !== 'paid' && po.status !== 'cancelled');
+            const buckets: Record<string, { count: number; amount: number }> = {
+              'Current': { count: 0, amount: 0 },
+              '1-30 days': { count: 0, amount: 0 },
+              '31-60 days': { count: 0, amount: 0 },
+              '61-90 days': { count: 0, amount: 0 },
+              '90+ days': { count: 0, amount: 0 },
+            };
+            for (const po of unpaidPOs) {
+              const dueDate = (po as any).dueDate ? new Date((po as any).dueDate) : ((po as any).orderDate ? new Date((po as any).orderDate) : new Date((po as any).createdAt));
+              const daysOverdue = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
+              const amt = toNum((po as any).totalAmount);
+              if (daysOverdue <= 0) { buckets['Current'].count++; buckets['Current'].amount += amt; }
+              else if (daysOverdue <= 30) { buckets['1-30 days'].count++; buckets['1-30 days'].amount += amt; }
+              else if (daysOverdue <= 60) { buckets['31-60 days'].count++; buckets['31-60 days'].amount += amt; }
+              else if (daysOverdue <= 90) { buckets['61-90 days'].count++; buckets['61-90 days'].amount += amt; }
+              else { buckets['90+ days'].count++; buckets['90+ days'].amount += amt; }
+            }
+            const total = Object.values(buckets).reduce((s, b) => s + b.amount, 0);
+            const rows = Object.entries(buckets).map(([label, b]) => ({
+              label, amount: b.amount, type: 'item', count: b.count,
+            }));
+            rows.push({ label: 'Total AP', amount: total, type: 'total', count: unpaidPOs.length });
+            return {
+              title: 'Accounts Payable Aging',
+              headers: ['Age Bucket', 'Amount', '# Bills'],
+              rows,
+              generatedAt: new Date().toISOString(),
+              summary: `${unpaidPOs.length} unpaid bills | Total AP: $${total.toFixed(2)}`,
+            };
+          }
+
+          // ---- COGS Summary ----
+          case "cogs_summary": {
+            const cogsRecords = (await db.getCogsRecords()).filter((r: any) => inRange(r.soldAt || r.createdAt));
+            const products = await db.getProducts();
+            const prodMap = new Map(products.map((p: any) => [p.id, p.name || p.sku || `Product ${p.id}`]));
+            const cogsMap: Record<string, { qty: number; cost: number }> = {};
+            for (const r of cogsRecords) {
+              const name = String(prodMap.get((r as any).productId) || 'Unknown');
+              const current = cogsMap[name] || { qty: 0, cost: 0 };
+              current.qty += toNum((r as any).quantitySold);
+              current.cost += toNum((r as any).totalCost);
+              cogsMap[name] = current;
+            }
+            const sorted = Object.entries(cogsMap).sort((a, b) => b[1].cost - a[1].cost);
+            const total = sorted.reduce((s, [, v]) => s + v.cost, 0);
+            const rows = sorted.map(([name, data]) => ({
+              label: name, amount: data.cost, type: 'item', quantity: data.qty,
+            }));
+            rows.push({ label: 'Total COGS', amount: total, type: 'total', quantity: sorted.reduce((s, [, v]) => s + v.qty, 0) });
+            return {
+              title: 'Cost of Goods Sold',
+              headers: ['Product', 'Qty Sold', 'Total COGS'],
+              rows,
+              generatedAt: new Date().toISOString(),
+              summary: `Total COGS: $${total.toFixed(2)}`,
+            };
+          }
+
+          // ---- Inventory Valuation ----
+          case "inventory_valuation": {
+            const inventory = await db.getInventory();
+            const products = await db.getProducts();
+            const prodMap = new Map((products as any[]).map((p: any) => [p.id, p]));
+            const rows: any[] = [];
+            let totalValue = 0;
+            for (const inv of inventory) {
+              const prod = prodMap.get((inv as any).productId) as any;
+              const qty = toNum(inv.quantity);
+              const cost = toNum(prod?.costPrice || 0);
+              const value = qty * cost;
+              totalValue += value;
+              rows.push({
+                label: prod?.name || prod?.sku || 'Unknown',
+                amount: value,
+                type: 'item',
+                quantity: qty,
+                unitCost: cost,
+              });
+            }
+            rows.sort((a: any, b: any) => b.amount - a.amount);
+            rows.push({ label: 'Total Inventory Value', amount: totalValue, type: 'total', quantity: null, unitCost: null });
+            return {
+              title: 'Inventory Valuation',
+              headers: ['Product', 'Quantity', 'Unit Cost', 'Total Value'],
+              rows,
+              generatedAt: new Date().toISOString(),
+              summary: `Total inventory value: $${totalValue.toFixed(2)}`,
+            };
+          }
+
+          // ---- Tax Summary ----
+          case "tax_summary": {
+            const invoices = (await db.getInvoices({ status: 'paid' })).filter(i => inRange(i.issueDate));
+            const totalRevenue = invoices.reduce((s, i) => s + toNum(i.totalAmount), 0);
+            const totalTaxCollected = invoices.reduce((s, i) => s + toNum((i as any).taxAmount || 0), 0);
+            const transactions = (await db.getTransactions({ type: 'expense' })).filter(t => inRange(t.date));
+            const deductibleExpenses = transactions.reduce((s, t) => s + toNum(t.totalAmount), 0);
+            const taxableIncome = totalRevenue - deductibleExpenses;
+            const estimatedTax = Math.max(0, taxableIncome * 0.21); // 21% corporate rate
+
+            const rows: any[] = [
+              { label: 'Total Revenue', amount: totalRevenue, type: 'item' },
+              { label: 'Sales Tax Collected', amount: totalTaxCollected, type: 'item' },
+              { label: 'Deductible Expenses', amount: deductibleExpenses, type: 'item' },
+              { label: 'Taxable Income', amount: taxableIncome, type: 'subtotal' },
+              { label: 'Estimated Federal Tax (21%)', amount: estimatedTax, type: 'total' },
+            ];
+            return {
+              title: 'Tax Summary',
+              headers: ['Item', 'Amount'],
+              rows,
+              generatedAt: new Date().toISOString(),
+              summary: `Revenue: $${totalRevenue.toFixed(2)} | Taxable Income: $${taxableIncome.toFixed(2)} | Est. Tax: $${estimatedTax.toFixed(2)}`,
+            };
+          }
+
+          // ---- Monthly Financial Summary ----
+          case "monthly_summary": {
+            const invoices = (await db.getInvoices({ status: 'paid' })).filter(i => inRange(i.issueDate));
+            const transactions = (await db.getTransactions({ type: 'expense' })).filter(t => inRange(t.date));
+
+            const monthlyData: Record<string, { revenue: number; expenses: number }> = {};
+            for (const inv of invoices) {
+              const d = new Date(inv.issueDate);
+              const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+              if (!monthlyData[key]) monthlyData[key] = { revenue: 0, expenses: 0 };
+              monthlyData[key].revenue += toNum(inv.totalAmount);
+            }
+            for (const t of transactions) {
+              const d = new Date(t.date);
+              const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+              if (!monthlyData[key]) monthlyData[key] = { revenue: 0, expenses: 0 };
+              monthlyData[key].expenses += toNum(t.totalAmount);
+            }
+
+            const sorted = Object.entries(monthlyData).sort((a, b) => a[0].localeCompare(b[0]));
+            let cumulative = 0;
+            const rows = sorted.map(([month, data]) => {
+              const net = data.revenue - data.expenses;
+              cumulative += net;
+              return { label: month, amount: net, type: 'item', revenue: data.revenue, expenses: data.expenses, cumulative };
+            });
+            return {
+              title: 'Monthly Financial Summary',
+              headers: ['Month', 'Revenue', 'Expenses', 'Net', 'Cumulative'],
+              rows,
+              generatedAt: new Date().toISOString(),
+              summary: `${sorted.length} months | Cumulative: $${cumulative.toFixed(2)}`,
+            };
+          }
+
+          default:
+            throw new TRPCError({ code: 'BAD_REQUEST', message: `Unknown report type: ${input.reportType}` });
+        }
+      }),
+
+    aiAnalysis: financeProcedure
+      .input(z.object({ reportType: z.string(), reportData: z.string() }))
+      .mutation(async ({ input }) => {
+        const result = await invokeLLM({
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a startup CFO. Provide concise, actionable financial analysis.',
+            },
+            {
+              role: 'user',
+              content: `Analyze this ${input.reportType} financial report for Superhumn Inc (a CPG startup) and provide:
+1. Key takeaways (3-5 bullet points)
+2. Areas of concern
+3. Recommendations
+4. Comparison to typical startup benchmarks
+
+Report data: ${input.reportData}`,
+            },
+          ],
+        });
+        const content = result.choices?.[0]?.message?.content;
+        const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((c: any) => c.text || '').join('') : '';
+        return { analysis: text };
+      }),
+
+    autoCategorize: financeProcedure
+      .mutation(async () => {
+        const allTransactions = await db.getTransactions();
+        const uncategorized = allTransactions.filter((t: any) => !t.accountId && !t.category);
+        const accounts = await db.getAccounts();
+        const accountList = accounts.map((a: any) => `${a.code}: ${a.name} (${a.type})`).join(', ');
+
+        let categorized = 0;
+        for (const txn of uncategorized) {
+          try {
+            const result = await invokeLLM({
+              messages: [{
+                role: 'user',
+                content: `Categorize this business transaction for a CPG food company:
+Description: ${(txn as any).description || (txn as any).reference || 'N/A'}
+Amount: ${txn.totalAmount}
+Date: ${txn.date}
+Type: ${txn.type}
+
+Available categories: ${accountList}
+
+Return ONLY valid JSON: { "accountCode": "string", "category": "string" }`,
+              }],
+            });
+            const raw = typeof result.choices?.[0]?.message?.content === 'string'
+              ? result.choices[0].message.content
+              : '';
+            const cleaned = raw.replace(/```json\n?|\n?```/g, '').trim();
+            const parsed = JSON.parse(cleaned);
+            if (parsed.accountCode) {
+              const matchedAccount = accounts.find((a: any) => a.code === parsed.accountCode);
+              if (matchedAccount) {
+                categorized++;
+              }
+            }
+          } catch { /* skip unparseable */ }
+        }
+        return { categorized, total: uncategorized.length };
+      }),
   }),
 });
 

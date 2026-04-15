@@ -11,6 +11,8 @@ export type EmailCategory =
   | "order_confirmation"
   | "payment_confirmation"
   | "inventory_report"
+  | "hr_recruiting"
+  | "legal"
   | "general";
 
 export interface EmailCategorization {
@@ -166,7 +168,9 @@ Return JSON with this structure:
     }
 
     const content = typeof messageContent === 'string' ? messageContent : JSON.stringify(messageContent);
-    const parsed = JSON.parse(content);
+    // Strip markdown code fences that some LLMs add despite instructions
+    const cleaned = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
+    const parsed = JSON.parse(cleaned);
     
     return {
       category: validateCategory(parsed.category),
@@ -186,7 +190,7 @@ function validateCategory(category: string): EmailCategory {
   const validCategories: EmailCategory[] = [
     "receipt", "purchase_order", "invoice", "shipping_confirmation",
     "freight_quote", "delivery_notification", "order_confirmation",
-    "payment_confirmation", "inventory_report", "general"
+    "payment_confirmation", "inventory_report", "hr_recruiting", "legal", "general"
   ];
   return validCategories.includes(category as EmailCategory) 
     ? (category as EmailCategory) 
@@ -209,19 +213,99 @@ function getDefaultCategorization(): EmailCategorization {
   };
 }
 
+// ── Known copacker email domains ─────────────────────────────────
+// Emails from these domains auto-categorize as inventory_report (copacker)
+const COPACKER_DOMAINS = [
+  "copacker", "copack", "3pl", "fulfillment", "warehouse",
+  "packers", "manufacturing", "production", "contract-mfg",
+];
+
+// ── CPG raw material / ingredient keywords ───────────────────────
+// Used to detect raw-material-related emails for a CPG food company
+const INGREDIENT_KEYWORDS = [
+  // Proteins
+  "mushroom", "shiitake", "hemp protein", "pea protein", "whey protein",
+  "soy protein", "collagen", "gelatin", "casein",
+  // Meats
+  "ground beef", "beef slices", "chicken breast", "turkey", "pork",
+  "beef", "lamb", "bison",
+  // Oils & fats
+  "coconut oil", "olive oil", "avocado oil", "palm oil", "sunflower oil",
+  "mct oil", "cocoa butter", "shea butter",
+  // Sweeteners
+  "sugar", "honey", "maple syrup", "stevia", "monk fruit", "erythritol",
+  "agave", "molasses",
+  // Flours & starches
+  "almond flour", "coconut flour", "tapioca starch", "corn starch",
+  "rice flour", "oat flour", "cassava flour",
+  // Nuts & seeds
+  "almond", "cashew", "walnut", "peanut", "sunflower seed", "flaxseed",
+  "chia seed", "hemp seed", "pumpkin seed", "sesame",
+  // Dairy & alternatives
+  "whole milk", "cream", "butter", "yogurt", "oat milk", "almond milk",
+  "coconut milk", "coconut cream",
+  // Spices & flavoring
+  "vanilla", "cinnamon", "turmeric", "ginger", "cayenne", "paprika",
+  "cumin", "cacao", "cocoa powder", "matcha", "spirulina",
+  // Additives & misc
+  "lecithin", "xanthan gum", "guar gum", "citric acid", "salt",
+  "baking soda", "baking powder", "preservative", "emulsifier",
+  // Fruits & vegetables
+  "blueberry", "strawberry", "raspberry", "banana", "mango", "acai",
+  "spinach", "kale", "beet", "carrot", "sweet potato",
+  // Packaging
+  "packaging", "label", "pouch", "bottle", "jar", "wrapper", "shrink wrap",
+];
+
 /**
  * Quick categorization using pattern matching (no AI call)
  * Use this for fast initial sorting before full AI analysis
  */
-export function quickCategorize(subject: string, fromEmail: string): EmailCategorization {
+export function quickCategorize(subject: string, fromEmail: string, bodyText?: string): EmailCategorization {
   const subjectLower = subject.toLowerCase();
   const emailLower = fromEmail.toLowerCase();
-  
+  const bodyLower = (bodyText || "").toLowerCase().substring(0, 2000);
+  const emailDomain = extractEmailDomain(fromEmail);
+
+  // ── Copacker detection (by domain) ──────────────────────────
+  const isCopacker = COPACKER_DOMAINS.some(d => emailDomain.includes(d));
+  if (isCopacker) {
+    return {
+      category: "inventory_report",
+      confidence: 85,
+      subcategory: "copacker",
+      keywords: ["copacker", emailDomain],
+      suggestedAction: "Update copacker raw material inventory levels",
+      priority: "high",
+    };
+  }
+
+  // ── Raw-material / ingredient detection ─────────────────────
+  const foundIngredients: string[] = [];
+  const searchText = `${subjectLower} ${bodyLower}`;
+  for (const ingredient of INGREDIENT_KEYWORDS) {
+    if (searchText.includes(ingredient.toLowerCase())) {
+      foundIngredients.push(ingredient);
+    }
+  }
+  if (foundIngredients.length >= 2) {
+    // Multiple ingredient mentions → likely a raw material order/quote/inventory
+    return {
+      category: "purchase_order",
+      confidence: 75,
+      subcategory: "raw_materials",
+      keywords: foundIngredients.slice(0, 5),
+      suggestedAction: "Review raw material order / pricing",
+      priority: "high",
+    };
+  }
+
   // Pattern-based categorization
   const patterns: Array<{
     category: EmailCategory;
     subjectPatterns: RegExp[];
     emailPatterns: RegExp[];
+    bodyPatterns?: RegExp[];
     priority: "high" | "medium" | "low";
     action: string;
   }> = [
@@ -238,6 +322,14 @@ export function quickCategorize(subject: string, fromEmail: string): EmailCatego
       emailPatterns: [/ups\.com/i, /fedex\.com/i, /dhl\.com/i, /usps\.com/i, /maersk/i],
       priority: "medium",
       action: "Update shipment tracking"
+    },
+    {
+      category: "freight_quote",
+      subjectPatterns: [/quote/i, /rate/i, /freight/i, /shipping cost/i, /estimate/i, /rfq/i, /\bfob\b/i, /\bbol\b/i, /\bsbl\b/i, /bill of lading/i, /straight bill/i, /\bcif\b/i, /\bexw\b/i, /\bddp\b/i, /\bdap\b/i, /incoterm/i, /demurrage/i, /detention/i, /container/i, /\bltl\b/i, /\bftl\b/i, /\bfcl\b/i, /\blcl\b/i, /drayage/i, /customs clearance/i],
+      emailPatterns: [/freight/i, /logistics/i, /carrier/i, /maersk/i, /hapag/i, /evergreen/i, /cosco/i, /msc\./i, /cma-cgm/i, /flexport/i, /expeditors/i, /kuehne/i, /dhl.*freight/i, /ch.*robinson/i],
+      bodyPatterns: [/\bfob\b/i, /\bbol\b/i, /bill of lading/i, /\bcif\b/i, /\bexw\b/i, /container.*\d+/i, /pallet/i, /customs/i, /port of/i, /vessel/i, /eta.*\d/i, /gross weight/i],
+      priority: "medium",
+      action: "Compare quotes and select carrier"
     },
     {
       category: "invoice",
@@ -261,13 +353,6 @@ export function quickCategorize(subject: string, fromEmail: string): EmailCatego
       action: "Process purchase order"
     },
     {
-      category: "freight_quote",
-      subjectPatterns: [/quote/i, /rate/i, /freight/i, /shipping cost/i, /estimate/i, /rfq/i],
-      emailPatterns: [/freight/i, /logistics/i, /carrier/i],
-      priority: "medium",
-      action: "Compare quotes and select carrier"
-    },
-    {
       category: "order_confirmation",
       subjectPatterns: [/order confirm/i, /order placed/i, /order received/i, /thank you for your order/i],
       emailPatterns: [],
@@ -282,6 +367,20 @@ export function quickCategorize(subject: string, fromEmail: string): EmailCatego
       action: "Reconcile payment"
     },
     {
+      category: "legal",
+      subjectPatterns: [/trademark/i, /patent/i, /copyright/i, /legal.*notice/i, /cancellation.*request/i, /cancel.*confirm/i, /compliance/i, /regulatory/i, /subpoena/i, /litigation/i, /nda/i, /non.?disclosure/i, /contract.*review/i, /terms.*condition/i],
+      emailPatterns: [/legal/i, /law.*firm/i, /attorney/i, /trademark/i, /govdelivery/i, /fda\.gov/i, /sec\.gov/i],
+      priority: "high",
+      action: "Review legal/compliance matter"
+    },
+    {
+      category: "hr_recruiting",
+      subjectPatterns: [/fractional/i, /cfo/i, /cto/i, /vp\b/i, /hire/i, /hiring/i, /recruit/i, /candidate/i, /resume/i, /cv\b/i, /job.*application/i, /offer.*letter/i, /onboard/i, /interview/i, /headhunt/i, /talent/i, /staffing/i, /payroll/i, /benefits.*enrollment/i, /w-?2/i, /i-?9/i, /background.*check/i],
+      emailPatterns: [/linkedin/i, /indeed/i, /greenhouse/i, /lever\.co/i, /workday/i, /gusto/i, /rippling/i, /adp\./i],
+      priority: "medium",
+      action: "Review HR/recruiting matter"
+    },
+    {
       category: "inventory_report",
       subjectPatterns: [/inventory/i, /stock.*(report|level|update)/i, /left amount/i, /remaining.*(stock|inventory)/i, /warehouse report/i, /material.*report/i],
       emailPatterns: [/copacker/i, /warehouse/i, /3pl/i, /fulfillment/i],
@@ -291,7 +390,7 @@ export function quickCategorize(subject: string, fromEmail: string): EmailCatego
   ];
   
   let matchedKeywords: string[] = [];
-  
+
   for (const pattern of patterns) {
     const subjectMatch = pattern.subjectPatterns.some(p => {
       const match = p.test(subjectLower);
@@ -301,14 +400,18 @@ export function quickCategorize(subject: string, fromEmail: string): EmailCatego
       }
       return match;
     });
-    
+
     const emailMatch = pattern.emailPatterns.some(p => p.test(emailLower));
-    
-    if (subjectMatch || emailMatch) {
+
+    // Also check body patterns if available
+    const bodyMatch = pattern.bodyPatterns?.some(p => p.test(bodyLower)) ?? false;
+
+    if (subjectMatch || emailMatch || bodyMatch) {
+      const matchCount = [subjectMatch, emailMatch, bodyMatch].filter(Boolean).length;
       return {
         category: pattern.category,
-        confidence: subjectMatch && emailMatch ? 85 : subjectMatch ? 75 : 60,
-        keywords: matchedKeywords.slice(0, 5),
+        confidence: matchCount >= 2 ? 85 : subjectMatch ? 75 : 60,
+        keywords: [...matchedKeywords, ...(foundIngredients.length === 1 ? foundIngredients : [])].slice(0, 5),
         suggestedAction: pattern.action,
         priority: pattern.priority
       };
@@ -466,7 +569,9 @@ Only include fields that have actual values - omit null/empty fields.`;
     }
 
     const content = typeof messageContent === 'string' ? messageContent : JSON.stringify(messageContent);
-    const parsed = JSON.parse(content);
+    // Strip markdown code fences that some LLMs add despite instructions
+    const cleaned = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
+    const parsed = JSON.parse(cleaned);
     return {
       success: true,
       documents: parsed.documents || [],
@@ -591,7 +696,9 @@ Return a JSON object with this exact structure:
     }
 
     const content = typeof messageContent === 'string' ? messageContent : JSON.stringify(messageContent);
-    const parsed = JSON.parse(content);
+    // Strip markdown code fences that some LLMs add despite instructions
+    const cleaned = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
+    const parsed = JSON.parse(cleaned);
     return {
       success: true,
       documents: parsed.documents || []
@@ -643,6 +750,8 @@ export function getCategoryDisplayInfo(category: EmailCategory): {
     order_confirmation: { label: "Order Confirmation", color: "indigo", icon: "check-circle" },
     payment_confirmation: { label: "Payment", color: "teal", icon: "credit-card" },
     inventory_report: { label: "Inventory Report", color: "amber", icon: "clipboard-check" },
+    hr_recruiting: { label: "HR / Recruiting", color: "pink", icon: "users" },
+    legal: { label: "Legal", color: "red", icon: "scale" },
     general: { label: "General", color: "gray", icon: "mail" }
   };
   

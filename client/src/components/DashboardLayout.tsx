@@ -3,6 +3,7 @@ import { NotificationCenter } from "@/components/NotificationCenter";
 import { AutonomousAgentBar } from "@/components/AutonomousAgentBar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import  {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,56 +33,64 @@ import {
   LayoutDashboard,
   LogOut,
   PanelLeft,
-  DollarSign,
   ShoppingCart,
   Package,
   Users,
   Scale,
-  FolderKanban,
-  Bot,
   Settings,
-  Building2,
   FileText,
-  CreditCard,
-  TrendingUp,
   Warehouse,
   Truck,
-  UserCog,
-  FileSignature,
-  AlertTriangle,
   Mail,
   ChevronDown,
-  Search,
   Bell,
-  FileSpreadsheet,
-  Ship,
-  FileCheck,
-  Send,
   MapPin,
+  ArrowLeftRight,
   ArrowRightLeft,
-  ClipboardCheck, ClipboardList,
-  PackageCheck,
-  Brain,
-  Plug,
+  ClipboardCheck,
+  ClipboardList,
   FolderLock,
   Target,
-  MessageSquare,
-  Heart,
+  BarChart3,
+  CircleDollarSign,
+  Wrench,
+  Factory,
+  UserCircle,
+  Receipt,
+  Landmark,
+  Network,
+  Upload,
+  LineChart,
+  Megaphone,
+  FileBarChart,
+  Clock,
+  Sun,
+  Moon,
   Mic,
+  MessageSquare,
   BookOpen,
   Plus,
   Calculator,
   Handshake,
-  Sparkles,
-  BarChart3,
-  Shield,
+  FlaskConical,
+  Award,
+  DollarSign,
+  Banknote,
+  TrendingUp,
+  Code2,
+  Headphones,
+  PenTool,
+  UserPlus,
+  Bot,
+  Heart,
+  Building2,
 } from "lucide-react";
 import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { AICommandBar } from './AICommandBar';
-import { FloatingAIAssistant } from './FloatingAIAssistant';
-import { Button } from "./ui/button";
+import { useTheme } from "@/contexts/ThemeContext";
+// FloatingAIAssistant removed — toolbar only
 import { toast } from "sonner";
 import {
   Collapsible,
@@ -89,26 +98,38 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Input } from "./ui/input";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "./ui/tooltip";
 
-const menuGroups = [
+function getMenuGroups(role: string = "user") {
+  const isAdmin = ["admin", "exec"].includes(role);
+  const hasFinance = ["admin", "exec", "finance"].includes(role);
+  const hasOps = ["admin", "exec", "ops"].includes(role);
+  const hasLegal = ["admin", "exec", "legal"].includes(role);
+  const hasSales = ["admin", "exec", "ops", "finance", "sales"].includes(role);
+  return [
   {
-    label: "Overview",
+    label: "_main",
     items: [
       { icon: LayoutDashboard, label: "Dashboard", path: "/" },
-      { icon: Sparkles, label: "AI Assistant", path: "/ai" },
-      { icon: ClipboardList, label: "Approvals", path: "/ai/approvals" },
+      { icon: Target, label: "Projects", path: "/projects" },
+      { icon: Bot, label: "AI Assistant", path: "/ai" },
+      { icon: ClipboardList, label: "Approval Queue", path: "/ai/approvals" },
     ],
   },
   {
     label: "Sales & Finance",
     items: [
       { icon: ShoppingCart, label: "Sales Hub", path: "/sales/hub" },
-      { icon: Heart, label: "Fundraising", path: "/crm" },
+      { icon: Heart, label: "Fundraising CRM", path: "/crm" },
       { icon: Users, label: "Investors", path: "/crm/investors" },
       { icon: Target, label: "Campaigns", path: "/crm/campaigns" },
       { icon: DollarSign, label: "Accounts", path: "/finance/accounts" },
       { icon: TrendingUp, label: "Transactions", path: "/finance/transactions" },
-      { icon: Brain, label: "Finance AI", path: "/finance/ai" },
+      { icon: FlaskConical, label: "R&D Tax Credit", path: "/finance/rd-tax-credit" },
     ],
   },
   {
@@ -129,53 +150,62 @@ const menuGroups = [
       { icon: Building2, label: "Procurement", path: "/operations/procurement-hub" },
       { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
-      { icon: FileSpreadsheet, label: "Documents", path: "/operations/document-import" },
-      { icon: Calculator, label: "Costing", path: "/operations/inventory-costing" },
-      { icon: Handshake, label: "Negotiations", path: "/operations/vendor-negotiations" },
-      { icon: Brain, label: "Manufacturing AI", path: "/operations/manufacturing-ai" },
-      { icon: BarChart3, label: "Supplier Scoring", path: "/operations/supplier-scoring" },
+      { icon: Mic, label: "Meetings", path: "/meetings" },
+      { icon: MessageSquare, label: "Messaging", path: "/messaging" },
+    ],
+  },
+  ...(hasSales || isAdmin ? [{
+    label: "_sell",
+    items: [
+      ...(hasOps || isAdmin ? [{ icon: ShoppingCart, label: "Orders", path: "/sales/orders" }] : []),
+      { icon: UserCircle, label: "CRM", path: "/crm/hub" },
+      { icon: Headphones, label: "Support", path: "/cx/support" },
+      ...(isAdmin ? [{ icon: PenTool, label: "Marketing", path: "/marketing" }] : []),
+      ...(hasFinance || isAdmin ? [{ icon: BarChart3, label: "Financials", path: "/finance/reports" }] : []),
+      ...(isAdmin ? [{ icon: TrendingUp, label: "Fundraising", path: "/crm/campaigns" }] : []),
+    ],
+  }] : []),
+  ...(hasOps || isAdmin ? [{
+    label: "_ops",
+    items: [
+      { icon: Warehouse, label: "Inventory", path: "/operations/inventory-hub" },
+      { icon: Factory, label: "Recipes", path: "/operations/recipes" },
+      { icon: Truck, label: "Freight", path: "/freight" },
+      { icon: Users, label: "Vendors", path: "/operations/vendors" },
+    ],
+  }] : []),
+  {
+    label: "_people",
+    items: [
+      ...(isAdmin ? [
+        { icon: Users, label: "People", path: "/hr/employees" },
+        { icon: UserPlus, label: "Recruiting", path: "/hr/recruiting" },
+        { icon: FileBarChart, label: "Investors", path: "/hr/investors" },
+      ] : [
+        { icon: Clock, label: "Time Tracking", path: "/hr/time-tracking" },
+        { icon: LineChart, label: "Equity Portal", path: "/hr/equity-portal" },
+      ]),
+      ...(hasLegal || isAdmin ? [
+        { icon: Scale, label: "Legal", path: "/legal" },
+      ] : []),
     ],
   },
   {
-    label: "EDI & Retail",
+    label: "_tools",
     items: [
-      { icon: ArrowRightLeft, label: "EDI Hub", path: "/edi" },
-      { icon: Plus, label: "Connect", path: "/edi/connect" },
-      { icon: Building2, label: "Partners", path: "/edi/partners" },
-      { icon: FileText, label: "Transactions", path: "/edi/transactions" },
-    ],
-  },
-  {
-    label: "People & Legal",
-    items: [
-      { icon: UserCog, label: "Team & Payroll", path: "/hr/employees" },
-      { icon: Brain, label: "HR AI Insights", path: "/hr/ai" },
-      { icon: FileSignature, label: "Contracts", path: "/legal/contracts" },
-      { icon: Shield, label: "Legal AI", path: "/legal/ai" },
-    ],
-  },
-  {
-    label: "Projects & Data",
-    items: [
-      { icon: FolderKanban, label: "Projects", path: "/projects" },
-      { icon: Brain, label: "Project AI", path: "/projects/ai" },
-      { icon: ClipboardCheck, label: "Grants", path: "/projects/investment-grants" },
-      { icon: Send, label: "Grant & Bid Submitter", path: "/grants/submitter" },
-      { icon: FolderLock, label: "Data Rooms", path: "/datarooms" },
       { icon: BookOpen, label: "SOPs", path: "/sops" },
-    ],
-  },
-  {
-    label: "Settings",
-    items: [
-      { icon: Users, label: "Team", path: "/settings/team" },
-      { icon: Plug, label: "Integrations", path: "/settings/integrations" },
-      { icon: Mic, label: "Fireflies", path: "/settings/fireflies" },
-      { icon: FileSpreadsheet, label: "Import", path: "/import" },
+      ...(isAdmin ? [
+        { icon: FolderLock, label: "Data Room", path: "/dataroom/1" },
+        { icon: Award, label: "Grants", path: "/grants/submitter" },
+        { icon: Upload, label: "Import", path: "/import" },
+        { icon: Network, label: "EDI", path: "/edi" },
+      ] : []),
+      { icon: Code2, label: "Code", path: "/code" },
       { icon: Settings, label: "Settings", path: "/settings" },
     ],
   },
 ];
+}
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
 const DEFAULT_WIDTH = 260;
@@ -211,38 +241,13 @@ export default function DashboardLayout({
   }
 
   if (!user) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <div className="flex flex-col items-center gap-8 p-8 max-w-sm w-full animate-fade-in">
-          <div className="flex flex-col items-center gap-4">
-            <div className="h-10 w-10 rounded-xl bg-primary flex items-center justify-center">
-              <Sparkles className="h-5 w-5 text-primary-foreground" />
-            </div>
-            <div className="flex flex-col items-center gap-1.5">
-              <h1 className="text-xl font-semibold tracking-[-0.02em] text-center">
-                Welcome back
-              </h1>
-              <p className="text-sm text-muted-foreground text-center leading-relaxed">
-                Sign in to your ERP dashboard
-              </p>
-            </div>
-          </div>
-          <Button
-            onClick={() => {
-              window.location.href = getLoginUrl();
-            }}
-            size="lg"
-            className="w-full"
-          >
-            Continue with sign in
-          </Button>
-        </div>
-      </div>
-    );
+    window.location.href = getLoginUrl();
+    return null;
   }
 
   return (
     <SidebarProvider
+      defaultOpen={false}
       style={
         {
           "--sidebar-width": `${sidebarWidth}px`,
@@ -268,13 +273,12 @@ function DashboardLayoutContent({
   const { user, logout } = useAuth();
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar } = useSidebar();
+  const { theme, toggleTheme } = useTheme();
   const isCollapsed = state === "collapsed";
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
-  const [openGroups, setOpenGroups] = useState<string[]>(["Overview", "Finance", "Sales", "CRM", "Operations"]);
-  const [aiCommandOpen, setAiCommandOpen] = useState(false);
-
+  const [openGroups, setOpenGroups] = useState<string[]>(["Command Center", "Buy", "Sell"]);
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -284,27 +288,23 @@ function DashboardLayoutContent({
         return;
       }
 
-      // Cmd/Ctrl + K: Open AI Command Bar
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault();
-        setAiCommandOpen(true);
-        return;
-      }
-
       // G + key combinations for navigation (Gmail-style)
       if (e.key === 'g') {
         // Set a flag to wait for next key
         const handleNextKey = (nextE: KeyboardEvent) => {
           document.removeEventListener('keydown', handleNextKey);
           switch (nextE.key) {
-            case 'd': setLocation('/'); break; // Go to Dashboard
-            case 'a': setLocation('/ai'); break; // Go to AI Assistant
-            case 's': setLocation('/sales/hub'); break; // Go to Sales
-            case 'c': setLocation('/crm'); break; // Go to CRM
-            case 'm': setLocation('/operations/manufacturing-hub'); break; // Go to Manufacturing
-            case 'p': setLocation('/operations/procurement-hub'); break; // Go to Procurement
-            case 'l': setLocation('/operations/logistics-hub'); break; // Go to Logistics
-            case 'e': setLocation('/operations/email-inbox'); break; // Go to Email
+            case 'd': setLocation('/'); break; // Dashboard
+            case 'e': setLocation('/operations/email-inbox'); break; // Email Inbox
+            case 'v': setLocation('/operations/vendors'); break; // Vendors
+            case 'i': setLocation('/operations/inventory-hub'); break; // Inventory
+            case 'o': setLocation('/sales/orders'); break; // Orders
+            case 'w': setLocation('/operations/work-orders'); break; // Work Orders
+            case 'c': setLocation('/crm/hub'); break; // CRM
+            case 'a': setLocation('/finance/accounts'); break; // Accounts
+            case 't': setLocation('/finance/transactions'); break; // Transactions
+            case 's': setLocation('/settings'); break; // Settings
+          case 'm': setLocation('/meetings'); break; // Meetings
           }
         };
         document.addEventListener('keydown', handleNextKey, { once: true });
@@ -318,13 +318,16 @@ function DashboardLayoutContent({
           'Keyboard Shortcuts:\n' +
           '⌘K - AI Command Bar\n' +
           'g d - Dashboard\n' +
-          'g a - AI Assistant\n' +
-          'g s - Sales Hub\n' +
-          'g c - CRM Hub\n' +
-          'g m - Manufacturing\n' +
-          'g p - Procurement\n' +
-          'g l - Logistics\n' +
-          'g e - Email Inbox',
+          'g e - Email Inbox\n' +
+          'g v - Vendors\n' +
+          'g i - Inventory\n' +
+          'g o - Orders\n' +
+          'g w - Work Orders\n' +
+          'g c - CRM\n' +
+          'g a - Accounts\n' +
+          'g t - Transactions\n' +
+          'g s - Settings\n' +
+        'g m - Meetings',
           { duration: 5000 }
         );
         return;
@@ -343,9 +346,9 @@ function DashboardLayoutContent({
   }, []);
 
   // Find active menu item for mobile header (memoized to avoid recalculation)
-  const activeMenuItem = useMemo(() => menuGroups
+  const activeMenuItem = useMemo(() => getMenuGroups(user?.role)
     .flatMap(g => g.items)
-    .find(item => item.path === location), [location]);
+    .find(item => item.path === location), [location, user?.role]);
 
   useEffect(() => {
     if (isCollapsed) {
@@ -409,42 +412,35 @@ function DashboardLayoutContent({
             </div>
           </SidebarHeader>
 
-          {/* Lightfield-style navigation: clean groups, minimal icons */}
+          {/* Flat navigation — all items visible, no dropdowns */}
           <SidebarContent className="overflow-y-auto px-2 py-2">
-            <nav className="flex flex-col gap-0.5">
-              {menuGroups.map((group) => (
-                <div key={group.label} className="mb-0.5">
-                  {!isCollapsed && (
-                    <button
-                      onClick={() => toggleGroup(group.label)}
-                      className="w-full flex items-center justify-between px-2 py-1.5 text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-[0.1em] hover:text-muted-foreground transition-colors duration-100 mt-2 first:mt-0"
-                    >
-                      <span>{group.label}</span>
-                      <ChevronDown className={`h-2.5 w-2.5 transition-transform duration-150 ${openGroups.includes(group.label) ? "" : "-rotate-90"}`} />
-                    </button>
-                  )}
-                  {(isCollapsed || openGroups.includes(group.label)) && (
-                    <div className="flex flex-col gap-px mt-0.5">
-                      {group.items.map(item => {
-                        const isActive = location === item.path;
-                        return (
-                          <button
-                            key={item.path}
-                            onClick={() => setLocation(item.path)}
-                            className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] transition-colors duration-100 ${
-                              isActive
-                                ? "bg-accent text-foreground font-medium"
-                                : "text-sidebar-foreground hover:bg-accent/60 hover:text-foreground"
-                            } ${isCollapsed ? "justify-center" : ""}`}
-                            title={isCollapsed ? item.label : undefined}
-                          >
-                            <item.icon className={`h-[14px] w-[14px] shrink-0 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
-                            {!isCollapsed && <span className="truncate">{item.label}</span>}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
+            <nav className="flex flex-col gap-px">
+              {getMenuGroups(user?.role).map((group, gi) => (
+                <div key={group.label}>
+                  {gi > 0 && !isCollapsed && <div className="border-t border-border/30 my-1.5" />}
+                  {group.items.map(item => {
+                    const isActive = location === item.path;
+                    const btn = (
+                      <button
+                        key={item.path}
+                        onClick={() => setLocation(item.path)}
+                        className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] transition-colors duration-100 w-full ${
+                          isActive
+                            ? "bg-accent text-foreground font-medium"
+                            : "text-sidebar-foreground hover:bg-accent/60 hover:text-foreground"
+                        } ${isCollapsed ? "justify-center" : ""}`}
+                      >
+                        <item.icon className={`h-[14px] w-[14px] shrink-0 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
+                        {!isCollapsed && <span className="truncate">{item.label}</span>}
+                      </button>
+                    );
+                    return isCollapsed ? (
+                      <Tooltip key={item.path}>
+                        <TooltipTrigger asChild>{btn}</TooltipTrigger>
+                        <TooltipContent side="right" className="text-xs">{item.label}</TooltipContent>
+                      </Tooltip>
+                    ) : <div key={item.path}>{btn}</div>;
+                  })}
                 </div>
               ))}
             </nav>
@@ -452,6 +448,16 @@ function DashboardLayoutContent({
 
           {/* Lightfield-style footer: clean user section */}
           <SidebarFooter className="p-2 border-t border-sidebar-border">
+            <div className="flex items-center gap-1 px-1 mb-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0"
+                onClick={() => toggleTheme?.()}
+              >
+                {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </Button>
+            </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="flex items-center gap-2.5 rounded-lg px-2 py-2 hover:bg-accent transition-colors duration-100 w-full text-left group-data-[collapsible=icon]:justify-center focus:outline-none">
@@ -508,44 +514,21 @@ function DashboardLayoutContent({
       </div>
 
       <SidebarInset className="flex flex-col bg-background">
-        {/* Autonomous Agent Status Bar */}
-        <AutonomousAgentBar />
-
-        {/* Lightfield-style top bar: clean, minimal, functional */}
-        <header className="flex h-12 items-center justify-between border-b border-border bg-background px-4 sticky top-0 z-40">
-          <div className="flex items-center gap-2">
+        {/* Top bar: AI search + agent status + notifications */}
+        <header className="flex h-12 items-center justify-between gap-3 border-b border-border bg-background px-4 sticky top-0 z-40">
+          <div className="flex items-center gap-2 shrink-0">
             {isMobile && <SidebarTrigger className="h-8 w-8 rounded-md" />}
-            {/* Search trigger */}
-            <button
-              onClick={() => setAiCommandOpen(true)}
-              className="relative hidden sm:flex items-center gap-2 w-64 h-8 px-3 bg-secondary hover:bg-accent rounded-lg text-sm text-muted-foreground transition-colors duration-100"
-            >
-              <Search className="h-3.5 w-3.5" />
-              <span className="flex-1 text-left text-[13px]">Search...</span>
-              <kbd className="pointer-events-none hidden h-[18px] select-none items-center gap-0.5 rounded border border-border bg-background px-1 font-mono text-[10px] font-medium text-muted-foreground sm:flex">
-                <span className="text-[10px]">⌘</span>K
-              </kbd>
-            </button>
-            {isMobile && (
-              <button
-                onClick={() => setAiCommandOpen(true)}
-                className="flex sm:hidden items-center justify-center h-8 w-8 rounded-md hover:bg-accent text-muted-foreground transition-colors"
-                aria-label="Search"
-              >
-                <Search className="h-4 w-4" />
-              </button>
-            )}
           </div>
-          <div className="flex items-center gap-1">
+          <AICommandBar />
+          <div className="flex items-center gap-2 shrink-0">
+            <AutonomousAgentBar />
             <NotificationCenter />
           </div>
         </header>
-        <AICommandBar open={aiCommandOpen} onOpenChange={setAiCommandOpen} />
-        <main className="flex-1 overflow-auto p-4 pb-20 md:p-6 md:pb-6 lg:p-8 lg:pb-8">{children}</main>
+        <main className="flex-1 overflow-auto p-3 pb-4 md:p-6 md:pb-6 lg:p-8 lg:pb-8">{children}</main>
       </SidebarInset>
 
-      {/* Floating AI Assistant */}
-      <FloatingAIAssistant />
+      {/* Floating AI removed — using toolbar only */}
     </>
   );
 }

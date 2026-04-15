@@ -122,7 +122,9 @@ export const projectsRouter = router({
       }),
     tasks: protectedProcedure
       .input(z.object({ projectId: z.number() }))
-      .query(({ input }) => db.getProjectTasks(input.projectId)),
+      .query(({ input }) => input.projectId === 0 ? db.getAllProjectTasks() : db.getProjectTasks(input.projectId)),
+    listAllTasks: protectedProcedure
+      .query(() => db.getAllProjectTasks()),
   }),
   // ============================================
   // SAUDI INVESTMENT GRANT CHECKLIST

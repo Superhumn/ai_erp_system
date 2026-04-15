@@ -6,10 +6,12 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { AIAgentProvider } from "./contexts/AIAgentContext";
 import DashboardLayout from "./components/DashboardLayout";
+import { ModuleErrorBoundary } from "./components/ModuleErrorBoundary";
 
 // Eagerly loaded pages (high-traffic, first paint)
 import Home from "./pages/Home";
 import Login from "./pages/Login";
+import ResetPassword from "./pages/ResetPassword";
 import NotFound from "@/pages/NotFound";
 
 // Lazy-loaded pages — split into separate chunks for smaller initial bundle
@@ -23,6 +25,9 @@ const Accounts = lazy(() => import("./pages/finance/Accounts"));
 const Invoices = lazy(() => import("./pages/finance/Invoices"));
 const Payments = lazy(() => import("./pages/finance/Payments"));
 const Transactions = lazy(() => import("./pages/finance/Transactions"));
+const FinancialReports = lazy(() => import("./pages/finance/FinancialReports"));
+const Banking = lazy(() => import("./pages/finance/Banking"));
+const RdTaxCredit = lazy(() => import("./pages/finance/RdTaxCredit"));
 
 // Sales
 const Orders = lazy(() => import("./pages/sales/Orders"));
@@ -48,6 +53,7 @@ const Locations = lazy(() => import("./pages/operations/Locations"));
 const Transfers = lazy(() => import("./pages/operations/Transfers"));
 const TransferDetail = lazy(() => import("./pages/operations/TransferDetail"));
 const BOM = lazy(() => import("./pages/operations/BOM"));
+const Recipes = lazy(() => import("./pages/operations/Recipes"));
 const BOMDetail = lazy(() => import("./pages/operations/BOMDetail"));
 const RawMaterials = lazy(() => import("./pages/operations/RawMaterials"));
 const WorkOrders = lazy(() => import("./pages/operations/WorkOrders"));
@@ -79,6 +85,8 @@ const RetailerOnboarding = lazy(() => import("./pages/edi/RetailerOnboarding"));
 
 // Freight
 const FreightDashboard = lazy(() => import("./pages/freight/FreightDashboard"));
+const FreightTracking = lazy(() => import("./pages/freight/FreightTracking"));
+const FDAPriorNotice = lazy(() => import("./pages/freight/FDAPriorNotice"));
 const Carriers = lazy(() => import("./pages/freight/Carriers"));
 const RFQs = lazy(() => import("./pages/freight/RFQs"));
 const RFQDetail = lazy(() => import("./pages/freight/RFQDetail"));
@@ -88,8 +96,22 @@ const CustomsDetail = lazy(() => import("./pages/freight/CustomsDetail"));
 // HR
 const Employees = lazy(() => import("./pages/hr/Employees"));
 const Payroll = lazy(() => import("./pages/hr/Payroll"));
+const EquityPortal = lazy(() => import("./pages/hr/EquityPortal"));
+const EquityReports = lazy(() => import("./pages/hr/EquityReports"));
+const InvestorsHub = lazy(() => import("./pages/hr/InvestorsHub"));
+const TimeTracking = lazy(() => import("./pages/hr/TimeTracking"));
+
+// CX
+const CustomerSupport = lazy(() => import("./pages/cx/CustomerSupport"));
+
+// Marketing
+const ContentHub = lazy(() => import("./pages/marketing/ContentHub"));
+
+// Recruiting
+const Recruiting = lazy(() => import("./pages/hr/Recruiting"));
 
 // Legal
+const LegalHub = lazy(() => import("./pages/legal/LegalHub"));
 const Contracts = lazy(() => import("./pages/legal/Contracts"));
 const Disputes = lazy(() => import("./pages/legal/Disputes"));
 const Documents = lazy(() => import("./pages/legal/Documents"));
@@ -120,6 +142,15 @@ const VendorPortal = lazy(() => import("./pages/portal/VendorPortal"));
 // SOPs
 const SOPs = lazy(() => import("./pages/SOPs"));
 
+// Meetings
+const Meetings = lazy(() => import("./pages/Meetings"));
+
+// Messaging
+const Messaging = lazy(() => import("./pages/Messaging"));
+
+// Investor Updates
+const InvestorUpdates = lazy(() => import("./pages/InvestorUpdates"));
+
 // Data Room
 const DataRooms = lazy(() => import("./pages/DataRooms"));
 const DataRoomDetail = lazy(() => import("./pages/DataRoomDetail"));
@@ -127,6 +158,9 @@ const DataRoomPublic = lazy(() => import("./pages/DataRoomPublic"));
 
 // Component Showcase
 const ComponentShowcase = lazy(() => import("./pages/ComponentShowcase"));
+
+// Code
+const CodeEditor = lazy(() => import("./pages/Code"));
 
 // AI Agent
 const ApprovalQueue = lazy(() => import("./pages/ai/ApprovalQueue"));
@@ -156,6 +190,7 @@ function PageLoader() {
 function Router() {
   return (
     <DashboardLayout>
+      <ModuleErrorBoundary>
       <Suspense fallback={<PageLoader />}>
         <Switch>
           {/* Overview */}
@@ -183,6 +218,9 @@ function Router() {
           <Route path="/finance/invoices" component={Invoices} />
           <Route path="/finance/payments" component={Payments} />
           <Route path="/finance/transactions" component={Transactions} />
+          <Route path="/finance/reports" component={FinancialReports} />
+          <Route path="/finance/banking" component={Banking} />
+          <Route path="/finance/rd-tax-credit" component={RdTaxCredit} />
           <Route path="/finance/ai" component={FinanceAI} />
 
           {/* Sales */}
@@ -211,6 +249,7 @@ function Router() {
           <Route path="/operations/transfers" component={Transfers} />
           <Route path="/operations/transfers/:id" component={TransferDetail} />
           <Route path="/operations/bom" component={BOM} />
+          <Route path="/operations/recipes" component={Recipes} />
           <Route path="/operations/bom/:id" component={BOMDetail} />
           <Route path="/operations/raw-materials" component={RawMaterials} />
           <Route path="/operations/work-orders" component={WorkOrders} />
@@ -242,18 +281,34 @@ function Router() {
 
           {/* Freight */}
           <Route path="/freight" component={FreightDashboard} />
+          <Route path="/freight/tracking" component={FreightTracking} />
+          <Route path="/freight/fda" component={FDAPriorNotice} />
           <Route path="/freight/carriers" component={Carriers} />
           <Route path="/freight/rfqs" component={RFQs} />
           <Route path="/freight/rfqs/:id" component={RFQDetail} />
           <Route path="/freight/customs" component={CustomsClearance} />
           <Route path="/freight/customs/:id" component={CustomsDetail} />
 
+          {/* CX */}
+          <Route path="/cx/support" component={CustomerSupport} />
+
+          {/* Marketing */}
+          <Route path="/marketing" component={ContentHub} />
+
+          {/* Recruiting */}
+          <Route path="/hr/recruiting" component={Recruiting} />
+
           {/* HR */}
+          <Route path="/hr/investors" component={InvestorsHub} />
           <Route path="/hr/employees" component={Employees} />
           <Route path="/hr/payroll" component={Payroll} />
           <Route path="/hr/ai" component={HRAIInsights} />
+          <Route path="/hr/equity-portal" component={EquityPortal} />
+          <Route path="/hr/equity-reports" component={EquityReports} />
+          <Route path="/hr/time-tracking" component={TimeTracking} />
 
           {/* Legal */}
+          <Route path="/legal" component={LegalHub} />
           <Route path="/legal/contracts" component={Contracts} />
           <Route path="/legal/disputes" component={Disputes} />
           <Route path="/legal/documents" component={Documents} />
@@ -264,8 +319,17 @@ function Router() {
           <Route path="/projects/ai" component={ProjectsAI} />
           <Route path="/projects/investment-grants" component={InvestmentGrantChecklist} />
 
+          {/* Investor Updates */}
+          <Route path="/investor-updates" component={InvestorUpdates} />
+
           {/* SOPs */}
           <Route path="/sops" component={SOPs} />
+
+          {/* Meetings */}
+          <Route path="/meetings" component={Meetings} />
+
+          {/* Messaging */}
+          <Route path="/messaging" component={Messaging} />
 
           {/* Grants & Bids */}
           <Route path="/grants/submitter" component={GrantBidSubmitter} />
@@ -284,6 +348,9 @@ function Router() {
           <Route path="/datarooms" component={DataRooms} />
           <Route path="/dataroom/:id" component={DataRoomDetail} />
 
+          {/* Code */}
+          <Route path="/code" component={CodeEditor} />
+
           {/* Component Showcase */}
           <Route path="/showcase" component={ComponentShowcase} />
 
@@ -292,6 +359,7 @@ function Router() {
           <Route component={NotFound} />
         </Switch>
       </Suspense>
+      </ModuleErrorBoundary>
     </DashboardLayout>
   );
 }
@@ -307,8 +375,10 @@ function App() {
               <Switch>
                 {/* Public routes (outside dashboard) */}
                 <Route path="/login" component={Login} />
+                <Route path="/reset-password" component={ResetPassword} />
                 {/* Public Data Room Access (outside dashboard) */}
                 <Route path="/share/:code" component={DataRoomPublic} />
+                <Route path="/dr/:code" component={DataRoomPublic} />
                 {/* Supplier Portal (public) */}
                 <Route path="/supplier-portal/:token" component={SupplierPortal} />
                 {/* All other routes go through dashboard */}

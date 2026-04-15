@@ -443,7 +443,8 @@ export async function getInboundShipmentsFromPOs() {
       eq(shipments.status, 'in_transit')
     )
   ))
-  .orderBy(desc(shipments.createdAt));
+  .orderBy(desc(shipments.createdAt))
+  .limit(200);
 }
 
 // ============================================

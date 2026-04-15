@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { trpc } from "@/lib/trpc";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -8,22 +7,15 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { Streamdown } from "streamdown";
 import {
-  Bot, Search, Loader2, Sparkles, ArrowRight, Command,
+  Search, Loader2, Sparkles, ArrowRight, Command,
   FileText, Package, Users, DollarSign, Truck, ClipboardList,
-  Send, X, CheckCircle, Clock, Building, AlertCircle, Box, Mail
+  Send, X, CheckCircle, Clock, Building, AlertCircle, Box, Mail, Mic, MicOff
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { QuickCreateDialog } from "@/components/QuickCreateDialog";
 
 interface AICommandBarProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  context?: {
-    type: string;
-    id?: number | string;
-    name?: string;
-    data?: any;
-  };
+  context?: string;
 }
 
 // Task types that can be created via AI Command Bar
@@ -653,7 +645,9 @@ interface VendorSuggestion {
   recentPOCount: number;
 }
 
-export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps) {
+export function AICommandBar({ context }: AICommandBarProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [response, setResponse] = useState<string | null>(null);
@@ -687,6 +681,55 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
   const inputRef = useRef<HTMLInputElement>(null);
   const [, setLocation] = useLocation();
   const utils = trpc.useUtils();
+
+  // Voice input
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
+  const startVoiceInput = useCallback(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      toast.error("Voice input not supported in this browser");
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognition.onstart = () => setIsListening(true);
+    recognition.onresult = (event: any) => {
+      const transcript = Array.from(event.results)
+        .map((r: any) => r[0].transcript)
+        .join("");
+      setQuery(transcript);
+    };
+    recognition.onend = () => {
+      setIsListening(false);
+      // Auto-submit if we got a final result
+      if (recognitionRef.current?._autoSubmit) {
+        setTimeout(() => {
+          const currentQuery = (inputRef.current as any)?.value || "";
+          if (currentQuery.trim()) handleSubmit(currentQuery);
+        }, 300);
+      }
+    };
+    recognition.onerror = (e: any) => {
+      setIsListening(false);
+      if (e.error !== "aborted") toast.error(`Voice error: ${e.error}`);
+    };
+    recognitionRef.current = recognition;
+    recognitionRef.current._autoSubmit = true;
+    recognition.start();
+    setIsExpanded(true);
+  }, []);
+
+  const stopVoiceInput = useCallback(() => {
+    if (recognitionRef.current) {
+      recognitionRef.current._autoSubmit = false;
+      recognitionRef.current.stop();
+    }
+    setIsListening(false);
+  }, []);
 
   // AI Query mutation for general questions
   const aiQuery = trpc.ai.query.useMutation({
@@ -727,7 +770,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
       });
       utils.invoices.list.invalidate();
       setLocation("/finance/invoices");
-      onOpenChange(false);
+      setIsExpanded(false);
     },
     onError: (error) => {
       toast.error(`Failed to create invoice: ${error.message}`);
@@ -744,7 +787,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
       });
       utils.purchaseOrders.list.invalidate();
       setLocation("/procurement");
-      onOpenChange(false);
+      setIsExpanded(false);
     },
     onError: (error) => {
       toast.error(`Failed to create PO: ${error.message}`);
@@ -759,7 +802,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
         description: `Shipment #${data.trackingNumber} has been added`
       });
       utils.shipments.list.invalidate();
-      onOpenChange(false);
+      setIsExpanded(false);
     },
     onError: (error) => {
       toast.error(`Failed to track shipment: ${error.message}`);
@@ -775,7 +818,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
       });
       utils.payments.list.invalidate();
       setLocation("/finance");
-      onOpenChange(false);
+      setIsExpanded(false);
     },
     onError: (error) => {
       toast.error(`Failed to record payment: ${error.message}`);
@@ -791,7 +834,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
       });
       utils.workOrders.list.invalidate();
       setLocation("/operations/manufacturing");
-      onOpenChange(false);
+      setIsExpanded(false);
     },
     onError: (error) => {
       toast.error(`Failed to create work order: ${error.message}`);
@@ -806,7 +849,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
         description: `Transfer #${data.transferNumber} has been created`
       });
       utils.inventory.list.invalidate();
-      onOpenChange(false);
+      setIsExpanded(false);
     },
     onError: (error) => {
       toast.error(`Failed to transfer inventory: ${error.message}`);
@@ -860,11 +903,9 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
     return () => clearTimeout(timer);
   }, [query]);
 
+  // Reset state when collapsing
   useEffect(() => {
-    if (open && inputRef.current) {
-      setTimeout(() => inputRef.current?.focus(), 100);
-    }
-    if (!open) {
+    if (!isExpanded) {
       setQuery("");
       setResponse(null);
       setTaskCreated(null);
@@ -881,22 +922,33 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
       setEditingQuantity("");
       setEditingDate("");
     }
-  }, [open]);
+  }, [isExpanded]);
+
+  // Click-outside handler
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        if (!isLoading && !showDraftPreview) {
+          setIsExpanded(false);
+        }
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isLoading, showDraftPreview]);
 
   // Global keyboard shortcut
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+    function handleKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
-        onOpenChange(!open);
+        inputRef.current?.focus();
+        setIsExpanded(true);
       }
-      if (e.key === "Escape" && open) {
-        onOpenChange(false);
-      }
-    };
+    }
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [open, onOpenChange]);
+  }, []);
 
   const handleSubmit = useCallback(async (q: string, forceTaskType?: TaskType) => {
     if (!q.trim()) return;
@@ -913,7 +965,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
       setIsLoading(true);
       let fullQuery = q;
       if (context) {
-        fullQuery = `[Context: ${context.type}${context.name ? ` - ${context.name}` : ""}${context.id ? ` (ID: ${context.id})` : ""}]\n\n${q}`;
+        fullQuery = `[Context: ${context}]\n\n${q}`;
       }
       aiQuery.mutate({ question: fullQuery });
       return;
@@ -1017,11 +1069,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
     try {
       const taskDataWithVendor = {
         originalQuery: draftData.originalQuery,
-        context: context ? {
-          type: context.type,
-          id: context.id,
-          name: context.name
-        } : null,
+        context: context || null,
         // Material info
         ...(draftData.material && {
           materialId: draftData.material.id,
@@ -1055,50 +1103,62 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
     }
   }, [draftData, context, createTask, editingQuantity, editingDate]);
 
-  const filteredActions = quickActions.filter(action => 
-    !context || action.context.some(c => context.type.toLowerCase().includes(c))
+  const filteredActions = quickActions.filter(action =>
+    !context || action.context.some(c => context.toLowerCase().includes(c))
   );
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl p-0 gap-0 overflow-hidden">
-        <div className="flex items-center border-b px-4 py-3">
-          <Bot className="h-5 w-5 text-primary mr-3" />
-          <Input
-            ref={inputRef}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSubmit(query);
-              }
-            }}
-            placeholder={context ? `Ask about ${context.name || context.type}...` : "Ask AI or create a task... (⌘K)"}
-            className="border-0 focus-visible:ring-0 text-base flex-1"
-          />
-          {query && (
-            <Button
-              size="sm"
-              onClick={() => handleSubmit(query)}
-              disabled={isLoading}
-              className="ml-2"
-            >
-              {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            </Button>
-          )}
-        </div>
-
-        {context && (
-          <div className="px-4 py-2 bg-muted/50 border-b flex items-center gap-2">
-            <Badge variant="secondary" className="text-xs">
-              {context.type}
-            </Badge>
-            {context.name && (
-              <span className="text-sm text-muted-foreground">{context.name}</span>
-            )}
-          </div>
+    <>
+    <div ref={containerRef} className="relative flex-1 max-w-2xl">
+      {/* Always-visible search/AI bar */}
+      <div className="flex items-center gap-2 h-9 px-3 rounded-lg border border-border/50 bg-muted/50 hover:bg-muted transition-colors cursor-text"
+           onClick={() => { inputRef.current?.focus(); setIsExpanded(true); }}>
+        <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => setIsExpanded(true)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              handleSubmit(query);
+            }
+            if (e.key === "Escape") {
+              setIsExpanded(false);
+              inputRef.current?.blur();
+            }
+          }}
+          placeholder="Ask AI anything... (⌘K)"
+          className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60"
+        />
+        {/* Voice input button */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            if (isListening) stopVoiceInput();
+            else startVoiceInput();
+          }}
+          className={`shrink-0 p-0.5 rounded transition-colors ${
+            isListening
+              ? "text-red-500 animate-pulse"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+          title={isListening ? "Stop listening" : "Voice input"}
+        >
+          {isListening ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+        </button>
+        {query && (
+          <button onClick={(e) => { e.stopPropagation(); setQuery(""); setIsExpanded(false); }} className="text-muted-foreground hover:text-foreground">
+            <X className="h-3.5 w-3.5" />
+          </button>
         )}
+      </div>
+
+      {/* Expandable dropdown panel */}
+      {isExpanded && (
+        <div className="absolute top-full left-0 right-0 mt-1 z-50 rounded-lg border border-border bg-card shadow-xl max-h-[500px] overflow-hidden">
 
         {/* Vendor Suggestion Display */}
         {vendorSuggestion?.material && !isLoading && !taskCreated && !response && (
@@ -1215,7 +1275,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
                   size="sm"
                   onClick={() => {
                     setLocation("/ai/approvals");
-                    onOpenChange(false);
+                    setIsExpanded(false);
                   }}
                 >
                   View Queue
@@ -1229,7 +1289,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
                     size="sm"
                     onClick={() => {
                       setLocation("/procurement");
-                      onOpenChange(false);
+                      setIsExpanded(false);
                     }}
                   >
                     <ArrowRight className="h-4 w-4 mr-1" /> Go to Purchase Orders
@@ -1241,7 +1301,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
                     size="sm"
                     onClick={() => {
                       setLocation("/logistics");
-                      onOpenChange(false);
+                      setIsExpanded(false);
                     }}
                   >
                     <ArrowRight className="h-4 w-4 mr-1" /> Go to Freight RFQs
@@ -1253,7 +1313,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
                     size="sm"
                     onClick={() => {
                       setLocation("/procurement");
-                      onOpenChange(false);
+                      setIsExpanded(false);
                     }}
                   >
                     <ArrowRight className="h-4 w-4 mr-1" /> Go to Vendors
@@ -1265,7 +1325,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
                     size="sm"
                     onClick={() => {
                       setLocation("/procurement");
-                      onOpenChange(false);
+                      setIsExpanded(false);
                     }}
                   >
                     <ArrowRight className="h-4 w-4 mr-1" /> Go to Raw Materials
@@ -1277,7 +1337,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
                     size="sm"
                     onClick={() => {
                       setLocation("/sales");
-                      onOpenChange(false);
+                      setIsExpanded(false);
                     }}
                   >
                     <ArrowRight className="h-4 w-4 mr-1" /> Go to Products
@@ -1289,7 +1349,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
                     size="sm"
                     onClick={() => {
                       setLocation("/sales");
-                      onOpenChange(false);
+                      setIsExpanded(false);
                     }}
                   >
                     <ArrowRight className="h-4 w-4 mr-1" /> Go to Customers
@@ -1301,7 +1361,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
                     size="sm"
                     onClick={() => {
                       setLocation("/manufacturing");
-                      onOpenChange(false);
+                      setIsExpanded(false);
                     }}
                   >
                     <ArrowRight className="h-4 w-4 mr-1" /> Go to Work Orders
@@ -1325,9 +1385,14 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
           {/* Draft Preview Panel */}
           {showDraftPreview && draftData && !isLoading && !taskCreated && (
             <div className="p-4 space-y-4">
-              <div className="flex items-center gap-2 mb-3">
-                <FileText className="h-5 w-5 text-blue-600" />
-                <h3 className="font-semibold text-lg">Review Draft {draftData.taskType === 'generate_po' ? 'Purchase Order' : draftData.taskType === 'send_rfq' ? 'RFQ' : 'Task'}</h3>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-blue-600" />
+                  <h3 className="font-semibold text-lg">Review Draft {draftData.taskType === 'generate_po' ? 'Purchase Order' : draftData.taskType === 'send_rfq' ? 'RFQ' : 'Task'}</h3>
+                </div>
+                <button onClick={() => { setShowDraftPreview(false); setDraftData(null); setShowSuggestions(true); }} className="text-muted-foreground hover:text-foreground">
+                  <X className="h-5 w-5" />
+                </button>
               </div>
               
               <div className="bg-slate-50 rounded-lg p-4 space-y-4">
@@ -1616,9 +1681,11 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
             </div>
           )}
         </ScrollArea>
-      </DialogContent>
+        </div>
+      )}
+    </div>
 
-      {/* Quick Create Dialogs */}
+    {/* Quick Create Dialogs */}
       <QuickCreateDialog
         open={showQuickCreateVendor}
         onOpenChange={setShowQuickCreateVendor}
@@ -1639,7 +1706,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
                 className="text-blue-600 hover:underline font-medium"
                 onClick={() => {
                   setLocation("/procurement");
-                  onOpenChange(false);
+                  setIsExpanded(false);
                 }}
               >
                 View in Procurement
@@ -1671,7 +1738,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
                 className="text-blue-600 hover:underline font-medium"
                 onClick={() => {
                   setLocation("/procurement");
-                  onOpenChange(false);
+                  setIsExpanded(false);
                 }}
               >
                 View in Procurement
@@ -1693,7 +1760,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
                 className="text-blue-600 hover:underline font-medium"
                 onClick={() => {
                   setLocation("/sales");
-                  onOpenChange(false);
+                  setIsExpanded(false);
                 }}
               >
                 View in Sales Hub
@@ -1715,7 +1782,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
                 className="text-blue-600 hover:underline font-medium"
                 onClick={() => {
                   setLocation("/sales");
-                  onOpenChange(false);
+                  setIsExpanded(false);
                 }}
               >
                 View in Sales Hub
@@ -1724,54 +1791,7 @@ export function AICommandBar({ open, onOpenChange, context }: AICommandBarProps)
           );
         }}
       />
-    </Dialog>
-  );
-}
-
-// Floating AI button for pages
-export function AIFloatingButton({ context }: { context?: AICommandBarProps["context"] }) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <>
-      <Button
-        onClick={() => setOpen(true)}
-        size="sm"
-        variant="outline"
-        className="fixed bottom-6 right-6 shadow-lg hover:shadow-xl transition-all z-50 gap-2"
-      >
-        <Bot className="h-4 w-4" />
-        <span className="hidden sm:inline">Ask AI</span>
-        <kbd className="hidden sm:inline px-1.5 py-0.5 bg-muted rounded text-xs">⌘K</kbd>
-      </Button>
-      <AICommandBar open={open} onOpenChange={setOpen} context={context} />
     </>
   );
 }
 
-// Inline AI input for list views
-export function AIInlineInput({ 
-  context, 
-  placeholder = "Ask AI about this data...",
-  className = ""
-}: { 
-  context?: AICommandBarProps["context"];
-  placeholder?: string;
-  className?: string;
-}) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <>
-      <div 
-        onClick={() => setOpen(true)}
-        className={`flex items-center gap-2 px-3 py-2 border rounded-lg cursor-pointer hover:bg-muted/50 transition-colors ${className}`}
-      >
-        <Bot className="h-4 w-4 text-muted-foreground" />
-        <span className="text-sm text-muted-foreground flex-1">{placeholder}</span>
-        <kbd className="px-1.5 py-0.5 bg-muted rounded text-xs text-muted-foreground">⌘K</kbd>
-      </div>
-      <AICommandBar open={open} onOpenChange={setOpen} context={context} />
-    </>
-  );
-}

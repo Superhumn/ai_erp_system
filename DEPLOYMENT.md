@@ -1,6 +1,6 @@
 # Deployment Guide
 
-Comprehensive guide for deploying the AI ERP System. Covers Docker, Railway, Vercel, and manual hosting.
+Comprehensive guide for deploying the AI ERP System. Covers Docker, Railway, and manual hosting.
 
 ## Prerequisites
 
@@ -43,17 +43,6 @@ Visit `http://localhost:3000` and sign up. First user gets admin role.
 3. Set environment variables: `JWT_SECRET`, `NODE_ENV=production`
 4. Railway auto-detects build/start commands from `package.json`
 5. Visit `https://[your-app].railway.app`, sign up as first user
-
-### Vercel + PlanetScale
-
-1. Deploy: `vercel` or connect GitHub repo
-2. Create a MySQL database at [planetscale.com](https://planetscale.com) (same region as Vercel)
-3. Set environment variables in Vercel dashboard: `DATABASE_URL`, `JWT_SECRET`, `NODE_ENV=production`
-4. Run migrations locally: `npm run db:push` (with `DATABASE_URL` in local `.env`)
-5. Redeploy: `vercel --prod`
-6. Visit `https://[your-project].vercel.app`, sign up as first user
-
-**Vercel SPA routing note:** The repo includes `vercel.json` with rewrite rules so that direct navigation to routes like `/settings` works correctly. If you see raw code instead of the app, ensure `vercel.json` is committed and redeploy with `vercel --prod`.
 
 ### AWS / DigitalOcean / Manual Hosting
 
@@ -120,7 +109,7 @@ See `.env.example` for the full list.
 
 ## SSL / HTTPS
 
-Railway and Vercel provide HTTPS automatically. For Docker/manual:
+Railway provides HTTPS automatically. For Docker/manual:
 
 **Let's Encrypt:**
 ```bash
@@ -142,9 +131,9 @@ See `docs/deployment-setup.md` for GitHub Actions CI/CD configuration with stagi
 
 **"Invalid session cookie" / immediate logout** — `JWT_SECRET` is missing or too short. Must be 32+ characters. Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Redeploy after setting.
 
-**404 on direct navigation (Vercel)** — Ensure `vercel.json` is committed. Redeploy with `vercel --prod`.
+**404 on direct navigation** — Ensure your hosting platform serves `index.html` for all routes (SPA routing). For Railway this is handled automatically.
 
-**Seeing raw code instead of the app (Vercel)** — Same fix: ensure `vercel.json` exists, then `vercel --prod`.
+**Seeing raw code instead of the app** — Build may not have run. Check that `pnpm run build` completed and `dist/public/` was created.
 
 **Page loads but looks broken** — Build may have failed. Check deployment logs. Verify `dist/public/` was created.
 

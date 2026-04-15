@@ -183,7 +183,7 @@ function EmptyState({ onQuickAction }: { onQuickAction: (message: string) => voi
       </div>
       <h3 className="text-lg font-semibold mb-2">AI Assistant</h3>
       <p className="text-sm text-muted-foreground mb-6 max-w-sm">
-        I can help you analyze data, send emails, track items, manage vendors and copackers, and more.
+        I can create purchase orders, invoices, products, vendors, customers, work orders, shipments, and more. I can also analyze data, send emails, track items, and manage your entire ERP system.
         What would you like to do?
       </p>
       <div className="grid grid-cols-2 gap-2 w-full max-w-md">

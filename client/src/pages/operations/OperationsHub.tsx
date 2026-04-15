@@ -421,7 +421,7 @@ export default function OperationsHub() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em]">Operations Hub</h1>
+          <h1 className="text-lg font-semibold">Operations Hub</h1>
           <p className="text-muted-foreground">
             Procurement, Manufacturing, and Inventory Management
           </p>

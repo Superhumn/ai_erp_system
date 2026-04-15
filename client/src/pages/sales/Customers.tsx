@@ -31,7 +31,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Users, Plus, Search, Loader2, RefreshCw, ShoppingBag } from "lucide-react";
+import { Users, Plus, Search, Loader2, RefreshCw, ShoppingBag, Upload } from "lucide-react";
+import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { Link } from "wouter";
 import { getStatusColor } from "@/lib/statusColors";
@@ -138,7 +139,7 @@ export default function Customers() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
             <Users className="h-8 w-8" />
             Customers
           </h1>
@@ -202,6 +203,9 @@ export default function Customers() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          <Button variant="outline" onClick={() => window.location.href = "/import"}>
+            <Upload className="h-4 w-4 mr-1" /> Import
+          </Button>
           <Dialog open={isOpen} onOpenChange={setIsOpen}>
             <DialogTrigger asChild>
               <Button>

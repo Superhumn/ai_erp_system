@@ -1,26 +1,34 @@
 import express, { type Express } from "express";
 import fs from "fs";
 import { type Server } from "http";
-import { nanoid } from "nanoid";
 import path from "path";
-import { createServer as createViteServer } from "vite";
-import viteConfig from "../../vite.config";
 
 export async function setupVite(app: Express, server: Server) {
+  // These are dynamically imported to avoid bundling vite/plugins in production.
+  // When built with esbuild --packages=external, static imports of vite and
+  // vite plugins cause ERR_MODULE_NOT_FOUND since they're devDependencies.
+  const vite = await import(/* @vite-ignore */ "vite");
+  const viteConfigModule = await import(/* @vite-ignore */ "../../vite.config");
+  const nanoidModule = await import("nanoid");
+
+  const createViteServer = vite.createServer;
+  const viteConfig = viteConfigModule.default;
+  const nanoid = nanoidModule.nanoid;
+
   const serverOptions = {
     middlewareMode: true,
     hmr: { server },
     allowedHosts: true as const,
   };
 
-  const vite = await createViteServer({
+  const viteServer = await createViteServer({
     ...viteConfig,
     configFile: false,
     server: serverOptions,
     appType: "custom",
   });
 
-  app.use(vite.middlewares);
+  app.use(viteServer.middlewares);
   app.use("*", async (req, res, next) => {
     const url = req.originalUrl;
 
@@ -32,16 +40,15 @@ export async function setupVite(app: Express, server: Server) {
         "index.html"
       );
 
-      // always reload the index.html file from disk incase it changes
       let template = await fs.promises.readFile(clientTemplate, "utf-8");
       template = template.replace(
         `src="/src/main.tsx"`,
         `src="/src/main.tsx?v=${nanoid()}"`
       );
-      const page = await vite.transformIndexHtml(url, template);
+      const page = await viteServer.transformIndexHtml(url, template);
       res.status(200).set({ "Content-Type": "text/html" }).end(page);
     } catch (e) {
-      vite.ssrFixStacktrace(e as Error);
+      viteServer.ssrFixStacktrace(e as Error);
       next(e);
     }
   });
