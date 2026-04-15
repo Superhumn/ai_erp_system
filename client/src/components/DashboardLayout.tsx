@@ -34,42 +34,31 @@ import {
   LogOut,
   PanelLeft,
   ShoppingCart,
-  Package,
   Users,
   Scale,
   Settings,
   Warehouse,
   Truck,
   Mail,
-  ArrowLeftRight,
   ClipboardCheck,
   FolderLock,
   Target,
-  BarChart3,
-  Factory,
   UserCircle,
   Network,
   Upload,
-  LineChart,
-  Megaphone,
-  FileBarChart,
-  Clock,
   Sun,
   Moon,
   Mic,
   MessageSquare,
   BookOpen,
-  Calculator,
   Handshake,
   FlaskConical,
   Award,
   DollarSign,
   Code2,
-  Headphones,
   PenTool,
   UserPlus,
   Bot,
-  Building2,
 } from "lucide-react";
 import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -104,6 +93,9 @@ function getMenuGroups(role: string = "user") {
       items: [
         { icon: LayoutDashboard, label: "Dashboard", path: "/" },
         { icon: Target, label: "Projects", path: "/projects" },
+        { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
+        { icon: Mic, label: "Meetings", path: "/meetings" },
+        { icon: MessageSquare, label: "Messaging", path: "/messaging" },
       ],
     },
 
@@ -114,7 +106,6 @@ function getMenuGroups(role: string = "user") {
         { icon: ShoppingCart, label: "Orders", path: "/sales/orders" },
         ...(hasSales ? [
           { icon: UserCircle, label: "Sales / CRM", path: "/crm/hub" },
-          { icon: Headphones, label: "Support", path: "/cx/support" },
           { icon: PenTool, label: "Marketing", path: "/marketing" },
         ] : []),
       ],
@@ -124,13 +115,11 @@ function getMenuGroups(role: string = "user") {
     ...(hasFinance ? [{
       label: "Finance",
       items: [
-        { icon: DollarSign, label: "Accounts", path: "/finance/accounts" },
-        { icon: ArrowLeftRight, label: "Transactions", path: "/finance/transactions" },
-        { icon: BarChart3, label: "Reports", path: "/finance/reports" },
-        { icon: Calculator, label: "R&D Tax Credit", path: "/finance/rd-tax-credit" },
-        { icon: Handshake, label: "Fundraising", path: "/crm" },
-        { icon: Megaphone, label: "Campaigns", path: "/crm/campaigns" },
+        { icon: DollarSign, label: "Finance", path: "/finance" },
+        { icon: Award, label: "Grants", path: "/grants/submitter" },
+        { icon: Handshake, label: "Fundraising", path: "/crm/campaigns" },
         { icon: Users, label: "Investors", path: "/crm/investors" },
+        { icon: FolderLock, label: "Data Room", path: "/dataroom/1" },
       ],
     }] : []),
 
@@ -138,54 +127,35 @@ function getMenuGroups(role: string = "user") {
     ...(hasOps ? [{
       label: "Operations",
       items: [
-        { icon: Warehouse, label: "Inventory", path: "/operations/inventory-hub" },
-        { icon: Factory, label: "Manufacturing", path: "/operations/manufacturing-hub" },
-        { icon: Building2, label: "Procurement", path: "/operations/procurement-hub" },
-        { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
-        { icon: FlaskConical, label: "Recipes", path: "/operations/recipes" },
+        { icon: Warehouse, label: "Operations", path: "/operations" },
+        { icon: Truck, label: "Logistics", path: "/freight" },
+        ...(isAdmin || role === "ops" ? [
+          { icon: FlaskConical, label: "Recipes", path: "/operations/recipes" },
+        ] : []),
         { icon: Users, label: "Vendors", path: "/operations/vendors" },
-        { icon: Package, label: "Freight", path: "/freight" },
       ],
     }] : []),
 
-    // 5. Communications — always visible
-    {
-      label: "Communications",
-      items: [
-        { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
-        { icon: Mic, label: "Meetings", path: "/meetings" },
-        { icon: MessageSquare, label: "Messaging", path: "/messaging" },
-      ],
-    },
-
-    // 6. People — always visible, content varies by role
+    // 5. People — always visible, content varies by role
     {
       label: "People",
       items: [
-        ...(isAdmin ? [
-          { icon: Users, label: "People", path: "/hr/employees" },
-          { icon: UserPlus, label: "Recruiting", path: "/hr/recruiting" },
-          { icon: FileBarChart, label: "Investors", path: "/hr/investors" },
-        ] : [
-          { icon: Clock, label: "Time Tracking", path: "/hr/time-tracking" },
-          { icon: LineChart, label: "Equity Portal", path: "/hr/equity-portal" },
-        ]),
+        { icon: Users, label: "HR", path: "/hr" },
+        { icon: UserPlus, label: "Recruiting", path: "/hr/recruiting" },
         ...(hasLegal ? [
           { icon: Scale, label: "Legal", path: "/legal" },
         ] : []),
       ],
     },
 
-    // 7. Tools — always visible, some items role-restricted
+    // 6. Tools — always visible, some items role-restricted
     {
       label: "Tools",
       items: [
         { icon: BookOpen, label: "SOPs", path: "/sops" },
-        { icon: Code2, label: "Code", path: "/code" },
-        { icon: Settings, label: "Settings", path: "/settings" },
-        ...(hasFinance ? [
-          { icon: FolderLock, label: "Data Room", path: "/dataroom/1" },
-          { icon: Award, label: "Grants", path: "/grants/submitter" },
+        ...(isAdmin ? [
+          { icon: Code2, label: "Code", path: "/code" },
+          { icon: Settings, label: "Settings", path: "/settings" },
         ] : []),
         ...((isAdmin || hasOps) ? [
           { icon: Upload, label: "Import", path: "/import" },
