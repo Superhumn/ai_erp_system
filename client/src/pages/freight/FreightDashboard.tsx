@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, lazy, Suspense } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,9 @@ import {
   AlertCircle, Plus, Loader2, Search, Ship, Plane,
 } from "lucide-react";
 import { Link } from "wouter";
+import { MapPin } from "lucide-react";
+
+const LogisticsHub = lazy(() => import("../operations/LogisticsHub"));
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
 
@@ -116,6 +119,10 @@ export default function FreightDashboard() {
                 <TabsTrigger value="carriers" className="flex items-center gap-1.5">
                   <Truck className="h-3.5 w-3.5" />
                   Carriers
+                </TabsTrigger>
+                <TabsTrigger value="shipments" className="flex items-center gap-1.5">
+                  <MapPin className="h-3.5 w-3.5" />
+                  Shipments
                 </TabsTrigger>
               </TabsList>
             </Tabs>
@@ -373,6 +380,14 @@ export default function FreightDashboard() {
                 )}
               </TableBody>
             </Table>
+          )}
+
+          {tab === "shipments" && (
+            <div className="p-4">
+              <Suspense fallback={<div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}>
+                <LogisticsHub />
+              </Suspense>
+            </div>
           )}
         </CardContent>
       </Card>
