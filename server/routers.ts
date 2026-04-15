@@ -53,7 +53,7 @@ import type { Request as ExpressRequest } from 'express';
 function stripShopifyStoreSecrets<T extends { accessToken?: any; webhookSecret?: any }>(
   store: T
 ): Omit<T, 'accessToken' | 'webhookSecret'> {
-  const { accessToken: _a, webhookSecret: _w, ...safe } = store;
+  const { accessToken: _accessToken, webhookSecret: _webhookSecret, ...safe } = store;
   return safe;
 }
 
@@ -10653,8 +10653,8 @@ Ask if they received the original request and if they can provide a quote.`;
           signerTitle: z.string().optional(),
           signerCompany: z.string().optional(),
           signatureType: z.enum(['typed', 'drawn']),
-          signatureData: z.string().max(5_000_000), // 5 MB base64 character limit (~3.75 MB decoded)
-          consentCheckbox: z.literal(true),
+          signatureData: z.string().max(2_000_000), // 2 MB base64 character limit (~1.5 MB decoded)
+          consentCheckbox: z.boolean().refine(val => val === true, { message: 'You must consent to the NDA terms' }),
         }))
         .mutation(async ({ input, ctx }) => {
           // Get the NDA document
