@@ -1,11 +1,10 @@
 import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { DollarSign, ArrowLeftRight, BarChart3, FlaskConical } from "lucide-react";
+import { DollarSign, BarChart3, FlaskConical } from "lucide-react";
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 
-const Accounts = lazy(() => import("./Accounts"));
-const Transactions = lazy(() => import("./Transactions"));
+const AccountsAndTransactions = lazy(() => import("./AccountsAndTransactions"));
 const FinancialReports = lazy(() => import("./FinancialReports"));
 const RdTaxCredit = lazy(() => import("./RdTaxCredit"));
 
@@ -16,7 +15,7 @@ const fallback = (
 );
 
 export default function FinanceHub() {
-  const [tab, setTab] = useState("accounts");
+  const [tab, setTab] = useState("ledger");
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -32,13 +31,9 @@ export default function FinanceHub() {
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
-          <TabsTrigger value="accounts" className="flex items-center gap-1.5">
+          <TabsTrigger value="ledger" className="flex items-center gap-1.5">
             <DollarSign className="h-4 w-4" />
-            Accounts
-          </TabsTrigger>
-          <TabsTrigger value="transactions" className="flex items-center gap-1.5">
-            <ArrowLeftRight className="h-4 w-4" />
-            Transactions
+            Accounts & Transactions
           </TabsTrigger>
           <TabsTrigger value="reports" className="flex items-center gap-1.5">
             <BarChart3 className="h-4 w-4" />
@@ -50,11 +45,8 @@ export default function FinanceHub() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="accounts">
-          <Suspense fallback={fallback}><Accounts /></Suspense>
-        </TabsContent>
-        <TabsContent value="transactions">
-          <Suspense fallback={fallback}><Transactions /></Suspense>
+        <TabsContent value="ledger">
+          <Suspense fallback={fallback}><AccountsAndTransactions /></Suspense>
         </TabsContent>
         <TabsContent value="reports">
           <Suspense fallback={fallback}><FinancialReports /></Suspense>
