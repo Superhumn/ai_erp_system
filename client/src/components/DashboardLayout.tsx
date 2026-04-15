@@ -34,56 +34,31 @@ import {
   LogOut,
   PanelLeft,
   ShoppingCart,
-  Package,
   Users,
   Scale,
   Settings,
-  FileText,
   Warehouse,
   Truck,
   Mail,
-  ChevronDown,
-  Bell,
-  MapPin,
-  ArrowLeftRight,
-  ArrowRightLeft,
   ClipboardCheck,
-  ClipboardList,
   FolderLock,
   Target,
-  BarChart3,
-  CircleDollarSign,
-  Wrench,
-  Factory,
   UserCircle,
-  Receipt,
-  Landmark,
   Network,
   Upload,
-  LineChart,
-  Megaphone,
-  FileBarChart,
-  Clock,
   Sun,
   Moon,
   Mic,
   MessageSquare,
   BookOpen,
-  Plus,
-  Calculator,
   Handshake,
   FlaskConical,
   Award,
   DollarSign,
-  Banknote,
-  TrendingUp,
   Code2,
-  Headphones,
   PenTool,
   UserPlus,
   Bot,
-  Heart,
-  Building2,
 } from "lucide-react";
 import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -104,107 +79,94 @@ import {
   TooltipTrigger,
 } from "./ui/tooltip";
 
-function getMenuGroups(role: string = "user") {
+/** @see DashboardLayout.test.tsx — structure is enforced by tests. Do not reorganize without updating the test. */
+export function getMenuGroups(role: string = "user") {
   const isAdmin = ["admin", "exec"].includes(role);
   const hasFinance = ["admin", "exec", "finance"].includes(role);
   const hasOps = ["admin", "exec", "ops"].includes(role);
   const hasLegal = ["admin", "exec", "legal"].includes(role);
-  const hasSales = ["admin", "exec", "ops", "finance", "sales"].includes(role);
+  const hasSales = ["admin", "exec", "sales"].includes(role);
+
   return [
-  {
-    label: "_main",
-    items: [
-      { icon: LayoutDashboard, label: "Dashboard", path: "/" },
-      { icon: Target, label: "Projects", path: "/projects" },
-      { icon: Bot, label: "AI Assistant", path: "/ai" },
-      { icon: ClipboardList, label: "Approval Queue", path: "/ai/approvals" },
-    ],
-  },
-  {
-    label: "Sales & Finance",
-    items: [
-      { icon: ShoppingCart, label: "Sales Hub", path: "/sales/hub" },
-      { icon: Heart, label: "Fundraising CRM", path: "/crm" },
-      { icon: Users, label: "Investors", path: "/crm/investors" },
-      { icon: Target, label: "Campaigns", path: "/crm/campaigns" },
-      { icon: DollarSign, label: "Accounts", path: "/finance/accounts" },
-      { icon: TrendingUp, label: "Transactions", path: "/finance/transactions" },
-      { icon: FlaskConical, label: "R&D Tax Credit", path: "/finance/rd-tax-credit" },
-    ],
-  },
-  {
-    label: "CRM",
-    items: [
-      { icon: Target, label: "CRM Hub", path: "/crm/hub" },
-      { icon: Users, label: "Contacts", path: "/crm/contacts" },
-      { icon: MessageSquare, label: "Messaging", path: "/crm/messaging" },
-    ],
-  },
-  {
-    label: "Operations",
-    items: [
-      { icon: Package, label: "Operations", path: "/operations" },
-      { icon: Package, label: "Inventory", path: "/operations/inventory-hub" },
-      { icon: ClipboardList, label: "Inventory Mgmt", path: "/operations/inventory-management" },
-      { icon: Warehouse, label: "Manufacturing", path: "/operations/manufacturing-hub" },
-      { icon: Building2, label: "Procurement", path: "/operations/procurement-hub" },
-      { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
-      { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
-      { icon: Mic, label: "Meetings", path: "/meetings" },
-      { icon: MessageSquare, label: "Messaging", path: "/messaging" },
-    ],
-  },
-  ...(hasSales || isAdmin ? [{
-    label: "_sell",
-    items: [
-      ...(hasOps || isAdmin ? [{ icon: ShoppingCart, label: "Orders", path: "/sales/orders" }] : []),
-      { icon: UserCircle, label: "CRM", path: "/crm/hub" },
-      { icon: Headphones, label: "Support", path: "/cx/support" },
-      ...(isAdmin ? [{ icon: PenTool, label: "Marketing", path: "/marketing" }] : []),
-      ...(hasFinance || isAdmin ? [{ icon: BarChart3, label: "Financials", path: "/finance/reports" }] : []),
-      ...(isAdmin ? [{ icon: TrendingUp, label: "Fundraising", path: "/crm/campaigns" }] : []),
-    ],
-  }] : []),
-  ...(hasOps || isAdmin ? [{
-    label: "_ops",
-    items: [
-      { icon: Warehouse, label: "Inventory", path: "/operations/inventory-hub" },
-      { icon: Factory, label: "Recipes", path: "/operations/recipes" },
-      { icon: Truck, label: "Freight", path: "/freight" },
-      { icon: Users, label: "Vendors", path: "/operations/vendors" },
-    ],
-  }] : []),
-  {
-    label: "_people",
-    items: [
-      ...(isAdmin ? [
-        { icon: Users, label: "People", path: "/hr/employees" },
-        { icon: UserPlus, label: "Recruiting", path: "/hr/recruiting" },
-        { icon: FileBarChart, label: "Investors", path: "/hr/investors" },
-      ] : [
-        { icon: Clock, label: "Time Tracking", path: "/hr/time-tracking" },
-        { icon: LineChart, label: "Equity Portal", path: "/hr/equity-portal" },
-      ]),
-      ...(hasLegal || isAdmin ? [
-        { icon: Scale, label: "Legal", path: "/legal" },
-      ] : []),
-    ],
-  },
-  {
-    label: "_tools",
-    items: [
-      { icon: BookOpen, label: "SOPs", path: "/sops" },
-      ...(isAdmin ? [
-        { icon: FolderLock, label: "Data Room", path: "/dataroom/1" },
+    // 1. Command Center — always visible
+    {
+      label: "Command Center",
+      items: [
+        { icon: LayoutDashboard, label: "Dashboard", path: "/" },
+        { icon: Target, label: "Projects", path: "/projects" },
+        { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
+        { icon: Mic, label: "Meetings", path: "/meetings" },
+        { icon: MessageSquare, label: "Messaging", path: "/messaging" },
+      ],
+    },
+
+    // 2. Sales — sales, ops (for orders), admin, exec
+    ...((hasSales || hasOps) ? [{
+      label: "Sales",
+      items: [
+        { icon: ShoppingCart, label: "Orders", path: "/sales/orders" },
+        ...(hasSales ? [
+          { icon: UserCircle, label: "Sales / CRM", path: "/crm/hub" },
+          { icon: PenTool, label: "Marketing", path: "/marketing" },
+        ] : []),
+      ],
+    }] : []),
+
+    // 3. Finance — admin, exec, finance
+    ...(hasFinance ? [{
+      label: "Finance",
+      items: [
+        { icon: DollarSign, label: "Finance", path: "/finance" },
         { icon: Award, label: "Grants", path: "/grants/submitter" },
-        { icon: Upload, label: "Import", path: "/import" },
-        { icon: Network, label: "EDI", path: "/edi" },
-      ] : []),
-      { icon: Code2, label: "Code", path: "/code" },
-      { icon: Settings, label: "Settings", path: "/settings" },
-    ],
-  },
-];
+        { icon: Handshake, label: "Fundraising", path: "/crm/campaigns" },
+        { icon: Users, label: "Investors", path: "/crm/investors" },
+        { icon: FolderLock, label: "Data Room", path: "/dataroom/1" },
+      ],
+    }] : []),
+
+    // 4. Operations — admin, exec, ops
+    ...(hasOps ? [{
+      label: "Operations",
+      items: [
+        { icon: Warehouse, label: "Operations", path: "/operations" },
+        { icon: Truck, label: "Logistics", path: "/freight" },
+        ...(isAdmin || role === "ops" ? [
+          { icon: FlaskConical, label: "Recipes", path: "/operations/recipes" },
+        ] : []),
+        { icon: Users, label: "Vendors", path: "/operations/vendors" },
+      ],
+    }] : []),
+
+    // 5. People — always visible, content varies by role
+    {
+      label: "People",
+      items: [
+        { icon: Users, label: "HR", path: "/hr" },
+        { icon: UserPlus, label: "Recruiting", path: "/hr/recruiting" },
+        ...(hasLegal ? [
+          { icon: Scale, label: "Legal", path: "/legal" },
+        ] : []),
+      ],
+    },
+
+    // 6. Tools — always visible, some items role-restricted
+    {
+      label: "Tools",
+      items: [
+        { icon: BookOpen, label: "SOPs", path: "/sops" },
+        ...(isAdmin ? [
+          { icon: Code2, label: "Code", path: "/code" },
+          { icon: Settings, label: "Settings", path: "/settings" },
+        ] : []),
+        ...((isAdmin || hasOps) ? [
+          { icon: Upload, label: "Import", path: "/import" },
+        ] : []),
+        ...(hasOps ? [
+          { icon: Network, label: "EDI", path: "/edi" },
+        ] : []),
+      ],
+    },
+  ];
 }
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
@@ -297,12 +259,12 @@ function DashboardLayoutContent({
             case 'd': setLocation('/'); break; // Dashboard
             case 'e': setLocation('/operations/email-inbox'); break; // Email Inbox
             case 'v': setLocation('/operations/vendors'); break; // Vendors
-            case 'i': setLocation('/operations/inventory-hub'); break; // Inventory
+            case 'i': setLocation('/operations'); break; // Operations
             case 'o': setLocation('/sales/orders'); break; // Orders
             case 'w': setLocation('/operations/work-orders'); break; // Work Orders
             case 'c': setLocation('/crm/hub'); break; // CRM
-            case 'a': setLocation('/finance/accounts'); break; // Accounts
-            case 't': setLocation('/finance/transactions'); break; // Transactions
+            case 'a': setLocation('/finance'); break; // Finance
+            case 't': setLocation('/finance'); break; // Finance (Transactions tab)
             case 's': setLocation('/settings'); break; // Settings
           case 'm': setLocation('/meetings'); break; // Meetings
           }
@@ -320,12 +282,12 @@ function DashboardLayoutContent({
           'g d - Dashboard\n' +
           'g e - Email Inbox\n' +
           'g v - Vendors\n' +
-          'g i - Inventory\n' +
+          'g i - Operations\n' +
           'g o - Orders\n' +
           'g w - Work Orders\n' +
           'g c - CRM\n' +
-          'g a - Accounts\n' +
-          'g t - Transactions\n' +
+          'g a - Finance\n' +
+          'g t - Finance\n' +
           'g s - Settings\n' +
         'g m - Meetings',
           { duration: 5000 }
@@ -418,6 +380,11 @@ function DashboardLayoutContent({
               {getMenuGroups(user?.role).map((group, gi) => (
                 <div key={group.label}>
                   {gi > 0 && !isCollapsed && <div className="border-t border-border/30 my-1.5" />}
+                  {!isCollapsed && (
+                    <div className="px-2 pt-2 pb-1 text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-widest select-none">
+                      {group.label}
+                    </div>
+                  )}
                   {group.items.map(item => {
                     const isActive = location === item.path;
                     const btn = (
@@ -520,7 +487,40 @@ function DashboardLayoutContent({
             {isMobile && <SidebarTrigger className="h-8 w-8 rounded-md" />}
           </div>
           <AICommandBar />
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setLocation("/ai")}
+                  className={`flex items-center gap-1.5 h-8 px-2.5 rounded-md text-[13px] transition-colors duration-100 ${
+                    location === "/ai"
+                      ? "bg-accent text-foreground font-medium"
+                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                  }`}
+                >
+                  <Bot className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">AI</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>AI Assistant</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setLocation("/ai/approvals")}
+                  className={`flex items-center gap-1.5 h-8 px-2.5 rounded-md text-[13px] transition-colors duration-100 ${
+                    location === "/ai/approvals"
+                      ? "bg-accent text-foreground font-medium"
+                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                  }`}
+                >
+                  <ClipboardCheck className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Approvals</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Approval Queue</TooltipContent>
+            </Tooltip>
+            <div className="w-px h-5 bg-border mx-1" />
             <AutonomousAgentBar />
             <NotificationCenter />
           </div>

@@ -21,6 +21,7 @@ const GlobalSearch = lazy(() => import("./pages/GlobalSearch"));
 const Notifications = lazy(() => import("./pages/Notifications"));
 
 // Finance
+const FinanceHub = lazy(() => import("./pages/finance/FinanceHub"));
 const Accounts = lazy(() => import("./pages/finance/Accounts"));
 const Invoices = lazy(() => import("./pages/finance/Invoices"));
 const Payments = lazy(() => import("./pages/finance/Payments"));
@@ -94,6 +95,7 @@ const CustomsClearance = lazy(() => import("./pages/freight/CustomsClearance"));
 const CustomsDetail = lazy(() => import("./pages/freight/CustomsDetail"));
 
 // HR
+const HRHub = lazy(() => import("./pages/hr/HRHub"));
 const Employees = lazy(() => import("./pages/hr/Employees"));
 const Payroll = lazy(() => import("./pages/hr/Payroll"));
 const EquityPortal = lazy(() => import("./pages/hr/EquityPortal"));
@@ -214,6 +216,7 @@ function Router() {
           <Route path="/settings/shopify" component={ShopifySettings} />
 
           {/* Finance */}
+          <Route path="/finance" component={FinanceHub} />
           <Route path="/finance/accounts" component={Accounts} />
           <Route path="/finance/invoices" component={Invoices} />
           <Route path="/finance/payments" component={Payments} />
@@ -299,6 +302,7 @@ function Router() {
           <Route path="/hr/recruiting" component={Recruiting} />
 
           {/* HR */}
+          <Route path="/hr" component={HRHub} />
           <Route path="/hr/investors" component={InvestorsHub} />
           <Route path="/hr/employees" component={Employees} />
           <Route path="/hr/payroll" component={Payroll} />
