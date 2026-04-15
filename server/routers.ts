@@ -1,7 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { eq, and } from "drizzle-orm";
-import { encrypt, decrypt, safeDecryptToken } from "./_core/crypto";
+import { safeDecryptToken } from "./_core/crypto";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
@@ -36,7 +36,7 @@ import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
-import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, getFolderInfo, getSimpleFileType, downloadDriveFile } from "./_core/googleDrive";
+import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType, downloadDriveFile } from "./_core/googleDrive";
 import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems } from "./_core/quickbooks";
 import { listAllTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { queueFirefliesActionItemsForApproval } from "./firefliesSyncService";
@@ -46,6 +46,28 @@ import { collectERPData, autoPopulateFields, generateApplicationNarrative, revie
 import { runFormFillerAgent } from "./formFillerAgent";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
 import { purchaseOrderTextEndpoints, shipmentTextEndpoints, paymentTextEndpoints, workOrderTextEndpoints, inventoryTextEndpoints } from "./naturalLanguageRouterExtensions";
+import { encrypt, decrypt } from "./_core/crypto";
+import { ENV } from "./_core/env";
+import { createDecipheriv, createHash } from "crypto";
+
+// Decrypts a stored password supporting both the current AES-256-GCM format
+// (iv:authTag:ciphertext) and the legacy AES-256-CBC format (plain hex ciphertext).
+function decryptPassword(encryptedText: string): string {
+  if (encryptedText.split(":").length === 3) {
+    return decrypt(encryptedText);
+  }
+  // Legacy CBC fallback for passwords stored before the GCM migration.
+  // Uses ENV.cookieSecret which is validated at startup (no insecure fallback).
+  const key = ENV.cookieSecret;
+  const decipher = createDecipheriv(
+    "aes-256-cbc",
+    createHash("sha256").update(key).digest().slice(0, 32),
+    Buffer.alloc(16, 0),
+  );
+  let decrypted = decipher.update(encryptedText, "hex", "utf8");
+  decrypted += decipher.final("utf8");
+  return decrypted;
+}
 
 // Role-based access middleware
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -207,12 +229,14 @@ function hashPassword(password: string): string {
   return `${salt}:${hash}`;
 }
 
-function verifyPassword(password: string, stored: string): boolean {
+function verifyPassword(password: string, stored: string): { valid: boolean; needsUpgrade: boolean } {
   const crypto = require('crypto');
   const [salt, hash] = stored.split(':');
-  if (!salt || !hash) return false;
-  const verifyHash = crypto.scryptSync(password, salt, 64).toString('hex');
-  return verifyHash === hash;
+  if (!salt || !hash) return { valid: false, needsUpgrade: false };
+  const computed = crypto.scryptSync(password, salt, 64);
+  const storedBuf = Buffer.from(hash, 'hex');
+  const valid = computed.length === storedBuf.length && crypto.timingSafeEqual(computed, storedBuf);
+  return { valid, needsUpgrade: false };
 }
 
 
@@ -13301,6 +13325,108 @@ Ask if they received the original request and if they can provide a quote.`;
             totalFiles: syncResult.files.length,
           };
         }),
+
+      // List files (non-folders) inside a Google Drive folder
+      listFiles: protectedProcedure
+        .input(z.object({
+          folderId: z.string(),
+        }))
+        .query(async ({ ctx, input }) => {
+          const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+          if (error) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+          }
+
+          const result = await listDriveFiles(accessToken, input.folderId);
+          if (result.error) {
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
+          }
+
+          return { files: result.files };
+        }),
+
+      // Sync a single Google Drive file to a data room
+      syncFile: protectedProcedure
+        .input(z.object({
+          dataRoomId: z.number(),
+          googleDriveFileId: z.string(),
+          folderId: z.number().nullable().optional(),
+        }))
+        .mutation(async ({ ctx, input }) => {
+          const room = await db.getDataRoomById(input.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
+          const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+          if (error) {
+            throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+          }
+
+          // Fetch file metadata
+          const { file: driveFile, error: metaError } = await getFileMetadata(accessToken, input.googleDriveFileId);
+          if (metaError || !driveFile) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: metaError || 'File not found in Google Drive' });
+          }
+
+          // Check if already synced
+          const existingDocs = await db.getDataRoomDocuments(input.dataRoomId);
+          if (existingDocs.some(d => d.googleDriveFileId === driveFile.id)) {
+            throw new TRPCError({ code: 'CONFLICT', message: 'This file has already been synced to this data room' });
+          }
+
+          const downloaded = await downloadDriveFile(accessToken, driveFile.id, driveFile.mimeType);
+
+          const isGoogleWorkspaceFile = driveFile.mimeType.startsWith('application/vnd.google-apps.');
+          const displayName = isGoogleWorkspaceFile ? `${driveFile.name}.pdf` : driveFile.name;
+
+          const effectiveMimeType = ('exportedMimeType' in downloaded) ? downloaded.exportedMimeType : driveFile.mimeType;
+          const fileType = getSimpleFileType(effectiveMimeType);
+
+          let storageType: 'google_drive' | 's3' = 'google_drive';
+          let storageUrl: string | undefined;
+          let storageKey: string | undefined;
+          let fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
+            ? parseInt(driveFile.size)
+            : undefined;
+
+          if ('buffer' in downloaded) {
+            fileSize = downloaded.buffer.length;
+            try {
+              const fileKey = `dataroom/${input.dataRoomId}/${nanoid()}-${displayName}`;
+              const result = await storagePut(fileKey, downloaded.buffer, downloaded.exportedMimeType);
+              storageUrl = result.url;
+              storageKey = result.key;
+              storageType = 's3';
+            } catch {
+              if (downloaded.buffer.length < 5 * 1024 * 1024) {
+                storageUrl = `data:${downloaded.exportedMimeType};base64,${downloaded.buffer.toString('base64')}`;
+                storageType = 's3';
+              }
+            }
+          } else {
+            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: `Failed to download file: ${downloaded.error}` });
+          }
+
+          await db.createDataRoomDocument({
+            dataRoomId: input.dataRoomId,
+            folderId: input.folderId ?? null,
+            name: displayName,
+            fileType,
+            mimeType: effectiveMimeType,
+            fileSize,
+            storageType,
+            storageUrl,
+            storageKey,
+            googleDriveFileId: driveFile.id,
+            googleDriveWebViewLink: driveFile.webViewLink,
+            thumbnailUrl: driveFile.thumbnailLink,
+            uploadedBy: ctx.user.id,
+          });
+
+          return { success: true, fileName: displayName };
+        }),
     }),
 
     // Public access endpoints (no auth required)
@@ -13340,16 +13466,20 @@ Ask if they received the original request and if they can provide a quote.`;
             return { requiresInfo: true, requiredFields: ['email'], dataRoomId: null, visitorId: null };
           }
 
-          // Check password
           if (link.password) {
             if (!input.password) {
               return { requiresPassword: true, dataRoomId: null, visitorId: null };
             }
-            const matches = link.password.includes(':')
-              ? verifyPassword(input.password, link.password)
-              : require('crypto').createHash('sha256').update(input.password).digest('hex') === link.password;
-            if (!matches) {
+
+            const { valid, needsUpgrade } = verifyPassword(input.password, link.password);
+
+            if (!valid) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid password' });
+            }
+
+            if (needsUpgrade) {
+              const upgradedHash = hashPassword(input.password);
+              await db.updateDataRoomLink(link.id, { password: upgradedHash });
             }
           }
 
@@ -13710,8 +13840,8 @@ Ask if they received the original request and if they can provide a quote.`;
           try {
             // Get Google OAuth token for the user configured for sync (or current user as fallback)
             const syncUserId = config.syncUserId || ctx.user.id;
-            const token = await db.getGoogleOAuthTokenByUserId(syncUserId);
-            if (!token) {
+            const { accessToken: syncAccessToken, error: syncTokenErr } = await getValidGoogleToken(syncUserId);
+            if (syncTokenErr || !syncAccessToken) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected. Please connect your Google account first.' });
             }
 
@@ -13721,8 +13851,7 @@ Ask if they received the original request and if they can provide a quote.`;
             const result = await syncGoogleDriveFolder({
               dataRoomId: input.dataRoomId,
               folderId: config.googleDriveFolderId,
-              accessToken: token.accessToken,
-              refreshToken: token.refreshToken || undefined,
+              accessToken: syncAccessToken,
               syncSubfolders: config.syncSubfolders,
               includeFileTypes: config.includeFileTypes ? JSON.parse(config.includeFileTypes) : undefined,
               excludeFileTypes: config.excludeFileTypes ? JSON.parse(config.excludeFileTypes) : undefined,
@@ -13771,13 +13900,13 @@ Ask if they received the original request and if they can provide a quote.`;
       listDriveFolders: protectedProcedure
         .input(z.object({ parentId: z.string().optional() }))
         .query(async ({ input, ctx }) => {
-          const token = await db.getGoogleOAuthTokenByUserId(ctx.user.id);
-          if (!token) {
+          const { accessToken: listAccessToken, error: listTokenErr } = await getValidGoogleToken(ctx.user.id);
+          if (listTokenErr || !listAccessToken) {
             throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected' });
           }
 
           const { listGoogleDriveFolders } = await import('./googleDriveSyncService');
-          return listGoogleDriveFolders(token.accessToken, input.parentId);
+          return listGoogleDriveFolders(listAccessToken, input.parentId);
         }),
     }),
 
@@ -14526,13 +14655,13 @@ Ask if they received the original request and if they can provide a quote.`;
         pollingIntervalMinutes: z.number().min(5).default(15),
       }))
       .mutation(async ({ input, ctx }) => {
-        // Encrypt password using central crypto utility (AES-256-CBC, random IV)
-        const encryptedPassword = encrypt(input.password);
+        // Encrypt password
+        const encrypted = encrypt(input.password);
 
         const { id } = await db.createImapCredential({
           ...input,
           userId: ctx.user.id,
-          encryptedPassword,
+          encryptedPassword: encrypted,
         });
 
         return { id };
@@ -14579,20 +14708,8 @@ Ask if they received the original request and if they can provide a quote.`;
           throw new TRPCError({ code: 'NOT_FOUND' });
         }
 
-        // Decrypt password — handle both new (iv:hex) and legacy (hex-only, static-IV) formats
-        let decrypted: string;
-        if (credential.encryptedPassword.includes(':')) {
-          decrypted = decrypt(credential.encryptedPassword);
-        } else {
-          const crypto = await import('crypto');
-          const key = process.env.JWT_SECRET || 'default-key';
-          const decipher = crypto.createDecipheriv('aes-256-cbc',
-            crypto.createHash('sha256').update(key).digest().slice(0, 32),
-            Buffer.alloc(16, 0)
-          );
-          decrypted = decipher.update(credential.encryptedPassword, 'hex', 'utf8');
-          decrypted += decipher.final('utf8');
-        }
+        // Decrypt password
+        const decrypted = decryptPassword(credential.encryptedPassword);
 
         return {
           ...credential,
@@ -14637,7 +14754,7 @@ Ask if they received the original request and if they can provide a quote.`;
         maxEmailsPerScan: z.number().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        // Encrypt password if provided using central crypto utility (AES-256-CBC, random IV)
+        // Encrypt password if provided
         let encryptedPassword = input.imapPassword;
         if (input.imapPassword) {
           encryptedPassword = encrypt(input.imapPassword);
@@ -14676,7 +14793,7 @@ Ask if they received the original request and if they can provide a quote.`;
         const { id, imapPassword, ...data } = input;
         let updateData: any = data;
 
-        // Encrypt new password if provided using central crypto utility (AES-256-CBC, random IV)
+        // Encrypt new password if provided
         if (imapPassword) {
           updateData.imapPassword = encrypt(imapPassword);
         }
@@ -14716,22 +14833,9 @@ Ask if they received the original request and if they can provide a quote.`;
             throw new TRPCError({ code: 'NOT_FOUND' });
           }
 
-          // Decrypt password — handle both new (iv:hex) and legacy (hex-only, static-IV) formats
+          // Decrypt password
           if (credential.imapPassword) {
-            let decrypted: string;
-            if (credential.imapPassword.includes(':')) {
-              decrypted = decrypt(credential.imapPassword);
-            } else {
-              const crypto = await import('crypto');
-              const key = process.env.JWT_SECRET || 'default-key';
-              const decipher = crypto.createDecipheriv('aes-256-cbc',
-                crypto.createHash('sha256').update(key).digest().slice(0, 32),
-                Buffer.alloc(16, 0)
-              );
-              decrypted = decipher.update(credential.imapPassword, 'hex', 'utf8');
-              decrypted += decipher.final('utf8');
-            }
-            config = { ...credential, imapPassword: decrypted };
+            config = { ...credential, imapPassword: decryptPassword(credential.imapPassword) };
           }
         }
 
@@ -14932,12 +15036,13 @@ Ask if they received the original request and if they can provide a quote.`;
           signerCompany: z.string().optional(),
           signatureType: z.enum(['typed', 'drawn']),
           signatureData: z.string(), // Base64 for drawn, typed name for typed
-          consentCheckbox: z.boolean(),
+          consentCheckbox: z.literal(true),
         }))
         .mutation(async ({ input, ctx }) => {
           // Get the NDA document
           const ndaDoc = await db.getNdaDocumentById(input.ndaDocumentId);
           if (!ndaDoc) throw new TRPCError({ code: 'NOT_FOUND', message: 'NDA document not found' });
+          if (ndaDoc.dataRoomId !== input.dataRoomId) throw new TRPCError({ code: 'BAD_REQUEST', message: 'NDA document does not belong to this data room' });
 
           // Get IP address from request
           const ipAddress = ctx.req.headers['x-forwarded-for'] as string || ctx.req.socket.remoteAddress || 'unknown';
@@ -15182,8 +15287,8 @@ Ask if they received the original request and if they can provide a quote.`;
           try {
             // Get Google OAuth token for the user configured for sync (or current user as fallback)
             const syncUserId = config.syncUserId || ctx.user.id;
-            const token = await db.getGoogleOAuthToken(syncUserId);
-            if (!token) {
+            const { accessToken: syncAccessToken, error: syncTokenErr } = await getValidGoogleToken(syncUserId);
+            if (syncTokenErr || !syncAccessToken) {
               throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected. Please connect your Google account first.' });
             }
 
@@ -15193,8 +15298,7 @@ Ask if they received the original request and if they can provide a quote.`;
             const result = await syncGoogleDriveFolder({
               dataRoomId: input.dataRoomId,
               folderId: config.googleDriveFolderId,
-              accessToken: token.accessToken,
-              refreshToken: token.refreshToken || undefined,
+              accessToken: syncAccessToken,
               syncSubfolders: config.syncSubfolders,
               includeFileTypes: config.includeFileTypes ? JSON.parse(config.includeFileTypes) : undefined,
               excludeFileTypes: config.excludeFileTypes ? JSON.parse(config.excludeFileTypes) : undefined,
@@ -15243,13 +15347,13 @@ Ask if they received the original request and if they can provide a quote.`;
       listDriveFolders: protectedProcedure
         .input(z.object({ parentId: z.string().optional() }))
         .query(async ({ input, ctx }) => {
-          const token = await db.getGoogleOAuthToken(ctx.user.id);
-          if (!token) {
+          const { accessToken: listAccessToken, error: listTokenErr } = await getValidGoogleToken(ctx.user.id);
+          if (listTokenErr || !listAccessToken) {
             throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google Drive not connected' });
           }
 
           const { listGoogleDriveFolders } = await import('./googleDriveSyncService');
-          return listGoogleDriveFolders(token.accessToken, input.parentId);
+          return listGoogleDriveFolders(listAccessToken, input.parentId);
         }),
     }),
 
@@ -16071,14 +16175,14 @@ Ask if they received the original request and if they can provide a quote.`;
       .input(z.object({ token: z.string() }))
       .query(async ({ input }) => {
         const session = await db.getSupplierPortalSession(input.token);
-        if (!session) return [];
+        if (!session || session.status !== 'active') return [];
         return db.getSupplierDocuments({ portalSessionId: session.id });
       }),
     getFreightInfo: publicProcedure
       .input(z.object({ token: z.string() }))
       .query(async ({ input }) => {
         const session = await db.getSupplierPortalSession(input.token);
-        if (!session) return null;
+        if (!session || session.status !== 'active') return null;
         return db.getSupplierFreightInfo(session.purchaseOrderId);
       }),
     uploadDocument: publicProcedure

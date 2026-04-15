@@ -308,7 +308,9 @@ export async function changeUserPassword(userId: number, currentPassword: string
   // Verify current password
   const crypto = await import("crypto");
   const currentHash = crypto.pbkdf2Sync(currentPassword, localAuth.salt, 100000, 64, "sha512").toString("hex");
-  if (currentHash !== localAuth.passwordHash) throw new Error("Current password is incorrect");
+  const hashesMatch = currentHash.length === localAuth.passwordHash.length &&
+    crypto.timingSafeEqual(Buffer.from(currentHash, 'hex'), Buffer.from(localAuth.passwordHash, 'hex'));
+  if (!hashesMatch) throw new Error("Current password is incorrect");
   // Set new password
   const newSalt = crypto.randomBytes(32).toString("hex");
   const newHash = crypto.pbkdf2Sync(newPassword, newSalt, 100000, 64, "sha512").toString("hex");
@@ -1816,10 +1818,10 @@ export async function upsertGoogleOAuthToken(data: InsertGoogleOAuthToken) {
     .onDuplicateKeyUpdate({
       set: {
         accessToken: data.accessToken,
-        refreshToken: sql`COALESCE(${data.refreshToken}, ${googleOAuthTokens.refreshToken})`,
+        refreshToken: sql`COALESCE(${data.refreshToken ?? null}, ${googleOAuthTokens.refreshToken})`,
         expiresAt: data.expiresAt,
-        scope: sql`COALESCE(${data.scope}, ${googleOAuthTokens.scope})`,
-        googleEmail: sql`COALESCE(${data.googleEmail}, ${googleOAuthTokens.googleEmail})`,
+        scope: sql`COALESCE(${data.scope ?? null}, ${googleOAuthTokens.scope})`,
+        googleEmail: sql`COALESCE(${data.googleEmail ?? null}, ${googleOAuthTokens.googleEmail})`,
       },
     });
   return { id: result[0].insertId };
@@ -2610,7 +2612,8 @@ export async function createTeamInvitation(data: Omit<InsertTeamInvitation, 'inv
   const db = await getDb();
   if (!db) return null;
   
-  const inviteCode = `INV-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+  const { randomBytes } = await import('crypto');
+  const inviteCode = `INV-${randomBytes(8).toString('hex').toUpperCase()}`;
   
   const result = await db.insert(teamInvitations).values({
     ...data,
