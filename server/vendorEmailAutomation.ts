@@ -117,9 +117,9 @@ Write a concise, professional email. Return ONLY a JSON object with:
 Keep the email under 200 words. Be direct and professional. Include a clear call to action.`;
 
   try {
-    const response = await invokeLLM({ messages: [{ role: 'user', content: prompt }] });
-    const content = (response as any)?.choices?.[0]?.message?.content || '{}';
-    const parsed = JSON.parse(typeof content === 'string' ? content : JSON.stringify(content));
+    const response = await invokeLLM({ messages: [{ role: 'user' as const, content: prompt }] });
+    const rawContent = response.choices[0]?.message?.content;
+    const parsed = JSON.parse(typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent));
     return {
       subject: parsed.subject || request.subject || defaultSubject,
       body: parsed.body || "",

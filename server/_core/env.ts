@@ -1,6 +1,21 @@
+function getJwtSecret(): string {
+    const secret = process.env.JWT_SECRET;
+    if (secret && secret.length >= 32) return secret;
+    if (process.env.NODE_ENV === "production") {
+        throw new Error("JWT_SECRET must be set to at least 32 characters in production. Generate one with: openssl rand -hex 32");
+    }
+    const fallback = "dev-only-jwt-secret-not-for-production-use!!";
+    if (!secret) {
+        console.warn("[Auth] JWT_SECRET not set — using insecure dev fallback. Set JWT_SECRET in .env for production.");
+    } else {
+        console.warn("[Auth] JWT_SECRET is shorter than 32 characters — using insecure dev fallback.");
+    }
+    return fallback;
+}
+
 export const ENV = {
-    appId: process.env.VITE_APP_ID ?? "",
-    cookieSecret: process.env.JWT_SECRET ?? "",
+    appId: process.env.VITE_APP_ID || "ai_erp_system",
+    cookieSecret: getJwtSecret(),
     databaseUrl: process.env.DATABASE_URL ?? "",
     oAuthServerUrl: process.env.OAUTH_SERVER_URL ?? "",
     ownerOpenId: process.env.OWNER_OPEN_ID ?? "",
@@ -58,6 +73,19 @@ export const ENV = {
 };
 
 /**
+ * Validate critical environment variables at startup
+ */
+export function validateCriticalConfig(): void {
+  const INSECURE_DEFAULTS = ["your-secret-key-here-min-32-chars", "changeme", "secret"];
+  if (!ENV.cookieSecret || ENV.cookieSecret.length < 32 || INSECURE_DEFAULTS.includes(ENV.cookieSecret)) {
+    if (ENV.isProduction) {
+      throw new Error("CRITICAL: JWT_SECRET must be a secure random value of at least 32 characters in production");
+    }
+    console.warn("[Security] WARNING: JWT_SECRET is weak or uses a default value. Generate a secure random value for production.");
+  }
+}
+
+/**
  * Validate required environment variables for production
  * Call this at startup to fail fast if critical config is missing
  */
@@ -98,4 +126,23 @@ function isValidEmail(email: string): boolean {
  */
 export function isTransactionalEmailReady(): boolean {
     return !!(ENV.sendgridApiKey && ENV.sendgridFromEmail);
+}
+
+/**
+ * Validate critical secrets at startup. Throws in production if
+ * required secrets are missing so the process fails fast.
+ */
+export function validateRequiredSecrets(): void {
+  if (!ENV.isProduction) return;
+
+  const missing: string[] = [];
+  if (!ENV.cookieSecret) missing.push("JWT_SECRET");
+  if (!ENV.databaseUrl) missing.push("DATABASE_URL");
+
+  if (missing.length > 0) {
+    throw new Error(
+      `[FATAL] Missing required secrets in production: ${missing.join(", ")}. ` +
+      `The server cannot start without these environment variables.`
+    );
+  }
 }

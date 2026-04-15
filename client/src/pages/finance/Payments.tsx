@@ -33,14 +33,8 @@ import {
 import { CreditCard, Plus, Search, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
+import { getStatusColor } from "@/lib/statusColors";
 
 export default function Payments() {
   const [search, setSearch] = useState("");
@@ -54,13 +48,14 @@ export default function Payments() {
     notes: "",
   });
 
-  const { data: payments, isLoading, refetch } = trpc.payments.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: payments, isLoading } = trpc.payments.list.useQuery();
   const createPayment = trpc.payments.create.useMutation({
     onSuccess: () => {
       toast.success("Payment recorded successfully");
       setIsOpen(false);
       setFormData({ type: "received", amount: "", paymentMethod: "bank_transfer", referenceNumber: "", notes: "" });
-      refetch();
+      utils.payments.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -74,13 +69,6 @@ export default function Payments() {
     const matchesType = typeFilter === "all" || payment.type === typeFilter;
     return matchesSearch && matchesType;
   });
-
-  const statusColors: Record<string, string> = {
-    pending: "bg-amber-500/10 text-amber-600",
-    completed: "bg-green-500/10 text-green-600",
-    failed: "bg-red-500/10 text-red-600",
-    cancelled: "bg-gray-500/10 text-gray-500",
-  };
 
   const typeColors: Record<string, string> = {
     received: "bg-green-500/10 text-green-600",
@@ -103,7 +91,7 @@ export default function Payments() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
             <CreditCard className="h-8 w-8" />
             Payments
           </h1>
@@ -267,12 +255,12 @@ export default function Payments() {
                         ? format(new Date(payment.paymentDate), "MMM d, yyyy")
                         : "-"}
                     </TableCell>
-                    <TableCell className="capitalize">{payment.paymentMethod?.replace("_", " ") || "-"}</TableCell>
+                    <TableCell className="capitalize">{payment.paymentMethod?.replace(/_/g, " ") || "-"}</TableCell>
                     <TableCell className="text-right font-mono">
                       {formatCurrency(payment.amount)}
                     </TableCell>
                     <TableCell>
-                      <Badge className={statusColors[payment.status]}>{payment.status}</Badge>
+                      <Badge className={getStatusColor(payment.status)}>{payment.status}</Badge>
                     </TableCell>
                   </TableRow>
                 ))}

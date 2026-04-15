@@ -64,12 +64,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Link } from "wouter";
 import { toast } from "sonner";
-
-function formatCurrency(value: string | number | null | undefined) {
-  const num = typeof value === "string" ? parseFloat(value) : value;
-  if (!num) return "-";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
 
 function formatDate(value: string | Date | null | undefined) {
   if (!value) return "-";
@@ -1380,7 +1375,7 @@ export default function ProcurementHub() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+            <h1 className="text-lg font-semibold flex items-center gap-2">
               <ShoppingCart className="h-8 w-8" />
               Procurement Hub
             </h1>

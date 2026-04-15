@@ -1,27 +1,15 @@
+import React, { lazy, Suspense } from "react";
 import { trpc } from "@/lib/trpc";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
-  Ship,
-  Plane,
-  Truck,
-  FileText,
-  Package,
-  ClipboardList,
-  Building2,
-  AlertCircle,
-  Plus,
-  ArrowRight,
-  Loader2,
+  Truck, FileText, Package, Plus, Loader2, Users,
 } from "lucide-react";
 import { Link } from "wouter";
 
+const LogisticsHub = lazy(() => import("../operations/LogisticsHub"));
+
 export default function FreightDashboard() {
   const { data: stats, isLoading } = trpc.freight.dashboardStats.useQuery();
-  const { data: recentRfqs } = trpc.freight.rfqs.list.useQuery({ status: undefined });
-  const { data: recentBookings } = trpc.freight.bookings.list.useQuery({});
-  const { data: pendingClearances } = trpc.customs.clearances.list.useQuery({ status: 'pending_documents' });
 
   if (isLoading) {
     return (
@@ -32,230 +20,79 @@ export default function FreightDashboard() {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-4 animate-fade-in">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold tracking-[-0.02em]">Freight & Logistics</h1>
-          <p className="text-muted-foreground">Manage shipments, quotes, and customs clearance</p>
+          <h1 className="text-lg font-semibold flex items-center gap-2">
+            <Truck className="h-8 w-8" />
+            Logistics
+          </h1>
+          <p className="text-muted-foreground text-sm">
+            Shipments, customs, and freight management
+          </p>
         </div>
         <div className="flex gap-2">
-          <Link href="/freight/rfqs/new">
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              New Quote Request
+          <Link href="/freight/carriers">
+            <Button variant="outline" size="sm">
+              <Users className="h-3.5 w-3.5 mr-1.5" />
+              Carriers
+            </Button>
+          </Link>
+          <Link href="/freight/customs">
+            <Button variant="outline" size="sm">
+              <FileText className="h-3.5 w-3.5 mr-1.5" />
+              Customs
+            </Button>
+          </Link>
+          <Link href="/freight/tracking">
+            <Button variant="outline" size="sm">
+              <Package className="h-3.5 w-3.5 mr-1.5" />
+              Track
+            </Button>
+          </Link>
+          <Link href="/freight/rfqs">
+            <Button size="sm">
+              <Plus className="h-3.5 w-3.5 mr-1.5" />
+              New RFQ
             </Button>
           </Link>
         </div>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <ClipboardList className="h-4 w-4" />
-              Active RFQs
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.activeRfqs || 0}</div>
-            <p className="text-xs text-muted-foreground">Awaiting quotes</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              Pending Quotes
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.pendingQuotes || 0}</div>
-            <p className="text-xs text-muted-foreground">To review</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Package className="h-4 w-4" />
-              Active Bookings
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.activeBookings || 0}</div>
-            <p className="text-xs text-muted-foreground">In transit</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <AlertCircle className="h-4 w-4" />
-              Pending Clearances
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.pendingClearances || 0}</div>
-            <p className="text-xs text-muted-foreground">Need attention</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Building2 className="h-4 w-4" />
-              Active Carriers
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.totalCarriers || 0}</div>
-            <p className="text-xs text-muted-foreground">In network</p>
-          </CardContent>
-        </Card>
+      {/* Compact KPI bar */}
+      <div className="flex items-center gap-5 flex-wrap text-sm border rounded-xl px-4 py-3 bg-card">
+        <div>
+          <span className="text-xs text-muted-foreground">Active RFQs</span>
+          <div className="font-bold text-base">{stats?.activeRfqs || 0}</div>
+        </div>
+        <div className="h-8 w-px bg-border" />
+        <div>
+          <span className="text-xs text-muted-foreground">In Transit</span>
+          <div className="font-bold text-base">{stats?.activeBookings || 0}</div>
+        </div>
+        <div className="h-8 w-px bg-border" />
+        <div>
+          <span className="text-xs text-muted-foreground">Clearances</span>
+          <div className="font-bold text-base">{stats?.pendingClearances || 0}</div>
+        </div>
+        <div className="h-8 w-px bg-border" />
+        <div>
+          <span className="text-xs text-muted-foreground">Carriers</span>
+          <div className="font-bold text-base">{stats?.totalCarriers || 0}</div>
+        </div>
       </div>
 
-      {/* Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="hover:border-border/80 transition-shadow cursor-pointer">
-          <Link href="/freight/rfqs">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ClipboardList className="h-5 w-5 text-blue-600" />
-                Quote Requests
-              </CardTitle>
-              <CardDescription>Create and manage freight RFQs</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">View all RFQs</span>
-                <ArrowRight className="h-4 w-4" />
-              </div>
-            </CardContent>
-          </Link>
-        </Card>
-
-        <Card className="hover:border-border/80 transition-shadow cursor-pointer">
-          <Link href="/freight/carriers">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <div className="flex -space-x-1">
-                  <Ship className="h-4 w-4 text-blue-600" />
-                  <Plane className="h-4 w-4 text-blue-600" />
-                  <Truck className="h-4 w-4 text-blue-600" />
-                </div>
-                Carriers & Forwarders
-              </CardTitle>
-              <CardDescription>Manage your carrier network</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">View all carriers</span>
-                <ArrowRight className="h-4 w-4" />
-              </div>
-            </CardContent>
-          </Link>
-        </Card>
-
-        <Card className="hover:border-border/80 transition-shadow cursor-pointer">
-          <Link href="/freight/customs">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5 text-orange-600" />
-                Customs Clearance
-              </CardTitle>
-              <CardDescription>Track import/export clearances</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">View clearances</span>
-                <ArrowRight className="h-4 w-4" />
-              </div>
-            </CardContent>
-          </Link>
-        </Card>
-      </div>
-
-      {/* Recent Activity */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recent RFQs */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Recent Quote Requests</CardTitle>
-            <CardDescription>Latest freight RFQs</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {recentRfqs && recentRfqs.length > 0 ? (
-              <div className="space-y-3">
-                {recentRfqs.slice(0, 5).map((rfq) => (
-                  <Link key={rfq.id} href={`/freight/rfqs/${rfq.id}`}>
-                    <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted transition-colors cursor-pointer">
-                      <div>
-                        <p className="font-medium">{rfq.rfqNumber}</p>
-                        <p className="text-sm text-muted-foreground">{rfq.title}</p>
-                      </div>
-                      <Badge variant={
-                        rfq.status === 'quotes_received' ? 'default' :
-                        rfq.status === 'awarded' ? 'secondary' :
-                        rfq.status === 'sent' ? 'outline' : 'secondary'
-                      }>
-                        {rfq.status.replace(/_/g, ' ')}
-                      </Badge>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-8 text-muted-foreground">
-                <ClipboardList className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                <p>No quote requests yet</p>
-                <Link href="/freight/rfqs/new">
-                  <Button variant="link" className="mt-2">Create your first RFQ</Button>
-                </Link>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Active Bookings */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Active Bookings</CardTitle>
-            <CardDescription>Shipments in progress</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {recentBookings && recentBookings.length > 0 ? (
-              <div className="space-y-3">
-                {recentBookings.slice(0, 5).map((booking) => (
-                  <Link key={booking.id} href={`/freight/bookings/${booking.id}`}>
-                    <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted transition-colors cursor-pointer">
-                      <div>
-                        <p className="font-medium">{booking.bookingNumber}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {booking.trackingNumber || 'No tracking yet'}
-                        </p>
-                      </div>
-                      <Badge variant={
-                        booking.status === 'in_transit' ? 'default' :
-                        booking.status === 'delivered' ? 'secondary' :
-                        booking.status === 'confirmed' ? 'outline' : 'secondary'
-                      }>
-                        {booking.status.replace(/_/g, ' ')}
-                      </Badge>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-8 text-muted-foreground">
-                <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                <p>No active bookings</p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      {/* Shipments — the main view */}
+      <Suspense
+        fallback={
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        }
+      >
+        <LogisticsHub />
+      </Suspense>
     </div>
   );
 }

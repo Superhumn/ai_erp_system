@@ -58,11 +58,10 @@ describe("Vendor Negotiation Service", () => {
     vi.clearAllMocks();
 
     // Default db stubs
-    vi.mocked(db.getVendorSpendingHistory).mockResolvedValue({
-      totalSpend: 20000,
-      orderCount: 5,
-      avgOrderValue: 4000,
-    } as any);
+    // Return PO-like array: 5 orders totalling 20000
+    vi.mocked(db.getVendorSpendingHistory).mockResolvedValue(
+      Array.from({ length: 5 }, (_, i) => ({ id: i + 1, totalAmount: "4000" })) as any
+    );
     vi.mocked(db.getPurchaseOrders).mockResolvedValue([]);
     vi.mocked(db.getVendorById).mockResolvedValue({
       id: 1,
@@ -228,11 +227,10 @@ describe("Vendor Negotiation Service", () => {
     });
 
     it("rule-based fallback uses higher targetPriceReduction for high-spend vendors", async () => {
-      vi.mocked(db.getVendorSpendingHistory).mockResolvedValue({
-        totalSpend: 150000,
-        orderCount: 25,
-        avgOrderValue: 6000,
-      } as any);
+      // Return PO-like array: 25 orders totalling 150000
+      vi.mocked(db.getVendorSpendingHistory).mockResolvedValue(
+        Array.from({ length: 25 }, (_, i) => ({ id: i + 1, totalAmount: "6000" })) as any
+      );
       mockInvokeLLM.mockRejectedValue(new Error("LLM unavailable"));
 
       const result = await analyzeNegotiationOpportunity({

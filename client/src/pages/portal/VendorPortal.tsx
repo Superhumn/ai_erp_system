@@ -92,8 +92,9 @@ export default function VendorPortal() {
     reader.onload = () => {
       const base64 = (reader.result as string).split(",")[1];
       uploadCustomsDocument.mutate({
-        clearanceId: selectedClearanceId,
-        documentType: customsDocType as any,
+        relatedEntityType: "shipment" as const,
+        relatedEntityId: selectedClearanceId!,
+        documentType: customsDocType as "invoice" | "receipt" | "contract" | "legal" | "report" | "hr" | "other",
         name: file.name,
         fileData: base64,
         mimeType: file.type,

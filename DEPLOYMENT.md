@@ -132,6 +132,10 @@ See `docs/deployment-setup.md` for GitHub Actions CI/CD configuration with stagi
 
 **"Invalid session cookie" / immediate logout** — `JWT_SECRET` is missing or too short. Must be 32+ characters. Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Redeploy after setting.
 
+**404 on direct navigation** — Ensure your hosting platform serves `index.html` for all routes (SPA routing). For Railway this is handled automatically.
+
+**Seeing raw code instead of the app** — Build may not have run. Check that `pnpm run build` completed and `dist/public/` was created.
+
 **Page loads but looks broken** — Build may have failed. Check deployment logs. Verify `dist/public/` was created.
 
 **Slow first load** — Normal for cold starts (3-5s). Keep warm with health check pings. Ensure database is in the same region.

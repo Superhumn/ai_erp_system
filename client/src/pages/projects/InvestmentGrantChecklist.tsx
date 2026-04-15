@@ -35,6 +35,7 @@ import {
 import { ClipboardCheck, Plus, Search, Loader2, ArrowLeft, CheckCircle2, Circle, Clock, Ban } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { getStatusColor } from "@/lib/statusColors";
 
 const CATEGORY_LABELS: Record<string, string> = {
   entity_entry_setup: "Entity & Entry Setup",
@@ -291,7 +292,7 @@ function ChecklistDetail({ checklistId, onBack }: { checklistId: number; onBack:
                         </div>
                         <Select
                           value={item.status}
-                          onValueChange={(value: any) => handleStatusChange(item.id, value as "completed" | "in_progress" | "not_started" | "blocked")}
+                          onValueChange={(value) => handleStatusChange(item.id, value as ChecklistItem["status"])}
                         >
                           <SelectTrigger className="w-[140px] h-8 text-xs">
                             <div className="flex items-center gap-1.5">
@@ -348,7 +349,7 @@ export default function InvestmentGrantChecklist() {
     return <ChecklistDetail checklistId={selectedId} onBack={() => setSelectedId(null)} />;
   }
 
-  const filteredChecklists = (checklists as unknown as Checklist[])?.filter((c: Checklist) =>
+  const filteredChecklists = (checklists as unknown as Checklist[] | undefined)?.filter((c) =>
     c.name.toLowerCase().includes(search.toLowerCase())
   );
 
@@ -366,18 +367,11 @@ export default function InvestmentGrantChecklist() {
     });
   };
 
-  const statusColors: Record<string, string> = {
-    not_started: "bg-gray-500/10 text-gray-600",
-    in_progress: "bg-blue-500/10 text-blue-600",
-    completed: "bg-green-500/10 text-green-600",
-    on_hold: "bg-amber-500/10 text-amber-600",
-  };
-
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
             <ClipboardCheck className="h-8 w-8" />
             Saudi Investment Grant Checklist
           </h1>
@@ -540,11 +534,7 @@ export default function InvestmentGrantChecklist() {
                     onClick={() => setSelectedId(checklist.id)}
                   >
                     <TableCell className="font-medium">{checklist.name}</TableCell>
-                    <TableCell>
-                      <Badge className={statusColors[checklist.status]}>
-                        {checklist.status.replace(/_/g, " ")}
-                      </Badge>
-                    </TableCell>
+                    <TableCell><Badge className={getStatusColor(checklist.status)}>{checklist.status.replace(/_/g, " ")}</Badge></TableCell>
                     <TableCell className="text-right font-mono">
                       {checklist.totalCapex
                         ? formatCurrency(checklist.totalCapex, checklist.currency || "SAR")

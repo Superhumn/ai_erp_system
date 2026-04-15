@@ -1,96 +1,37 @@
 import crypto from 'crypto';
 
-// Maximum age for signed OAuth state tokens (10 minutes)
-const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000;
+const AES_GCM_IV_LENGTH = 12;
+const AES_GCM_AUTH_TAG_LENGTH = 16;
 
-/**
- * Creates an HMAC-signed OAuth state parameter to prevent CSRF attacks.
- * Format: "<userId>:<timestampMs>:<hmac-sha256-hex>"
- */
-export function createSignedOAuthState(userId: number): string {
-  const key = process.env.JWT_SECRET;
-  if (!key) {
-    throw new Error('JWT_SECRET is required for OAuth state signing');
-  }
-  const payload = `${userId}:${Date.now()}`;
-  const mac = crypto.createHmac('sha256', key).update(payload).digest('hex');
-  return `${payload}:${mac}`;
+function deriveKey(secret: string): Buffer {
+  return crypto.createHash('sha256').update(secret).digest();
 }
 
 /**
- * Validates an HMAC-signed OAuth state parameter.
- * Returns the userId on success, or an error string on failure.
- */
-export function verifySignedOAuthState(state: string): { userId?: number; error?: string } {
-  try {
-    const key = process.env.JWT_SECRET;
-    if (!key) return { error: 'JWT_SECRET is required' };
-
-    // The mac is the last colon-delimited segment; payload is everything before it.
-    const lastColon = state.lastIndexOf(':');
-    if (lastColon === -1) return { error: 'Invalid state format' };
-
-    const payload = state.slice(0, lastColon);
-    const mac = state.slice(lastColon + 1);
-
-    // SHA-256 HMAC produces exactly 32 bytes = 64 lowercase hex characters.
-    // Reject anything else before touching crypto primitives.
-    if (!/^[0-9a-f]{64}$/.test(mac)) return { error: 'Invalid state format' };
-
-    const expectedMac = crypto.createHmac('sha256', key).update(payload).digest('hex');
-    const macBuf = Buffer.from(mac, 'hex');
-    const expectedBuf = Buffer.from(expectedMac, 'hex');
-
-    if (!crypto.timingSafeEqual(macBuf, expectedBuf)) {
-      return { error: 'Invalid state signature' };
-    }
-
-    const [userIdStr, timestampStr] = payload.split(':');
-    const timestamp = parseInt(timestampStr, 10);
-    if (isNaN(timestamp) || Date.now() - timestamp > OAUTH_STATE_MAX_AGE_MS) {
-      return { error: 'State expired' };
-    }
-
-    const userId = parseInt(userIdStr, 10);
-    if (isNaN(userId) || userId <= 0) return { error: 'Invalid user ID in state' };
-
-    return { userId };
-  } catch {
-    return { error: 'State validation failed' };
-  }
-}
-
-/**
- * Encrypts a string using AES-256-CBC encryption with a random IV
+ * Encrypts a string using AES-256-GCM (authenticated encryption) with a random IV
  * @param text - The text to encrypt
  * @param secret - The encryption secret (defaults to JWT_SECRET from env)
- * @returns Encrypted string in format "iv:encryptedData" (both in hex)
+ * @returns Encrypted string in format "iv:authTag:ciphertext" (all in hex)
  */
 export function encrypt(text: string, secret?: string): string {
   const key = secret || process.env.JWT_SECRET;
   if (!key) {
     throw new Error('Encryption secret is required. Set JWT_SECRET environment variable.');
   }
-  
-  // Generate a random IV for each encryption
-  const iv = crypto.randomBytes(16);
-  
-  const cipher = crypto.createCipheriv(
-    'aes-256-cbc',
-    crypto.createHash('sha256').update(key).digest().slice(0, 32),
-    iv
-  );
-  
+
+  const iv = crypto.randomBytes(AES_GCM_IV_LENGTH);
+  const cipher = crypto.createCipheriv('aes-256-gcm', deriveKey(key), iv);
+
   let encrypted = cipher.update(text, 'utf8', 'hex');
   encrypted += cipher.final('hex');
-  
-  // Return IV and encrypted data together
-  return `${iv.toString('hex')}:${encrypted}`;
+  const authTag = cipher.getAuthTag().toString('hex');
+
+  return `${iv.toString('hex')}:${authTag}:${encrypted}`;
 }
 
 /**
  * Decrypts a string that was encrypted with the encrypt function
- * @param encryptedText - The encrypted text in format "iv:encryptedData" (both in hex)
+ * @param encryptedText - The encrypted text in format "iv:authTag:ciphertext" (all in hex)
  * @param secret - The encryption secret (defaults to JWT_SECRET from env)
  * @returns Decrypted string
  */
@@ -99,37 +40,72 @@ export function decrypt(encryptedText: string, secret?: string): string {
   if (!key) {
     throw new Error('Decryption secret is required. Set JWT_SECRET environment variable.');
   }
-  
-  // Split IV and encrypted data
+
   const parts = encryptedText.split(':');
-  if (parts.length !== 2) {
+  if (parts.length !== 3) {
     throw new Error('Invalid encrypted data format');
   }
-  
+
   const iv = Buffer.from(parts[0], 'hex');
-  const encryptedData = parts[1];
-  
-  const decipher = crypto.createDecipheriv(
-    'aes-256-cbc',
-    crypto.createHash('sha256').update(key).digest().slice(0, 32),
-    iv
-  );
-  
+  const authTag = Buffer.from(parts[1], 'hex');
+  const encryptedData = parts[2];
+
+  const decipher = crypto.createDecipheriv('aes-256-gcm', deriveKey(key), iv);
+  decipher.setAuthTag(authTag);
+
   let decrypted = decipher.update(encryptedData, 'hex', 'utf8');
   decrypted += decipher.final('utf8');
   return decrypted;
 }
 
 /**
- * Safely decrypts a token that was encrypted with encrypt().
- * Returns null instead of throwing if the value is missing or decryption fails.
+ * Safely decrypt a token that may be stored encrypted (format: "iv:authTag:ciphertext").
+ * Returns the original string unchanged for plain-text tokens (e.g. Shopify shpat_xxx)
+ * or if decryption fails, providing backwards compatibility with tokens stored before
+ * encryption was introduced.
  */
-export function safeDecryptToken(encryptedText: string | null | undefined): string | null {
-  if (!encryptedText) return null;
+export function safeDecryptToken(token: string): string {
+  const parts = token.split(':');
+  if (parts.length !== 3) {
+    return token; // Not in encrypted format — treat as plain text
+  }
   try {
-    return decrypt(encryptedText);
-  } catch (err) {
-    console.warn('[safeDecryptToken] Decryption failed:', (err as Error).message);
+    return decrypt(token);
+  } catch {
+    return token; // Decryption failed — fall back to raw value
+  }
+}
+
+/**
+ * Create an HMAC-signed OAuth state parameter
+ * Format: "payload.signature" where payload is base64url-encoded JSON
+ */
+export function createSignedOAuthState(data: Record<string, unknown>): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET required for OAuth state signing');
+  const payload = Buffer.from(JSON.stringify({ ...data, ts: Date.now() })).toString('base64url');
+  const sig = crypto.createHmac('sha256', secret).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+/**
+ * Verify and decode an HMAC-signed OAuth state parameter
+ * Returns null if signature is invalid or state has expired
+ */
+export function verifySignedOAuthState(state: string, maxAgeMs = 10 * 60 * 1000): Record<string, unknown> | null {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) return null;
+  const dotIdx = state.lastIndexOf('.');
+  if (dotIdx === -1) return null;
+  const payload = state.slice(0, dotIdx);
+  const sig = state.slice(dotIdx + 1);
+  const expected = crypto.createHmac('sha256', secret).update(payload).digest('base64url');
+  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  try {
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    if (typeof data.ts === 'number' && Date.now() - data.ts > maxAgeMs) return null;
+    return data;
+  } catch {
     return null;
   }
 }

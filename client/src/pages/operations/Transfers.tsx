@@ -25,17 +25,18 @@ export default function Transfers() {
     notes: "",
   });
 
-  const { data: transfers, isLoading, refetch } = trpc.transfers.list.useQuery(
+  const utils = trpc.useUtils();
+  const { data: transfers, isLoading } = trpc.transfers.list.useQuery(
     statusFilter !== "all" ? { status: statusFilter } : undefined
   );
   const { data: warehouses } = trpc.warehouses.list.useQuery();
-  
+
   const createMutation = trpc.transfers.create.useMutation({
     onSuccess: (result) => {
       toast.success(`Transfer ${result.transferNumber} created`);
       setIsOpen(false);
       resetForm();
-      refetch();
+      utils.transfers.list.invalidate();
       // Navigate to the transfer detail page
       setLocation(`/operations/transfers/${result.id}`);
     },

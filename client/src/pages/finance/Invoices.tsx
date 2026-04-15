@@ -45,14 +45,8 @@ import {
 } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { format } from "date-fns";
-
-function formatCurrency(value: string | null | undefined) {
-  const num = parseFloat(value || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(num);
-}
+import { formatCurrency } from "@/lib/format";
+import { getStatusColor } from "@/lib/statusColors";
 
 type LineItem = {
   productId?: number;
@@ -103,23 +97,24 @@ export default function Invoices() {
   const [draftInvoiceId, setDraftInvoiceId] = useState<number | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
-  const { data: invoices, isLoading, refetch } = trpc.invoices.list.useQuery();
+  const utils = trpc.useUtils();
+  const { data: invoices, isLoading } = trpc.invoices.list.useQuery();
   const { data: customers } = trpc.customers.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
-  
+
   const createInvoice = trpc.invoices.create.useMutation({
     onSuccess: () => {
       toast.success("Invoice created successfully");
       setIsOpen(false);
       resetForm();
-      refetch();
+      utils.invoices.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
     },
   });
 
-  const { data: recurringInvoices, refetch: refetchRecurring } = trpc.recurringInvoices.list.useQuery();
+  const { data: recurringInvoices } = trpc.recurringInvoices.list.useQuery();
 
   const generatePdf = trpc.invoices.generatePdf.useMutation({
     onSuccess: (data) => {
@@ -141,7 +136,7 @@ export default function Invoices() {
       setIsPaymentDialogOpen(false);
       setPaymentData({ amount: "", paymentMethod: "bank_transfer", notes: "" });
       setSelectedInvoiceId(null);
-      refetch();
+      utils.invoices.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -162,7 +157,7 @@ export default function Invoices() {
         daysUntilDue: 30,
       });
       setRecurringLineItems([]);
-      refetchRecurring();
+      utils.recurringInvoices.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -172,8 +167,8 @@ export default function Invoices() {
   const generateNow = trpc.recurringInvoices.generateNow.useMutation({
     onSuccess: (data) => {
       toast.success(`Invoice ${data.invoiceNumber} generated`);
-      refetch();
-      refetchRecurring();
+      utils.invoices.list.invalidate();
+      utils.recurringInvoices.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -183,7 +178,7 @@ export default function Invoices() {
   const toggleRecurringActive = trpc.recurringInvoices.toggleActive.useMutation({
     onSuccess: () => {
       toast.success("Recurring invoice updated");
-      refetchRecurring();
+      utils.recurringInvoices.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -195,7 +190,7 @@ export default function Invoices() {
       toast.success("Invoice sent to customer");
       setIsEmailDialogOpen(false);
       setEmailMessage("");
-      refetch();
+      utils.invoices.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -222,7 +217,7 @@ export default function Invoices() {
       setParsedInvoiceData(null);
       setDraftInvoiceId(null);
       setInvoiceText("");
-      refetch();
+      utils.invoices.list.invalidate();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -305,14 +300,6 @@ export default function Invoices() {
     const matchesStatus = statusFilter === "all" || invoice.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-
-  const statusColors: Record<string, string> = {
-    draft: "bg-gray-500/10 text-gray-600",
-    sent: "bg-blue-500/10 text-blue-600",
-    paid: "bg-green-500/10 text-green-600",
-    overdue: "bg-red-500/10 text-red-600",
-    cancelled: "bg-gray-500/10 text-gray-500",
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -423,7 +410,7 @@ export default function Invoices() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.025em] flex items-center gap-2">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
             <FileText className="h-8 w-8" />
             Invoices
           </h1>
@@ -960,7 +947,7 @@ export default function Invoices() {
                     </TableCell>
                     <TableCell>{formatCurrency(invoice.totalAmount)}</TableCell>
                     <TableCell>
-                      <Badge className={statusColors[invoice.status] || ""}>
+                      <Badge className={getStatusColor(invoice.status) || ""}>
                         {invoice.status}
                       </Badge>
                     </TableCell>

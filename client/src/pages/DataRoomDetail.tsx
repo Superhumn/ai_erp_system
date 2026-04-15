@@ -24,6 +24,32 @@ import {
 import { useLocation, useParams } from "wouter";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
+// Helper: open or download a file URL, handling data: URLs properly
+function openFileUrl(url: string, filename?: string) {
+  if (url.startsWith('data:')) {
+    // Convert data URL to blob for proper download/viewing
+    const [header, base64] = url.split(',');
+    const mime = header.match(/data:(.*?);/)?.[1] || 'application/octet-stream';
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes], { type: mime });
+    const blobUrl = URL.createObjectURL(blob);
+    if (filename) {
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    } else {
+      window.open(blobUrl, '_blank');
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    }
+  } else {
+    window.open(url, '_blank');
+  }
+}
+
 export default function DataRoomDetail() {
   const params = useParams<{ id: string }>();
   const roomId = parseInt(params.id || "0");
@@ -36,6 +62,7 @@ export default function DataRoomDetail() {
   const [newLink, setNewLink] = useState({
     name: "",
     password: "",
+    expiresAt: "",
     requireEmail: true,
     requireName: false,
     requireCompany: false,
@@ -48,6 +75,10 @@ export default function DataRoomDetail() {
   });
   const [googleDriveSyncOpen, setGoogleDriveSyncOpen] = useState(false);
   const [selectedDriveFolderId, setSelectedDriveFolderId] = useState("");
+  const [driveSyncTab, setDriveSyncTab] = useState<"folder" | "file">("folder");
+  const [driveFileBrowseFolderId, setDriveFileBrowseFolderId] = useState("");
+  const [driveFileBrowseInput, setDriveFileBrowseInput] = useState("");
+  const [selectedDriveFileId, setSelectedDriveFileId] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: room, isLoading: roomLoading, refetch: refetchRoom } = trpc.dataRoom.getById.useQuery({ id: roomId });
@@ -149,10 +180,67 @@ export default function DataRoomDetail() {
     onSuccess: (data) => {
       toast.success(`Synced ${data.foldersCreated} new folders and ${data.filesCreated} new files from Google Drive`);
       setGoogleDriveSyncOpen(false);
-      setSelectedDriveFolderId(""); // Clear the input
+      setSelectedDriveFolderId("");
       refetchFolders();
       refetchDocuments();
       refetchRoom();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const { data: driveFilesData, isLoading: driveFilesLoading } = trpc.dataRoom.googleDrive.listFiles.useQuery(
+    { folderId: driveFileBrowseFolderId },
+    { enabled: !!driveFileBrowseFolderId }
+  );
+
+  const syncDriveFileMutation = trpc.dataRoom.googleDrive.syncFile.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Imported "${data.fileName}" from Google Drive`);
+      setGoogleDriveSyncOpen(false);
+      setSelectedDriveFileId("");
+      setDriveFileBrowseFolderId("");
+      setDriveFileBrowseInput("");
+      refetchDocuments();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const syncFromDriveMutation = trpc.dataRoom.syncFromDrive.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Synced ${data.filesCreated} files and ${data.foldersCreated} folders from Google Drive${data.folderName ? ` (${data.folderName})` : ''}`);
+      refetchFolders();
+      refetchDocuments();
+      refetchRoom();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  // Investment pipeline
+  const { data: commitments, refetch: refetchCommitments } = trpc.dataRoom.listCommitments.useQuery({ dataRoomId: roomId });
+  const [finalizeOpen, setFinalizeOpen] = useState(false);
+  const [selectedCommitment, setSelectedCommitment] = useState<any>(null);
+  const [finalizeForm, setFinalizeForm] = useState({ shareClassId: "", shares: "", pricePerShare: "" });
+
+  const updateStatusMutation = trpc.dataRoom.updateCommitmentStatus.useMutation({
+    onSuccess: () => {
+      toast.success("Status updated");
+      refetchCommitments();
+    },
+  });
+
+  const finalizeMutation = trpc.dataRoom.finalizeInvestment.useMutation({
+    onSuccess: () => {
+      toast.success("Investment finalized and added to cap table!");
+      setFinalizeOpen(false);
+      setSelectedCommitment(null);
+      setFinalizeForm({ shareClassId: "", shares: "", pricePerShare: "" });
+      refetchCommitments();
     },
     onError: (error) => {
       toast.error(error.message);
@@ -234,13 +322,56 @@ export default function DataRoomDetail() {
             <h1 className="text-xl font-semibold tracking-[-0.02em]">{room.name}</h1>
             <p className="text-muted-foreground">/dataroom/{room.slug}</p>
           </div>
-          <Button variant="outline" onClick={() => copyLinkUrl(room.slug)}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              const firstLink = links?.[0];
+              if (firstLink) {
+                copyLinkUrl(firstLink.linkCode);
+              } else {
+                toast.error("No share link exists yet. Create one first.");
+              }
+            }}
+          >
             <Copy className="h-4 w-4 mr-2" />
             Copy Link
           </Button>
-          <Button variant="outline" onClick={() => window.open(`/share/${room.slug}`, '_blank')}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              const firstLink = links?.[0];
+              if (firstLink) {
+                window.open(`/share/${firstLink.linkCode}`, '_blank');
+              } else {
+                toast.error("No share link exists yet. Create one first.");
+              }
+            }}
+          >
             <ExternalLink className="h-4 w-4 mr-2" />
             Preview
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              if (room.googleDriveFolderId) {
+                syncFromDriveMutation.mutate({ dataRoomId: roomId, driveFolderId: room.googleDriveFolderId });
+              } else {
+                setGoogleDriveSyncOpen(true);
+              }
+            }}
+            disabled={syncFromDriveMutation.isPending}
+          >
+            {syncFromDriveMutation.isPending ? (
+              <>
+                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                Syncing...
+              </>
+            ) : (
+              <>
+                <HardDrive className="h-4 w-4 mr-2" />
+                Sync from Google Drive
+              </>
+            )}
           </Button>
         </div>
 
@@ -317,10 +448,7 @@ export default function DataRoomDetail() {
               <ClipboardList className="h-4 w-4 mr-2" />
               Checklist
             </TabsTrigger>
-            <TabsTrigger value="driveSync">
-              <HardDrive className="h-4 w-4 mr-2" />
-              Drive Sync
-            </TabsTrigger>
+            {/* Drive Sync removed — use header button instead */}
             <TabsTrigger value="emailRules">
               <Shield className="h-4 w-4 mr-2" />
               Email Rules
@@ -328,6 +456,10 @@ export default function DataRoomDetail() {
             <TabsTrigger value="nda">
               <FileText className="h-4 w-4 mr-2" />
               NDA
+            </TabsTrigger>
+            <TabsTrigger value="investments">
+              <Activity className="h-4 w-4 mr-2" />
+              Investments
             </TabsTrigger>
             <TabsTrigger value="settings">
               <Settings className="h-4 w-4 mr-2" />
@@ -479,7 +611,7 @@ export default function DataRoomDetail() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => window.open(doc.googleDriveWebViewLink || doc.storageUrl!, '_blank')}
+                            onClick={() => openFileUrl(doc.googleDriveWebViewLink || doc.storageUrl!, doc.name)}
                           >
                             <Eye className="h-4 w-4" />
                           </Button>
@@ -492,7 +624,7 @@ export default function DataRoomDetail() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent>
                             {doc.storageUrl && (
-                              <DropdownMenuItem onClick={() => window.open(doc.storageUrl!, '_blank')}>
+                              <DropdownMenuItem onClick={() => openFileUrl(doc.storageUrl!, doc.name)}>
                                 <Download className="h-4 w-4 mr-2" />
                                 Download
                               </DropdownMenuItem>
@@ -563,6 +695,14 @@ export default function DataRoomDetail() {
                             placeholder="Leave empty for no password"
                           />
                         </div>
+                        <div className="space-y-2">
+                          <Label>Link Expiration (optional)</Label>
+                          <Input
+                            type="datetime-local"
+                            value={newLink.expiresAt}
+                            onChange={(e) => setNewLink({ ...newLink, expiresAt: e.target.value })}
+                          />
+                        </div>
                         <div className="flex items-center justify-between">
                           <Label>Require Email</Label>
                           <Switch
@@ -599,6 +739,7 @@ export default function DataRoomDetail() {
                               dataRoomId: roomId,
                               name: newLink.name || undefined,
                               password: newLink.password || undefined,
+                              expiresAt: newLink.expiresAt ? new Date(newLink.expiresAt) : undefined,
                               requireEmail: newLink.requireEmail,
                               requireName: newLink.requireName,
                               requireCompany: newLink.requireCompany,
@@ -861,9 +1002,7 @@ export default function DataRoomDetail() {
           </TabsContent>
 
           {/* Google Drive Sync Tab */}
-          <TabsContent value="driveSync" className="mt-4">
-            <GoogleDriveSyncSettings dataRoomId={roomId} />
-          </TabsContent>
+          {/* Drive Sync tab removed — use header button */}
 
           {/* Email Access Rules Tab */}
           <TabsContent value="emailRules" className="mt-4">
@@ -873,6 +1012,245 @@ export default function DataRoomDetail() {
           {/* NDA Tab */}
           <TabsContent value="nda" className="mt-4">
             <NdaManagement dataRoomId={roomId} requiresNda={room?.requiresNda || false} />
+          </TabsContent>
+
+          {/* Investments Tab */}
+          <TabsContent value="investments" className="mt-4">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Investment Pipeline</CardTitle>
+                    <CardDescription>Track investor commitments and onboard to cap table</CardDescription>
+                  </div>
+                  <Badge variant="outline" className="text-xs">
+                    {commitments?.length || 0} total
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {!commitments?.length ? (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <Activity className="h-10 w-10 mx-auto mb-3 opacity-40" />
+                    <p className="text-sm font-medium">No investment commitments yet</p>
+                    <p className="text-xs mt-1">Investors can express interest from the public data room page.</p>
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Investor</TableHead>
+                        <TableHead>Company</TableHead>
+                        <TableHead>Amount</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {commitments.map((c: any) => {
+                        const statusColors: Record<string, string> = {
+                          interested: "bg-blue-500/10 text-blue-500 border-blue-500/20",
+                          committed: "bg-indigo-500/10 text-indigo-500 border-indigo-500/20",
+                          docs_sent: "bg-amber-500/10 text-amber-500 border-amber-500/20",
+                          signed: "bg-purple-500/10 text-purple-500 border-purple-500/20",
+                          funded: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
+                          completed: "bg-green-500/10 text-green-500 border-green-500/20",
+                          declined: "bg-red-500/10 text-red-500 border-red-500/20",
+                        };
+                        const typeLabels: Record<string, string> = {
+                          safe: "SAFE",
+                          equity: "Equity",
+                          convertible_note: "Conv. Note",
+                          warrant: "Warrant",
+                        };
+                        const statusSteps = ["interested", "committed", "docs_sent", "signed", "funded", "completed"];
+                        const currentIdx = statusSteps.indexOf(c.status);
+                        const nextStatus = c.status !== "declined" && c.status !== "completed" && currentIdx < statusSteps.length - 1
+                          ? statusSteps[currentIdx + 1]
+                          : null;
+
+                        return (
+                          <TableRow key={c.id}>
+                            <TableCell>
+                              <div>
+                                <p className="font-medium text-sm">{c.investorName}</p>
+                                <p className="text-xs text-muted-foreground">{c.investorEmail}</p>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {c.investorCompany || "-"}
+                              {c.investorTitle && (
+                                <span className="text-xs text-muted-foreground block">{c.investorTitle}</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="font-medium text-sm">
+                              ${Number(c.investmentAmount || 0).toLocaleString()}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="text-xs">
+                                {typeLabels[c.instrumentType] || c.instrumentType}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge className={`text-xs ${statusColors[c.status] || ""}`}>
+                                {c.status?.replace(/_/g, " ")}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground">
+                              {c.createdAt ? new Date(c.createdAt).toLocaleDateString() : "-"}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                {nextStatus && (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button variant="ghost" size="sm" className="h-7 text-xs">
+                                        <ChevronDown className="h-3 w-3 mr-1" />
+                                        Advance
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      {statusSteps.slice(currentIdx + 1).map((s) => (
+                                        <DropdownMenuItem
+                                          key={s}
+                                          onClick={() => updateStatusMutation.mutate({ id: c.id, status: s as any })}
+                                        >
+                                          {s.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
+                                        </DropdownMenuItem>
+                                      ))}
+                                      <DropdownMenuItem
+                                        className="text-red-500"
+                                        onClick={() => updateStatusMutation.mutate({ id: c.id, status: "declined" })}
+                                      >
+                                        Decline
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                )}
+                                {(c.status === "funded" || c.status === "signed") && !c.addedToCapTable && (
+                                  <Button
+                                    variant="default"
+                                    size="sm"
+                                    className="h-7 text-xs"
+                                    onClick={() => {
+                                      setSelectedCommitment(c);
+                                      setFinalizeOpen(true);
+                                    }}
+                                  >
+                                    <CheckCircle2 className="h-3 w-3 mr-1" />
+                                    Finalize
+                                  </Button>
+                                )}
+                                {c.addedToCapTable && (
+                                  <Badge variant="outline" className="text-xs text-green-600 border-green-600/30">
+                                    <CheckCircle2 className="h-3 w-3 mr-1" />
+                                    On Cap Table
+                                  </Badge>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                )}
+
+                {/* Pipeline summary */}
+                {commitments && commitments.length > 0 && (
+                  <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Total Interest</p>
+                      <p className="text-lg font-semibold">
+                        ${commitments.reduce((sum: number, c: any) => sum + Number(c.investmentAmount || 0), 0).toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Active Pipeline</p>
+                      <p className="text-lg font-semibold">
+                        {commitments.filter((c: any) => !["completed", "declined"].includes(c.status)).length}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Completed</p>
+                      <p className="text-lg font-semibold">
+                        {commitments.filter((c: any) => c.status === "completed").length}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">On Cap Table</p>
+                      <p className="text-lg font-semibold">
+                        {commitments.filter((c: any) => c.addedToCapTable).length}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Finalize Investment Dialog */}
+            <Dialog open={finalizeOpen} onOpenChange={setFinalizeOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Finalize Investment</DialogTitle>
+                  <DialogDescription>
+                    Add {selectedCommitment?.investorName} to the cap table. This will create a stakeholder record and equity grant.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="rounded-lg bg-muted/50 p-3 space-y-1">
+                    <p className="text-sm"><span className="text-muted-foreground">Investor:</span> {selectedCommitment?.investorName}</p>
+                    <p className="text-sm"><span className="text-muted-foreground">Amount:</span> ${Number(selectedCommitment?.investmentAmount || 0).toLocaleString()}</p>
+                    <p className="text-sm"><span className="text-muted-foreground">Type:</span> {selectedCommitment?.instrumentType?.replace(/_/g, " ")}</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Share Class ID</Label>
+                    <Input
+                      type="number"
+                      placeholder="e.g., 1"
+                      value={finalizeForm.shareClassId}
+                      onChange={(e) => setFinalizeForm(f => ({ ...f, shareClassId: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Number of Shares</Label>
+                    <Input
+                      placeholder="e.g., 10000"
+                      value={finalizeForm.shares}
+                      onChange={(e) => setFinalizeForm(f => ({ ...f, shares: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Price Per Share</Label>
+                    <Input
+                      placeholder="e.g., 1.00"
+                      value={finalizeForm.pricePerShare}
+                      onChange={(e) => setFinalizeForm(f => ({ ...f, pricePerShare: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setFinalizeOpen(false)}>Cancel</Button>
+                  <Button
+                    disabled={!finalizeForm.shareClassId || !finalizeForm.shares || !finalizeForm.pricePerShare || finalizeMutation.isPending}
+                    onClick={() => {
+                      if (selectedCommitment) {
+                        finalizeMutation.mutate({
+                          commitmentId: selectedCommitment.id,
+                          shareClassId: parseInt(finalizeForm.shareClassId),
+                          shares: finalizeForm.shares,
+                          pricePerShare: finalizeForm.pricePerShare,
+                        });
+                      }
+                    }}
+                  >
+                    {finalizeMutation.isPending ? "Adding..." : "Add to Cap Table"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </TabsContent>
 
           {/* Settings Tab */}
@@ -968,105 +1346,150 @@ export default function DataRoomDetail() {
                     )}
                   </div>
                 </div>
-                <div className="border-t pt-6 mt-6">
-                  <h3 className="font-medium mb-4">Google Drive Sync</h3>
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <Label>Google Drive Folder</Label>
-                        <p className="text-sm text-muted-foreground">
-                          {room.googleDriveFolderId 
-                            ? `Synced to Google Drive folder` 
-                            : "Not connected to Google Drive"}
-                        </p>
-                        {room.lastSyncedAt && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Last synced: {new Date(room.lastSyncedAt).toLocaleString()}
-                          </p>
-                        )}
-                      </div>
-                      <Button
-                        onClick={() => setGoogleDriveSyncOpen(true)}
-                        variant={room.googleDriveFolderId ? "outline" : "default"}
-                      >
-                        {room.googleDriveFolderId ? "Re-sync" : "Connect"}
-                      </Button>
-                    </div>
-                    {room.googleDriveFolderId && (
-                      <div className="pl-4 border-l-2 border-muted text-sm text-muted-foreground">
-                        <p>Files and folders from Google Drive will inherit all security settings from this data room, including:</p>
-                        <ul className="list-disc list-inside mt-2 space-y-1">
-                          <li>Password protection</li>
-                          <li>NDA requirements</li>
-                          <li>Download and print permissions</li>
-                          <li>Access controls and invitations</li>
-                          <li>Visitor tracking and analytics</li>
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                {/* Google Drive sync — use header button only */}
               </CardContent>
             </Card>
           </TabsContent>
         </Tabs>
 
         {/* Google Drive Sync Dialog */}
-        <Dialog open={googleDriveSyncOpen} onOpenChange={setGoogleDriveSyncOpen}>
-          <DialogContent>
+        <Dialog open={googleDriveSyncOpen} onOpenChange={(open) => {
+          setGoogleDriveSyncOpen(open);
+          if (!open) {
+            setSelectedDriveFolderId("");
+            setDriveFileBrowseFolderId("");
+            setDriveFileBrowseInput("");
+            setSelectedDriveFileId("");
+            setDriveSyncTab("folder");
+          }
+        }}>
+          <DialogContent className="max-w-lg">
             <DialogHeader>
-              <DialogTitle>Sync Google Drive Folder</DialogTitle>
+              <DialogTitle>Import from Google Drive</DialogTitle>
               <DialogDescription>
-                Connect this data room to an existing Google Drive folder. All files and folders will be imported with the security and access controls configured for this data room.
+                Import a full folder or a single file from Google Drive into this data room.
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="driveFolderId">Google Drive Folder ID</Label>
-                <Input
-                  id="driveFolderId"
-                  placeholder="Paste Google Drive folder ID here"
-                  value={selectedDriveFolderId}
-                  onChange={(e) => setSelectedDriveFolderId(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  To get the folder ID, open the folder in Google Drive and copy the ID from the URL (the part after /folders/)
-                </p>
-              </div>
-              <div className="bg-muted p-4 rounded-lg space-y-2">
-                <p className="text-sm font-medium">Security & Access Controls</p>
-                <p className="text-xs text-muted-foreground">
-                  All synced files will have:
-                </p>
-                <ul className="text-xs text-muted-foreground list-disc list-inside space-y-1">
-                  {room.requiresNda && <li>NDA requirement before access</li>}
-                  {room.password && <li>Password protection</li>}
-                  {!room.allowDownload && <li>Download disabled</li>}
-                  {!room.allowPrint && <li>Print disabled</li>}
-                  {room.watermarkEnabled && <li>Watermarked with visitor email</li>}
-                </ul>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setGoogleDriveSyncOpen(false)}>
-                Cancel
-              </Button>
-              <Button
-                onClick={() => {
-                  if (!selectedDriveFolderId) {
-                    toast.error("Please enter a Google Drive folder ID");
-                    return;
-                  }
-                  syncGoogleDriveMutation.mutate({
-                    dataRoomId: roomId,
-                    googleDriveFolderId: selectedDriveFolderId,
-                  });
-                }}
-                disabled={syncGoogleDriveMutation.isPending}
-              >
-                {syncGoogleDriveMutation.isPending ? "Syncing..." : "Sync Folder"}
-              </Button>
-            </DialogFooter>
+
+            <Tabs value={driveSyncTab} onValueChange={(v) => setDriveSyncTab(v as "folder" | "file")}>
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="folder">Sync Folder</TabsTrigger>
+                <TabsTrigger value="file">Import Single File</TabsTrigger>
+              </TabsList>
+
+              {/* ── Sync Folder tab ── */}
+              <TabsContent value="folder" className="space-y-4 pt-2">
+                <div className="space-y-2">
+                  <Label htmlFor="driveFolderId">Google Drive Folder ID</Label>
+                  <Input
+                    id="driveFolderId"
+                    placeholder="Paste folder ID here"
+                    value={selectedDriveFolderId}
+                    onChange={(e) => setSelectedDriveFolderId(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Open the folder in Google Drive and copy the ID from the URL (the part after /folders/)
+                  </p>
+                </div>
+                <div className="bg-muted p-3 rounded-lg space-y-1 text-xs text-muted-foreground">
+                  <p className="font-medium text-foreground">What gets synced:</p>
+                  <p>All files and subfolders are imported recursively (up to 5 levels deep). Folders named "private", "confidential", or starting with "_" are skipped. Google Docs/Sheets/Slides are exported as PDF.</p>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setGoogleDriveSyncOpen(false)}>Cancel</Button>
+                  <Button
+                    onClick={() => {
+                      if (!selectedDriveFolderId) {
+                        toast.error("Please enter a Google Drive folder ID");
+                        return;
+                      }
+                      syncGoogleDriveMutation.mutate({ dataRoomId: roomId, googleDriveFolderId: selectedDriveFolderId });
+                    }}
+                    disabled={syncGoogleDriveMutation.isPending}
+                  >
+                    {syncGoogleDriveMutation.isPending ? "Syncing..." : "Sync Folder"}
+                  </Button>
+                </DialogFooter>
+              </TabsContent>
+
+              {/* ── Import Single File tab ── */}
+              <TabsContent value="file" className="space-y-4 pt-2">
+                <div className="space-y-2">
+                  <Label htmlFor="driveFileBrowse">Google Drive Folder ID to browse</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="driveFileBrowse"
+                      placeholder="Paste folder ID to list its files"
+                      value={driveFileBrowseInput}
+                      onChange={(e) => setDriveFileBrowseInput(e.target.value)}
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        if (!driveFileBrowseInput.trim()) {
+                          toast.error("Enter a folder ID first");
+                          return;
+                        }
+                        setSelectedDriveFileId("");
+                        setDriveFileBrowseFolderId(driveFileBrowseInput.trim());
+                      }}
+                    >
+                      Browse
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Open the parent folder in Google Drive and copy the ID from the URL.
+                  </p>
+                </div>
+
+                {driveFileBrowseFolderId && (
+                  <div className="space-y-2">
+                    <Label>Select a file</Label>
+                    {driveFilesLoading ? (
+                      <p className="text-sm text-muted-foreground">Loading files…</p>
+                    ) : !driveFilesData?.files?.length ? (
+                      <p className="text-sm text-muted-foreground">No files found in this folder.</p>
+                    ) : (
+                      <ScrollArea className="h-48 rounded-md border p-2">
+                        <div className="space-y-1">
+                          {driveFilesData.files.map((f) => (
+                            <div
+                              key={f.id}
+                              className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-sm hover:bg-muted transition-colors ${selectedDriveFileId === f.id ? "bg-muted font-medium" : ""}`}
+                              onClick={() => setSelectedDriveFileId(f.id)}
+                            >
+                              <File className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              <span className="truncate flex-1">{f.name}</span>
+                              {selectedDriveFileId === f.id && <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" />}
+                            </div>
+                          ))}
+                        </div>
+                      </ScrollArea>
+                    )}
+                  </div>
+                )}
+
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setGoogleDriveSyncOpen(false)}>Cancel</Button>
+                  <Button
+                    onClick={() => {
+                      if (!selectedDriveFileId) {
+                        toast.error("Please select a file");
+                        return;
+                      }
+                      syncDriveFileMutation.mutate({
+                        dataRoomId: roomId,
+                        googleDriveFileId: selectedDriveFileId,
+                        folderId: currentFolderId,
+                      });
+                    }}
+                    disabled={syncDriveFileMutation.isPending || !selectedDriveFileId}
+                  >
+                    {syncDriveFileMutation.isPending ? "Importing…" : "Import File"}
+                  </Button>
+                </DialogFooter>
+              </TabsContent>
+            </Tabs>
           </DialogContent>
         </Dialog>
       </div>
@@ -2406,7 +2829,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                     setExpandedCategories(newSet);
                   }}
                 >
-                  {name}: {stats.complete}/{stats.total}
+                  {name}: {(stats as any).complete}/{(stats as any).total}
                 </Badge>
               );
             })}

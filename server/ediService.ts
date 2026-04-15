@@ -864,7 +864,7 @@ export async function generateOutboundEdi(
 
   // Auto-generate control number if not provided
   if (!controlNumber) {
-    controlNumber = await db.getNextControlNumber(tradingPartnerId, "interchange");
+    controlNumber = String(await db.getNextControlNumber(tradingPartnerId, "isa"));
   }
 
   // Use company settings for sender IDs, fall back to partner config for backwards compat
@@ -935,7 +935,7 @@ async function sendAuto997(
   const settings = await db.getEdiSettings(partner.companyId || 1);
   if (settings && !(settings as any).autoSend997) return;
 
-  const controlNumber = await db.getNextControlNumber(tradingPartnerId, "interchange");
+  const controlNumber = String(await db.getNextControlNumber(tradingPartnerId, "isa"));
 
   const ourIsaId = settings?.isaId || "OURCOMPANY";
   const ourIsaQualifier = settings?.isaQualifier || "ZZ";
