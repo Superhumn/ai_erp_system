@@ -128,7 +128,8 @@ export function safeDecryptToken(encryptedText: string | null | undefined): stri
   if (!encryptedText) return null;
   try {
     return decrypt(encryptedText);
-  } catch {
+  } catch (err) {
+    console.warn('[safeDecryptToken] Decryption failed:', (err as Error).message);
     return null;
   }
 }
