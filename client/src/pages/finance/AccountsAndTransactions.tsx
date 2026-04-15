@@ -146,7 +146,7 @@ export default function AccountsAndTransactions() {
           ) : (
             <Table>
               <TableHeader>
-                <TableRow>
+                <TableRow className="text-xs">
                   <TableHead>Code</TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Type</TableHead>
@@ -232,7 +232,7 @@ export default function AccountsAndTransactions() {
           ) : (
             <Table>
               <TableHeader>
-                <TableRow>
+                <TableRow className="text-xs">
                   <TableHead>Transaction #</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Description</TableHead>
