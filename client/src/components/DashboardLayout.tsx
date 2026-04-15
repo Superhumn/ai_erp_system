@@ -259,12 +259,12 @@ function DashboardLayoutContent({
             case 'd': setLocation('/'); break; // Dashboard
             case 'e': setLocation('/operations/email-inbox'); break; // Email Inbox
             case 'v': setLocation('/operations/vendors'); break; // Vendors
-            case 'i': setLocation('/operations/inventory-hub'); break; // Inventory
+            case 'i': setLocation('/operations'); break; // Operations
             case 'o': setLocation('/sales/orders'); break; // Orders
             case 'w': setLocation('/operations/work-orders'); break; // Work Orders
             case 'c': setLocation('/crm/hub'); break; // CRM
-            case 'a': setLocation('/finance/accounts'); break; // Accounts
-            case 't': setLocation('/finance/transactions'); break; // Transactions
+            case 'a': setLocation('/finance'); break; // Finance
+            case 't': setLocation('/finance'); break; // Finance (Transactions tab)
             case 's': setLocation('/settings'); break; // Settings
           case 'm': setLocation('/meetings'); break; // Meetings
           }
@@ -282,12 +282,12 @@ function DashboardLayoutContent({
           'g d - Dashboard\n' +
           'g e - Email Inbox\n' +
           'g v - Vendors\n' +
-          'g i - Inventory\n' +
+          'g i - Operations\n' +
           'g o - Orders\n' +
           'g w - Work Orders\n' +
           'g c - CRM\n' +
-          'g a - Accounts\n' +
-          'g t - Transactions\n' +
+          'g a - Finance\n' +
+          'g t - Finance\n' +
           'g s - Settings\n' +
         'g m - Meetings',
           { duration: 5000 }
