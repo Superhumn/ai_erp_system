@@ -79,7 +79,8 @@ import {
   TooltipTrigger,
 } from "./ui/tooltip";
 
-function getMenuGroups(role: string = "user") {
+/** @see DashboardLayout.test.tsx — structure is enforced by tests. Do not reorganize without updating the test. */
+export function getMenuGroups(role: string = "user") {
   const isAdmin = ["admin", "exec"].includes(role);
   const hasFinance = ["admin", "exec", "finance"].includes(role);
   const hasOps = ["admin", "exec", "ops"].includes(role);
