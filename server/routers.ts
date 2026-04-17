@@ -12556,7 +12556,8 @@ Ask if they received the original request and if they can provide a quote.`;
         .mutation(async ({ input, ctx }) => {
           // Upload to S3
           const buffer = Buffer.from(input.base64Content, 'base64');
-          const key = `dataroom/${input.dataRoomId}/${nanoid()}-${input.name}`;
+          const safeName = input.name.replace(/[/\\]/g, '_');
+          const key = `dataroom/${input.dataRoomId}/${nanoid()}-${safeName}`;
           const { url } = await storagePut(key, buffer, input.mimeType);
 
           // Create document record
@@ -14961,7 +14962,8 @@ Ask if they received the original request and if they can provide a quote.`;
         .mutation(async ({ input, ctx }) => {
           const { base64Content, ...rest } = input;
           const buffer = Buffer.from(base64Content, 'base64');
-          const fileKey = `nda/${input.dataRoomId}/${nanoid()}-${input.name}`;
+          const safeName = input.name.replace(/[/\\]/g, '_');
+          const fileKey = `nda/${input.dataRoomId}/${nanoid()}-${safeName}`;
           const { url } = await storagePut(fileKey, buffer, input.mimeType || 'application/pdf');
           const { id } = await db.createNdaDocument({
             ...rest,
