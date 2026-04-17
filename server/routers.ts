@@ -14950,8 +14950,7 @@ Ask if they received the original request and if they can provide a quote.`;
           dataRoomId: z.number(),
           name: z.string(),
           version: z.string().optional(),
-          storageKey: z.string(),
-          storageUrl: z.string(),
+          base64Content: z.string(),
           mimeType: z.string().optional(),
           fileSize: z.number().optional(),
           pageCount: z.number().optional(),
@@ -14960,8 +14959,14 @@ Ask if they received the original request and if they can provide a quote.`;
           allowDrawnSignature: z.boolean().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
+          const { base64Content, ...rest } = input;
+          const buffer = Buffer.from(base64Content, 'base64');
+          const fileKey = `nda/${input.dataRoomId}/${nanoid()}-${input.name}`;
+          const { url } = await storagePut(fileKey, buffer, input.mimeType || 'application/pdf');
           const { id } = await db.createNdaDocument({
-            ...input,
+            ...rest,
+            storageKey: fileKey,
+            storageUrl: url,
             uploadedBy: ctx.user.id,
           });
           return { id };
