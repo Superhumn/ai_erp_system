@@ -687,8 +687,14 @@ function parseVCard(vcardData: string): Partial<InsertCrmContact> {
         result.country = addrParts[6] || "";
         break;
       case "url":
-        if (value.includes("linkedin.com")) {
-          result.linkedinUrl = value;
+        try {
+          const parsedUrl = new URL(value);
+          const host = parsedUrl.hostname.toLowerCase();
+          if (host === "linkedin.com" || host.endsWith(".linkedin.com")) {
+            result.linkedinUrl = value;
+          }
+        } catch {
+          // Ignore invalid URLs
         }
         break;
       case "note":

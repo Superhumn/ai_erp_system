@@ -762,8 +762,7 @@ export const dataRoomRouter = router({
             // Seamlessly upgrade legacy SHA-256 hashes to salted scrypt after successful verification.
             if (passwordCheck.needsUpgrade) {
               const upgradedHash = hashDataRoomPassword(input.password);
-              await db.updateShareLink(link.id, { password: upgradedHash });
-            }
+              await db.updateDataRoomLink(link.id, { password: upgradedHash });            }
           }
 
           // Check required info

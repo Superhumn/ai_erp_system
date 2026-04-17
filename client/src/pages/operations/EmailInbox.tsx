@@ -716,7 +716,7 @@ export default function EmailInbox() {
 
                           {/* Body — prefer HTML content (strip tags), fall back to plain text */}
                           <div className="p-3 bg-background rounded-md border text-sm whitespace-pre-wrap max-h-[70vh] overflow-y-auto leading-relaxed">
-                            {emailDetailLoading && expandedEmail === email.id ? (
+                            {emailsLoading && expandedEmailId === email.id ? (
                               <span className="flex items-center gap-2 text-muted-foreground">
                                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                                 Loading…

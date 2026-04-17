@@ -218,13 +218,6 @@
       "when": 1776110400000,
       "tag": "0030_recipe_costing_module",
       "breakpoints": true
-    },
-    {
-      "idx": 31,
-      "version": "5",
-      "when": 1776283200000,
-      "tag": "0031_local_auth_credentials",
-      "breakpoints": true
     }
   ]
 }

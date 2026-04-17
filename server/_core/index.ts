@@ -355,6 +355,9 @@ async function startServer() {
     });
   }
 
+  if (!ENV.cookieSecret) {
+    console.error("[Security] CRITICAL: JWT_SECRET is not set. All session tokens are trivially forgeable. Set JWT_SECRET before deploying.");  }
+
   const app = express();
 
   // Trust exactly one proxy hop in production (Railway/Vercel reverse proxy)
@@ -595,6 +598,15 @@ async function startServer() {
   // Shared handler for Google OAuth callbacks.
   // `selfRedirectUri` must exactly match the redirect_uri used when the auth URL was generated.
   async function handleGoogleOAuthCallback(req: any, res: any, selfRedirectUri: string) {
+    const sanitizeReturnTo = (value: unknown): string => {
+      if (typeof value !== 'string') return '/import';
+      if (!value.startsWith('/')) return '/import';
+      if (value.startsWith('//')) return '/import';
+      if (value.includes('\\')) return '/import';
+      if (/[\r\n\t]/.test(value)) return '/import';
+      return value;
+    };
+
     const { code, state } = req.query;
     let returnTo = '/import';
     if (!code || !state) return res.redirect(`${returnTo}?error=missing_params`);
@@ -607,9 +619,7 @@ async function startServer() {
       const stateData = verifySignedOAuthState(state as string);
       if (!stateData) return res.redirect(`${returnTo}?error=invalid_state`);
       // Use returnTo from state if the caller encoded one (e.g. Gmail/Workspace pages)
-      if (typeof stateData.returnTo === 'string' && stateData.returnTo.startsWith('/')) {
-        returnTo = stateData.returnTo;
-      }
+      returnTo = sanitizeReturnTo(stateData.returnTo);
       const { sdk: authSdk } = await import('./sdk');
       let user: any;
       try { user = await authSdk.authenticateRequest(req); } catch { return res.redirect(`${returnTo}?error=not_authenticated`); }
