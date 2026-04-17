@@ -1,7 +1,12 @@
 // Preconfigured storage helpers for Manus WebDev templates
 // Uses the Biz-provided storage proxy (Authorization: Bearer <token>)
+// Falls back to AWS S3 when Forge API credentials are not configured.
 
 import { ENV } from './_core/env';
+import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+
+// ── Forge proxy helpers ────────────────────────────────────────────────────────
 
 type StorageConfig = { baseUrl: string; apiKey: string };
 
@@ -67,11 +72,82 @@ function buildAuthHeaders(apiKey: string): HeadersInit {
   return { Authorization: `Bearer ${apiKey}` };
 }
 
+// ── S3 helpers ─────────────────────────────────────────────────────────────────
+
+function isS3Configured(): boolean {
+  return !!(
+    ENV.awsAccessKeyId &&
+    ENV.awsSecretAccessKey &&
+    ENV.awsS3Bucket
+  );
+}
+
+function getS3Client(): S3Client {
+  return new S3Client({
+    region: ENV.awsRegion || "us-east-1",
+    credentials: {
+      accessKeyId: ENV.awsAccessKeyId,
+      secretAccessKey: ENV.awsSecretAccessKey,
+    },
+  });
+}
+
+// Presigned URL valid for 7 days (max for temporary access links)
+const S3_PRESIGNED_URL_EXPIRES = 7 * 24 * 60 * 60;
+
+async function s3Put(
+  relKey: string,
+  data: Buffer | Uint8Array | string,
+  contentType: string
+): Promise<{ key: string; url: string }> {
+  const key = normalizeKey(relKey);
+  const body = typeof data === "string" ? Buffer.from(data) : data;
+  const s3 = getS3Client();
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: ENV.awsS3Bucket,
+      Key: key,
+      Body: body as Buffer,
+      ContentType: contentType,
+    })
+  );
+  const url = await getSignedUrl(
+    s3,
+    new GetObjectCommand({ Bucket: ENV.awsS3Bucket, Key: key }),
+    { expiresIn: S3_PRESIGNED_URL_EXPIRES }
+  );
+  return { key, url };
+}
+
+async function s3Get(relKey: string): Promise<{ key: string; url: string }> {
+  const key = normalizeKey(relKey);
+  const s3 = getS3Client();
+  const url = await getSignedUrl(
+    s3,
+    new GetObjectCommand({ Bucket: ENV.awsS3Bucket, Key: key }),
+    { expiresIn: S3_PRESIGNED_URL_EXPIRES }
+  );
+  return { key, url };
+}
+
+// ── Public API ─────────────────────────────────────────────────────────────────
+
 export async function storagePut(
   relKey: string,
   data: Buffer | Uint8Array | string,
   contentType = "application/octet-stream"
 ): Promise<{ key: string; url: string }> {
+  // Prefer S3 when Forge credentials are absent but S3 is configured
+  if (!ENV.forgeApiUrl || !ENV.forgeApiKey) {
+    if (isS3Configured()) {
+      return s3Put(relKey, data, contentType);
+    }
+    throw new Error(
+      "No storage backend configured. Set FORGE_API_URL + FORGE_API_KEY (Forge proxy) " +
+      "or AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + AWS_S3_BUCKET (S3)."
+    );
+  }
+
   const { baseUrl, apiKey } = getStorageConfig();
   const key = normalizeKey(relKey);
   const uploadUrl = buildUploadUrl(baseUrl, key);
@@ -93,6 +169,17 @@ export async function storagePut(
 }
 
 export async function storageGet(relKey: string): Promise<{ key: string; url: string; }> {
+  // Prefer S3 when Forge credentials are absent but S3 is configured
+  if (!ENV.forgeApiUrl || !ENV.forgeApiKey) {
+    if (isS3Configured()) {
+      return s3Get(relKey);
+    }
+    throw new Error(
+      "No storage backend configured. Set FORGE_API_URL + FORGE_API_KEY (Forge proxy) " +
+      "or AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + AWS_S3_BUCKET (S3)."
+    );
+  }
+
   const { baseUrl, apiKey } = getStorageConfig();
   const key = normalizeKey(relKey);
   return {
@@ -100,3 +187,4 @@ export async function storageGet(relKey: string): Promise<{ key: string; url: st
     url: await buildDownloadUrl(baseUrl, key, apiKey),
   };
 }
+
