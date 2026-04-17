@@ -178,7 +178,7 @@ const sops: SOPSection[] = [
           "Orders arrive via Shopify sync or manual creation in the Sales Hub.",
           "New orders start in 'pending' status.",
         ],
-        link: "/sales/hub",
+        link: "/sales/orders",
       },
       {
         title: "Confirm & Process",
@@ -187,7 +187,7 @@ const sops: SOPSection[] = [
           "Move the order to 'confirmed', then 'processing'.",
           "The system automatically reserves inventory against the order.",
         ],
-        link: "/operations/inventory-hub",
+        link: "/operations",
       },
       {
         title: "Pick, Pack & Ship",
@@ -296,7 +296,7 @@ const sops: SOPSection[] = [
           "Set reorder points and safety stock levels per product per location.",
           "The system alerts when stock falls below reorder point.",
         ],
-        link: "/operations/inventory-hub",
+        link: "/operations",
       },
       {
         title: "Process Inventory Adjustments",
@@ -577,7 +577,7 @@ const sops: SOPSection[] = [
           "Navigate to the Logistics Hub.",
           "Create a Request for Quote specifying: origin, destination, cargo details, and required dates.",
         ],
-        link: "/operations/logistics-hub",
+        link: "/freight",
       },
       {
         title: "Receive & Compare Quotes",

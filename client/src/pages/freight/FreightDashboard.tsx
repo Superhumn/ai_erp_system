@@ -16,6 +16,8 @@ import { Link } from "wouter";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
 
+const LogisticsHub = lazy(() => import("../operations/LogisticsHub"));
+
 export default function FreightDashboard() {
   const [tab, setTab] = useState("rfqs");
   const [search, setSearch] = useState("");

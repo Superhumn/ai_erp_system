@@ -356,8 +356,7 @@ async function startServer() {
   }
 
   if (!ENV.cookieSecret) {
-    console.error("[Security] CRITICAL: JWT_SECRET is not set. All session tokens are trivially forgeable. Set JWT_SECRET before deploying.");
-  }
+    console.error("[Security] CRITICAL: JWT_SECRET is not set. All session tokens are trivially forgeable. Set JWT_SECRET before deploying.");  }
 
   const app = express();
 
