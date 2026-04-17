@@ -10,6 +10,7 @@
 
 import crypto from "crypto";
 import https from "https";
+import sanitizeHtml from "sanitize-html";
 import { encrypt, safeDecryptToken } from "./crypto";
 
 /**
@@ -317,7 +318,9 @@ async function syncProducts(
       const productData: any = {
         sku,
         name: sp.title || "Untitled",
-        description: sp.body_html ? sp.body_html.replace(/<[^>]*>/g, "") : null,
+        description: sp.body_html
+          ? sanitizeHtml(sp.body_html, { allowedTags: [], allowedAttributes: {} })
+          : null,
         category: sp.product_type || null,
         unitPrice: price,
         status: statusMap[sp.status] || "active",
