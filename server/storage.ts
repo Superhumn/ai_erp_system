@@ -74,6 +74,11 @@ function buildAuthHeaders(apiKey: string): HeadersInit {
 
 // ── S3 helpers ─────────────────────────────────────────────────────────────────
 
+const S3_DEFAULT_REGION = "us-east-1";
+
+// Presigned URL valid for 7 days (max for temporary access links)
+const S3_PRESIGNED_URL_EXPIRES = 7 * 24 * 60 * 60;
+
 function isS3Configured(): boolean {
   return !!(
     ENV.awsAccessKeyId &&
@@ -83,17 +88,17 @@ function isS3Configured(): boolean {
 }
 
 function getS3Client(): S3Client {
+  if (!ENV.awsAccessKeyId || !ENV.awsSecretAccessKey) {
+    throw new Error("AWS credentials missing: set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.");
+  }
   return new S3Client({
-    region: ENV.awsRegion || "us-east-1",
+    region: ENV.awsRegion || S3_DEFAULT_REGION,
     credentials: {
       accessKeyId: ENV.awsAccessKeyId,
       secretAccessKey: ENV.awsSecretAccessKey,
     },
   });
 }
-
-// Presigned URL valid for 7 days (max for temporary access links)
-const S3_PRESIGNED_URL_EXPIRES = 7 * 24 * 60 * 60;
 
 async function s3Put(
   relKey: string,
@@ -107,7 +112,7 @@ async function s3Put(
     new PutObjectCommand({
       Bucket: ENV.awsS3Bucket,
       Key: key,
-      Body: body as Buffer,
+      Body: body,
       ContentType: contentType,
     })
   );

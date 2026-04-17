@@ -101,11 +101,12 @@ export default function DataRoomDetail() {
     onSuccess: () => {
       toast.success("File uploaded");
       refetchDocuments();
-      // Reset the file input so the same file can be selected again
-      if (fileInputRef.current) fileInputRef.current.value = "";
     },
     onError: (error) => {
       toast.error(error.message);
+    },
+    onSettled: () => {
+      // Reset the file input so the same file can be selected again
       if (fileInputRef.current) fileInputRef.current.value = "";
     },
   });
