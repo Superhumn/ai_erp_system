@@ -566,8 +566,8 @@ function TimeOffTab({
     }
     submit.mutate({
       leaveType,
-      startDate: new Date(startDate),
-      endDate: new Date(endDate),
+      startDate: new Date(startDate + "T00:00:00"),
+      endDate: new Date(endDate + "T00:00:00"),
       hours: hrs,
       reason: reason || undefined,
     });
