@@ -1,9 +1,16 @@
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
+import { useAuth } from "@/_core/hooks/useAuth";
 
 const Employees = lazy(() => import("./Employees"));
+const EmployeePortal = lazy(() => import("./EmployeePortal"));
+
+const MANAGER_ROLES = ["admin", "exec", "finance"];
 
 export default function HRHub() {
+  const { user } = useAuth();
+  const isManager = user ? MANAGER_ROLES.includes(user.role) : false;
+
   return (
     <Suspense
       fallback={
@@ -12,7 +19,7 @@ export default function HRHub() {
         </div>
       }
     >
-      <Employees />
+      {isManager ? <Employees /> : <EmployeePortal />}
     </Suspense>
   );
 }

@@ -21,6 +21,7 @@ import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSumm
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import { agentRouter } from "./agent";
+import { employeePortalRouter } from "./routers/employeePortal";
 import { parseCopackerInventoryEmail, applyCopackerInventoryUpdate } from "./copackerEmailExtractor";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
 import { detectFinancialAnomalies, forecastRevenue, predictCashFlow, classifyTransactions } from "./financeAiService";
@@ -249,6 +250,9 @@ export const appRouter = router({
 
   // Reasoning Agent
   agent: agentRouter,
+
+  // Employee self-service portal
+  employeePortal: employeePortalRouter,
 
   auth: router({
     me: publicProcedure.query(opts => {

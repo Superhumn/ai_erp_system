@@ -670,8 +670,89 @@ export const employeePayments = mysqlTable("employee_payments", {
   payPeriodEnd: timestamp("payPeriodEnd"),
   paymentMethod: mysqlEnum("paymentMethod", ["check", "direct_deposit", "wire", "other"]).default("direct_deposit"),
   status: mysqlEnum("status", ["pending", "processed", "cancelled"]).default("pending").notNull(),
+  grossAmount: decimal("grossAmount", { precision: 15, scale: 2 }),
+  taxWithheld: decimal("taxWithheld", { precision: 15, scale: 2 }),
+  otherDeductions: decimal("otherDeductions", { precision: 15, scale: 2 }),
+  payslipUrl: text("payslipUrl"),
   notes: text("notes"),
   createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+// PTO balance per employee per leave type per year
+export const ptoBalances = mysqlTable("pto_balances", {
+  id: int("id").autoincrement().primaryKey(),
+  employeeId: int("employeeId").notNull().references(() => employees.id),
+  leaveType: mysqlEnum("leaveType", ["vacation", "sick", "personal", "parental", "bereavement", "unpaid", "other"]).notNull(),
+  year: int("year").notNull(),
+  accruedHours: decimal("accruedHours", { precision: 8, scale: 2 }).default("0").notNull(),
+  usedHours: decimal("usedHours", { precision: 8, scale: 2 }).default("0").notNull(),
+  pendingHours: decimal("pendingHours", { precision: 8, scale: 2 }).default("0").notNull(),
+  carryOverHours: decimal("carryOverHours", { precision: 8, scale: 2 }).default("0").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const leaveRequests = mysqlTable("leave_requests", {
+  id: int("id").autoincrement().primaryKey(),
+  employeeId: int("employeeId").notNull().references(() => employees.id),
+  leaveType: mysqlEnum("leaveType", ["vacation", "sick", "personal", "parental", "bereavement", "unpaid", "other"]).notNull(),
+  startDate: timestamp("startDate").notNull(),
+  endDate: timestamp("endDate").notNull(),
+  hours: decimal("hours", { precision: 8, scale: 2 }).notNull(),
+  reason: text("reason"),
+  status: mysqlEnum("status", ["pending", "approved", "rejected", "cancelled"]).default("pending").notNull(),
+  approverId: int("approverId"),
+  approvedAt: timestamp("approvedAt"),
+  rejectionReason: text("rejectionReason"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const onboardingTasks = mysqlTable("onboarding_tasks", {
+  id: int("id").autoincrement().primaryKey(),
+  employeeId: int("employeeId").notNull().references(() => employees.id),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  category: mysqlEnum("category", ["paperwork", "training", "equipment", "access", "introduction", "acknowledgment", "other"]).default("other").notNull(),
+  dueDate: timestamp("dueDate"),
+  status: mysqlEnum("status", ["pending", "in_progress", "completed", "skipped"]).default("pending").notNull(),
+  completedAt: timestamp("completedAt"),
+  sortOrder: int("sortOrder").default(0).notNull(),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const employeeBenefits = mysqlTable("employee_benefits", {
+  id: int("id").autoincrement().primaryKey(),
+  employeeId: int("employeeId").notNull().references(() => employees.id),
+  benefitType: mysqlEnum("benefitType", ["health", "dental", "vision", "retirement_401k", "life_insurance", "disability", "hsa", "fsa", "commuter", "other"]).notNull(),
+  plan: varchar("plan", { length: 255 }),
+  carrier: varchar("carrier", { length: 255 }),
+  coverageLevel: mysqlEnum("coverageLevel", ["employee_only", "employee_spouse", "employee_children", "family", "waived"]),
+  employeeContribution: decimal("employeeContribution", { precision: 15, scale: 2 }),
+  employerContribution: decimal("employerContribution", { precision: 15, scale: 2 }),
+  contributionFrequency: mysqlEnum("contributionFrequency", ["per_paycheck", "monthly", "annual"]).default("per_paycheck"),
+  effectiveDate: timestamp("effectiveDate"),
+  endDate: timestamp("endDate"),
+  enrollmentStatus: mysqlEnum("enrollmentStatus", ["enrolled", "pending", "waived", "terminated"]).default("pending").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const employeeEmergencyContacts = mysqlTable("employee_emergency_contacts", {
+  id: int("id").autoincrement().primaryKey(),
+  employeeId: int("employeeId").notNull().references(() => employees.id),
+  name: varchar("name", { length: 255 }).notNull(),
+  relationship: varchar("relationship", { length: 64 }),
+  phone: varchar("phone", { length: 32 }),
+  email: varchar("email", { length: 320 }),
+  address: text("address"),
+  isPrimary: boolean("isPrimary").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
