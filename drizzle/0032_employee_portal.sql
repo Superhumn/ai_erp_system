@@ -95,3 +95,45 @@ CREATE TABLE IF NOT EXISTS `employee_emergency_contacts` (
   `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT `employee_emergency_contacts_id` PRIMARY KEY(`id`)
 );
+--> statement-breakpoint
+
+ALTER TABLE `pto_balances`
+  ADD CONSTRAINT `pto_balances_employeeId_employees_id_fk`
+  FOREIGN KEY (`employeeId`) REFERENCES `employees`(`id`)
+  ON DELETE NO ACTION ON UPDATE NO ACTION;
+--> statement-breakpoint
+
+ALTER TABLE `leave_requests`
+  ADD CONSTRAINT `leave_requests_employeeId_employees_id_fk`
+  FOREIGN KEY (`employeeId`) REFERENCES `employees`(`id`)
+  ON DELETE NO ACTION ON UPDATE NO ACTION;
+--> statement-breakpoint
+
+ALTER TABLE `leave_requests`
+  ADD CONSTRAINT `leave_requests_approverId_users_id_fk`
+  FOREIGN KEY (`approverId`) REFERENCES `users`(`id`)
+  ON DELETE NO ACTION ON UPDATE NO ACTION;
+--> statement-breakpoint
+
+ALTER TABLE `onboarding_tasks`
+  ADD CONSTRAINT `onboarding_tasks_employeeId_employees_id_fk`
+  FOREIGN KEY (`employeeId`) REFERENCES `employees`(`id`)
+  ON DELETE NO ACTION ON UPDATE NO ACTION;
+--> statement-breakpoint
+
+ALTER TABLE `onboarding_tasks`
+  ADD CONSTRAINT `onboarding_tasks_createdBy_users_id_fk`
+  FOREIGN KEY (`createdBy`) REFERENCES `users`(`id`)
+  ON DELETE NO ACTION ON UPDATE NO ACTION;
+--> statement-breakpoint
+
+ALTER TABLE `employee_benefits`
+  ADD CONSTRAINT `employee_benefits_employeeId_employees_id_fk`
+  FOREIGN KEY (`employeeId`) REFERENCES `employees`(`id`)
+  ON DELETE NO ACTION ON UPDATE NO ACTION;
+--> statement-breakpoint
+
+ALTER TABLE `employee_emergency_contacts`
+  ADD CONSTRAINT `employee_emergency_contacts_employeeId_employees_id_fk`
+  FOREIGN KEY (`employeeId`) REFERENCES `employees`(`id`)
+  ON DELETE NO ACTION ON UPDATE NO ACTION;

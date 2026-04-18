@@ -705,7 +705,7 @@ export const leaveRequests = mysqlTable("leave_requests", {
   hours: decimal("hours", { precision: 8, scale: 2 }).notNull(),
   reason: text("reason"),
   status: mysqlEnum("status", ["pending", "approved", "rejected", "cancelled"]).default("pending").notNull(),
-  approverId: int("approverId"),
+  approverId: int("approverId").references(() => users.id),
   approvedAt: timestamp("approvedAt"),
   rejectionReason: text("rejectionReason"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -722,7 +722,7 @@ export const onboardingTasks = mysqlTable("onboarding_tasks", {
   status: mysqlEnum("status", ["pending", "in_progress", "completed", "skipped"]).default("pending").notNull(),
   completedAt: timestamp("completedAt"),
   sortOrder: int("sortOrder").default(0).notNull(),
-  createdBy: int("createdBy"),
+  createdBy: int("createdBy").references(() => users.id),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
