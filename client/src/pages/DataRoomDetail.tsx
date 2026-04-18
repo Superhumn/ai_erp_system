@@ -311,10 +311,7 @@ export default function DataRoomDetail() {
     }
   };
 
-  const isPreviewable = (fileType: string) =>
-    ["pdf", "jpg", "jpeg", "png", "gif", "webp", "svg", "txt", "html"].includes(
-      (fileType || "").toLowerCase()
-    );
+  const isPreviewable = (_fileType: string) => true; // All types now handled by getViewerSrc logic
 
   if (roomLoading) {
     return (
@@ -652,27 +649,71 @@ export default function DataRoomDetail() {
                         transition: "opacity 0.35s ease, transform 0.35s ease",
                       }}
                     >
-                      {selectedDoc.storageType === "google_drive" && selectedDoc.googleDriveFileId ? (
-                        <iframe
-                          key={selectedDoc.id}
-                          src={getGooglePreviewUrl(selectedDoc.googleDriveFileId)}
-                          className="w-full h-full border-0"
-                          allow="autoplay"
-                          title={selectedDoc.name}
-                        />
-                      ) : selectedDoc.storageUrl && isPreviewable(selectedDoc.fileType) ? (
-                        <iframe
-                          key={selectedDoc.id}
-                          src={selectedDoc.storageUrl}
-                          className="w-full h-full border-0"
-                          title={selectedDoc.name}
-                        />
-                      ) : (
-                        <div className="flex-1 flex flex-col items-center justify-center gap-3 h-full text-muted-foreground">
-                          <FileText className="h-14 w-14 opacity-20" />
-                          <p className="text-sm font-medium">Preview not available</p>
-                          <p className="text-xs opacity-70">This file type cannot be previewed inline.</p>
-                        </div>
+                      {(() => {
+                        const ft = (selectedDoc.fileType || "").toLowerCase();
+                        const isImg = ["png","jpg","jpeg","gif","webp","svg"].includes(ft);
+                        const isOffice = ["doc","docx","xls","xlsx","ppt","pptx"].includes(ft);
+
+                        // Google Drive: always use /preview
+                        if (selectedDoc.storageType === "google_drive" && selectedDoc.googleDriveFileId) {
+                          return (
+                            <iframe
+                              key={selectedDoc.id}
+                              src={getGooglePreviewUrl(selectedDoc.googleDriveFileId)}
+                              className="w-full h-full border-0"
+                              allow="autoplay"
+                              title={selectedDoc.name}
+                            />
+                          );
+                        }
+
+                        if (!selectedDoc.storageUrl) {
+                          return (
+                            <div className="flex-1 flex flex-col items-center justify-center gap-3 h-full text-muted-foreground">
+                              <FileText className="h-14 w-14 opacity-20" />
+                              <p className="text-sm font-medium">Preview not available</p>
+                              <p className="text-xs opacity-70">No file URL found.</p>
+                            </div>
+                          );
+                        }
+
+                        // Images
+                        if (isImg) {
+                          return (
+                            <div className="flex items-center justify-center h-full p-6">
+                              <img
+                                key={selectedDoc.id}
+                                src={selectedDoc.storageUrl}
+                                alt={selectedDoc.name}
+                                className="max-w-full max-h-full object-contain rounded-lg"
+                              />
+                            </div>
+                          );
+                        }
+
+                        // Office files: MS Office Online viewer
+                        if (isOffice) {
+                          return (
+                            <iframe
+                              key={selectedDoc.id}
+                              src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(selectedDoc.storageUrl)}`}
+                              className="w-full h-full border-0"
+                              allow="autoplay"
+                              title={selectedDoc.name}
+                            />
+                          );
+                        }
+
+                        // PDF, txt, html, csv — direct URL
+                        return (
+                          <iframe
+                            key={selectedDoc.id}
+                            src={selectedDoc.storageUrl}
+                            className="w-full h-full border-0"
+                            title={selectedDoc.name}
+                          />
+                        );
+                      })()}
                       )}
                     </div>
                   </>

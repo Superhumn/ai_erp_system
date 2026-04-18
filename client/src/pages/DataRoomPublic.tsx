@@ -26,6 +26,7 @@ interface DocumentItem {
   fileSize: number | null;
   pageCount: number | null;
   storageUrl: string | null;
+  googleDriveFileId: string | null;
   googleDriveWebViewLink: string | null;
   thumbnailUrl: string | null;
   folderId: number | null;
@@ -51,6 +52,49 @@ function formatFileSize(bytes: number | null): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Returns the correct embed/viewer URL for any document type so that the
+ * FULL content is always visible (not just a thumbnail or partial preview).
+ *
+ * Priority order:
+ *  1. Google Drive files  → /preview URL (supports all types, full scroll)
+ *  2. S3 Office files     → Microsoft Office Online embed (full workbook/doc)
+ *  3. S3 PDF / txt / html → direct URL (native browser viewer)
+ *  4. Images              → returns storageUrl; caller renders as <img>
+ *  5. Anything else       → null (show "preview unavailable")
+ */
+function getViewerSrc(doc: DocumentItem): { src: string | null; isImg: boolean } {
+  const ft = (doc.fileType || "").toLowerCase();
+  const isImg = ["png", "jpg", "jpeg", "gif", "svg", "webp"].includes(ft);
+  const isOffice = ["doc", "docx", "xls", "xlsx", "ppt", "pptx"].includes(ft);
+
+  // ── Google Drive: always use /preview (full, iframe-safe, all types)
+  if (doc.googleDriveFileId) {
+    return { src: `https://drive.google.com/file/d/${doc.googleDriveFileId}/preview`, isImg: false };
+  }
+  if (doc.googleDriveWebViewLink) {
+    // Extract file ID from any Drive/Docs URL pattern
+    const m = doc.googleDriveWebViewLink.match(/\/d\/([^/?#]+)/);
+    if (m) {
+      return { src: `https://drive.google.com/file/d/${m[1]}/preview`, isImg: false };
+    }
+  }
+
+  if (!doc.storageUrl) return { src: null, isImg: false };
+
+  // ── Images
+  if (isImg) return { src: doc.storageUrl, isImg: true };
+
+  // ── Office files: route through Microsoft Office Online Viewer
+  if (isOffice) {
+    const encoded = encodeURIComponent(doc.storageUrl);
+    return { src: `https://view.officeapps.live.com/op/embed.aspx?src=${encoded}`, isImg: false };
+  }
+
+  // ── Everything else (PDF, txt, html, csv …): direct URL
+  return { src: doc.storageUrl, isImg: false };
 }
 
 function getFileIcon(fileType: string) {
@@ -541,26 +585,37 @@ export default function DataRoomPublic() {
               key={pageKey}
               className={`w-full h-full ${pageDirection === "left" ? "dr-page-left" : "dr-page-right"}`}
             >
-              {isImage && (doc.storageUrl || doc.googleDriveWebViewLink) ? (
-                <div className="flex items-center justify-center h-full p-6">
-                  <img
-                    src={doc.storageUrl || doc.googleDriveWebViewLink || ''}
-                    alt={doc.name}
-                    className="max-w-full max-h-full object-contain rounded-lg"
-                  />
-                </div>
-              ) : (doc.storageUrl || doc.googleDriveWebViewLink) ? (
-                <iframe
-                  src={doc.storageUrl || doc.googleDriveWebViewLink || ''}
-                  className="w-full h-full border-0"
-                  title={doc.name}
-                />
-              ) : (
-                <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                  <File className="h-16 w-16 mb-4 text-gray-600" />
-                  <p className="text-sm">Preview not available</p>
-                </div>
-              )}
+              {(() => {
+                const { src, isImg } = getViewerSrc(doc);
+                if (isImg && src) {
+                  return (
+                    <div className="flex items-center justify-center h-full p-6">
+                      <img
+                        src={src}
+                        alt={doc.name}
+                        className="max-w-full max-h-full object-contain rounded-lg"
+                      />
+                    </div>
+                  );
+                }
+                if (src) {
+                  return (
+                    <iframe
+                      key={src}
+                      src={src}
+                      className="w-full h-full border-0"
+                      title={doc.name}
+                      allow="autoplay"
+                    />
+                  );
+                }
+                return (
+                  <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                    <File className="h-16 w-16 mb-4 text-gray-600" />
+                    <p className="text-sm">Preview not available</p>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Page navigation arrows */}
