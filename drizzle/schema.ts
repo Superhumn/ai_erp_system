@@ -693,8 +693,9 @@ export const ptoBalances = mysqlTable("pto_balances", {
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
-
+}, (table) => ({
+  employeeLeaveYearIdx: uniqueIndex("pto_balances_employee_leave_year_idx").on(table.employeeId, table.leaveType, table.year),
+}));
 export const leaveRequests = mysqlTable("leave_requests", {
   id: int("id").autoincrement().primaryKey(),
   employeeId: int("employeeId").notNull().references(() => employees.id),
