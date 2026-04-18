@@ -24,6 +24,11 @@ import {
 import { useLocation, useParams } from "wouter";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
+// Helper: return the Google Drive embedded preview URL for a file
+function getGooglePreviewUrl(fileId: string) {
+  return `https://drive.google.com/file/d/${fileId}/preview`;
+}
+
 // Helper: open or download a file URL, handling data: URLs properly
 function openFileUrl(url: string, filename?: string) {
   if (url.startsWith('data:')) {
@@ -79,6 +84,7 @@ export default function DataRoomDetail() {
   const [driveFileBrowseFolderId, setDriveFileBrowseFolderId] = useState("");
   const [driveFileBrowseInput, setDriveFileBrowseInput] = useState("");
   const [selectedDriveFileId, setSelectedDriveFileId] = useState("");
+  const [previewDoc, setPreviewDoc] = useState<{ id: number; name: string; fileId: string; webViewLink?: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: room, isLoading: roomLoading, refetch: refetchRoom } = trpc.dataRoom.getById.useQuery({ id: roomId });
@@ -611,15 +617,25 @@ export default function DataRoomDetail() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        {(doc.storageUrl || doc.googleDriveWebViewLink) && (
+                        {doc.storageType === 'google_drive' && doc.googleDriveFileId ? (
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => openFileUrl(doc.googleDriveWebViewLink || doc.storageUrl!, doc.name)}
+                            title="Preview"
+                            onClick={() => setPreviewDoc({ id: doc.id, name: doc.name, fileId: doc.googleDriveFileId!, webViewLink: doc.googleDriveWebViewLink ?? undefined })}
                           >
                             <Eye className="h-4 w-4" />
                           </Button>
-                        )}
+                        ) : doc.storageUrl ? (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="View"
+                            onClick={() => openFileUrl(doc.storageUrl!, doc.name)}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        ) : null}
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon">
@@ -627,6 +643,12 @@ export default function DataRoomDetail() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent>
+                            {doc.storageType === 'google_drive' && (doc.googleDriveWebViewLink || doc.googleDriveFileId) && (
+                              <DropdownMenuItem onClick={() => openFileUrl(doc.googleDriveWebViewLink || `https://drive.google.com/file/d/${doc.googleDriveFileId}/view`, doc.name)}>
+                                <ExternalLink className="h-4 w-4 mr-2" />
+                                Open in Google Drive
+                              </DropdownMenuItem>
+                            )}
                             {doc.storageUrl && (
                               <DropdownMenuItem onClick={() => openFileUrl(doc.storageUrl!, doc.name)}>
                                 <Download className="h-4 w-4 mr-2" />
@@ -1496,6 +1518,36 @@ export default function DataRoomDetail() {
             </Tabs>
           </DialogContent>
         </Dialog>
+
+        {/* Google Drive inline preview modal */}
+        <Dialog open={!!previewDoc} onOpenChange={(open) => { if (!open) setPreviewDoc(null); }}>
+          <DialogContent className="max-w-5xl w-full h-[90vh] flex flex-col p-0 gap-0">
+            <DialogHeader className="px-4 py-3 border-b shrink-0">
+              <div className="flex items-center justify-between">
+                <DialogTitle className="truncate pr-4">{previewDoc?.name}</DialogTitle>
+                {previewDoc && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => openFileUrl(previewDoc.webViewLink || `https://drive.google.com/file/d/${previewDoc.fileId}/view`, previewDoc.name)}
+                  >
+                    <ExternalLink className="h-4 w-4 mr-1" />
+                    Open in Drive
+                  </Button>
+                )}
+              </div>
+            </DialogHeader>
+            {previewDoc && (
+              <iframe
+                src={getGooglePreviewUrl(previewDoc.fileId)}
+                className="flex-1 w-full border-0"
+                allow="autoplay"
+                title={previewDoc.name}
+              />
+            )}
+          </DialogContent>
+        </Dialog>
+
       </div>
   );
 }
