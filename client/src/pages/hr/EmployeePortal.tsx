@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -311,6 +311,17 @@ function ProfileTab({ me, onSaved }: { me: any; onSaved: () => void }) {
   const [state, setState] = useState(me.state || "");
   const [country, setCountry] = useState(me.country || "");
   const [postalCode, setPostalCode] = useState(me.postalCode || "");
+
+  // Sync form fields when 'me' data changes (e.g. after save or external update)
+  useEffect(() => {
+    setPhone(me.phone || "");
+    setPersonalEmail(me.personalEmail || "");
+    setAddress(me.address || "");
+    setCity(me.city || "");
+    setState(me.state || "");
+    setCountry(me.country || "");
+    setPostalCode(me.postalCode || "");
+  }, [me]);
 
   const update = trpc.employeePortal.updateProfile.useMutation({
     onSuccess: () => {
@@ -1160,6 +1171,7 @@ function EmergencyContactsTab({
                 <Button
                   size="sm"
                   variant="ghost"
+                  aria-label="Delete emergency contact"
                   onClick={() => remove.mutate({ id: c.id })}
                 >
                   <Trash2 className="h-4 w-4" />
