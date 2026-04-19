@@ -84,7 +84,7 @@ export default function DataRoomDetail() {
   const [driveFileBrowseFolderId, setDriveFileBrowseFolderId] = useState("");
   const [driveFileBrowseInput, setDriveFileBrowseInput] = useState("");
   const [selectedDriveFileId, setSelectedDriveFileId] = useState("");
-  const [selectedDoc, setSelectedDoc] = useState<any>(null);
+  const [selectedDoc, setSelectedDoc] = useState<{ id: string; name: string; googleDriveFileId?: string | null; storageUrl?: string | null; storageType?: string | null } | null>(null);
   const [docVisible, setDocVisible] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -310,8 +310,6 @@ export default function DataRoomDetail() {
         return <File className="h-5 w-5 text-gray-500" />;
     }
   };
-
-  const isPreviewable = (_fileType: string) => true; // All types now handled by getViewerSrc logic
 
   if (roomLoading) {
     return (
@@ -718,7 +716,7 @@ export default function DataRoomDetail() {
                           />
                         );
                       })()}
-                      )}
+                      }
                     </div>
                   </>
                 ) : (
