@@ -1221,6 +1221,10 @@ function NdaSigningGate({
       toast.error("Please provide your signature");
       return;
     }
+    if (!consentChecked) {
+      toast.error("Please accept the terms to proceed");
+      return;
+    }
     signMutation.mutate({
       ndaDocumentId: activeNda.id,
       dataRoomId,
@@ -1231,7 +1235,7 @@ function NdaSigningGate({
       signerCompany: signerCompany || undefined,
       signatureType,
       signatureData,
-      consentCheckbox: consentChecked as true,
+      consentCheckbox: true,
     });
   };
 

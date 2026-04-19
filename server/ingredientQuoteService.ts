@@ -218,8 +218,10 @@ The HTML should be simple and professional. Keep it under 200 words.`,
 
   try {
     const rawText = result.choices[0].message.content;
-    const text = typeof rawText === 'string' ? rawText : '';
-    const match = text.match(/\{[\s\S]*\}/);
+    if (typeof rawText !== 'string') {
+      throw new Error('Unexpected LLM response format');
+    }
+    const match = rawText.match(/\{[\s\S]*\}/);
     if (match) return JSON.parse(match[0]);
   } catch { /* fall through to default */ }
 
