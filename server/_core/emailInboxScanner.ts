@@ -356,6 +356,10 @@ export async function scanInbox(
                           });
                           if (!routing.projectId) continue;
 
+                          const bodyText =
+                            typeof scannedEmail.bodyText === "string"
+                              ? scannedEmail.bodyText.slice(0, 20000)
+                              : "";
                           const taskPayload = {
                             action: "create_project_task",
                             projectId: routing.projectId,
@@ -363,11 +367,12 @@ export async function scanInbox(
                             description: `From: ${scannedEmail.from.name || scannedEmail.from.address} — ${scannedEmail.subject}`,
                             priority: normalizeTaskPriority(item.priority),
                             assigneeId: routing.assigneeId,
-                            source: "email_scan",
+                            source: "email",
                             sourceEmail: {
                               from: scannedEmail.from.address,
                               subject: scannedEmail.subject,
                               messageId: scannedEmail.messageId,
+                              bodyText: bodyText || undefined,
                             },
                             domain,
                           };

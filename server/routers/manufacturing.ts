@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import * as db from "../db";
 import * as manufacturingDb from "../db/manufacturing";
 import * as ingredientQuoteService from "../ingredientQuoteService";
@@ -819,6 +820,19 @@ export const manufacturingRouter = router({
           snapshotDate: new Date(),
         });
       }),
+    /** Build or refresh a BOM from recipe lines so work orders consume raw material inventory. */
+    syncToBom: protectedProcedure
+      .input(z.object({
+        recipeId: z.number(),
+        productId: z.number(),
+        formulation: z.enum(["wet", "dry"]).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.syncRecipeToBom(input.recipeId, input.productId, {
+          userId: ctx.user?.id,
+          formulation: input.formulation,
+        });
+      }),
   }),
   moisture: router({
     calculate: protectedProcedure
@@ -860,7 +874,8 @@ export const manufacturingRouter = router({
       }),
     create: protectedProcedure
       .input(z.object({
-        bomId: z.number(),
+        bomId: z.number().optional(),
+        recipeId: z.number().optional(),
         productId: z.number(),
         warehouseId: z.number().optional(),
         quantity: z.string(),
@@ -870,11 +885,43 @@ export const manufacturingRouter = router({
         scheduledEndDate: z.date().optional(),
         notes: z.string().optional(),
         assignedTo: z.number().optional(),
+      }).refine((d) => d.bomId != null || d.recipeId != null, {
+        message: "Provide bomId or recipeId (recipe must be synced to a BOM first).",
       }))
       .mutation(async ({ input, ctx }) => {
-        const result = await db.createWorkOrder({ ...input, createdBy: ctx.user?.id });
-        // Auto-generate material requirements from BOM
-        await db.generateWorkOrderMaterialsFromBom(result.id, input.bomId, parseFloat(input.quantity));
+        let bomId = input.bomId;
+        let productId = input.productId;
+        if (input.recipeId != null) {
+          const recipe = await manufacturingDb.getRecipeById(input.recipeId);
+          if (!recipe) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "Recipe not found" });
+          }
+          if (!recipe.bomId) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "Recipe has no BOM. Run recipes.syncToBom with a finished product first.",
+            });
+          }
+          bomId = recipe.bomId;
+          if (recipe.outputProductId) productId = recipe.outputProductId;
+        }
+        if (bomId == null) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "bomId is required" });
+        }
+        const result = await db.createWorkOrder({
+          bomId,
+          productId,
+          warehouseId: input.warehouseId,
+          quantity: input.quantity,
+          unit: input.unit,
+          priority: input.priority,
+          scheduledStartDate: input.scheduledStartDate,
+          scheduledEndDate: input.scheduledEndDate,
+          notes: input.notes,
+          assignedTo: input.assignedTo,
+          createdBy: ctx.user?.id,
+        });
+        await db.generateWorkOrderMaterialsFromBom(result.id, bomId, parseFloat(input.quantity));
         return result;
       }),
     update: protectedProcedure

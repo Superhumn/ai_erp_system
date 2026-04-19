@@ -95,7 +95,6 @@ const CustomsClearance = lazy(() => import("./pages/freight/CustomsClearance"));
 const CustomsDetail = lazy(() => import("./pages/freight/CustomsDetail"));
 
 // HR
-const HRHub = lazy(() => import("./pages/hr/HRHub"));
 const Employees = lazy(() => import("./pages/hr/Employees"));
 const EmployeePortal = lazy(() => import("./pages/hr/EmployeePortal"));
 const Payroll = lazy(() => import("./pages/hr/Payroll"));
@@ -116,6 +115,7 @@ const Recruiting = lazy(() => import("./pages/hr/Recruiting"));
 // Legal
 const LegalHub = lazy(() => import("./pages/legal/LegalHub"));
 const Contracts = lazy(() => import("./pages/legal/Contracts"));
+const CaseTracker = lazy(() => import("./pages/legal/CaseTracker"));
 const Disputes = lazy(() => import("./pages/legal/Disputes"));
 const Documents = lazy(() => import("./pages/legal/Documents"));
 
@@ -217,7 +217,6 @@ function Router() {
           <Route path="/settings/shopify" component={ShopifySettings} />
 
           {/* Finance */}
-          <Route path="/finance" component={FinanceHub} />
           <Route path="/finance/accounts" component={Accounts} />
           <Route path="/finance/invoices" component={Invoices} />
           <Route path="/finance/payments" component={Payments} />
@@ -305,7 +304,6 @@ function Router() {
           {/* HR */}
           <Route path="/hr" component={HRHub} />
           <Route path="/hr/me" component={EmployeePortal} />
-          <Route path="/hr/investors" component={InvestorsHub} />
           <Route path="/hr/employees" component={Employees} />
           <Route path="/hr/payroll" component={Payroll} />
           <Route path="/hr/ai" component={HRAIInsights} />
@@ -316,6 +314,7 @@ function Router() {
           {/* Legal */}
           <Route path="/legal" component={LegalHub} />
           <Route path="/legal/contracts" component={Contracts} />
+          <Route path="/legal/cases" component={CaseTracker} />
           <Route path="/legal/disputes" component={Disputes} />
           <Route path="/legal/documents" component={Documents} />
           <Route path="/legal/ai" component={LegalAI} />

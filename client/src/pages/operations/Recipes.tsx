@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Calculator, Plus } from "lucide-react";
+import { Calculator, Link2, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Recipes() {
@@ -29,6 +29,7 @@ export default function Recipes() {
 
   const recipeQueryInput = statusFilter === "all" ? undefined : { status: statusFilter };
   const { data: recipes, isLoading, refetch } = trpc.recipes.list.useQuery(recipeQueryInput);
+  const { data: products } = trpc.products.list.useQuery({});
   const batchCost = trpc.recipes.batchCost.useQuery(
     selectedRecipeId ? { id: selectedRecipeId, formulation } : undefined as any,
     { enabled: !!selectedRecipeId },
@@ -58,10 +59,20 @@ export default function Recipes() {
     onError: (err) => toast.error(err.message),
   });
 
+  const syncToBom = trpc.recipes.syncToBom.useMutation({
+    onSuccess: (r) => {
+      toast.success(`BOM #${r.bomId} synced (${r.componentCount} components)`);
+      refetch();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
   const selectedRecipe = useMemo(
     () => recipes?.find((r) => r.id === selectedRecipeId),
     [recipes, selectedRecipeId],
   );
+
+  const [syncProductId, setSyncProductId] = useState<string>("");
 
   return (
     <div className="p-6 space-y-6">
@@ -162,12 +173,13 @@ export default function Recipes() {
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Batch (g)</TableHead>
                 <TableHead className="text-right">Yield %</TableHead>
+                <TableHead>BOM</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
-                <TableRow><TableCell colSpan={7} className="py-8 text-center">Loading...</TableCell></TableRow>
+                <TableRow><TableCell colSpan={8} className="py-8 text-center">Loading...</TableCell></TableRow>
               ) : recipes?.length ? recipes.map((recipe) => (
                 <TableRow key={recipe.id}>
                   <TableCell className="font-mono text-xs">{recipe.recipeId}</TableCell>
@@ -176,6 +188,13 @@ export default function Recipes() {
                   <TableCell><Badge>{recipe.status}</Badge></TableCell>
                   <TableCell className="text-right">{recipe.baseBatchGrams}</TableCell>
                   <TableCell className="text-right">{(parseFloat(recipe.expectedYieldPct?.toString() || "0") * 100).toFixed(1)}%</TableCell>
+                  <TableCell>
+                    {(recipe as { bomId?: number | null }).bomId ? (
+                      <Badge variant="secondary">#{String((recipe as { bomId?: number }).bomId)}</Badge>
+                    ) : (
+                      <span className="text-muted-foreground text-xs">—</span>
+                    )}
+                  </TableCell>
                   <TableCell className="text-right">
                     <Button variant="ghost" size="sm" onClick={() => setSelectedRecipeId(recipe.id)}>
                       <Calculator className="h-4 w-4 mr-1" />
@@ -184,7 +203,7 @@ export default function Recipes() {
                   </TableCell>
                 </TableRow>
               )) : (
-                <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">No recipes yet</TableCell></TableRow>
+                <TableRow><TableCell colSpan={8} className="py-8 text-center text-muted-foreground">No recipes yet</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
@@ -198,6 +217,13 @@ export default function Recipes() {
               <div>
                 <h3 className="text-base font-semibold">{selectedRecipe.name} Costing</h3>
                 <p className="text-sm text-muted-foreground">Live batch cost by formulation</p>
+                {(selectedRecipe as { bomId?: number | null }).bomId != null && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Linked BOM #{(selectedRecipe as { bomId: number }).bomId}
+                    {(selectedRecipe as { outputProductId?: number | null }).outputProductId != null &&
+                      ` · Product #${String((selectedRecipe as { outputProductId: number }).outputProductId)}`}
+                  </p>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <Select value={formulation} onValueChange={(v: "wet" | "dry") => setFormulation(v)}>
@@ -215,6 +241,40 @@ export default function Recipes() {
                   Save Snapshot
                 </Button>
               </div>
+            </div>
+            <div className="flex flex-wrap items-end gap-3 border rounded-lg p-3 bg-muted/30">
+              <div className="space-y-1 flex-1 min-w-[200px]">
+                <Label className="text-xs">Finished product (BOM output)</Label>
+                <Select value={syncProductId} onValueChange={setSyncProductId}>
+                  <SelectTrigger><SelectValue placeholder="Select product…" /></SelectTrigger>
+                  <SelectContent>
+                    {(products as { id: number; name: string; sku?: string }[] | undefined)?.map((p) => (
+                      <SelectItem key={p.id} value={String(p.id)}>
+                        {p.name} {p.sku ? `(${p.sku})` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                variant="secondary"
+                disabled={!syncProductId || !selectedRecipeId || syncToBom.isPending}
+                onClick={() => {
+                  if (!selectedRecipeId || !syncProductId) return;
+                  syncToBom.mutate({
+                    recipeId: selectedRecipeId,
+                    productId: parseInt(syncProductId, 10),
+                    formulation,
+                  });
+                }}
+              >
+                {syncToBom.isPending ? "Syncing…" : (
+                  <>
+                    <Link2 className="h-4 w-4 mr-2" />
+                    Sync recipe → BOM
+                  </>
+                )}
+              </Button>
             </div>
             {batchCost.data ? (
               <div className="grid grid-cols-4 gap-3 text-sm">

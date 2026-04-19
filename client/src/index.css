@@ -233,11 +233,11 @@
 }
 
 .data-table th {
-  @apply text-left font-medium text-muted-foreground px-5 py-3.5 border-b text-xs tracking-wide;
+  @apply text-left font-medium text-muted-foreground px-3 py-2 border-b text-[11px] tracking-wide;
 }
 
 .data-table td {
-  @apply px-5 py-4 border-b border-border/40;
+  @apply px-3 py-2 border-b border-border/40;
 }
 
 .data-table tr {
@@ -273,19 +273,19 @@
    Clean metrics, strong value hierarchy
    ============================================ */
 .kpi-card {
-  @apply p-3 rounded-2xl border border-border/40 bg-card shadow-[0_1px_6px_-2px_rgba(0,0,0,0.04)];
+  @apply p-2.5 rounded-xl border border-border/40 bg-card shadow-[0_1px_6px_-2px_rgba(0,0,0,0.04)];
 }
 
 .kpi-card-title {
-  @apply text-[11px] font-medium text-muted-foreground uppercase tracking-wider;
+  @apply text-[10px] font-medium text-muted-foreground uppercase tracking-wider;
 }
 
 .kpi-card-value {
-  @apply text-xl font-semibold mt-1.5 tracking-[-0.02em];
+  @apply text-lg font-semibold mt-1 tracking-[-0.02em];
 }
 
 .kpi-card-change {
-  @apply text-xs mt-1.5 font-medium;
+  @apply text-[11px] mt-1 font-medium;
 }
 
 .kpi-card-change.positive {
@@ -301,24 +301,24 @@
    Generous spacing, clear section hierarchy
    ============================================ */
 .module-header {
-  @apply flex items-center justify-between mb-6;
+  @apply flex items-center justify-between mb-3;
 }
 
 .module-title {
-  @apply text-[1.875rem] font-bold tracking-[-0.03em];
+  @apply text-lg font-semibold tracking-[-0.02em];
 }
 
 .module-description {
-  @apply text-muted-foreground mt-1;
+  @apply text-muted-foreground text-sm mt-0.5;
 }
 
 /* Form sections */
 .form-section {
-  @apply space-y-3 p-4 rounded-2xl border border-border/40 bg-card shadow-[0_1px_6px_-2px_rgba(0,0,0,0.04)];
+  @apply space-y-2.5 p-3 rounded-xl border border-border/40 bg-card shadow-[0_1px_6px_-2px_rgba(0,0,0,0.04)];
 }
 
 .form-section-title {
-  @apply text-sm font-semibold mb-4 tracking-[-0.01em];
+  @apply text-sm font-semibold mb-3 tracking-[-0.01em];
 }
 
 /* ============================================
@@ -527,52 +527,52 @@
 
 /* Page header pattern */
 .lf-page-header {
-  @apply flex items-start justify-between gap-4 mb-8;
+  @apply flex items-start justify-between gap-3 mb-3;
 }
 
 .lf-page-title {
-  @apply text-[1.875rem] font-bold tracking-[-0.03em] leading-none;
+  @apply text-lg font-semibold tracking-[-0.02em] leading-none;
 }
 
 .lf-page-subtitle {
-  @apply text-sm text-muted-foreground mt-1.5;
+  @apply text-sm text-muted-foreground mt-0.5;
 }
 
 /* Section separator */
 .lf-section {
-  @apply space-y-6;
+  @apply space-y-3;
 }
 
 /* Metric grid */
 .lf-metric-grid {
-  @apply grid gap-4 sm:grid-cols-2 lg:grid-cols-4;
+  @apply grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4;
 }
 
 /* List item pattern */
 .lf-list-item {
-  @apply flex items-center justify-between py-4 px-6 rounded-2xl hover:bg-accent/50 transition-colors duration-100 cursor-pointer;
+  @apply flex items-center justify-between py-2 px-3 rounded-lg hover:bg-accent/50 transition-colors duration-100 cursor-pointer;
 }
 
 /* Inline stat */
 .lf-stat {
-  @apply flex items-baseline gap-1.5;
+  @apply flex items-baseline gap-1;
 }
 
 .lf-stat-value {
-  @apply text-xl font-semibold tracking-[-0.02em] tabular-nums;
+  @apply text-lg font-semibold tracking-[-0.02em] tabular-nums;
 }
 
 .lf-stat-label {
-  @apply text-xs text-muted-foreground font-medium;
+  @apply text-[11px] text-muted-foreground font-medium;
 }
 
 /* Empty state */
 .lf-empty {
-  @apply flex flex-col items-center justify-center py-16 text-center;
+  @apply flex flex-col items-center justify-center py-8 text-center;
 }
 
 .lf-empty-icon {
-  @apply h-10 w-10 text-muted-foreground/30 mb-4;
+  @apply h-8 w-8 text-muted-foreground/30 mb-3;
 }
 
 .lf-empty-title {
@@ -580,7 +580,7 @@
 }
 
 .lf-empty-description {
-  @apply text-xs text-muted-foreground/70 mt-1 max-w-sm;
+  @apply text-xs text-muted-foreground/70 mt-0.5 max-w-sm;
 }
 
 /* ============================================
@@ -650,6 +650,59 @@
 .dr-hover-lift:hover {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* ============================================
+   COMPACT DENSITY OVERRIDES (all viewports)
+   Auto-tighten spacing across every page
+   ============================================ */
+
+/* Reduce space-y-6 (used on almost every page wrapper) */
+.space-y-6 > * + * {
+  margin-top: 0.625rem !important; /* 10px instead of 24px */
+}
+
+/* Tighten space-y-4 */
+.space-y-4 > * + * {
+  margin-top: 0.5rem !important; /* 8px instead of 16px */
+}
+
+/* Tighten any gap-6 grids/flex */
+.gap-6 {
+  gap: 0.625rem !important;
+}
+.gap-4 {
+  gap: 0.5rem !important;
+}
+
+/* Shrink py-12 empty states / loading spinners */
+.py-12 {
+  padding-top: 1.5rem !important;
+  padding-bottom: 1.5rem !important;
+}
+
+/* Shrink mb-6 headers */
+.mb-6 {
+  margin-bottom: 0.75rem !important;
+}
+
+/* Tighten p-6 card/content padding */
+[data-slot="card-content"].p-6,
+[data-slot="card"].p-6 {
+  padding: 0.75rem !important;
+}
+
+/* Auto-compact large text sizes in page headers */
+main h1[class*="text-2xl"],
+main h1[class*="text-[1.875rem]"] {
+  font-size: 1.125rem !important;
+  line-height: 1.3 !important;
+}
+
+/* Tighter stat grids */
+.lf-metric-grid,
+.grid[class*="sm:grid-cols-2"][class*="lg:grid-cols-4"] {
+  gap: 0.5rem !important;
 }
 
 /* ── Mobile-compact: fit each page on screen without scrolling ── */

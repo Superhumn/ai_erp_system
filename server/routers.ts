@@ -49,8 +49,7 @@ import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound
 import { purchaseOrderTextEndpoints, shipmentTextEndpoints, paymentTextEndpoints, workOrderTextEndpoints, inventoryTextEndpoints } from "./naturalLanguageRouterExtensions";
 import { encrypt, decrypt } from "./_core/crypto";
 import { ENV } from "./_core/env";
-import { createDecipheriv } from "crypto";
-
+import { createDecipheriv, createHash } from "crypto";
 // Decrypts a stored password supporting both the current AES-256-GCM format
 // (iv:authTag:ciphertext) and the legacy AES-256-CBC format (plain hex ciphertext).
 function decryptPassword(encryptedText: string): string {
@@ -9035,6 +9034,18 @@ Provide a brief status summary, any missing documents, and next steps.`;
           snapshotDate: new Date(),
         });
       }),
+    syncToBom: protectedProcedure
+      .input(z.object({
+        recipeId: z.number(),
+        productId: z.number(),
+        formulation: z.enum(["wet", "dry"]).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        return db.syncRecipeToBom(input.recipeId, input.productId, {
+          userId: ctx.user?.id,
+          formulation: input.formulation,
+        });
+      }),
   }),
 
   moisture: router({
@@ -9070,7 +9081,8 @@ Provide a brief status summary, any missing documents, and next steps.`;
       }),
     create: protectedProcedure
       .input(z.object({
-        bomId: z.number(),
+        bomId: z.number().optional(),
+        recipeId: z.number().optional(),
         productId: z.number(),
         warehouseId: z.number().optional(),
         quantity: z.string(),
@@ -9080,11 +9092,43 @@ Provide a brief status summary, any missing documents, and next steps.`;
         scheduledEndDate: z.date().optional(),
         notes: z.string().optional(),
         assignedTo: z.number().optional(),
+      }).refine((d) => d.bomId != null || d.recipeId != null, {
+        message: "Provide bomId or recipeId (recipe must be synced to a BOM first).",
       }))
       .mutation(async ({ input, ctx }) => {
-        const result = await db.createWorkOrder({ ...input, createdBy: ctx.user?.id });
-        // Auto-generate material requirements from BOM
-        await db.generateWorkOrderMaterialsFromBom(result.id, input.bomId, parseFloat(input.quantity));
+        let bomId = input.bomId;
+        let productId = input.productId;
+        if (input.recipeId != null) {
+          const recipe = await manufacturingDb.getRecipeById(input.recipeId);
+          if (!recipe) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "Recipe not found" });
+          }
+          if (!recipe.bomId) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "Recipe has no BOM. Run recipes.syncToBom with a finished product first.",
+            });
+          }
+          bomId = recipe.bomId;
+          if (recipe.outputProductId) productId = recipe.outputProductId;
+        }
+        if (bomId == null) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "bomId is required" });
+        }
+        const result = await db.createWorkOrder({
+          bomId,
+          productId,
+          warehouseId: input.warehouseId,
+          quantity: input.quantity,
+          unit: input.unit,
+          priority: input.priority,
+          scheduledStartDate: input.scheduledStartDate,
+          scheduledEndDate: input.scheduledEndDate,
+          notes: input.notes,
+          assignedTo: input.assignedTo,
+          createdBy: ctx.user?.id,
+        });
+        await db.generateWorkOrderMaterialsFromBom(result.id, bomId, parseFloat(input.quantity));
         return result;
       }),
     update: protectedProcedure
@@ -11311,6 +11355,18 @@ Ask if they received the original request and if they can provide a quote.`;
         const attachments = await db.getEmailAttachments(input.id);
         const documents = await db.getParsedDocuments({ emailId: input.id });
         
+        return { ...email, attachments, documents };
+      }),
+
+    /** Resolve by RFC Message-ID (approval queue source links). */
+    getByMessageId: protectedProcedure
+      .input(z.object({ messageId: z.string().min(1) }))
+      .query(async ({ input }) => {
+        const email = await db.findInboundEmailByMessageId(input.messageId);
+        if (!email) return null;
+        const id = (email as { id: number }).id;
+        const attachments = await db.getEmailAttachments(id);
+        const documents = await db.getParsedDocuments({ emailId: id });
         return { ...email, attachments, documents };
       }),
 
@@ -18511,7 +18567,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         }
         const fullTranscript = await getTranscript(config.apiKey, t.id);
         const participants = fullTranscript ? extractParticipants(fullTranscript) : [];
-        await db.createFirefliesMeeting({
+        const createdMeeting = await db.createFirefliesMeeting({
           firefliesId: t.id,
           title: t.title || 'Untitled Meeting',
           date: t.date ? new Date(t.date) : new Date(),
@@ -18523,6 +18579,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           actionItems: fullTranscript ? JSON.stringify(parseActionItems(fullTranscript?.summary?.action_items || [])) : null,
           processingStatus: 'pending',
         });
+        const newMeetingDbId = Number(createdMeeting.id);
         synced++;
 
         // Auto-create CRM deals from meeting notes
@@ -18592,12 +18649,20 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
 
           const suggested = await queueFirefliesActionItemsForApproval({
             userId: ctx.user.id,
+            meetingId: newMeetingDbId,
             meetingTitle: fullTranscript?.title || t.title || "Unknown meeting",
             firefliesId: t.id,
             actionItems: parseActionItems(actionItems),
             participants,
           });
           tasksSuggested += suggested;
+          if (suggested > 0) {
+            await db.updateFirefliesMeeting(newMeetingDbId, {
+              processingStatus: "tasks_created",
+              processedAt: new Date(),
+              autoCreatedTaskCount: suggested,
+            });
+          }
         } catch (e) {
           console.warn("[CRM Auto-Deal] Failed to create deal from meeting:", e);
         }
@@ -18611,6 +18676,8 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         createTasks: z.boolean().optional(),
         createProject: z.boolean().optional(),
         projectName: z.string().optional(),
+        projectId: z.number().optional(),
+        assigneeId: z.number().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const meeting = await db.getFirefliesMeetingById(input.meetingId);
@@ -18651,6 +18718,9 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           } as any);
           projectId = project.id;
         }
+        if (!projectId && input.projectId) {
+          projectId = input.projectId;
+        }
 
         // Queue tasks from action items for approval
         if (input.createTasks && meeting.actionItems) {
@@ -18664,6 +18734,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             actionItems: (meeting.actionItems ? JSON.parse(meeting.actionItems) : []) as Array<{ text: string; assignee?: string; dueDate?: string }>,
             participants: parsedParticipants,
             preferredProjectId: projectId,
+            preferredAssigneeId: input.assigneeId,
           });
         }
 
@@ -18685,6 +18756,14 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
 
         return { contactsCreated, tasksCreated, projectId };
       }),
+    taskRoutingOptions: protectedProcedure.query(async () => {
+      const projects = await db.getProjects();
+      const teamMembers = await db.getTeamMembers();
+      return {
+        projects: (projects || []).map((p: any) => ({ id: p.id, name: p.name })),
+        assignees: (teamMembers || []).map((u: any) => ({ id: u.id, name: u.name, email: u.email })),
+      };
+    }),
     processAllPending: protectedProcedure
       .input(z.object({
         createContacts: z.boolean().optional(),
@@ -18754,6 +18833,26 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       list: protectedProcedure
         .input(z.object({ status: z.string().optional() }).optional())
         .query(({ input }) => db.getFirefliesMeetings(input || undefined)),
+      get: protectedProcedure
+        .input(
+          z
+            .object({
+              id: z.number().optional(),
+              firefliesId: z.string().optional(),
+            })
+            .refine((i) => i.id != null || (i.firefliesId != null && i.firefliesId.length > 0), {
+              message: "Provide id or firefliesId",
+            }),
+        )
+        .query(async ({ input }) => {
+          if (input.id != null) {
+            return db.getFirefliesMeetingById(input.id);
+          }
+          if (input.firefliesId) {
+            return db.getFirefliesMeetingByFirefliesId(input.firefliesId);
+          }
+          return null;
+        }),
       getStats: protectedProcedure.query(async () => {
         const stats = await db.getFirefliesMeetingStats();
         return { ...stats, contactsCreated: 0, tasksCreated: 0 };
@@ -21373,6 +21472,90 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         const { kpiGoals: kg } = await import("../drizzle/schema");
         const rows = await database.selectDistinct({ category: kg.category }).from(kg);
         return rows.map(r => r.category).filter(Boolean);
+      }),
+  }),
+
+  // ============================================
+  // LEGAL CASES
+  // ============================================
+  legalCases: router({
+    list: protectedProcedure
+      .input(z.object({
+        status: z.string().optional(),
+        type: z.string().optional(),
+        priority: z.string().optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) return [];
+        const conditions: string[] = [];
+        const params: any[] = [];
+        if (input?.status) { conditions.push('status = ?'); params.push(input.status); }
+        if (input?.type) { conditions.push('type = ?'); params.push(input.type); }
+        if (input?.priority) { conditions.push('priority = ?'); params.push(input.priority); }
+        const where = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
+        const conn = (database as any)._.session?.client;
+        if (!conn) return [];
+        const [rows] = await conn.query('SELECT * FROM legal_cases' + where + ' ORDER BY createdAt DESC', params);
+        return rows as any[];
+      }),
+    create: legalProcedure
+      .input(z.object({
+        caseNumber: z.string().optional(),
+        title: z.string().min(1),
+        type: z.enum(['trademark','litigation','compliance','contract_dispute','ip','regulatory','employment','other']).default('other'),
+        status: z.enum(['open','pending','in_review','resolved','closed','dismissed']).default('open'),
+        priority: z.enum(['low','medium','high','critical']).default('medium'),
+        opposingParty: z.string().optional(),
+        attorney: z.string().optional(),
+        lawFirm: z.string().optional(),
+        filedDate: z.string().optional(),
+        nextHearingDate: z.string().optional(),
+        jurisdiction: z.string().optional(),
+        description: z.string().optional(),
+        notes: z.string().optional(),
+        assignedTo: z.number().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const conn = (database as any)._.session?.client;
+        if (!conn) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database connection not available' });
+        const [result] = await conn.query(
+          'INSERT INTO legal_cases (caseNumber, title, type, status, priority, opposingParty, attorney, lawFirm, filedDate, nextHearingDate, jurisdiction, description, notes, assignedTo, createdBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [input.caseNumber || null, input.title, input.type, input.status, input.priority, input.opposingParty || null, input.attorney || null, input.lawFirm || null, input.filedDate || null, input.nextHearingDate || null, input.jurisdiction || null, input.description || null, input.notes || null, input.assignedTo || null, ctx.user.id]
+        );
+        return { id: result.insertId, success: true };
+      }),
+    update: legalProcedure
+      .input(z.object({
+        id: z.number(),
+        caseNumber: z.string().optional(),
+        title: z.string().optional(),
+        type: z.enum(['trademark','litigation','compliance','contract_dispute','ip','regulatory','employment','other']).optional(),
+        status: z.enum(['open','pending','in_review','resolved','closed','dismissed']).optional(),
+        priority: z.enum(['low','medium','high','critical']).optional(),
+        opposingParty: z.string().optional(),
+        attorney: z.string().optional(),
+        lawFirm: z.string().optional(),
+        filedDate: z.string().optional(),
+        nextHearingDate: z.string().optional(),
+        jurisdiction: z.string().optional(),
+        description: z.string().optional(),
+        notes: z.string().optional(),
+        assignedTo: z.number().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+        const conn = (database as any)._.session?.client;
+        if (!conn) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database connection not available' });
+        const { id, ...fields } = input;
+        const sets = Object.entries(fields).filter(([, v]) => v !== undefined).map(([k]) => `${k} = ?`);
+        const vals = Object.entries(fields).filter(([, v]) => v !== undefined).map(([, v]) => v);
+        if (sets.length === 0) return { success: true };
+        await conn.query('UPDATE legal_cases SET ' + sets.join(', ') + ' WHERE id = ?', [...vals, id]);
+        return { success: true };
       }),
   }),
 

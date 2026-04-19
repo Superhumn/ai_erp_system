@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { formatCurrency } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +18,7 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Activity,
+  Target,
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { isThisMonth } from "date-fns";
@@ -127,6 +129,45 @@ export default function Home() {
   const { data: auditEntries } = trpc.auditLogs.list.useQuery(undefined, {
     retry: false,
   });
+
+  // KPI Goals
+  const { data: kpiGoals } = trpc.kpiGoals.list.useQuery(undefined, {
+    retry: false,
+  });
+
+  // Aggregate KPI goals by metric for current year
+  const kpiSummary = useMemo(() => {
+    if (!kpiGoals || !Array.isArray(kpiGoals) || kpiGoals.length === 0) return [];
+    const currentYear = new Date().getFullYear();
+    const thisYear = (kpiGoals as any[]).filter((k: any) => k.year === currentYear);
+    const grouped = new Map<string, { target: number; actual: number; unit: string; category: string; count: number }>();
+    (thisYear.length > 0 ? thisYear : kpiGoals as any[]).forEach((k: any) => {
+      const key = k.metricName || k.category;
+      const existing = grouped.get(key) || { target: 0, actual: 0, unit: k.unit || "", category: k.category || "", count: 0 };
+      existing.target += parseFloat(k.targetValue || "0");
+      existing.actual += parseFloat(k.actualValue || "0");
+      existing.count += 1;
+      existing.unit = k.unit || existing.unit;
+      existing.category = k.category || existing.category;
+      grouped.set(key, existing);
+    });
+    // For percentage/rate metrics, average instead of sum
+    return Array.from(grouped.entries()).map(([name, data]) => {
+      const isRate = data.unit === "percent" || data.unit === "USD_per_lb" || data.unit === "ratio";
+      return {
+        name,
+        target: isRate ? data.target / data.count : data.target,
+        actual: isRate ? data.actual / data.count : data.actual,
+        unit: data.unit,
+        category: data.category,
+        pct: data.target > 0 ? Math.min(100, (data.actual / data.target) * 100) : 0,
+      };
+    }).filter(k => ["Revenue", "Volume", "Gross Margin", "COGS", "Net Cash Flow", "Contribution"].includes(k.name))
+      .sort((a, b) => {
+        const order = ["Revenue", "Volume", "Gross Margin", "COGS", "Net Cash Flow", "Contribution"];
+        return order.indexOf(a.name) - order.indexOf(b.name);
+      });
+  }, [kpiGoals]);
 
   // ---- Derived KPIs ----
 
@@ -352,6 +393,53 @@ export default function Home() {
           />
         </div>
       </div>
+
+      {/* KPI Targets */}
+      {kpiSummary.length > 0 && (
+        <div>
+          <h2 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5">
+            KPI Targets
+          </h2>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {kpiSummary.map((kpi) => {
+              const fmtVal = (v: number, unit: string) => {
+                if (unit === "USD") return formatCurrency(v, { whole: true });
+                if (unit === "percent") return v.toFixed(1) + "%";
+                if (unit === "USD_per_lb") return "$" + v.toFixed(2) + "/lb";
+                if (unit === "lbs") return v.toLocaleString() + " lbs";
+                return v.toLocaleString();
+              };
+              const barColor = kpi.pct >= 80 ? "bg-emerald-500" : kpi.pct >= 50 ? "bg-amber-500" : kpi.pct > 0 ? "bg-blue-500" : "bg-gray-300";
+              return (
+                <Card key={kpi.name}>
+                  <CardContent className="pt-3 pb-2.5 px-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                        {kpi.name}
+                      </span>
+                      <Target className="h-3.5 w-3.5 text-muted-foreground/50" />
+                    </div>
+                    <div className="flex items-baseline gap-2 mb-1.5">
+                      <span className="text-lg font-semibold tracking-[-0.02em]">
+                        {fmtVal(kpi.actual, kpi.unit)}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        / {fmtVal(kpi.target, kpi.unit)}
+                      </span>
+                    </div>
+                    <div className="w-full bg-muted rounded-full h-1.5">
+                      <div className={`h-1.5 rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(100, kpi.pct)}%` }} />
+                    </div>
+                    <div className="text-[10px] text-muted-foreground mt-1">
+                      {kpi.pct > 0 ? `${kpi.pct.toFixed(0)}% of target` : "No actuals yet"}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Recent Activity Feed */}
       <div>

@@ -137,6 +137,20 @@ export default function Vendors() {
     onError: (error: any) => toast.error(error.message),
   });
 
+  const openAlibabaLiveSearch = () => {
+    const query = alibabaForm.query.trim();
+    if (!query) {
+      toast.info("Enter a product search term first.");
+      return;
+    }
+
+    const terms = [query, alibabaForm.category?.trim(), alibabaForm.country?.trim()]
+      .filter(Boolean)
+      .join(" ");
+    const url = `https://www.alibaba.com/trade/search?SearchText=${encodeURIComponent(terms)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
   const handleAddAlibabaSupplier = (supplier: any) => {
     createVendor.mutate({
       name: supplier.companyName,
@@ -449,7 +463,7 @@ export default function Vendors() {
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Search Alibaba Suppliers</DialogTitle>
-            <DialogDescription>AI-powered search for suppliers and manufacturers on Alibaba</DialogDescription>
+            <DialogDescription>Use live Alibaba search in a new tab, or use AI suggestions below.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-1.5">
@@ -478,21 +492,34 @@ export default function Vendors() {
                 />
               </div>
             </div>
-            <Button
-              onClick={() => {
-                setAlibabaUsedFallback(false);
-                alibabaSearch.mutate({
-                  query: alibabaForm.query,
-                  category: alibabaForm.category || undefined,
-                  country: alibabaForm.country || undefined,
-                });
-              }}
-              disabled={alibabaSearch.isPending || !alibabaForm.query.trim()}
-              className="w-full"
-            >
-              {alibabaSearch.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Search className="h-4 w-4 mr-2" />}
-              {alibabaSearch.isPending ? "Searching Alibaba..." : "Search Suppliers"}
-            </Button>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <Button
+                type="button"
+                onClick={openAlibabaLiveSearch}
+                disabled={!alibabaForm.query.trim()}
+                className="w-full"
+              >
+                <ExternalLink className="h-4 w-4 mr-2" />
+                Search Live on Alibaba
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setAlibabaUsedFallback(false);
+                  alibabaSearch.mutate({
+                    query: alibabaForm.query,
+                    category: alibabaForm.category || undefined,
+                    country: alibabaForm.country || undefined,
+                  });
+                }}
+                disabled={alibabaSearch.isPending || !alibabaForm.query.trim()}
+                className="w-full"
+              >
+                {alibabaSearch.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Search className="h-4 w-4 mr-2" />}
+                {alibabaSearch.isPending ? "Generating..." : "Generate AI Suggestions"}
+              </Button>
+            </div>
 
             {/* Results */}
             {alibabaResults.length > 0 && (

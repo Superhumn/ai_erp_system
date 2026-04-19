@@ -51,10 +51,6 @@ export default function FundraisingCampaigns() {
     createCampaign.mutate(formData);
   };
 
-  if (isLoading) {
-    return <div className="flex items-center justify-center h-96"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
-  }
-
   // Single round — use the first (most recent) campaign
   const round = campaigns?.[0] || null;
 
@@ -72,6 +68,10 @@ export default function FundraisingCampaigns() {
       notes: round.notes || "",
     });
   }, [isOpen, round]);
+
+  if (isLoading) {
+    return <div className="flex items-center justify-center h-96"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
+  }
 
   const statusColors: Record<string, string> = {
     planning: "bg-gray-500/10 text-gray-600",
