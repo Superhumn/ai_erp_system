@@ -14,6 +14,7 @@ import { freightRouter } from "./freight";
 import { ediRouter } from "./edi";
 import { emailRouter } from "./email";
 import { hrRouter } from "./hr";
+import { employeePortalRouter } from "./employeePortal";
 import { legalRouter } from "./legal";
 import { projectsRouter } from "./projects";
 import { dataRoomRouter } from "./dataRoom";
@@ -31,6 +32,9 @@ const baseRouter = router({
 
   // Reasoning Agent
   agent: agentRouter,
+
+  // Employee self-service portal
+  employeePortal: employeePortalRouter,
 });
 
 export const appRouter = mergeRouters(

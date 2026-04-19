@@ -517,6 +517,9 @@ export default function PeopleAndEquity() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => window.location.href = "/hr/me"}>
+            <UserCircle className="h-4 w-4 mr-1" /> My Portal
+          </Button>
           <Button variant="outline" onClick={() => window.location.href = "/hr/payroll"}>
             <Layers className="h-4 w-4 mr-1" /> Payroll
           </Button>

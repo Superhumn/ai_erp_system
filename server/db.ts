@@ -6,6 +6,7 @@ import {
   orders, orderItems, inventory, warehouses, productionBatches,
   purchaseOrders, purchaseOrderItems, shipments,
   departments, employees, compensationHistory, employeePayments,
+  ptoBalances, leaveRequests, onboardingTasks, employeeBenefits, employeeEmergencyContacts,
   contracts, contractKeyDates, disputes, documents,
   projects, projectMilestones, projectTasks,
   auditLogs, notifications, integrationConfigs, aiConversations, aiMessages,
@@ -1277,6 +1278,197 @@ export async function createEmployeePayment(data: typeof employeePayments.$infer
   if (!db) throw new Error("Database not available");
   const result = await db.insert(employeePayments).values(data);
   return { id: result[0].insertId };
+}
+
+// ============================================
+// HR - EMPLOYEE PORTAL (self-service)
+// ============================================
+
+export async function getEmployeeByUserId(userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(employees).where(eq(employees.userId, userId)).limit(1);
+  return result[0];
+}
+
+export async function getPtoBalances(employeeId: number, year?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const conds = [eq(ptoBalances.employeeId, employeeId)];
+  if (year !== undefined) conds.push(eq(ptoBalances.year, year));
+  return db.select().from(ptoBalances).where(and(...conds)).orderBy(ptoBalances.leaveType);
+}
+
+export async function upsertPtoBalance(data: typeof ptoBalances.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = await db
+    .select()
+    .from(ptoBalances)
+    .where(
+      and(
+        eq(ptoBalances.employeeId, data.employeeId),
+        eq(ptoBalances.leaveType, data.leaveType),
+        eq(ptoBalances.year, data.year),
+      ),
+    )
+    .limit(1);
+  if (existing[0]) {
+    await db.update(ptoBalances).set(data).where(eq(ptoBalances.id, existing[0].id));
+    return { id: existing[0].id };
+  }
+  const result = await db.insert(ptoBalances).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function adjustPtoBalance(
+  employeeId: number,
+  leaveType: typeof ptoBalances.$inferInsert["leaveType"],
+  year: number,
+  deltas: { used?: number; pending?: number },
+) {
+  const db = await getDb();
+  if (!db) return;
+  const existing = await db
+    .select()
+    .from(ptoBalances)
+    .where(
+      and(
+        eq(ptoBalances.employeeId, employeeId),
+        eq(ptoBalances.leaveType, leaveType),
+        eq(ptoBalances.year, year),
+      ),
+    )
+    .limit(1);
+  if (!existing[0]) return;
+  const updates: Record<string, unknown> = {};
+  if (deltas.used !== undefined) {
+    updates.usedHours = sql`${ptoBalances.usedHours} + ${deltas.used}`;
+  }
+  if (deltas.pending !== undefined) {
+    updates.pendingHours = sql`${ptoBalances.pendingHours} + ${deltas.pending}`;
+  }
+  if (Object.keys(updates).length === 0) return;
+  await db.update(ptoBalances).set(updates).where(eq(ptoBalances.id, existing[0].id));
+}
+
+export async function getLeaveRequests(filters?: { employeeId?: number; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conds = [];
+  if (filters?.employeeId) conds.push(eq(leaveRequests.employeeId, filters.employeeId));
+  if (filters?.status) conds.push(eq(leaveRequests.status, filters.status as any));
+  if (conds.length > 0) {
+    return db.select().from(leaveRequests).where(and(...conds)).orderBy(desc(leaveRequests.startDate));
+  }
+  return db.select().from(leaveRequests).orderBy(desc(leaveRequests.startDate));
+}
+
+export async function getLeaveRequestById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(leaveRequests).where(eq(leaveRequests.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createLeaveRequest(data: typeof leaveRequests.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(leaveRequests).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateLeaveRequest(id: number, data: Partial<typeof leaveRequests.$inferInsert>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(leaveRequests).set(data).where(eq(leaveRequests.id, id));
+}
+
+export async function getOnboardingTasks(employeeId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(onboardingTasks)
+    .where(eq(onboardingTasks.employeeId, employeeId))
+    .orderBy(onboardingTasks.sortOrder, onboardingTasks.id);
+}
+
+export async function createOnboardingTask(data: typeof onboardingTasks.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(onboardingTasks).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateOnboardingTask(
+  id: number,
+  data: Partial<typeof onboardingTasks.$inferInsert>,
+) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(onboardingTasks).set(data).where(eq(onboardingTasks.id, id));
+}
+
+export async function getEmployeeBenefits(employeeId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(employeeBenefits)
+    .where(eq(employeeBenefits.employeeId, employeeId))
+    .orderBy(employeeBenefits.benefitType);
+}
+
+export async function upsertEmployeeBenefit(data: typeof employeeBenefits.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(employeeBenefits).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEmployeeBenefit(
+  id: number,
+  data: Partial<typeof employeeBenefits.$inferInsert>,
+) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(employeeBenefits).set(data).where(eq(employeeBenefits.id, id));
+}
+
+export async function getEmergencyContacts(employeeId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(employeeEmergencyContacts)
+    .where(eq(employeeEmergencyContacts.employeeId, employeeId))
+    .orderBy(desc(employeeEmergencyContacts.isPrimary), employeeEmergencyContacts.name);
+}
+
+export async function createEmergencyContact(data: typeof employeeEmergencyContacts.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(employeeEmergencyContacts).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEmergencyContact(
+  id: number,
+  data: Partial<typeof employeeEmergencyContacts.$inferInsert>,
+) {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(employeeEmergencyContacts)
+    .set(data)
+    .where(eq(employeeEmergencyContacts.id, id));
+}
+
+export async function deleteEmergencyContact(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(employeeEmergencyContacts).where(eq(employeeEmergencyContacts.id, id));
 }
 
 // ============================================
