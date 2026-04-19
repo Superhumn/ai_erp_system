@@ -48,6 +48,7 @@ async function routeTaskProjectAndAssignee(params: {
   meetingTitle: string;
   participants: Array<{ name: string; email: string }>;
   preferredProjectId?: number;
+  preferredAssigneeId?: number;
   preferredAssigneeHint?: string;
 }) {
   const projects = await db.getProjects();
@@ -56,6 +57,9 @@ async function routeTaskProjectAndAssignee(params: {
   const userIndex = new Map((teamMembers || []).map((u: any) => [u.id, u]));
 
   if (params.preferredProjectId && projectIndex.has(params.preferredProjectId)) {
+    if (params.preferredAssigneeId && userIndex.has(params.preferredAssigneeId)) {
+      return { projectId: params.preferredProjectId, assigneeId: params.preferredAssigneeId };
+    }
     const assigneeId = (teamMembers || []).find((u: any) => {
       const hint = (params.preferredAssigneeHint || "").toLowerCase();
       if (!hint) return false;
@@ -107,6 +111,7 @@ export async function queueFirefliesActionItemsForApproval(params: {
   actionItems: FirefliesActionItem[];
   participants: Array<{ name: string; email: string }>;
   preferredProjectId?: number;
+  preferredAssigneeId?: number;
 }): Promise<number> {
   let created = 0;
   for (const item of params.actionItems) {
@@ -121,6 +126,7 @@ export async function queueFirefliesActionItemsForApproval(params: {
       meetingTitle: params.meetingTitle,
       participants: params.participants,
       preferredProjectId: params.preferredProjectId,
+      preferredAssigneeId: params.preferredAssigneeId,
       preferredAssigneeHint: item.assignee,
     });
     if (!routing.projectId) continue;
@@ -304,6 +310,13 @@ export async function syncFirefliesMeetingsForUser(
           participants,
         });
         result.tasksSuggested += suggested;
+        if (suggested > 0) {
+          await db.updateFirefliesMeeting(newMeetingDbId, {
+            processingStatus: "tasks_created",
+            processedAt: new Date(),
+            autoCreatedTaskCount: suggested,
+          });
+        }
       } catch (meetingErr) {
         result.errors.push(
           `Failed to sync meeting ${t.id}: ${meetingErr instanceof Error ? meetingErr.message : String(meetingErr)}`

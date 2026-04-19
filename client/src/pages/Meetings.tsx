@@ -1,5 +1,4 @@
-import { useMemo, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -7,7 +6,6 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import {
@@ -28,15 +26,17 @@ import {
   Tag,
   ArrowRight,
   CheckCircle2,
+  Filter,
+  X,
 } from "lucide-react";
 
 export default function Meetings() {
   const [search, setSearch] = useState("");
-  const [listView, setListView] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
   const [showProcessDialog, setShowProcessDialog] = useState(false);
   const [selectedMeetingId, setSelectedMeetingId] = useState<number | null>(null);
   const [processCreateProject, setProcessCreateProject] = useState(false);
@@ -44,6 +44,20 @@ export default function Meetings() {
 
   const { data: meetingsRaw, isLoading, refetch, error: meetingsError } = trpc.fireflies.meetings.list.useQuery({});
   const meetings = (meetingsRaw as any[] | undefined) || [];
+
+  const setExpandedMeetingWithUrl = (meetingId: number | null) => {
+    setExpandedId(meetingId);
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (meetingId != null) {
+      url.searchParams.set("meetingId", String(meetingId));
+      url.searchParams.delete("firefliesId");
+    } else {
+      url.searchParams.delete("meetingId");
+      url.searchParams.delete("firefliesId");
+    }
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  };
 
   const { data: statsRaw, refetch: refetchStats } = trpc.fireflies.meetings.getStats.useQuery();
   const stats = statsRaw as { total?: number; pending?: number; processed?: number; thisWeek?: number } | undefined;
@@ -92,20 +106,25 @@ export default function Meetings() {
 
   const filtered = meetingsWithParsed
     .filter((m: any) => {
-      if (listView === "pending" && m.processingStatus !== "pending") return false;
-      if (listView === "processed" && m.processingStatus !== "fully_processed") return false;
-      if (statusFilter !== "all" && m.processingStatus !== statusFilter) return false;
+      if (statusFilter === "pending" && m.processingStatus !== "pending") return false;
+      if (statusFilter === "processed" && m.processingStatus !== "fully_processed") return false;
+      if (statusFilter !== "all" && statusFilter !== "pending" && statusFilter !== "processed" && m.processingStatus !== statusFilter) return false;
       if (!search) return true;
       const q = search.toLowerCase();
       const title = (m.title || "").toLowerCase();
       const summaryText = (m.parsedSummary?.overview || "").toLowerCase();
+      const bulletText = (() => {
+        const bullets = m.parsedSummary?.shorthand_bullet;
+        if (!bullets) return "";
+        return (Array.isArray(bullets) ? bullets : [bullets]).join(" ").toLowerCase();
+      })();
       const participantText = (Array.isArray(m.parsedParticipants) ? m.parsedParticipants : [])
         .map((p: any) =>
           typeof p === "string" ? p : p?.displayName || p?.name || p?.email || ""
         )
         .join(" ")
         .toLowerCase();
-      return title.includes(q) || summaryText.includes(q) || participantText.includes(q);
+      return title.includes(q) || summaryText.includes(q) || bulletText.includes(q) || participantText.includes(q);
     })
     .filter((m: any) => {
       if (!dateFrom && !dateTo) return true;
@@ -125,52 +144,50 @@ export default function Meetings() {
     if (raw == null) return null;
     const value = typeof raw === "string" ? Number(raw) : raw;
     if (!Number.isFinite(value) || value <= 0) return null;
-
     if (value <= 120 && Number.isInteger(value)) return value * 60;
     if (value < 10 && !Number.isInteger(value)) return Math.round(value * 60);
-
     return Math.round(value);
   };
 
-  const formatDuration = (raw?: number | string | null) => {
+  const fmtDur = (raw?: number | string | null) => {
     const seconds = normalizeDurationSeconds(raw);
     if (!seconds) return "-";
     const hours = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
-    if (hours > 0) return `${hours}h ${mins}m`;
-    if (mins > 0) return `${mins}m`;
-    return `${seconds}s`;
+    if (hours > 0) return `${hours}h${mins}m`;
+    return `${mins}m`;
   };
 
-  const formatDate = (date?: string | Date | null) => {
+  const fmtDate = (date?: string | Date | null) => {
     if (!date) return "-";
-    return new Date(date).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    const d = new Date(date);
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  };
+
+  const fmtTime = (date?: string | Date | null) => {
+    if (!date) return "";
+    return new Date(date).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   };
 
   const statusBadge = (status: string) => {
+    const base = "text-[10px] px-1.5 py-0";
     switch (status) {
       case "pending":
-        return <Badge variant="outline" className="text-yellow-600 border-yellow-300">Pending</Badge>;
+        return <Badge variant="outline" className={`${base} text-yellow-600 border-yellow-300`}>Pending</Badge>;
       case "fully_processed":
-        return <Badge className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">Processed</Badge>;
+        return <Badge className={`${base} bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400`}>Processed</Badge>;
       case "contacts_created":
-        return <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Contacts Created</Badge>;
+        return <Badge className={`${base} bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400`}>Contacts</Badge>;
       case "tasks_created":
-        return <Badge className="bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">Tasks Created</Badge>;
+        return <Badge className={`${base} bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400`}>Tasks</Badge>;
       case "project_created":
-        return <Badge className="bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400">Project Created</Badge>;
+        return <Badge className={`${base} bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400`}>Project</Badge>;
       case "skipped":
-        return <Badge variant="outline" className="text-muted-foreground">Skipped</Badge>;
+        return <Badge variant="outline" className={`${base} text-muted-foreground`}>Skipped</Badge>;
       case "error":
-        return <Badge variant="destructive">Error</Badge>;
+        return <Badge variant="destructive" className={base}>Error</Badge>;
       default:
-        return <Badge variant="secondary">{status}</Badge>;
+        return <Badge variant="secondary" className={base}>{status}</Badge>;
     }
   };
 
@@ -185,366 +202,314 @@ export default function Meetings() {
     } as any);
   };
 
+  const hasActiveFilters = search || statusFilter !== "all" || dateFrom || dateTo;
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !meetings.length) return;
+    const params = new URLSearchParams(window.location.search);
+    const rawMeetingId = params.get("meetingId");
+    const firefliesId = params.get("firefliesId");
+
+    let matchedId: number | null = null;
+    if (rawMeetingId) {
+      const meetingId = Number(rawMeetingId);
+      if (Number.isFinite(meetingId) && meetingId > 0 && meetings.some((meeting: any) => meeting.id === meetingId)) {
+        matchedId = meetingId;
+      }
+    } else if (firefliesId) {
+      const matchedMeeting = meetings.find((meeting: any) => meeting.firefliesId === firefliesId);
+      if (matchedMeeting) matchedId = matchedMeeting.id;
+    }
+
+    if (matchedId != null && expandedId !== matchedId) {
+      setExpandedId(matchedId);
+      window.requestAnimationFrame(() => {
+        document.getElementById(`meeting-row-${matchedId}`)?.scrollIntoView({ block: "center" });
+      });
+    }
+  }, [meetings, expandedId]);
+
+  const getBullets = (meeting: any): string[] => {
+    const summary = meeting.parsedSummary;
+    if (!summary) return [];
+    const raw = summary.shorthand_bullet;
+    if (!raw) return [];
+    const arr = Array.isArray(raw) ? raw : [raw];
+    return arr.slice(0, 4);
+  };
+
   return (
-    <div className="space-y-6">
-      <Card className="border-none bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white shadow-lg">
-        <CardContent className="p-6 md:p-7">
-          <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
-            <div className="space-y-2">
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-medium">
-                <Mic className="h-3.5 w-3.5" />
-                Fireflies Workspace
-              </div>
-              <h1 className="text-2xl font-semibold tracking-tight">Meeting Intelligence</h1>
-              <p className="max-w-2xl text-sm text-white/70">
-                Review synced call transcripts, extract action items, and process meeting outcomes into CRM and projects.
-              </p>
-            </div>
+    <div className="space-y-2">
+      {/* ── Compact toolbar: stats + search + actions ── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <h1 className="text-lg font-semibold tracking-tight mr-1">Meetings</h1>
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span className="rounded bg-muted px-1.5 py-0.5 font-medium tabular-nums">{stats?.total ?? meetings.length}</span>
+          <span className="rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 px-1.5 py-0.5 font-medium tabular-nums">{stats?.pending ?? 0} pending</span>
+          <span className="rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 px-1.5 py-0.5 font-medium tabular-nums">{stats?.processed ?? 0} done</span>
+        </div>
+        <div className="ml-auto flex items-center gap-1.5">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-7 w-44 pl-7 text-xs"
+            />
+          </div>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="h-7 w-28 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="contacts_created">Contacts</SelectItem>
+              <SelectItem value="fully_processed">Processed</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={() => setShowFilters(!showFilters)}
+          >
+            <Filter className="h-3 w-3 mr-1" />
+            {showFilters ? "Hide" : "Date"}
+          </Button>
+          {hasActiveFilters && (
             <Button
-              variant="secondary"
-              onClick={() => (syncMutation.mutate as any)({})}
-              disabled={syncMutation.isPending}
-              className="w-full md:w-auto"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs text-muted-foreground"
+              onClick={() => { setSearch(""); setStatusFilter("all"); setDateFrom(""); setDateTo(""); setShowFilters(false); }}
             >
-              {syncMutation.isPending ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="mr-2 h-4 w-4" />
-              )}
-              Sync Meetings
+              <X className="h-3 w-3" />
             </Button>
-          </div>
-
-          <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
-            <div className="rounded-xl border border-white/15 bg-white/10 p-3">
-              <p className="text-xs text-white/70">Total</p>
-              <p className="mt-1 text-2xl font-semibold">{stats?.total ?? meetings.length}</p>
-            </div>
-            <div className="rounded-xl border border-white/15 bg-white/10 p-3">
-              <p className="text-xs text-white/70">Pending</p>
-              <p className="mt-1 text-2xl font-semibold">{stats?.pending ?? 0}</p>
-            </div>
-            <div className="rounded-xl border border-white/15 bg-white/10 p-3">
-              <p className="text-xs text-white/70">Processed</p>
-              <p className="mt-1 text-2xl font-semibold">{stats?.processed ?? 0}</p>
-            </div>
-            <div className="rounded-xl border border-white/15 bg-white/10 p-3">
-              <p className="text-xs text-white/70">This Week</p>
-              <p className="mt-1 text-2xl font-semibold">{stats?.thisWeek ?? 0}</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <Card className="h-fit lg:sticky lg:top-16">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Filters</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Search meetings..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Status</Label>
-              <Select
-                value={statusFilter}
-                onValueChange={(v) => {
-                  setStatusFilter(v);
-                  setListView("all");
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Status</SelectItem>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="contacts_created">Contacts Created</SelectItem>
-                  <SelectItem value="tasks_created">Tasks Created</SelectItem>
-                  <SelectItem value="fully_processed">Processed</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-xs text-muted-foreground">Date Range</Label>
-              <Input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-              />
-              <Input
-                type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-              />
-            </div>
-            {(search || listView !== "all" || statusFilter !== "all" || dateFrom || dateTo) && (
-              <Button
-                variant="ghost"
-                className="w-full"
-                onClick={() => {
-                  setSearch("");
-                  setListView("all");
-                  setStatusFilter("all");
-                  setDateFrom("");
-                  setDateTo("");
-                  setExpandedId(null);
-                }}
-              >
-                Clear Filters
-              </Button>
-            )}
-          </CardContent>
-        </Card>
-
-        <div className="space-y-3">
-          <div className="flex flex-col gap-2 rounded-xl border bg-card p-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold">Meetings</h2>
-              <p className="text-sm text-muted-foreground">
-                {filtered.length} of {meetings.length} meetings shown
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Tabs
-                value={listView}
-                onValueChange={(v) => {
-                  setListView(v);
-                  setStatusFilter("all");
-                }}
-              >
-                <TabsList className="grid w-[240px] grid-cols-3">
-                  <TabsTrigger value="all">All</TabsTrigger>
-                  <TabsTrigger value="pending">Pending</TabsTrigger>
-                  <TabsTrigger value="processed">Processed</TabsTrigger>
-                </TabsList>
-              </Tabs>
-              <Badge variant="secondary" className="px-3 py-1">
-                {statusFilter === "all" ? "All Statuses" : statusFilter.replace("_", " ")}
-              </Badge>
-            </div>
-          </div>
-
-          {isLoading ? (
-            <div className="flex items-center justify-center rounded-xl border py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : meetingsError ? (
-            <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center dark:border-red-900/30 dark:bg-red-950/20">
-              <p className="font-medium text-red-700 dark:text-red-300">Error loading meetings</p>
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{meetingsError.message}</p>
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="rounded-xl border p-12 text-center text-muted-foreground">
-              <Mic className="mx-auto mb-3 h-12 w-12 opacity-30" />
-              <p>{meetings.length === 0 ? "No meetings synced yet." : "No meetings match your filters."}</p>
-            </div>
-          ) : (
-            filtered.map((meeting: any) => {
-              const participants = meeting.parsedParticipants;
-              const summary = meeting.parsedSummary;
-              const actionItems = meeting.parsedActionItems;
-              const isExpanded = expandedId === meeting.id;
-
-              return (
-                <Card key={meeting.id} className="overflow-hidden border border-border/70 shadow-sm">
-                  <div className="p-3 md:p-4">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-center">
-                      <button
-                        className="flex min-w-0 flex-1 items-start gap-3 text-left transition-colors hover:text-foreground/90"
-                        onClick={() => setExpandedId(isExpanded ? null : meeting.id)}
-                      >
-                        <div className="mt-1 text-muted-foreground">
-                          {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                        </div>
-                        <div className="min-w-0 flex-1 space-y-2">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="truncate text-[15px] font-medium">{meeting.title || "Untitled Meeting"}</p>
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                {formatDate(meeting.date)} <span className="mx-1">•</span>
-                                <span className="inline-flex items-center gap-1">
-                                  <Clock className="h-3 w-3" />
-                                  {formatDuration(meeting.duration)}
-                                </span>
-                              </p>
-                            </div>
-                            <div className="hidden shrink-0 md:block">{statusBadge(meeting.processingStatus)}</div>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5">
-                              <Users className="h-3 w-3" />
-                              {Array.isArray(participants) ? participants.length : 0} participants
-                            </span>
-                            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5">
-                              <ListTodo className="h-3 w-3" />
-                              {actionItems.length} action items
-                            </span>
-                          </div>
-                          {summary?.overview && (
-                            <p className="line-clamp-1 text-sm text-muted-foreground">{summary.overview}</p>
-                          )}
-                        </div>
-                      </button>
-
-                      <div className="flex items-center justify-between gap-2 md:justify-end">
-                        <div className="md:hidden">{statusBadge(meeting.processingStatus)}</div>
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          {meeting.recordingUrl && (
-                            <Button variant="ghost" size="sm" asChild>
-                              <a href={meeting.recordingUrl} target="_blank" rel="noopener noreferrer">
-                                <Video className="h-3.5 w-3.5" />
-                              </a>
-                            </Button>
-                          )}
-                          {meeting.transcriptUrl && (
-                            <Button variant="ghost" size="sm" asChild>
-                              <a href={meeting.transcriptUrl} target="_blank" rel="noopener noreferrer">
-                                <FileText className="h-3.5 w-3.5" />
-                              </a>
-                            </Button>
-                          )}
-                          {meeting.processingStatus === "pending" && (
-                            <Button
-                              size="sm"
-                              onClick={() => {
-                                setSelectedMeetingId(meeting.id);
-                                setProcessProjectName("");
-                                setProcessCreateProject(false);
-                                setShowProcessDialog(true);
-                              }}
-                            >
-                              <Zap className="mr-1 h-3.5 w-3.5" />
-                              Process
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    <p className="mt-2 text-[11px] text-muted-foreground">
-                      Expand for full transcript summary and extracted tasks.
-                    </p>
-                  </div>
-
-                  {isExpanded && (
-                    <div className="space-y-4 border-t bg-muted/20 p-4">
-                      {Array.isArray(participants) && participants.length > 0 && (
-                        <div>
-                          <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Participants</Label>
-                          <div className="mt-1.5 flex flex-wrap gap-1.5">
-                            {participants.map((p: any, i: number) => (
-                              <Badge key={i} variant="secondary" className="text-xs">
-                                {typeof p === "string" ? p : p.displayName || p.name || p.email || "Unknown"}
-                              </Badge>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {summary?.overview && (
-                        <div>
-                          <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Summary</Label>
-                          <p className="mt-1.5 text-sm leading-relaxed">{summary.overview}</p>
-                        </div>
-                      )}
-
-                      {summary?.shorthand_bullet && (
-                        <div>
-                          <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Key Points</Label>
-                          <ul className="mt-1.5 space-y-1 text-sm">
-                            {(Array.isArray(summary.shorthand_bullet) ? summary.shorthand_bullet : [summary.shorthand_bullet]).map((bullet: string, i: number) => (
-                              <li key={i} className="flex items-start gap-2">
-                                <span className="mt-1 text-muted-foreground">•</span>
-                                <span>{bullet}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-
-                      {summary?.keywords && (
-                        <div>
-                          <Label className="flex items-center gap-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                            <Tag className="h-3 w-3" /> Keywords
-                          </Label>
-                          <div className="mt-1.5 flex flex-wrap gap-1.5">
-                            {(Array.isArray(summary.keywords) ? summary.keywords : []).map((kw: string, i: number) => (
-                              <Badge key={i} variant="outline" className="text-xs">
-                                {kw}
-                              </Badge>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {actionItems.length > 0 && (
-                        <div>
-                          <Label className="flex items-center gap-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                            <ListTodo className="h-3 w-3" /> Action Items ({actionItems.length})
-                          </Label>
-                          <ul className="mt-1.5 space-y-1.5">
-                            {actionItems.map((item: any, i: number) => (
-                              <li key={i} className="flex items-start gap-2 rounded border bg-background p-2 text-sm">
-                                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                                <div className="flex-1">
-                                  <span>{typeof item === "string" ? item : item.text || item.description || JSON.stringify(item)}</span>
-                                  {item.assignee && <span className="ml-2 text-xs text-blue-600">@{item.assignee}</span>}
-                                </div>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-
-                      <div className="flex flex-wrap items-center gap-2 border-t pt-2">
-                        {meeting.recordingUrl && (
-                          <Button variant="outline" size="sm" asChild>
-                            <a href={meeting.recordingUrl} target="_blank" rel="noopener noreferrer">
-                              <Video className="mr-1 h-3 w-3" /> Recording
-                              <ExternalLink className="ml-1 h-3 w-3" />
-                            </a>
-                          </Button>
-                        )}
-                        {meeting.transcriptUrl && (
-                          <Button variant="outline" size="sm" asChild>
-                            <a href={meeting.transcriptUrl} target="_blank" rel="noopener noreferrer">
-                              <Mic className="mr-1 h-3 w-3" /> Transcript
-                              <ExternalLink className="ml-1 h-3 w-3" />
-                            </a>
-                          </Button>
-                        )}
-                        {meeting.processingStatus === "pending" && (
-                          <Button
-                            size="sm"
-                            onClick={() => {
-                              setSelectedMeetingId(meeting.id);
-                              setProcessProjectName("");
-                              setProcessCreateProject(false);
-                              setShowProcessDialog(true);
-                            }}
-                          >
-                            <Zap className="mr-1 h-3 w-3" />
-                            Process Meeting
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </Card>
-              );
-            })
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => (syncMutation.mutate as any)({})}
+            disabled={syncMutation.isPending}
+          >
+            {syncMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+            Sync
+          </Button>
         </div>
       </div>
 
+      {/* ── Collapsible date filters ── */}
+      {showFilters && (
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-muted-foreground">From</span>
+          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-7 w-36 text-xs" />
+          <span className="text-muted-foreground">to</span>
+          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-7 w-36 text-xs" />
+        </div>
+      )}
+
+      {/* ── Dense meeting list ── */}
+      {isLoading ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : meetingsError ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-center text-sm dark:border-red-900/30 dark:bg-red-950/20">
+          <p className="font-medium text-red-700 dark:text-red-300">Error loading meetings</p>
+          <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">{meetingsError.message}</p>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">
+          {meetings.length === 0 ? "No meetings synced yet." : "No meetings match filters."}
+        </div>
+      ) : (
+        <div className="divide-y divide-border/50 rounded-xl border">
+          {filtered.map((meeting: any) => {
+            const summary = meeting.parsedSummary;
+            const actionItems = meeting.parsedActionItems;
+            const bullets = getBullets(meeting);
+            const isExpanded = expandedId === meeting.id;
+
+            return (
+              <div id={`meeting-row-${meeting.id}`} key={meeting.id} className="group transition-colors hover:bg-accent/30">
+                {/* ── Main row: always visible ── */}
+                <div className="flex items-start gap-2 px-3 py-2">
+                  {/* Expand toggle */}
+                  <button
+                    className="mt-0.5 shrink-0 text-muted-foreground/60 hover:text-foreground transition-colors"
+                    onClick={() => setExpandedMeetingWithUrl(isExpanded ? null : meeting.id)}
+                  >
+                    {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                  </button>
+
+                  {/* Content */}
+                  <div className="min-w-0 flex-1">
+                    {/* Title row */}
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="truncate text-[13px] font-medium cursor-pointer hover:text-foreground/80"
+                        onClick={() => setExpandedMeetingWithUrl(isExpanded ? null : meeting.id)}
+                      >
+                        {meeting.title || "Untitled"}
+                      </span>
+                      <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
+                        {fmtDate(meeting.date)} {fmtTime(meeting.date)}
+                      </span>
+                      <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
+                        {fmtDur(meeting.duration)}
+                      </span>
+                      <span className="shrink-0">{statusBadge(meeting.processingStatus)}</span>
+                      {meeting.processingStatus === "pending" && (
+                        <Button
+                          size="sm"
+                          className="h-5 px-2 text-[10px] shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedMeetingId(meeting.id);
+                            setProcessProjectName("");
+                            setProcessCreateProject(false);
+                            setShowProcessDialog(true);
+                          }}
+                        >
+                          <Zap className="h-2.5 w-2.5 mr-0.5" />
+                          Process
+                        </Button>
+                      )}
+                      {meeting.transcriptUrl && (
+                        <a
+                          href={meeting.transcriptUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="shrink-0 text-muted-foreground/50 hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <FileText className="h-3 w-3" />
+                        </a>
+                      )}
+                    </div>
+
+                    {/* Inline bullets - always visible */}
+                    {bullets.length > 0 && (
+                      <ul className="mt-0.5 space-y-0">
+                        {bullets.map((bullet: string, i: number) => (
+                          <li key={i} className="flex items-start gap-1.5 text-[12px] text-muted-foreground leading-[1.4]">
+                            <span className="mt-[3px] h-1 w-1 shrink-0 rounded-full bg-muted-foreground/40" />
+                            <span className="line-clamp-1">{bullet}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {!bullets.length && summary?.overview && (
+                      <p className="mt-0.5 text-[12px] text-muted-foreground line-clamp-1 leading-[1.4]">{summary.overview}</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* ── Expanded detail panel ── */}
+                {isExpanded && (
+                  <div className="space-y-3 border-t border-border/30 bg-muted/15 px-8 py-3 text-sm">
+                    {summary?.overview && (
+                      <div>
+                        <Label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Summary</Label>
+                        <p className="mt-1 text-[13px] leading-relaxed">{summary.overview}</p>
+                      </div>
+                    )}
+
+                    {summary?.shorthand_bullet && (
+                      <div>
+                        <Label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Key Points</Label>
+                        <ul className="mt-1 space-y-0.5">
+                          {(Array.isArray(summary.shorthand_bullet) ? summary.shorthand_bullet : [summary.shorthand_bullet]).map((b: string, i: number) => (
+                            <li key={i} className="flex items-start gap-1.5 text-[13px]">
+                              <span className="mt-[5px] h-1 w-1 shrink-0 rounded-full bg-foreground/30" />
+                              <span>{b}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {summary?.keywords && (
+                      <div className="flex flex-wrap items-center gap-1">
+                        <Tag className="h-3 w-3 text-muted-foreground" />
+                        {(Array.isArray(summary.keywords) ? summary.keywords : []).map((kw: string, i: number) => (
+                          <Badge key={i} variant="outline" className="text-[10px] px-1.5 py-0">{kw}</Badge>
+                        ))}
+                      </div>
+                    )}
+
+                    {actionItems.length > 0 && (
+                      <div>
+                        <Label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                          Action Items ({actionItems.length})
+                        </Label>
+                        <ul className="mt-1 space-y-1">
+                          {actionItems.map((item: any, i: number) => (
+                            <li key={i} className="flex items-start gap-1.5 text-[13px]">
+                              <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
+                              <span>{typeof item === "string" ? item : item.text || item.description || JSON.stringify(item)}</span>
+                              {item.assignee && <span className="text-[11px] text-blue-600 ml-1">@{item.assignee}</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {(meeting.parsedParticipants?.length > 0) && (
+                      <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+                        <Users className="h-3 w-3" />
+                        {meeting.parsedParticipants.map((p: any, i: number) => (
+                          <span key={i}>
+                            {typeof p === "string" ? p : p.displayName || p.name || p.email || "?"}
+                            {i < meeting.parsedParticipants.length - 1 && ","}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-1.5 pt-1">
+                      {meeting.recordingUrl && (
+                        <Button variant="outline" size="sm" className="h-6 text-[11px] px-2" asChild>
+                          <a href={meeting.recordingUrl} target="_blank" rel="noopener noreferrer">
+                            <Video className="mr-1 h-3 w-3" /> Recording <ExternalLink className="ml-1 h-2.5 w-2.5" />
+                          </a>
+                        </Button>
+                      )}
+                      {meeting.transcriptUrl && (
+                        <Button variant="outline" size="sm" className="h-6 text-[11px] px-2" asChild>
+                          <a href={meeting.transcriptUrl} target="_blank" rel="noopener noreferrer">
+                            <Mic className="mr-1 h-3 w-3" /> Transcript <ExternalLink className="ml-1 h-2.5 w-2.5" />
+                          </a>
+                        </Button>
+                      )}
+                      {meeting.processingStatus === "pending" && (
+                        <Button
+                          size="sm"
+                          className="h-6 text-[11px] px-2"
+                          onClick={() => {
+                            setSelectedMeetingId(meeting.id);
+                            setProcessProjectName("");
+                            setProcessCreateProject(false);
+                            setShowProcessDialog(true);
+                          }}
+                        >
+                          <Zap className="mr-1 h-3 w-3" />
+                          Process
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Process dialog (unchanged logic) ── */}
       <Dialog open={showProcessDialog} onOpenChange={setShowProcessDialog}>
         <DialogContent>
           <DialogHeader>

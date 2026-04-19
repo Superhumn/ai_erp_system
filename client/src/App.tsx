@@ -113,6 +113,7 @@ const Recruiting = lazy(() => import("./pages/hr/Recruiting"));
 // Legal
 const LegalHub = lazy(() => import("./pages/legal/LegalHub"));
 const Contracts = lazy(() => import("./pages/legal/Contracts"));
+const CaseTracker = lazy(() => import("./pages/legal/CaseTracker"));
 const Disputes = lazy(() => import("./pages/legal/Disputes"));
 const Documents = lazy(() => import("./pages/legal/Documents"));
 
@@ -310,6 +311,7 @@ function Router() {
           {/* Legal */}
           <Route path="/legal" component={LegalHub} />
           <Route path="/legal/contracts" component={Contracts} />
+          <Route path="/legal/cases" component={CaseTracker} />
           <Route path="/legal/disputes" component={Disputes} />
           <Route path="/legal/documents" component={Documents} />
           <Route path="/legal/ai" component={LegalAI} />

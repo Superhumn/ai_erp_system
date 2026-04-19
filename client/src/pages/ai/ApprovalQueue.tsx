@@ -197,7 +197,7 @@ function SuggestedSourceDialog({
                   {emailFromDb?.id != null && (
                     <p>
                       <Link
-                        href={`/operations/email-inbox`}
+                        href={`/operations/email-inbox?emailId=${emailFromDb.id}`}
                         className="text-primary inline-flex items-center gap-1 hover:underline font-medium"
                       >
                         Open in Email Inbox
@@ -234,7 +234,7 @@ function SuggestedSourceDialog({
                 <>
                   <div className="flex flex-wrap items-center gap-2">
                     <Link
-                      href="/meetings"
+                      href={meeting?.id != null ? `/meetings?meetingId=${meeting.id}` : ffId ? `/meetings?firefliesId=${encodeURIComponent(ffId)}` : "/meetings"}
                       className="text-primary inline-flex items-center gap-1 hover:underline font-medium"
                     >
                       Open Meetings
@@ -296,7 +296,10 @@ function SuggestedSourceDialog({
                     This suggestion does not match a stored meeting, or the meeting was removed. Check Fireflies sync
                     or process the meeting from the Meetings page.
                   </p>
-                  <Link href="/meetings" className="text-primary inline-flex items-center gap-1 hover:underline">
+                  <Link
+                    href={ffId ? `/meetings?firefliesId=${encodeURIComponent(ffId)}` : "/meetings"}
+                    className="text-primary inline-flex items-center gap-1 hover:underline"
+                  >
                     Go to Meetings <ExternalLink className="h-3.5 w-3.5" />
                   </Link>
                 </div>

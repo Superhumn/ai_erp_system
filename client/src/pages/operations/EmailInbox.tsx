@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -136,6 +136,18 @@ export default function EmailInbox() {
 
   const utils = trpc.useUtils();
 
+  const setSelectedEmailWithUrl = (emailId: number | null) => {
+    setSelectedEmailId(emailId);
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (emailId != null) {
+      url.searchParams.set("emailId", String(emailId));
+    } else {
+      url.searchParams.delete("emailId");
+    }
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  };
+
   // Build query params for email list
   const emailQueryParams = {
     ...(categoryFilter !== "all" && { category: categoryFilter }),
@@ -155,7 +167,7 @@ export default function EmailInbox() {
   const archiveEmailMutation = trpc.emailScanning.archiveEmail.useMutation({
     onSuccess: () => {
       toast.success("Email archived");
-      setSelectedEmailId(null);
+      setSelectedEmailWithUrl(null);
       utils.emailScanning.list.invalidate();
     },
   });
@@ -163,7 +175,7 @@ export default function EmailInbox() {
   const deleteEmailMutation = trpc.emailScanning.deleteEmail.useMutation({
     onSuccess: () => {
       toast.success("Email deleted");
-      setSelectedEmailId(null);
+      setSelectedEmailWithUrl(null);
       setShowDeleteConfirm(false);
       setDeleteTargetId(null);
       utils.emailScanning.list.invalidate();
@@ -392,6 +404,18 @@ export default function EmailInbox() {
 
   const selectedEmail = emails?.find((e: any) => e.id === selectedEmailId);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || !emails?.length) return;
+    const rawEmailId = new URLSearchParams(window.location.search).get("emailId");
+    if (!rawEmailId) return;
+    const emailId = Number(rawEmailId);
+    if (!Number.isFinite(emailId) || emailId <= 0) return;
+    if (!emails.some((email: any) => email.id === emailId)) return;
+    if (selectedEmailId !== emailId) {
+      setSelectedEmailId(emailId);
+    }
+  }, [emails, selectedEmailId]);
+
   // Sidebar folder config
   const sidebarFolders = [
     { key: "all", label: "Inbox", icon: Inbox, count: emails?.filter((e: any) => e.parsingStatus !== "archived").length ?? 0 },
@@ -466,7 +490,7 @@ export default function EmailInbox() {
                 className={`flex items-center gap-3 pl-4 pr-3 py-1.5 text-sm w-[calc(100%-8px)] rounded-r-full transition-colors hover:bg-accent/60 ${
                   categoryFilter === key ? "bg-accent font-semibold" : "font-normal"
                 }`}
-                onClick={() => { setCategoryFilter(key); setSelectedEmailId(null); }}
+                onClick={() => { setCategoryFilter(key); setSelectedEmailWithUrl(null); }}
               >
                 <Icon className="h-4 w-4 shrink-0" />
                 <span className="flex-1 text-left">{label}</span>
@@ -486,7 +510,7 @@ export default function EmailInbox() {
                 className={`flex items-center gap-3 pl-4 pr-3 py-1.5 text-sm w-[calc(100%-8px)] rounded-r-full transition-colors hover:bg-accent/60 ${
                   categoryFilter === key ? "bg-accent font-semibold" : "font-normal"
                 }`}
-                onClick={() => { setCategoryFilter(key); setSelectedEmailId(null); }}
+                onClick={() => { setCategoryFilter(key); setSelectedEmailWithUrl(null); }}
               >
                 <span className={`h-3 w-3 rounded-full shrink-0 ${dot}`} />
                 <span className="flex-1 text-left">{label}</span>
@@ -816,7 +840,7 @@ export default function EmailInbox() {
                   size="icon"
                   className="h-8 w-8 -ml-1 shrink-0"
                   title="Back to inbox"
-                  onClick={() => setSelectedEmailId(null)}
+                  onClick={() => setSelectedEmailWithUrl(null)}
                 >
                   <ArrowLeft className="h-4 w-4" />
                 </Button>

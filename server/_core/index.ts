@@ -18,7 +18,11 @@ function serveStatic(app: import("express").Express) {
       ? path.resolve(import.meta.dirname, "../..", "dist", "public")
       : path.resolve(import.meta.dirname, "..", "public");
   if (!fs.existsSync(distPath)) {
-    console.error(`Could not find the build directory: ${distPath}, make sure to build the client first`);
+    const message = `Could not find the build directory: ${distPath}, make sure to build the client first`;
+    if (ENV.isProduction) {
+      throw new Error(message);
+    }
+    console.error(message);
   }
   // Hashed assets (JS/CSS) — cache forever (filename changes on rebuild)
   app.use("/assets", express.static(path.join(distPath, "assets"), {
@@ -38,7 +42,35 @@ function serveStatic(app: import("express").Express) {
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }
-import { ENV, validateEmailConfig, validateCriticalConfig } from "./env";
+
+async function verifyDatabaseReadiness() {
+  const database = await db.getDb();
+  if (!database) {
+    throw new Error("Database is not available. Check DATABASE_URL and database connectivity.");
+  }
+
+  await database.execute(sql`SELECT 1`);
+
+  const productStageColumnResult = await database.execute(sql`
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'products'
+      AND COLUMN_NAME = 'manufacturingStage'
+    LIMIT 1
+  `);
+
+  const rows = Array.isArray((productStageColumnResult as any)?.rows)
+    ? (productStageColumnResult as any).rows
+    : (productStageColumnResult as any);
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error(
+      "Database schema is missing `products.manufacturingStage`. Run migrations before starting the server."
+    );
+  }
+}
+import { ENV, validateEmailConfig, validateCriticalConfig, validateRequiredSecrets } from "./env";
 import * as sendgridProvider from "./sendgridProvider";
 import * as emailService from "./emailService";
 import * as db from "../db";
@@ -342,7 +374,9 @@ async function cleanupPlaceholders() {
 async function startServer() {
   await initErrorTracking();
 
+  validateRequiredSecrets();
   validateCriticalConfig();
+  await verifyDatabaseReadiness();
 
   // Ensure critical tables exist + cleanup placeholders
   ensureTables().then(() => cleanupPlaceholders()).catch(console.warn);
@@ -1228,34 +1262,32 @@ async function startServer() {
       }
     })();
 
-    // ── Fireflies meeting auto-sync (every 30 minutes) ──
+    // ── Fireflies meeting auto-sync (uses per-user API keys from Settings; no env var required) ──
     (async () => {
       try {
-        if (process.env.FIREFLIES_API_KEY) {
-          const FIREFLIES_INTERVAL = 24 * 60 * 60 * 1000; // Daily
-          console.log("[Fireflies Sync] Starting auto-sync with 30m interval");
-          setInterval(async () => {
-            try {
-              const { syncAllFirefliesMeetings } = await import("../firefliesSyncService");
-              const result = await syncAllFirefliesMeetings();
-              if (result.totalSynced > 0) {
-                console.log(`[Fireflies Sync] Synced ${result.totalSynced} meetings, created ${result.contactsCreated} contacts, ${result.dealsCreated} deals, ${result.notificationsCreated} notifications`);
-              }
-            } catch (e) {
-              console.warn("[Fireflies Sync] Failed:", e);
+        const FIREFLIES_INTERVAL = 30 * 60 * 1000; // 30 minutes
+        console.log("[Fireflies Sync] Starting auto-sync (30m interval) for users with Fireflies connected");
+        const runFirefliesSync = async () => {
+          try {
+            const { syncAllFirefliesMeetings } = await import("../firefliesSyncService");
+            const result = await syncAllFirefliesMeetings();
+            if (
+              result.totalSynced > 0 ||
+              result.tasksSuggested > 0 ||
+              result.contactsCreated > 0 ||
+              result.dealsCreated > 0
+            ) {
+              console.log(
+                `[Fireflies Sync] Synced ${result.totalSynced} new meetings (${result.totalSkipped} already had), ` +
+                  `task suggestions ${result.tasksSuggested}, contacts ${result.contactsCreated}, deals ${result.dealsCreated}`
+              );
             }
-          }, FIREFLIES_INTERVAL);
-          // Initial sync after 3 minutes
-          setTimeout(async () => {
-            try {
-              const { syncAllFirefliesMeetings } = await import("../firefliesSyncService");
-              await syncAllFirefliesMeetings();
-              console.log("[Fireflies Sync] Initial sync complete");
-            } catch (e) {
-              console.warn("[Fireflies Sync] Initial sync failed:", e);
-            }
-          }, 3 * 60 * 1000);
-        }
+          } catch (e) {
+            console.warn("[Fireflies Sync] Failed:", e);
+          }
+        };
+        setInterval(runFirefliesSync, FIREFLIES_INTERVAL);
+        setTimeout(runFirefliesSync, 3 * 60 * 1000);
       } catch (e) {
         console.warn("[Fireflies Sync] Could not initialize:", e);
       }

@@ -10248,7 +10248,11 @@ export async function upsertFirefliesConfig(userId: number, data: { apiKey: stri
     await db.update(firefliesConfigs).set({ ...data, updatedAt: new Date() }).where(eq(firefliesConfigs.id, existing.id));
     return { id: existing.id, updated: true };
   }
-  const result = await db.insert(firefliesConfigs).values({ userId, ...data });
+  const result = await db.insert(firefliesConfigs).values({
+    userId,
+    ...data,
+    autoCreateTasks: data.autoCreateTasks ?? true,
+  });
   return { id: result[0].insertId, updated: false };
 }
 

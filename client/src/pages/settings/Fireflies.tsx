@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -35,6 +36,8 @@ export default function FirefliesPage() {
   const [selectedMeetingId, setSelectedMeetingId] = useState<number | null>(null);
   const [processProjectName, setProcessProjectName] = useState("");
   const [processCreateProject, setProcessCreateProject] = useState(false);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("auto");
+  const [selectedAssigneeId, setSelectedAssigneeId] = useState<string>("auto");
 
   const { data: configRaw, isLoading: configLoading, refetch: refetchConfig } = trpc.fireflies.getConfig.useQuery();
   const config = configRaw as any;
@@ -52,6 +55,12 @@ export default function FirefliesPage() {
   const meetings = meetingsRaw as any[] | undefined;
   const { data: statsRaw, refetch: refetchStats } = trpc.fireflies.meetings.getStats.useQuery();
   const stats = statsRaw as any;
+  const { data: taskRoutingOptionsRaw } = trpc.fireflies.taskRoutingOptions.useQuery(undefined, {
+    enabled: !!config?.configured,
+  });
+  const taskRoutingOptions = taskRoutingOptionsRaw as
+    | { projects: Array<{ id: number; name: string }>; assignees: Array<{ id: number; name?: string; email?: string }> }
+    | undefined;
 
   const configureMutation = trpc.fireflies.configure.useMutation({
     onSuccess: (data) => {
@@ -115,12 +124,18 @@ export default function FirefliesPage() {
 
   const handleProcessMeeting = () => {
     if (!selectedMeetingId) return;
+    if (!processCreateProject && selectedProjectId === "auto" && selectedAssigneeId !== "auto") {
+      toast.error("Select a project when assigning tasks to a team member");
+      return;
+    }
     processMeetingMutation.mutate({
       meetingId: selectedMeetingId,
       createContacts: true,
       createTasks: true,
       createProject: processCreateProject,
       projectName: processProjectName || undefined,
+      projectId: !processCreateProject && selectedProjectId !== "auto" ? Number(selectedProjectId) : undefined,
+      assigneeId: selectedAssigneeId !== "auto" ? Number(selectedAssigneeId) : undefined,
     } as any);
   };
 
@@ -352,7 +367,7 @@ export default function FirefliesPage() {
               <CardHeader>
                 <CardTitle>Synced Meetings</CardTitle>
                 <CardDescription>
-                  Meetings synced from Fireflies. Process them to create CRM contacts, tasks, and projects.
+                  New meetings sync automatically about every 30 minutes (and when you use Sync). Action items are queued as task suggestions when they can be matched to a project. Use Process for extra CRM contacts or a meeting project if needed.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -364,7 +379,7 @@ export default function FirefliesPage() {
                   <div className="text-center py-12 text-muted-foreground">
                     <Mic className="h-12 w-12 mx-auto mb-3 opacity-30" />
                     <p>No meetings synced yet.</p>
-                    <p className="text-sm mt-1">Click "Sync Meetings" to fetch your recent meetings from Fireflies.</p>
+                    <p className="text-sm mt-1">Wait for the next automatic sync or click Sync Meetings to fetch now.</p>
                   </div>
                 ) : (
                   <Table>
@@ -436,6 +451,8 @@ export default function FirefliesPage() {
                                     setSelectedMeetingId(meeting.id);
                                     setProcessProjectName("");
                                     setProcessCreateProject(false);
+                                    setSelectedProjectId("auto");
+                                    setSelectedAssigneeId("auto");
                                     setShowProcessDialog(true);
                                   }}
                                 >
@@ -483,6 +500,52 @@ export default function FirefliesPage() {
               </div>
               <ArrowRight className="h-4 w-4 text-purple-400 ml-auto" />
               <CheckCircle2 className="h-4 w-4 text-green-500" />
+            </div>
+            <div className="border rounded-lg p-3 space-y-3">
+              <div className="font-medium text-sm">Task Routing (optional)</div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <Label className="text-xs">Project</Label>
+                  <Select
+                    value={processCreateProject ? "auto" : selectedProjectId}
+                    onValueChange={setSelectedProjectId}
+                    disabled={processCreateProject}
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="Auto route project" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">Auto route project</SelectItem>
+                      {(taskRoutingOptions?.projects || []).map((project) => (
+                        <SelectItem key={project.id} value={String(project.id)}>
+                          {project.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-xs">Assignee</Label>
+                  <Select value={selectedAssigneeId} onValueChange={setSelectedAssigneeId}>
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="Auto assign" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">Auto assign</SelectItem>
+                      {(taskRoutingOptions?.assignees || []).map((assignee) => (
+                        <SelectItem key={assignee.id} value={String(assignee.id)}>
+                          {assignee.name || assignee.email || `User ${assignee.id}`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              {processCreateProject && (
+                <p className="text-xs text-muted-foreground">
+                  Project selection is disabled because a new project will be created for this meeting.
+                </p>
+              )}
             </div>
             <div className="border rounded-lg p-3 space-y-2">
               <div className="flex items-center justify-between">

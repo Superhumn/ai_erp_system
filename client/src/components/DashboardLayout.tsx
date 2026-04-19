@@ -187,6 +187,7 @@ function getMenuGroups(role: string = "user") {
       ]),
       ...(hasLegal || isAdmin ? [
         { icon: Scale, label: "Legal", path: "/legal" },
+        { icon: Scale, label: "Cases", path: "/legal/cases" },
       ] : []),
     ],
   },
@@ -525,7 +526,7 @@ function DashboardLayoutContent({
             <NotificationCenter />
           </div>
         </header>
-        <main className="flex-1 overflow-auto p-3 pb-4 md:p-6 md:pb-6 lg:p-8 lg:pb-8">{children}</main>
+        <main className="flex-1 overflow-auto p-3 pb-3 md:p-4 md:pb-4 lg:p-5 lg:pb-5">{children}</main>
       </SidebarInset>
 
       {/* Floating AI removed — using toolbar only */}
