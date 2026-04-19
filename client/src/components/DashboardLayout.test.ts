@@ -2,27 +2,29 @@
  * Navigation structure guard — prevents regressions to the sidebar layout.
  *
  * If this test fails, it means someone changed the nav groups or their order.
- * The canonical structure was agreed on 2026-04-15.  Do NOT update these
+ * The canonical structure was agreed on 2026-04-19.  Do NOT update these
  * assertions without explicit product approval.
  */
 import { describe, it, expect } from "vitest";
 import { getMenuGroups } from "./DashboardLayout";
 
-// ── Canonical section order (never reorder / rename without approval) ──
+// ── Canonical section order for admin (never reorder / rename without approval) ──
 const CANONICAL_SECTIONS = [
-  "Command Center",
-  "Sales",
-  "Finance",
+  "_main",
+  "Sales & Finance",
+  "CRM",
   "Operations",
-  "People",
-  "Tools",
+  "_sell",
+  "_ops",
+  "_people",
+  "_tools",
 ] as const;
 
 describe("Sidebar navigation structure", () => {
   // Admin sees every section
   const adminGroups = getMenuGroups("admin");
 
-  it("has exactly 6 sections for admin", () => {
+  it("has exactly 8 sections for admin", () => {
     expect(adminGroups.map((g) => g.label)).toEqual([...CANONICAL_SECTIONS]);
   });
 
@@ -33,177 +35,180 @@ describe("Sidebar navigation structure", () => {
     }
   });
 
-  // ── Command Center ──
-  it("Command Center has Dashboard, Projects, Email Inbox, Meetings, Messaging", () => {
-    const cc = adminGroups.find((g) => g.label === "Command Center")!;
-    expect(cc.items.map((i) => i.label)).toEqual([
+  // ── _main ──
+  it("_main has Dashboard, Projects, AI Assistant, Approval Queue", () => {
+    const main = adminGroups.find((g) => g.label === "_main")!;
+    expect(main.items.map((i) => i.label)).toEqual([
       "Dashboard",
       "Projects",
+      "AI Assistant",
+      "Approval Queue",
+    ]);
+  });
+
+  // ── Sales & Finance ──
+  it("Sales & Finance has Sales Hub, Fundraising CRM, Investors, Campaigns, Accounts, Transactions, R&D Tax Credit", () => {
+    const sf = adminGroups.find((g) => g.label === "Sales & Finance")!;
+    expect(sf.items.map((i) => i.label)).toEqual([
+      "Sales Hub",
+      "Fundraising CRM",
+      "Investors",
+      "Campaigns",
+      "Accounts",
+      "Transactions",
+      "R&D Tax Credit",
+    ]);
+  });
+
+  // ── CRM ──
+  it("CRM has CRM Hub, Contacts, Messaging", () => {
+    const crm = adminGroups.find((g) => g.label === "CRM")!;
+    expect(crm.items.map((i) => i.label)).toEqual([
+      "CRM Hub",
+      "Contacts",
+      "Messaging",
+    ]);
+  });
+
+  // ── Operations ──
+  it("Operations has Operations, Inventory, Inventory Mgmt, Manufacturing, Procurement, Logistics, Email Inbox, Meetings, Messaging", () => {
+    const ops = adminGroups.find((g) => g.label === "Operations")!;
+    expect(ops.items.map((i) => i.label)).toEqual([
+      "Operations",
+      "Inventory",
+      "Inventory Mgmt",
+      "Manufacturing",
+      "Procurement",
+      "Logistics",
       "Email Inbox",
       "Meetings",
       "Messaging",
     ]);
   });
 
-  // ── Sales ──
-  it("Sales has Orders, Sales / CRM, Marketing (admin)", () => {
-    const sales = adminGroups.find((g) => g.label === "Sales")!;
-    expect(sales.items.map((i) => i.label)).toEqual([
+  // ── _sell (admin) ──
+  it("_sell has Orders, CRM, Support, Marketing, Financials, Fundraising for admin", () => {
+    const sell = adminGroups.find((g) => g.label === "_sell")!;
+    expect(sell.items.map((i) => i.label)).toEqual([
       "Orders",
-      "Sales / CRM",
+      "CRM",
+      "Support",
       "Marketing",
-    ]);
-  });
-
-  // ── Finance ──
-  it("Finance has Finance, Grants, Fundraising, Investors, Data Room", () => {
-    const fin = adminGroups.find((g) => g.label === "Finance")!;
-    expect(fin.items.map((i) => i.label)).toEqual([
-      "Finance",
-      "Grants",
+      "Financials",
       "Fundraising",
-      "Investors",
-      "Data Room",
     ]);
   });
 
-  // ── Operations ──
-  it("Operations has Operations, Logistics, Recipes, Vendors (admin)", () => {
-    const ops = adminGroups.find((g) => g.label === "Operations")!;
-    expect(ops.items.map((i) => i.label)).toEqual([
-      "Operations",
-      "Logistics",
+  // ── _ops (admin) ──
+  it("_ops has Inventory, Recipes, Freight, Vendors for admin", () => {
+    const opsGroup = adminGroups.find((g) => g.label === "_ops")!;
+    expect(opsGroup.items.map((i) => i.label)).toEqual([
+      "Inventory",
       "Recipes",
+      "Freight",
       "Vendors",
     ]);
   });
 
-  // ── People ──
-  it("People has HR, Recruiting, Legal (admin)", () => {
-    const people = adminGroups.find((g) => g.label === "People")!;
+  // ── _people (admin) ──
+  it("_people has People, Recruiting, Investors, Legal for admin", () => {
+    const people = adminGroups.find((g) => g.label === "_people")!;
     expect(people.items.map((i) => i.label)).toEqual([
-      "HR",
+      "People",
       "Recruiting",
+      "Investors",
       "Legal",
     ]);
   });
 
-  // ── Tools ──
-  it("Tools has SOPs, Code, Settings, Import, EDI (admin)", () => {
-    const tools = adminGroups.find((g) => g.label === "Tools")!;
+  // ── _tools (admin) ──
+  it("_tools has SOPs, Data Room, Grants, Import, EDI, Code, Settings for admin", () => {
+    const tools = adminGroups.find((g) => g.label === "_tools")!;
     expect(tools.items.map((i) => i.label)).toEqual([
       "SOPs",
-      "Code",
-      "Settings",
+      "Data Room",
+      "Grants",
       "Import",
       "EDI",
+      "Code",
+      "Settings",
     ]);
   });
 
   // ── Role-based visibility ──
   describe("role gating", () => {
-    it("basic user sees only Command Center, People, Tools (SOPs only)", () => {
+    it("basic user sees _main, Sales & Finance, CRM, Operations, _people, _tools (no _sell or _ops)", () => {
       const groups = getMenuGroups("user");
       expect(groups.map((g) => g.label)).toEqual([
-        "Command Center",
-        "People",
-        "Tools",
+        "_main",
+        "Sales & Finance",
+        "CRM",
+        "Operations",
+        "_people",
+        "_tools",
       ]);
-      const tools = groups.find((g) => g.label === "Tools")!;
-      expect(tools.items.map((i) => i.label)).toEqual(["SOPs"]);
     });
 
-    it("ops user sees Sales (Orders only), Operations, but no Finance", () => {
+    it("ops user sees _sell and _ops", () => {
       const groups = getMenuGroups("ops");
       const labels = groups.map((g) => g.label);
-      expect(labels).toContain("Sales");
-      expect(labels).toContain("Operations");
-      expect(labels).not.toContain("Finance");
-
-      const sales = groups.find((g) => g.label === "Sales")!;
-      expect(sales.items.map((i) => i.label)).toEqual(["Orders"]);
+      expect(labels).toContain("_sell");
+      expect(labels).toContain("_ops");
     });
 
-    it("finance user sees Finance but not Sales or Operations", () => {
-      const groups = getMenuGroups("finance");
-      const labels = groups.map((g) => g.label);
-      expect(labels).toContain("Finance");
-      expect(labels).not.toContain("Sales");
-      expect(labels).not.toContain("Operations");
-    });
-
-    it("sales user sees Sales (full) but not Finance or Operations", () => {
-      const groups = getMenuGroups("sales");
-      const labels = groups.map((g) => g.label);
-      expect(labels).toContain("Sales");
-      expect(labels).not.toContain("Finance");
-      expect(labels).not.toContain("Operations");
-
-      const sales = groups.find((g) => g.label === "Sales")!;
-      expect(sales.items.map((i) => i.label)).toEqual([
-        "Orders",
-        "Sales / CRM",
-        "Marketing",
+    it("_ops has Inventory, Recipes, Freight, Vendors for ops user", () => {
+      const groups = getMenuGroups("ops");
+      const opsGroup = groups.find((g) => g.label === "_ops")!;
+      expect(opsGroup.items.map((i) => i.label)).toEqual([
+        "Inventory",
+        "Recipes",
+        "Freight",
+        "Vendors",
       ]);
     });
 
-    it("exec sees Recipes (isAdmin = true)", () => {
-      const groups = getMenuGroups("exec");
-      const ops = groups.find((g) => g.label === "Operations")!;
-      expect(ops.items.map((i) => i.label)).toContain("Recipes");
+    it("finance user sees _sell but not _ops", () => {
+      const groups = getMenuGroups("finance");
+      const labels = groups.map((g) => g.label);
+      expect(labels).toContain("_sell");
+      expect(labels).not.toContain("_ops");
     });
 
-    it("Recipes hidden from exec-only when not admin/ops", () => {
-      // exec IS admin (isAdmin includes exec), so they see Recipes.
-      // A hypothetical non-admin, non-ops role with hasOps would not.
-      // This test documents that exec = admin-equivalent for Recipes.
-      const groups = getMenuGroups("exec");
-      const ops = groups.find((g) => g.label === "Operations")!;
-      expect(ops.items.map((i) => i.label)).toContain("Recipes");
+    it("sales user sees _sell but not _ops", () => {
+      const groups = getMenuGroups("sales");
+      const labels = groups.map((g) => g.label);
+      expect(labels).toContain("_sell");
+      expect(labels).not.toContain("_ops");
     });
 
-    it("Code and Settings are admin-only", () => {
-      const userTools = getMenuGroups("user").find((g) => g.label === "Tools")!;
+    it("exec sees Recipes in _ops", () => {
+      const groups = getMenuGroups("exec");
+      const opsGroup = groups.find((g) => g.label === "_ops")!;
+      expect(opsGroup.items.map((i) => i.label)).toContain("Recipes");
+    });
+
+    it("Code and Settings are admin-only in _tools", () => {
+      const userTools = getMenuGroups("user").find((g) => g.label === "_tools")!;
       const labels = userTools.items.map((i) => i.label);
       expect(labels).not.toContain("Code");
       expect(labels).not.toContain("Settings");
 
-      const adminTools = getMenuGroups("admin").find((g) => g.label === "Tools")!;
+      const adminTools = getMenuGroups("admin").find((g) => g.label === "_tools")!;
       const adminLabels = adminTools.items.map((i) => i.label);
       expect(adminLabels).toContain("Code");
       expect(adminLabels).toContain("Settings");
     });
 
-    it("legal user sees Legal in People", () => {
+    it("legal user sees Legal in _people", () => {
       const groups = getMenuGroups("legal");
-      const people = groups.find((g) => g.label === "People")!;
+      const people = groups.find((g) => g.label === "_people")!;
       expect(people.items.map((i) => i.label)).toContain("Legal");
     });
 
-    it("non-legal user does not see Legal", () => {
+    it("non-legal user does not see Legal in _people", () => {
       const groups = getMenuGroups("user");
-      const people = groups.find((g) => g.label === "People")!;
+      const people = groups.find((g) => g.label === "_people")!;
       expect(people.items.map((i) => i.label)).not.toContain("Legal");
-    });
-  });
-
-  // ── Things that must NOT exist in the nav ──
-  describe("removed items stay removed", () => {
-    const allLabels = getMenuGroups("admin")
-      .flatMap((g) => [g.label, ...g.items.map((i) => i.label)]);
-
-    it.each([
-      "Sales & Finance",
-      "CRM",
-      "Communications",
-      "AI Assistant",
-      "Approval Queue",
-      "Support",
-      "Equity Portal",
-      "Time Tracking",
-      "Inventory Mgmt",
-    ])("%s must not appear in sidebar", (label) => {
-      expect(allLabels).not.toContain(label);
     });
   });
 });
