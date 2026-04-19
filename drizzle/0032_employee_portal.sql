@@ -137,3 +137,10 @@ ALTER TABLE `employee_emergency_contacts`
   ADD CONSTRAINT `employee_emergency_contacts_employeeId_employees_id_fk`
   FOREIGN KEY (`employeeId`) REFERENCES `employees`(`id`)
   ON DELETE NO ACTION ON UPDATE NO ACTION;
+
+-- Indexes for efficient per-employee queries
+CREATE INDEX `leave_requests_employeeId_idx` ON `leave_requests` (`employeeId`);
+CREATE INDEX `leave_requests_status_idx` ON `leave_requests` (`status`);
+CREATE INDEX `onboarding_tasks_employeeId_idx` ON `onboarding_tasks` (`employeeId`);
+CREATE INDEX `employee_benefits_employeeId_idx` ON `employee_benefits` (`employeeId`);
+CREATE INDEX `employee_emergency_contacts_employeeId_idx` ON `employee_emergency_contacts` (`employeeId`);
