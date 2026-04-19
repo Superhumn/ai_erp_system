@@ -628,6 +628,8 @@ export default function Projects() {
           />
           {search && (
             <button
+              type="button"
+              aria-label="Clear search"
               onClick={() => setSearch("")}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
             >
@@ -666,7 +668,7 @@ export default function Projects() {
       </div>
 
       {/* Collapsible filters */}
-      <div className={cn("overflow-hidden transition-all duration-300", showFilters ? "max-h-24 opacity-100" : "max-h-0 opacity-0")}>
+      <div className={cn("overflow-hidden transition-all duration-300", showFilters ? "max-h-[9999px] opacity-100" : "max-h-0 opacity-0")}>
         <div className="flex flex-wrap gap-2 pb-1">
           <Select value={projectFilter} onValueChange={setProjectFilter}>
             <SelectTrigger className="h-8 w-[180px] text-xs"><SelectValue placeholder="All Projects" /></SelectTrigger>
@@ -758,7 +760,7 @@ export default function Projects() {
                         <div className="mt-0.5 hidden items-center gap-2 sm:flex">
                           <Progress value={projectProgress} className="h-1 w-24" />
                           <span className="text-[11px] text-muted-foreground">
-                            {projectProgress}% · {tasks.length} task{tasks.length !== 1 ? "s" : ""}
+                            {projectProgress}% Â· {tasks.length} task{tasks.length !== 1 ? "s" : ""}
                           </span>
                         </div>
                       </div>
@@ -798,7 +800,6 @@ export default function Projects() {
                             "group border-b last:border-b-0 transition-colors",
                             isDone ? "bg-muted/10" : "hover:bg-muted/10"
                           )}
-                          style={{ animationDelay: `${taskIndex * 30}ms`, animationFillMode: "backwards" }}
                         >
                           <div
                             onClick={() => toggleExpanded(task.id)}
@@ -847,7 +848,7 @@ export default function Projects() {
                             />
                           </div>
 
-                          <div className={cn("overflow-hidden transition-all duration-300", expanded ? "max-h-48" : "max-h-0")}>
+                          <div className={cn("overflow-hidden transition-all duration-300", expanded ? "max-h-[9999px]" : "max-h-0")}>
                             <div className="border-t bg-muted/10 px-5 py-3">
                               {task.description && (
                                 <p className="mb-3 text-xs leading-relaxed text-muted-foreground">{task.description}</p>
@@ -897,7 +898,7 @@ export default function Projects() {
                           <Button size="sm" className="h-7 text-xs" disabled={addTask.isPending} onClick={() => handleInlineAdd(projectId)}>
                             {addTask.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Add"}
                           </Button>
-                          <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => { setInlineProjectId(null); setInlineText(""); }}>
+                          <Button size="sm" variant="ghost" className="h-7 px-2" aria-label="Cancel quick add task" onClick={() => { setInlineProjectId(null); setInlineText(""); }}>
                             <X className="h-3 w-3" />
                           </Button>
                         </div>
