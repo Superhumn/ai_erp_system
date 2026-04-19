@@ -660,7 +660,9 @@ export default function DataRoomDetail() {
                             <iframe
                               key={selectedDoc.id}
                               src={getGooglePreviewUrl(selectedDoc.googleDriveFileId)}
-                              className="w-full h-full border-0"
+                            className="w-full h-full border-0"
+                            sandbox="allow-same-origin"
+                            referrerPolicy="no-referrer"
                               allow="autoplay"
                               title={selectedDoc.name}
                             />
@@ -710,6 +712,8 @@ export default function DataRoomDetail() {
                             key={selectedDoc.id}
                             src={selectedDoc.storageUrl}
                             className="w-full h-full border-0"
+                            sandbox="allow-same-origin"
+                            referrerPolicy="no-referrer"
                             title={selectedDoc.name}
                           />
                         );
