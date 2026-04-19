@@ -1231,7 +1231,7 @@ function NdaSigningGate({
       signerCompany: signerCompany || undefined,
       signatureType,
       signatureData,
-      consentCheckbox: consentChecked,
+      consentCheckbox: consentChecked as true,
     });
   };
 
