@@ -84,7 +84,7 @@ export default function DataRoomDetail() {
   const [driveFileBrowseFolderId, setDriveFileBrowseFolderId] = useState("");
   const [driveFileBrowseInput, setDriveFileBrowseInput] = useState("");
   const [selectedDriveFileId, setSelectedDriveFileId] = useState("");
-  const [selectedDoc, setSelectedDoc] = useState<{ id: string; name: string; googleDriveFileId?: string | null; storageUrl?: string | null; storageType?: string | null } | null>(null);
+  const [selectedDoc, setSelectedDoc] = useState<{ id: string; name: string; googleDriveFileId?: string | null; googleDriveWebViewLink?: string | null; storageUrl?: string | null; storageType?: string | null } | null>(null);
   const [docVisible, setDocVisible] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -652,19 +652,23 @@ export default function DataRoomDetail() {
                         const isImg = ["png","jpg","jpeg","gif","webp","svg"].includes(ft);
                         const isOffice = ["doc","docx","xls","xlsx","ppt","pptx"].includes(ft);
 
-                        // Google Drive: always use /preview
-                        if (selectedDoc.storageType === "google_drive" && selectedDoc.googleDriveFileId) {
-                          return (
-                            <iframe
-                              key={selectedDoc.id}
-                              src={getGooglePreviewUrl(selectedDoc.googleDriveFileId)}
-                            className="w-full h-full border-0"
-                            sandbox="allow-same-origin"
-                            referrerPolicy="no-referrer"
-                              allow="autoplay"
-                              title={selectedDoc.name}
-                            />
-                          );
+                        if (selectedDoc.storageType === "google_drive") {
+                          const drivePreviewUrl = selectedDoc.googleDriveFileId
+                            ? getGooglePreviewUrl(selectedDoc.googleDriveFileId)
+                            : selectedDoc.googleDriveWebViewLink ?? null;
+                          if (drivePreviewUrl) {
+                            return (
+                              <iframe
+                                key={selectedDoc.id}
+                                src={drivePreviewUrl}
+                                className="w-full h-full border-0"
+                                sandbox="allow-same-origin"
+                                referrerPolicy="no-referrer"
+                                allow="autoplay"
+                                title={selectedDoc.name}
+                              />
+                            );
+                          }
                         }
 
                         if (!selectedDoc.storageUrl) {
@@ -716,7 +720,6 @@ export default function DataRoomDetail() {
                           />
                         );
                       })()}
-                      }
                     </div>
                   </>
                 ) : (
