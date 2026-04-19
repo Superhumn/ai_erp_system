@@ -81,13 +81,14 @@ import {
   Bot,
   Heart,
   Building2,
+  Package,
 } from "lucide-react";
 import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { AICommandBar } from './AICommandBar';
 import { useTheme } from "@/contexts/ThemeContext";
-// FloatingAIAssistant removed — toolbar only
+// FloatingAIAssistant removed â toolbar only
 import { toast } from "sonner";
 import {
   Collapsible,
@@ -101,7 +102,7 @@ import {
   TooltipTrigger,
 } from "./ui/tooltip";
 
-function getMenuGroups(role: string = "user") {
+export function getMenuGroups(role: string = "user") {
   const isAdmin = ["admin", "exec"].includes(role);
   const hasFinance = ["admin", "exec", "finance"].includes(role);
   const hasOps = ["admin", "exec", "ops"].includes(role);
@@ -314,7 +315,7 @@ function DashboardLayoutContent({
       if (e.key === '?') {
         toast.info(
           'Keyboard Shortcuts:\n' +
-          '⌘K - AI Command Bar\n' +
+          'âK - AI Command Bar\n' +
           'g d - Dashboard\n' +
           'g e - Email Inbox\n' +
           'g v - Vendors\n' +
@@ -410,7 +411,7 @@ function DashboardLayoutContent({
             </div>
           </SidebarHeader>
 
-          {/* Flat navigation — all items visible, no dropdowns */}
+          {/* Flat navigation â all items visible, no dropdowns */}
           <SidebarContent className="overflow-y-auto px-2 py-2">
             <nav className="flex flex-col gap-px">
               {getMenuGroups(user?.role).map((group, gi) => (
@@ -526,7 +527,7 @@ function DashboardLayoutContent({
         <main className="flex-1 overflow-auto p-3 pb-3 md:p-4 md:pb-4 lg:p-5 lg:pb-5">{children}</main>
       </SidebarInset>
 
-      {/* Floating AI removed — using toolbar only */}
+      {/* Floating AI removed â using toolbar only */}
     </>
   );
 }

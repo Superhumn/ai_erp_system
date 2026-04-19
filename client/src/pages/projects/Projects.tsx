@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import {
   Dialog,
@@ -32,10 +32,20 @@ import {
   LayoutGrid,
   ChevronDown,
   ChevronRight,
-  Clock3,
-  Check,
   AlertTriangle,
   FolderKanban,
+  Flame,
+  ArrowUp,
+  Minus,
+  ArrowDown,
+  CheckCircle2,
+  Timer,
+  Eye,
+  XCircle,
+  Sparkles,
+  SlidersHorizontal,
+  X,
+  Circle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -78,33 +88,61 @@ type UserRecord = {
   email: string;
 };
 
-const PRIORITY_BADGE: Record<string, { label: string; className: string }> = {
-  critical: { label: "Critical", className: "bg-muted text-foreground border-border" },
-  high: { label: "High", className: "bg-muted text-foreground border-border" },
-  medium: { label: "Medium", className: "bg-muted text-foreground border-border" },
-  low: { label: "Low", className: "bg-muted text-foreground border-border" },
+const PRIORITY_CONFIG: Record<
+  string,
+  { label: string; color: string; dot: string; border: string; Icon: React.ElementType }
+> = {
+  critical: { label: "Critical", color: "text-rose-500", dot: "bg-rose-500", border: "border-l-rose-500", Icon: Flame },
+  high: { label: "High", color: "text-orange-500", dot: "bg-orange-500", border: "border-l-orange-500", Icon: ArrowUp },
+  medium: { label: "Medium", color: "text-amber-500", dot: "bg-amber-500", border: "border-l-amber-500", Icon: Minus },
+  low: { label: "Low", color: "text-sky-500", dot: "bg-sky-500", border: "border-l-sky-500", Icon: ArrowDown },
 };
 
-const PRIORITY_ORDER: Record<string, number> = {
-  critical: 0,
-  high: 1,
-  medium: 2,
-  low: 3,
-};
+const PRIORITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
 const STATUS_META = {
-  todo: { label: "To Do", accent: "border-border", badge: "bg-muted text-foreground" },
-  in_progress: { label: "In Progress", accent: "border-border", badge: "bg-muted text-foreground" },
-  review: { label: "In Review", accent: "border-border", badge: "bg-muted text-foreground" },
-  completed: { label: "Completed", accent: "border-border", badge: "bg-muted text-foreground" },
-  cancelled: { label: "Cancelled", accent: "border-border", badge: "bg-muted text-foreground" },
+  todo: {
+    label: "To Do",
+    badge: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
+    dot: "bg-slate-400",
+    Icon: Circle,
+    pulse: false,
+  },
+  in_progress: {
+    label: "In Progress",
+    badge: "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
+    dot: "bg-blue-500",
+    Icon: Timer,
+    pulse: true,
+  },
+  review: {
+    label: "In Review",
+    badge: "bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-300",
+    dot: "bg-violet-500",
+    Icon: Eye,
+    pulse: false,
+  },
+  completed: {
+    label: "Completed",
+    badge: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
+    dot: "bg-emerald-500",
+    Icon: CheckCircle2,
+    pulse: false,
+  },
+  cancelled: {
+    label: "Cancelled",
+    badge: "bg-red-50 text-red-600 dark:bg-red-950 dark:text-red-300",
+    dot: "bg-red-400",
+    Icon: XCircle,
+    pulse: false,
+  },
 } as const;
 
 const BOARD_COLUMNS = [
-  { key: "todo", label: "To Do", accent: "border-border" },
-  { key: "in_progress", label: "In Progress", accent: "border-border" },
-  { key: "review", label: "In Review", accent: "border-border" },
-  { key: "completed", label: "Completed", accent: "border-border" },
+  { key: "todo", label: "To Do", headerColor: "bg-slate-500/10 text-slate-600 dark:text-slate-300", dotColor: "bg-slate-400" },
+  { key: "in_progress", label: "In Progress", headerColor: "bg-blue-500/10 text-blue-700 dark:text-blue-300", dotColor: "bg-blue-500" },
+  { key: "review", label: "In Review", headerColor: "bg-violet-500/10 text-violet-700 dark:text-violet-300", dotColor: "bg-violet-500" },
+  { key: "completed", label: "Completed", headerColor: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300", dotColor: "bg-emerald-500" },
 ] as const;
 
 function getUserName(users: UserRecord[] | undefined, id: number | null): string {
@@ -114,26 +152,45 @@ function getUserName(users: UserRecord[] | undefined, id: number | null): string
   return user.name || user.email.split("@")[0];
 }
 
+function getInitials(name: string): string {
+  return name.trim().split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+}
+
 function fmtDate(d: string | Date | null | undefined): string {
   if (!d) return "";
-  const date = new Date(d);
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 function daysUntilDate(d: string | Date | null | undefined): number | null {
   if (!d) return null;
-  const due = new Date(d);
-  const now = new Date();
-  const diff = due.getTime() - now.getTime();
+  const diff = new Date(d).getTime() - Date.now();
   return Math.ceil(diff / (1000 * 60 * 60 * 24));
 }
 
-function dueDateColor(d: string | Date | null | undefined): string {
+function dueDateBadge(d: string | Date | null | undefined): { text: string; className: string } | null {
+  if (!d) return null;
   const days = daysUntilDate(d);
-  if (days === null) return "text-muted-foreground";
-  if (days < 0) return "text-foreground";
-  if (days <= 3) return "text-foreground";
-  return "text-muted-foreground";
+  if (days === null) return null;
+  if (days < 0) return { text: `${Math.abs(days)}d overdue`, className: "bg-rose-50 text-rose-600 dark:bg-rose-950 dark:text-rose-300" };
+  if (days === 0) return { text: "Due today", className: "bg-amber-50 text-amber-600 dark:bg-amber-950 dark:text-amber-300" };
+  if (days <= 3) return { text: `Due in ${days}d`, className: "bg-amber-50 text-amber-600 dark:bg-amber-950 dark:text-amber-300" };
+  return { text: fmtDate(d), className: "bg-muted/60 text-muted-foreground" };
+}
+
+function ProgressRing({ value, size = 80, strokeWidth = 7 }: { value: number; size?: number; strokeWidth?: number }) {
+  const r = (size - strokeWidth) / 2;
+  const circ = 2 * Math.PI * r;
+  const offset = circ - (value / 100) * circ;
+  return (
+    <svg width={size} height={size} className="-rotate-90" aria-hidden>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" strokeWidth={strokeWidth} className="text-muted/30" />
+      <circle
+        cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" strokeWidth={strokeWidth}
+        strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
+        className="text-emerald-500 transition-all duration-700 ease-out"
+      />
+    </svg>
+  );
 }
 
 export default function Projects() {
@@ -144,6 +201,8 @@ export default function Projects() {
   const [projectFilter, setProjectFilter] = useState("all");
   const [expandedTasks, setExpandedTasks] = useState<Set<number>>(new Set());
   const [collapsedProjects, setCollapsedProjects] = useState<Set<number>>(new Set());
+  const [showFilters, setShowFilters] = useState(false);
+  const [statsVisible, setStatsVisible] = useState(false);
 
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [projectForm, setProjectForm] = useState({
@@ -167,6 +226,11 @@ export default function Projects() {
   const [inlineProjectId, setInlineProjectId] = useState<number | null>(null);
   const [inlineText, setInlineText] = useState("");
   const inlineRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const t = setTimeout(() => setStatsVisible(true), 100);
+    return () => clearTimeout(t);
+  }, []);
 
   const utils = trpc.useUtils();
   const { data: projects, isLoading: projectsLoading } = trpc.projects.list.useQuery();
@@ -206,7 +270,7 @@ export default function Projects() {
 
   const projectMap = useMemo(() => {
     const map = new Map<number, Project>();
-    projectList.forEach((project) => map.set(project.id, project));
+    projectList.forEach((p) => map.set(p.id, p));
     return map;
   }, [projectList]);
 
@@ -228,13 +292,11 @@ export default function Projects() {
 
   const groupedByProject = useMemo(() => {
     const groups = new Map<number, Task[]>();
-
     filteredTasks.forEach((task) => {
       const list = groups.get(task.projectId) || [];
       list.push(task);
       groups.set(task.projectId, list);
     });
-
     groups.forEach((tasks) => {
       tasks.sort((a, b) => {
         const pa = PRIORITY_ORDER[a.priority] ?? 9;
@@ -246,14 +308,12 @@ export default function Projects() {
         return 0;
       });
     });
-
     projectList.forEach((project) => {
       const includeProject =
         (projectFilter === "all" || project.id === Number(projectFilter)) &&
         (!search || project.name.toLowerCase().includes(search.toLowerCase()) || groups.has(project.id));
       if (includeProject && !groups.has(project.id)) groups.set(project.id, []);
     });
-
     return Array.from(groups.entries()).sort(([a], [b]) => {
       const aName = projectMap.get(a)?.name || "";
       const bName = projectMap.get(b)?.name || "";
@@ -282,14 +342,7 @@ export default function Projects() {
       const days = daysUntilDate(t.dueDate);
       return days !== null && days < 0 && t.status !== "completed" && t.status !== "cancelled";
     }).length;
-    return {
-      total,
-      completed,
-      inProgress,
-      review,
-      overdue,
-      completionRate: total === 0 ? 0 : Math.round((completed / total) * 100),
-    };
+    return { total, completed, inProgress, review, overdue, completionRate: total === 0 ? 0 : Math.round((completed / total) * 100) };
   }, [filteredTasks]);
 
   const isLoading = projectsLoading || tasksLoading;
@@ -308,10 +361,7 @@ export default function Projects() {
 
   function handleTaskSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!taskForm.projectId) {
-      toast.error("Select a project");
-      return;
-    }
+    if (!taskForm.projectId) { toast.error("Select a project"); return; }
     addTask.mutate({
       projectId: taskForm.projectId,
       name: taskForm.name,
@@ -327,11 +377,7 @@ export default function Projects() {
   }
 
   function handleStatusUpdate(taskId: number, status: Task["status"]) {
-    updateTask.mutate({
-      id: taskId,
-      status,
-      completedDate: status === "completed" ? new Date() : undefined,
-    });
+    updateTask.mutate({ id: taskId, status, completedDate: status === "completed" ? new Date() : undefined });
   }
 
   function toggleTaskComplete(task: Task) {
@@ -341,8 +387,7 @@ export default function Projects() {
   function toggleExpanded(taskId: number) {
     setExpandedTasks((prev) => {
       const next = new Set(prev);
-      if (next.has(taskId)) next.delete(taskId);
-      else next.add(taskId);
+      if (next.has(taskId)) next.delete(taskId); else next.add(taskId);
       return next;
     });
   }
@@ -350,27 +395,70 @@ export default function Projects() {
   function toggleProject(projectId: number) {
     setCollapsedProjects((prev) => {
       const next = new Set(prev);
-      if (next.has(projectId)) next.delete(projectId);
-      else next.add(projectId);
+      if (next.has(projectId)) next.delete(projectId); else next.add(projectId);
       return next;
     });
   }
 
+  const hasActiveFilters = statusFilter !== "all" || priorityFilter !== "all" || projectFilter !== "all";
+
+  const statPills = [
+    { Icon: Timer, label: `${metrics.inProgress} in progress`, color: "bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300", delay: "100ms" },
+    { Icon: Eye, label: `${metrics.review} in review`, color: "bg-violet-50 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300", delay: "200ms" },
+    ...(metrics.overdue > 0 ? [{ Icon: AlertTriangle, label: `${metrics.overdue} overdue`, color: "bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300", delay: "300ms" }] : []),
+    { Icon: CheckCircle2, label: `${metrics.completed}/${metrics.total} done`, color: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300", delay: "400ms" },
+  ];
+
   return (
     <div className="space-y-5 p-1 animate-fade-in">
-      <div className="rounded-xl border bg-background p-5">
-        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-          <div className="space-y-2">
-            <h1 className="text-2xl font-semibold">Projects</h1>
-            <p className="max-w-2xl text-sm text-muted-foreground">
-              Track work across projects and keep delivery moving.
-            </p>
+
+      {/* Hero Header */}
+      <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-background via-background to-muted/30 p-6">
+        <div
+          className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full opacity-[0.07]"
+          style={{ background: "radial-gradient(circle, hsl(var(--primary)) 0%, transparent 70%)" }}
+        />
+
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-5">
+            <div className="relative hidden shrink-0 sm:block">
+              <ProgressRing value={statsVisible ? metrics.completionRate : 0} />
+              <span className="absolute inset-0 flex items-center justify-center text-sm font-bold">
+                {metrics.completionRate}%
+              </span>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <FolderKanban className="h-5 w-5 text-primary" />
+                <h1 className="text-2xl font-bold tracking-tight">Projects</h1>
+              </div>
+              <p className="text-sm text-muted-foreground">Track work across initiatives and keep delivery moving.</p>
+
+              <div className="flex flex-wrap gap-2 pt-0.5">
+                {statPills.map(({ Icon, label, color, delay }) => (
+                  <span
+                    key={label}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-all duration-500",
+                      color,
+                      statsVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2"
+                    )}
+                    style={{ transitionDelay: delay }}
+                  >
+                    <Icon className="h-3 w-3" />
+                    {label}
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
-          <div className="flex flex-wrap gap-2">
+
+          <div className="flex flex-wrap items-center gap-2">
             <Dialog open={projectDialogOpen} onOpenChange={setProjectDialogOpen}>
               <DialogTrigger asChild>
-                <Button variant="outline">
-                  <Plus className="mr-1.5 h-4 w-4" />
+                <Button variant="outline" size="sm" className="gap-1.5">
+                  <Plus className="h-4 w-4" />
                   New Project
                 </Button>
               </DialogTrigger>
@@ -394,10 +482,7 @@ export default function Projects() {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label>Priority</Label>
-                        <Select
-                          value={projectForm.priority}
-                          onValueChange={(v: any) => setProjectForm({ ...projectForm, priority: v })}
-                        >
+                        <Select value={projectForm.priority} onValueChange={(v: any) => setProjectForm({ ...projectForm, priority: v })}>
                           <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="low">Low</SelectItem>
@@ -421,19 +506,11 @@ export default function Projects() {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label>Start Date</Label>
-                        <Input
-                          type="date"
-                          value={projectForm.startDate}
-                          onChange={(e) => setProjectForm({ ...projectForm, startDate: e.target.value })}
-                        />
+                        <Input type="date" value={projectForm.startDate} onChange={(e) => setProjectForm({ ...projectForm, startDate: e.target.value })} />
                       </div>
                       <div className="space-y-2">
                         <Label>End Date</Label>
-                        <Input
-                          type="date"
-                          value={projectForm.endDate}
-                          onChange={(e) => setProjectForm({ ...projectForm, endDate: e.target.value })}
-                        />
+                        <Input type="date" value={projectForm.endDate} onChange={(e) => setProjectForm({ ...projectForm, endDate: e.target.value })} />
                       </div>
                     </div>
                     <div className="space-y-2">
@@ -459,8 +536,8 @@ export default function Projects() {
 
             <Dialog open={taskDialogOpen} onOpenChange={setTaskDialogOpen}>
               <DialogTrigger asChild>
-                <Button>
-                  <Plus className="mr-1.5 h-4 w-4" />
+                <Button size="sm" className="gap-1.5">
+                  <Plus className="h-4 w-4" />
                   New Task
                 </Button>
               </DialogTrigger>
@@ -473,15 +550,10 @@ export default function Projects() {
                   <div className="grid gap-4 py-4">
                     <div className="space-y-2">
                       <Label>Project *</Label>
-                      <Select
-                        value={taskForm.projectId ? String(taskForm.projectId) : ""}
-                        onValueChange={(v) => setTaskForm({ ...taskForm, projectId: Number(v) })}
-                      >
+                      <Select value={taskForm.projectId ? String(taskForm.projectId) : ""} onValueChange={(v) => setTaskForm({ ...taskForm, projectId: Number(v) })}>
                         <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
                         <SelectContent>
-                          {projectList.map((project) => (
-                            <SelectItem key={project.id} value={String(project.id)}>{project.name}</SelectItem>
-                          ))}
+                          {projectList.map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}
                         </SelectContent>
                       </Select>
                     </div>
@@ -497,10 +569,7 @@ export default function Projects() {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label>Priority</Label>
-                        <Select
-                          value={taskForm.priority}
-                          onValueChange={(v: any) => setTaskForm({ ...taskForm, priority: v })}
-                        >
+                        <Select value={taskForm.priority} onValueChange={(v: any) => setTaskForm({ ...taskForm, priority: v })}>
                           <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="low">Low</SelectItem>
@@ -512,11 +581,7 @@ export default function Projects() {
                       </div>
                       <div className="space-y-2">
                         <Label>Due Date</Label>
-                        <Input
-                          type="date"
-                          value={taskForm.dueDate}
-                          onChange={(e) => setTaskForm({ ...taskForm, dueDate: e.target.value })}
-                        />
+                        <Input type="date" value={taskForm.dueDate} onChange={(e) => setTaskForm({ ...taskForm, dueDate: e.target.value })} />
                       </div>
                     </div>
                     <div className="space-y-2">
@@ -541,383 +606,413 @@ export default function Projects() {
             </Dialog>
           </div>
         </div>
-      </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <Card className="xl:col-span-2">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Completion Rate</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex items-end justify-between">
-              <p className="text-3xl font-semibold">{metrics.completionRate}%</p>
-              <p className="text-xs text-muted-foreground">
-                {metrics.completed}/{metrics.total} completed
-              </p>
-            </div>
-            <Progress value={metrics.completionRate} className="h-2.5" />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex h-full items-center gap-3 p-4">
-            <Clock3 className="h-5 w-5 text-muted-foreground" />
-            <div>
-              <p className="text-xs text-muted-foreground">In Progress</p>
-              <p className="text-xl font-semibold">{metrics.inProgress}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex h-full items-center gap-3 p-4">
-            <Check className="h-5 w-5 text-muted-foreground" />
-            <div>
-              <p className="text-xs text-muted-foreground">In Review</p>
-              <p className="text-xl font-semibold">{metrics.review}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className={cn(metrics.overdue > 0 && "border-border")}>
-          <CardContent className="flex h-full items-center gap-3 p-4">
-            <AlertTriangle className="h-5 w-5 text-muted-foreground" />
-            <div>
-              <p className="text-xs text-muted-foreground">Overdue</p>
-              <p className="text-xl font-semibold">{metrics.overdue}</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card className="border">
-        <CardContent className="p-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-            <div className="relative w-full lg:max-w-sm">
-              <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search tasks, projects, or descriptions..."
-                className="pl-9"
-              />
-            </div>
-
-            <div className="flex flex-1 flex-wrap items-center gap-2">
-              <Select value={projectFilter} onValueChange={setProjectFilter}>
-                <SelectTrigger className="w-[180px]">
-                  <SelectValue placeholder="Project" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Projects</SelectItem>
-                  {projectList.map((project) => (
-                    <SelectItem key={project.id} value={String(project.id)}>{project.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-[160px]">
-                  <SelectValue placeholder="Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Statuses</SelectItem>
-                  {Object.entries(STATUS_META).map(([key, status]) => (
-                    <SelectItem key={key} value={key}>{status.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={priorityFilter} onValueChange={setPriorityFilter}>
-                <SelectTrigger className="w-[160px]">
-                  <SelectValue placeholder="Priority" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Priorities</SelectItem>
-                  {Object.entries(PRIORITY_BADGE).map(([key, priority]) => (
-                    <SelectItem key={key} value={key}>{priority.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="flex rounded-lg border p-1">
-              <Button
-                size="sm"
-                variant={view === "list" ? "secondary" : "ghost"}
-                className="gap-1.5"
-                onClick={() => setView("list")}
-              >
-                <List className="h-4 w-4" />
-                List
-              </Button>
-              <Button
-                size="sm"
-                variant={view === "board" ? "secondary" : "ghost"}
-                className="gap-1.5"
-                onClick={() => setView("board")}
-              >
-                <LayoutGrid className="h-4 w-4" />
-                Board
-              </Button>
-            </div>
+        <div className="mt-5 space-y-1">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>Overall completion</span>
+            <span className="font-medium">{metrics.completionRate}%</span>
           </div>
-        </CardContent>
-      </Card>
+          <Progress value={statsVisible ? metrics.completionRate : 0} className="h-1.5 transition-all duration-700" />
+        </div>
+      </div>
 
+      {/* Toolbar */}
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search tasks, projects, or descriptions..."
+            className="pl-9 pr-8"
+          />
+          {search && (
+            <button
+              type="button"
+              aria-label="Clear search"
+              onClick={() => setSearch("")}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button
+            variant={showFilters ? "secondary" : "outline"}
+            size="sm"
+            className="gap-1.5"
+            onClick={() => setShowFilters((v) => !v)}
+          >
+            <SlidersHorizontal className="h-4 w-4" />
+            Filters
+            {hasActiveFilters && (
+              <span className="ml-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
+                {[statusFilter !== "all", priorityFilter !== "all", projectFilter !== "all"].filter(Boolean).length}
+              </span>
+            )}
+          </Button>
+
+          <div className="flex rounded-lg border bg-muted/30 p-1">
+            <Button size="sm" variant={view === "list" ? "secondary" : "ghost"} className="h-7 gap-1.5 px-2.5 text-xs" onClick={() => setView("list")}>
+              <List className="h-3.5 w-3.5" />
+              List
+            </Button>
+            <Button size="sm" variant={view === "board" ? "secondary" : "ghost"} className="h-7 gap-1.5 px-2.5 text-xs" onClick={() => setView("board")}>
+              <LayoutGrid className="h-3.5 w-3.5" />
+              Board
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Collapsible filters */}
+      <div className={cn("overflow-hidden transition-all duration-300", showFilters ? "max-h-[9999px] opacity-100" : "max-h-0 opacity-0")}>
+        <div className="flex flex-wrap gap-2 pb-1">
+          <Select value={projectFilter} onValueChange={setProjectFilter}>
+            <SelectTrigger className="h-8 w-[180px] text-xs"><SelectValue placeholder="All Projects" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Projects</SelectItem>
+              {projectList.map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="h-8 w-[160px] text-xs"><SelectValue placeholder="All Statuses" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              {Object.entries(STATUS_META).map(([k, s]) => <SelectItem key={k} value={k}>{s.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={priorityFilter} onValueChange={setPriorityFilter}>
+            <SelectTrigger className="h-8 w-[160px] text-xs"><SelectValue placeholder="All Priorities" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Priorities</SelectItem>
+              {Object.entries(PRIORITY_CONFIG).map(([k, p]) => <SelectItem key={k} value={k}>{p.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          {hasActiveFilters && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs text-muted-foreground"
+              onClick={() => { setStatusFilter("all"); setPriorityFilter("all"); setProjectFilter("all"); }}
+            >
+              <X className="mr-1 h-3 w-3" />
+              Clear filters
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Main content */}
       {isLoading ? (
-        <div className="flex items-center justify-center py-20">
+        <div className="flex flex-col items-center justify-center gap-3 py-24">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">Loading projects...</p>
         </div>
       ) : view === "list" ? (
         <div className="space-y-4">
           {groupedByProject.length === 0 && (
-            <Card>
-              <CardContent className="py-16 text-center text-muted-foreground">
-                <FolderKanban className="mx-auto mb-3 h-12 w-12 opacity-20" />
-                <p className="font-medium">No matching projects or tasks</p>
-                <p className="text-sm">Adjust your filters or create a new task.</p>
-              </CardContent>
-            </Card>
+            <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed py-24 text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
+                <FolderKanban className="h-7 w-7 text-muted-foreground" />
+              </div>
+              <p className="font-medium">No matching projects or tasks</p>
+              <p className="text-sm text-muted-foreground">Adjust your filters or create a new task.</p>
+            </div>
           )}
 
-          {groupedByProject.map(([projectId, tasks]) => {
+          {groupedByProject.map(([projectId, tasks], projectIndex) => {
             const project = projectMap.get(projectId);
             const collapsed = collapsedProjects.has(projectId);
-            const doneCount = tasks.filter((task) => task.status === "completed").length;
+            const doneCount = tasks.filter((t) => t.status === "completed").length;
             const projectProgress = tasks.length === 0 ? 0 : Math.round((doneCount / tasks.length) * 100);
+            const priorityCfg = PRIORITY_CONFIG[project?.priority || "medium"];
 
             return (
-              <Card key={projectId} className="overflow-hidden border">
+              <div
+                key={projectId}
+                className={cn(
+                  "animate-fade-in-up overflow-hidden rounded-2xl border bg-background shadow-sm",
+                  `stagger-${Math.min(projectIndex + 1, 5)}`
+                )}
+              >
                 <button
                   onClick={() => toggleProject(projectId)}
-                  className="w-full border-b bg-muted/20 px-4 py-3 text-left transition-colors hover:bg-muted/30"
+                  className="group w-full px-5 py-4 text-left transition-colors hover:bg-muted/20"
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                      {collapsed ? (
-                        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      ) : (
-                        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      )}
-                      <span className="truncate font-semibold">{project?.name || `Project #${projectId}`}</span>
-                      <Badge variant="secondary">{tasks.length} tasks</Badge>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                        <FolderKanban className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate font-semibold">{project?.name || `Project #${projectId}`}</span>
+                          {priorityCfg && (
+                            <span className={cn("flex items-center gap-1 text-[11px] font-medium", priorityCfg.color)}>
+                              <priorityCfg.Icon className="h-3 w-3" />
+                              {priorityCfg.label}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-0.5 hidden items-center gap-2 sm:flex">
+                          <Progress value={projectProgress} className="h-1 w-24" />
+                          <span className="text-[11px] text-muted-foreground">
+                            {projectProgress}% Â· {tasks.length} task{tasks.length !== 1 ? "s" : ""}
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="hidden items-center gap-2 sm:flex">
-                      <span className="text-xs text-muted-foreground">{projectProgress}% complete</span>
-                      <Progress value={projectProgress} className="h-2 w-24" />
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Badge variant="secondary" className="text-[11px]">{tasks.length}</Badge>
+                      {collapsed ? (
+                        <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                      )}
                     </div>
                   </div>
                 </button>
 
-                {!collapsed && (
-                  <CardContent className="space-y-2 p-3">
+                <div className={cn("overflow-hidden transition-all duration-300", collapsed ? "max-h-0" : "max-h-[9999px]")}>
+                  <div className="border-t">
                     {tasks.length === 0 && (
-                      <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                        No tasks yet for this project.
-                      </p>
+                      <div className="flex items-center gap-2 px-5 py-4 text-sm text-muted-foreground">
+                        <Sparkles className="h-4 w-4 opacity-50" />
+                        No tasks yet. Add one below.
+                      </div>
                     )}
 
-                    {tasks.map((task) => {
+                    {tasks.map((task, taskIndex) => {
                       const expanded = expandedTasks.has(task.id);
-                      const priority = PRIORITY_BADGE[task.priority] || PRIORITY_BADGE.medium;
+                      const pCfg = PRIORITY_CONFIG[task.priority] || PRIORITY_CONFIG.medium;
+                      const sCfg = STATUS_META[task.status] || STATUS_META.todo;
                       const assignee = getUserName(userList, task.assigneeId);
-                      const status = STATUS_META[task.status];
+                      const dueBadge = dueDateBadge(task.dueDate);
+                      const isDone = task.status === "completed";
 
                       return (
-                        <div key={task.id} className="rounded-md border bg-background">
+                        <div
+                          key={task.id}
+                          className={cn(
+                            "group border-b last:border-b-0 transition-colors",
+                            isDone ? "bg-muted/10" : "hover:bg-muted/10"
+                          )}
+                        >
                           <div
                             onClick={() => toggleExpanded(task.id)}
-                            className={cn(
-                              "flex cursor-pointer flex-col gap-2 p-3 md:flex-row md:items-center",
-                              task.status === "completed" && "opacity-70"
-                            )}
+                            className="flex cursor-pointer items-start gap-3 px-5 py-3"
                           >
-                            <div
-                              onClick={(e) => e.stopPropagation()}
-                              className="mr-1 self-start pt-0.5 md:self-center md:pt-0"
-                            >
+                            <div className={cn("mt-1 h-4 w-0.5 shrink-0 rounded-full", pCfg.dot)} />
+
+                            <div onClick={(e) => e.stopPropagation()} className="mt-0.5 shrink-0">
                               <Checkbox
-                                checked={task.status === "completed"}
+                                checked={isDone}
                                 onCheckedChange={() => toggleTaskComplete(task)}
+                                className="transition-transform duration-150 data-[state=checked]:scale-95"
                               />
                             </div>
-                            <div className="flex-1">
-                              <p
-                                className={cn(
-                                  "text-sm font-medium",
-                                  task.status === "completed" && "line-through text-muted-foreground"
-                                )}
-                              >
+
+                            <div className="flex-1 min-w-0">
+                              <p className={cn("text-sm font-medium leading-snug transition-colors duration-200", isDone && "line-through text-muted-foreground")}>
                                 {task.name}
                               </p>
-                              {expanded && task.description && (
-                                <p className="mt-1 text-xs text-muted-foreground">{task.description}</p>
-                              )}
-                            </div>
-                            <div className="flex flex-wrap items-center gap-2 md:justify-end">
-                              <Badge className={cn("border text-[10px] font-normal", status.badge)}>{status.label}</Badge>
-                              <Badge variant="outline" className={cn("text-[10px] font-normal", priority.className)}>
-                                {priority.label}
-                              </Badge>
-                              {task.dueDate && (
-                                <span className={cn("text-xs font-medium", dueDateColor(task.dueDate))}>
-                                  {fmtDate(task.dueDate)}
+                              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                                  <span className={cn("h-1.5 w-1.5 rounded-full", sCfg.dot, sCfg.pulse && "animate-pulse")} />
+                                  {sCfg.label}
                                 </span>
-                              )}
-                              {assignee && (
-                                <span className="rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground">
-                                  @{assignee}
-                                </span>
-                              )}
+                                {dueBadge && (
+                                  <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-medium", dueBadge.className)}>
+                                    {dueBadge.text}
+                                  </span>
+                                )}
+                                {assignee && (
+                                  <span className="flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                                    <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-primary/20 text-[8px] font-bold text-primary">
+                                      {getInitials(assignee)}
+                                    </span>
+                                    {assignee}
+                                  </span>
+                                )}
+                              </div>
                             </div>
+
+                            <ChevronDown
+                              className={cn(
+                                "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition-all duration-200 group-hover:opacity-100",
+                                expanded && "rotate-180 opacity-100"
+                              )}
+                            />
                           </div>
-                          {expanded && (
-                            <div className="border-t px-3 pb-3 pt-2">
-                              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                                <div className="text-xs text-muted-foreground">
-                                  {task.estimatedHours && <span className="mr-3">Est: {task.estimatedHours}h</span>}
+
+                          <div className={cn("overflow-hidden transition-all duration-300", expanded ? "max-h-[9999px]" : "max-h-0")}>
+                            <div className="border-t bg-muted/10 px-5 py-3">
+                              {task.description && (
+                                <p className="mb-3 text-xs leading-relaxed text-muted-foreground">{task.description}</p>
+                              )}
+                              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                  {task.estimatedHours && <span>Est: {task.estimatedHours}h</span>}
                                   {task.actualHours && <span>Actual: {task.actualHours}h</span>}
                                 </div>
                                 <div onClick={(e) => e.stopPropagation()}>
-                                  <Select
-                                    value={task.status}
-                                    onValueChange={(next) => handleStatusUpdate(task.id, next as Task["status"])}
-                                  >
-                                    <SelectTrigger className="h-8 w-[150px] text-xs">
-                                      <SelectValue />
-                                    </SelectTrigger>
+                                  <Select value={task.status} onValueChange={(next) => handleStatusUpdate(task.id, next as Task["status"])}>
+                                    <SelectTrigger className="h-8 w-[160px] text-xs"><SelectValue /></SelectTrigger>
                                     <SelectContent>
                                       {Object.entries(STATUS_META).map(([value, meta]) => (
-                                        <SelectItem key={value} value={value}>{meta.label}</SelectItem>
+                                        <SelectItem key={value} value={value}>
+                                          <span className="flex items-center gap-2">
+                                            <span className={cn("h-1.5 w-1.5 rounded-full", meta.dot)} />
+                                            {meta.label}
+                                          </span>
+                                        </SelectItem>
                                       ))}
                                     </SelectContent>
                                   </Select>
                                 </div>
                               </div>
                             </div>
-                          )}
+                          </div>
                         </div>
                       );
                     })}
 
-                    {inlineProjectId === projectId ? (
-                      <div className="flex items-center gap-2 rounded-md border border-dashed p-2">
-                        <Input
-                          ref={inlineRef}
-                          value={inlineText}
-                          onChange={(e) => setInlineText(e.target.value)}
-                          placeholder="Task name..."
-                          className="h-8"
-                          autoFocus
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              handleInlineAdd(projectId);
-                            }
-                            if (e.key === "Escape") {
-                              setInlineProjectId(null);
-                              setInlineText("");
-                            }
+                    <div className="px-5 py-2">
+                      {inlineProjectId === projectId ? (
+                        <div className="flex items-center gap-2 rounded-xl border border-dashed bg-muted/20 p-2 animate-fade-in">
+                          <Input
+                            ref={inlineRef}
+                            value={inlineText}
+                            onChange={(e) => setInlineText(e.target.value)}
+                            placeholder="Task name... press Enter to save"
+                            className="h-8 border-none bg-transparent text-sm shadow-none focus-visible:ring-0"
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") { e.preventDefault(); handleInlineAdd(projectId); }
+                              if (e.key === "Escape") { setInlineProjectId(null); setInlineText(""); }
+                            }}
+                          />
+                          <Button size="sm" className="h-7 text-xs" disabled={addTask.isPending} onClick={() => handleInlineAdd(projectId)}>
+                            {addTask.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Add"}
+                          </Button>
+                          <Button size="sm" variant="ghost" className="h-7 px-2" aria-label="Cancel quick add task" onClick={() => { setInlineProjectId(null); setInlineText(""); }}>
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setInlineProjectId(projectId);
+                            setInlineText("");
+                            setTimeout(() => inlineRef.current?.focus(), 50);
                           }}
-                        />
-                        <Button size="sm" disabled={addTask.isPending} onClick={() => handleInlineAdd(projectId)}>
-                          Add
-                        </Button>
-                      </div>
-                    ) : (
-                      <Button
-                        variant="ghost"
-                        className="h-8 w-full justify-start text-muted-foreground hover:text-foreground"
-                        onClick={() => {
-                          setInlineProjectId(projectId);
-                          setInlineText("");
-                          setTimeout(() => inlineRef.current?.focus(), 50);
-                        }}
-                      >
-                        <Plus className="mr-1.5 h-3.5 w-3.5" />
-                        Quick add task
-                      </Button>
-                    )}
-                  </CardContent>
-                )}
-              </Card>
+                          className="flex w-full items-center gap-1.5 rounded-lg py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          Quick add task
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
             );
           })}
         </div>
       ) : (
-        <div className="grid gap-4 xl:grid-cols-4">
-          {BOARD_COLUMNS.map((column) => {
+        <div className="grid gap-4 lg:grid-cols-4">
+          {BOARD_COLUMNS.map((column, colIndex) => {
             const tasks = boardTasks[column.key] || [];
             return (
-              <Card key={column.key} className="min-h-[420px]">
-                <CardHeader className={cn("border-b-2 pb-3", column.accent)}>
-                  <CardTitle className="flex items-center justify-between text-sm">
-                    <span>{column.label}</span>
-                    <Badge variant="secondary">{tasks.length}</Badge>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3 p-3">
+              <div
+                key={column.key}
+                className={cn("animate-fade-in-up rounded-2xl border bg-muted/20", `stagger-${Math.min(colIndex + 1, 5)}`)}
+              >
+                <div className={cn("flex items-center justify-between rounded-t-2xl px-4 py-3", column.headerColor)}>
+                  <div className="flex items-center gap-2">
+                    <span className={cn("h-2 w-2 rounded-full", column.dotColor)} />
+                    <span className="text-sm font-semibold">{column.label}</span>
+                  </div>
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-background/60 text-[11px] font-bold">
+                    {tasks.length}
+                  </span>
+                </div>
+
+                <div className="space-y-2.5 p-3">
                   {tasks.length === 0 && (
-                    <div className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
-                      No tasks in this column
+                    <div className="rounded-xl border border-dashed p-4 text-center text-xs text-muted-foreground">
+                      No tasks here
                     </div>
                   )}
-                  {tasks.map((task) => {
-                    const priority = PRIORITY_BADGE[task.priority] || PRIORITY_BADGE.medium;
+                  {tasks.map((task, taskIdx) => {
+                    const pCfg = PRIORITY_CONFIG[task.priority] || PRIORITY_CONFIG.medium;
                     const projectName = projectMap.get(task.projectId)?.name || "Unassigned";
                     const assignee = getUserName(userList, task.assigneeId);
+                    const dueBadge = dueDateBadge(task.dueDate);
+                    const expanded = expandedTasks.has(task.id);
 
                     return (
                       <Card
                         key={task.id}
-                        className="cursor-pointer border bg-background transition-shadow hover:shadow-sm"
+                        className={cn(
+                          "cursor-pointer border-l-2 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md",
+                          pCfg.border,
+                          `animate-fade-in stagger-${Math.min(taskIdx + 1, 5)}`
+                        )}
                         onClick={() => toggleExpanded(task.id)}
                       >
                         <CardContent className="space-y-2 p-3">
                           <div className="flex items-start justify-between gap-2">
                             <p className="text-sm font-medium leading-snug">{task.name}</p>
-                            <Badge variant="outline" className={cn("text-[10px]", priority.className)}>
-                              {priority.label}
-                            </Badge>
+                            <pCfg.Icon className={cn("h-3.5 w-3.5 shrink-0", pCfg.color)} />
                           </div>
-                          <p className="text-xs text-muted-foreground">{projectName}</p>
-                          {expandedTasks.has(task.id) && task.description && (
-                            <p className="rounded bg-muted/60 p-2 text-xs text-muted-foreground">{task.description}</p>
+                          <p className="text-[11px] text-muted-foreground">{projectName}</p>
+
+                          {expanded && task.description && (
+                            <p className="rounded-lg bg-muted/50 p-2 text-xs leading-relaxed text-muted-foreground animate-fade-in">
+                              {task.description}
+                            </p>
                           )}
-                          <div className="flex items-center justify-between">
-                            {task.dueDate ? (
-                              <span className={cn("text-xs font-medium", dueDateColor(task.dueDate))}>
-                                Due {fmtDate(task.dueDate)}
+
+                          <div className="flex flex-wrap items-center justify-between gap-1.5">
+                            {dueBadge ? (
+                              <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-medium", dueBadge.className)}>
+                                {dueBadge.text}
                               </span>
                             ) : (
-                              <span className="text-xs text-muted-foreground">No due date</span>
+                              <span className="text-[10px] text-muted-foreground">No due date</span>
                             )}
-                            {assignee ? (
-                              <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-                                @{assignee}
+                            {assignee && (
+                              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-[9px] font-bold text-primary">
+                                {getInitials(assignee)}
                               </span>
-                            ) : (
-                              <span className="text-[11px] text-muted-foreground">Unassigned</span>
                             )}
                           </div>
-                          <Select
-                            value={task.status}
-                            onValueChange={(next) => handleStatusUpdate(task.id, next as Task["status"])}
-                          >
-                            <SelectTrigger
-                              className="h-8 text-xs"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {Object.entries(STATUS_META).map(([value, meta]) => (
-                                <SelectItem key={value} value={value}>{meta.label}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+
+                          <div onClick={(e) => e.stopPropagation()}>
+                            <Select value={task.status} onValueChange={(next) => handleStatusUpdate(task.id, next as Task["status"])}>
+                              <SelectTrigger className="h-7 text-[11px]"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {Object.entries(STATUS_META).map(([value, meta]) => (
+                                  <SelectItem key={value} value={value}>
+                                    <span className="flex items-center gap-2">
+                                      <span className={cn("h-1.5 w-1.5 rounded-full", meta.dot)} />
+                                      {meta.label}
+                                    </span>
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
                         </CardContent>
                       </Card>
                     );
                   })}
-                </CardContent>
-              </Card>
+                </div>
+              </div>
             );
           })}
         </div>
