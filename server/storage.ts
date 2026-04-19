@@ -87,6 +87,10 @@ function isS3Configured(): boolean {
   );
 }
 
+function buildS3ObjectUrl(bucket: string, key: string, region: string): string {
+  return `https://${bucket}.s3.${region}.amazonaws.com/${encodeURI(key)}`;
+}
+
 function getS3Client(): S3Client {
   if (!ENV.awsAccessKeyId || !ENV.awsSecretAccessKey) {
     throw new Error("AWS credentials missing: set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.");
@@ -116,11 +120,8 @@ async function s3Put(
       ContentType: contentType,
     })
   );
-  const url = await getSignedUrl(
-    s3,
-    new GetObjectCommand({ Bucket: ENV.awsS3Bucket, Key: key }),
-    { expiresIn: S3_PRESIGNED_URL_EXPIRES }
-  );
+  const region = ENV.awsRegion || S3_DEFAULT_REGION;
+  const url = buildS3ObjectUrl(ENV.awsS3Bucket!, key, region);
   return { key, url };
 }
 
