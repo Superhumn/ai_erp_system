@@ -1259,14 +1259,14 @@ Ask if they received the original request and if they can provide a quote.`;
       .input(z.object({ token: z.string() }))
       .query(async ({ input }) => {
         const session = await db.getSupplierPortalSession(input.token);
-        if (!session) return [];
+        if (!session || session.status !== 'active' || new Date(session.expiresAt) < new Date()) return [];
         return db.getSupplierDocuments({ portalSessionId: session.id });
       }),
     getFreightInfo: publicProcedure
       .input(z.object({ token: z.string() }))
       .query(async ({ input }) => {
         const session = await db.getSupplierPortalSession(input.token);
-        if (!session) return null;
+        if (!session || session.status !== 'active' || new Date(session.expiresAt) < new Date()) return null;
         return db.getSupplierFreightInfo(session.purchaseOrderId);
       }),
     uploadDocument: publicProcedure

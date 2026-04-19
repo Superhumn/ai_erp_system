@@ -21,6 +21,7 @@ const GlobalSearch = lazy(() => import("./pages/GlobalSearch"));
 const Notifications = lazy(() => import("./pages/Notifications"));
 
 // Finance
+const FinanceHub = lazy(() => import("./pages/finance/FinanceHub"));
 const Accounts = lazy(() => import("./pages/finance/Accounts"));
 const Invoices = lazy(() => import("./pages/finance/Invoices"));
 const Payments = lazy(() => import("./pages/finance/Payments"));

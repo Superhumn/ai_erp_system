@@ -10,7 +10,6 @@ export const users = mysqlTable("users", {
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
-  passwordHash: text("passwordHash"),
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor"]).default("user").notNull(),
   departmentId: int("departmentId"),
@@ -1709,6 +1708,75 @@ export type RecipeIngredient = typeof recipeIngredients.$inferSelect;
 export type InsertRecipeIngredient = typeof recipeIngredients.$inferInsert;
 export type IngredientCostHistory = typeof ingredientCostHistory.$inferSelect;
 export type InsertIngredientCostHistory = typeof ingredientCostHistory.$inferInsert;
+
+// Multi-vendor pricing for ingredients
+export const ingredientVendors = mysqlTable("ingredientVendors", {
+  id: int("id").autoincrement().primaryKey(),
+  ingredientId: int("ingredientId").notNull().references(() => recipeIngredients.id),
+  vendorId: int("vendorId").notNull().references(() => vendors.id),
+  isPrimary: boolean("isPrimary").default(false).notNull(),
+  unitPrice: decimal("unitPrice", { precision: 12, scale: 4 }),
+  costUnit: mysqlEnum("costUnit", ["per_lb", "per_kg", "per_oz", "per_each"]).default("per_kg").notNull(),
+  contractStartDate: timestamp("contractStartDate"),
+  contractEndDate: timestamp("contractEndDate"),
+  minimumOrderQty: decimal("minimumOrderQty", { precision: 15, scale: 4 }),
+  leadTimeDays: int("leadTimeDays"),
+  paymentTerms: varchar("paymentTerms", { length: 100 }),
+  lastQuotedAt: timestamp("lastQuotedAt"),
+  lastQuotedPrice: decimal("lastQuotedPrice", { precision: 12, scale: 4 }),
+  quoteValidUntil: timestamp("quoteValidUntil"),
+  status: mysqlEnum("status", ["active", "inactive", "pending_quote"]).default("active").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  ingredientVendorIdx: uniqueIndex("ingredientVendors_ingredient_vendor_idx").on(table.ingredientId, table.vendorId),
+}));
+
+export type IngredientVendor = typeof ingredientVendors.$inferSelect;
+export type InsertIngredientVendor = typeof ingredientVendors.$inferInsert;
+
+// Automated ingredient quote requests (bridges ingredients to vendorRfqs)
+export const ingredientQuoteRequests = mysqlTable("ingredientQuoteRequests", {
+  id: int("id").autoincrement().primaryKey(),
+  ingredientId: int("ingredientId").notNull().references(() => recipeIngredients.id),
+  vendorRfqId: int("vendorRfqId"),
+  triggerType: mysqlEnum("triggerType", ["manual", "price_spike", "contract_expiry", "scheduled", "cost_review", "invoice_variance"]).notNull(),
+  triggerDetails: text("triggerDetails"),
+  currentCostPerUnit: decimal("currentCostPerUnit", { precision: 12, scale: 4 }),
+  historicalAvgCost: decimal("historicalAvgCost", { precision: 12, scale: 4 }),
+  targetVendorIds: text("targetVendorIds"),
+  status: mysqlEnum("status", ["pending", "rfq_created", "quotes_received", "analyzed", "accepted", "cancelled"]).default("pending").notNull(),
+  analysisResult: text("analysisResult"),
+  acceptedQuoteId: int("acceptedQuoteId"),
+  costUpdated: boolean("costUpdated").default(false).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type IngredientQuoteRequest = typeof ingredientQuoteRequests.$inferSelect;
+export type InsertIngredientQuoteRequest = typeof ingredientQuoteRequests.$inferInsert;
+
+// Cost alerts for ingredients (price spikes, better prices, contract expiry, invoice variances)
+export const ingredientCostAlerts = mysqlTable("ingredientCostAlerts", {
+  id: int("id").autoincrement().primaryKey(),
+  ingredientId: int("ingredientId").notNull().references(() => recipeIngredients.id),
+  alertType: mysqlEnum("alertType", [
+    "price_spike", "better_price_found", "contract_expiring",
+    "quote_below_current", "periodic_review", "invoice_above_po",
+  ]).notNull(),
+  severity: mysqlEnum("severity", ["info", "warning", "critical"]).default("info").notNull(),
+  message: text("message").notNull(),
+  details: text("details"),
+  quoteRequestId: int("quoteRequestId"),
+  vendorQuoteId: int("vendorQuoteId"),
+  isRead: boolean("isRead").default(false).notNull(),
+  isDismissed: boolean("isDismissed").default(false).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type IngredientCostAlert = typeof ingredientCostAlerts.$inferSelect;
+export type InsertIngredientCostAlert = typeof ingredientCostAlerts.$inferInsert;
 export type Recipe = typeof recipes.$inferSelect;
 export type InsertRecipe = typeof recipes.$inferInsert;
 export type RecipeLine = typeof recipeLines.$inferSelect;
@@ -3616,7 +3684,9 @@ export const aiAgentTasks = mysqlTable("aiAgentTasks", {
     "create_material",
     "create_product",
     "create_bom",
-    "create_customer"
+    "create_customer",
+    "ingredient_rfq",
+    "invoice_price_review"
   ]).notNull(),
   status: mysqlEnum("status", [
     "pending_approval",
@@ -3675,7 +3745,9 @@ export const aiAgentRules = mysqlTable("aiAgentRules", {
     "payment_reminder",
     "shipment_tracking",
     "price_alert",
-    "quality_check"
+    "quality_check",
+    "ingredient_requote",
+    "invoice_price_check"
   ]).notNull(),
   triggerCondition: text("triggerCondition").notNull(), // JSON condition definition
   // Action configuration
@@ -3755,6 +3827,7 @@ export const vendorRfqs = mysqlTable("vendorRfqs", {
   
   // Material details
   rawMaterialId: int("rawMaterialId"),
+  ingredientId: int("ingredientId").references(() => recipeIngredients.id),
   materialName: varchar("materialName", { length: 255 }).notNull(),
   materialDescription: text("materialDescription"),
   quantity: decimal("quantity", { precision: 15, scale: 4 }).notNull(),

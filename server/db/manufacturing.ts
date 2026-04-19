@@ -13,6 +13,10 @@ import {
   suggestedPurchaseOrders, InsertSuggestedPurchaseOrder, suggestedPoItems, InsertSuggestedPoItem,
   forecastAccuracy, InsertForecastAccuracy,
   purchaseOrderItems, purchaseOrders, products,
+  ingredientVendors, InsertIngredientVendor,
+  ingredientQuoteRequests, InsertIngredientQuoteRequest,
+  ingredientCostAlerts, InsertIngredientCostAlert,
+  vendors,
 } from "../../drizzle/schema";
 import { getDb } from "./connection";
 
@@ -431,78 +435,94 @@ export async function receivePurchaseOrderItems(
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const receiving = await createPoReceivingRecord({ purchaseOrderId, shipmentId, receivedDate: new Date(), receivedBy, warehouseId });
-  for (const item of items) {
-    await createPoReceivingItem({
-      receivingRecordId: receiving.id, purchaseOrderItemId: item.purchaseOrderItemId,
-      rawMaterialId: item.rawMaterialId, productId: item.productId,
-      receivedQuantity: item.quantity.toString(), unit: item.unit,
-      lotNumber: item.lotNumber, expirationDate: item.expirationDate, condition: 'good',
+  return db.transaction(async (tx) => {
+    const recResult = await tx.insert(poReceivingRecords).values({
+      purchaseOrderId, shipmentId, receivedDate: new Date(), receivedBy, warehouseId,
     });
-    if (item.rawMaterialId) {
-      const currentInv = await getRawMaterialInventoryByLocation(item.rawMaterialId, warehouseId);
-      const currentQty = parseFloat(currentInv?.quantity?.toString() || '0');
-      const newQty = currentQty + item.quantity;
-      await upsertRawMaterialInventory(item.rawMaterialId, warehouseId, {
-        quantity: newQty.toFixed(4), availableQuantity: newQty.toFixed(4),
-        unit: item.unit, lastReceivedDate: new Date(),
-        lotNumber: item.lotNumber, expirationDate: item.expirationDate,
+    const receivingId = recResult[0].insertId;
+
+    for (const item of items) {
+      await tx.insert(poReceivingItems).values({
+        receivingRecordId: receivingId, purchaseOrderItemId: item.purchaseOrderItemId,
+        rawMaterialId: item.rawMaterialId, productId: item.productId,
+        receivedQuantity: item.quantity.toString(), unit: item.unit,
+        lotNumber: item.lotNumber, expirationDate: item.expirationDate, condition: 'good',
       });
-      await createRawMaterialTransaction({
-        rawMaterialId: item.rawMaterialId, warehouseId, transactionType: 'receive',
-        quantity: item.quantity.toFixed(4), previousQuantity: currentQty.toFixed(4),
-        newQuantity: newQty.toFixed(4), unit: item.unit,
-        referenceType: 'purchase_order', referenceId: purchaseOrderId,
-        lotNumber: item.lotNumber, performedBy: receivedBy,
-      });
-    }
-    const poItem = await db.select().from(purchaseOrderItems)
-      .where(eq(purchaseOrderItems.id, item.purchaseOrderItemId)).limit(1);
-    if (poItem[0]) {
-      const prevReceived = parseFloat(poItem[0].receivedQuantity?.toString() || '0');
-      await db.update(purchaseOrderItems)
-        .set({ receivedQuantity: (prevReceived + item.quantity).toFixed(4) })
-        .where(eq(purchaseOrderItems.id, item.purchaseOrderItemId));
-    }
-  }
-  const poItems = await db.select().from(purchaseOrderItems)
-    .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
-  let allReceived = true;
-  let anyReceived = false;
-  for (const poi of poItems) {
-    const ordered = parseFloat(poi.quantity?.toString() || '0');
-    const received = parseFloat(poi.receivedQuantity?.toString() || '0');
-    if (received >= ordered) { anyReceived = true; }
-    else if (received > 0) { anyReceived = true; allReceived = false; }
-    else { allReceived = false; }
-  }
-  if (allReceived) {
-    await db.update(purchaseOrders).set({ status: 'received', receivedDate: new Date() })
-      .where(eq(purchaseOrders.id, purchaseOrderId));
-  } else if (anyReceived) {
-    await db.update(purchaseOrders).set({ status: 'partial' })
-      .where(eq(purchaseOrders.id, purchaseOrderId));
-  }
-  let shipmentToUpdate = shipmentId;
-  if (!shipmentToUpdate) {
-    const linkedShipment = await db.select().from(shipments)
-      .where(eq(shipments.purchaseOrderId, purchaseOrderId)).limit(1);
-    if (linkedShipment[0]) { shipmentToUpdate = linkedShipment[0].id; }
-  }
-  if (shipmentToUpdate) {
-    if (allReceived) {
-      await db.update(shipments).set({ status: 'delivered', deliveryDate: new Date() })
-        .where(eq(shipments.id, shipmentToUpdate));
-    } else if (anyReceived) {
-      const currentShipment = await db.select().from(shipments)
-        .where(eq(shipments.id, shipmentToUpdate)).limit(1);
-      if (currentShipment[0]?.status === 'pending') {
-        await db.update(shipments).set({ status: 'in_transit' })
-          .where(eq(shipments.id, shipmentToUpdate));
+      if (item.rawMaterialId) {
+        const invResult = await tx.select().from(rawMaterialInventory)
+          .where(and(eq(rawMaterialInventory.rawMaterialId, item.rawMaterialId), eq(rawMaterialInventory.warehouseId, warehouseId)))
+          .limit(1);
+        const currentInv = invResult[0];
+        const currentQty = parseFloat(currentInv?.quantity?.toString() || '0');
+        const newQty = currentQty + item.quantity;
+        const invData = {
+          quantity: newQty.toFixed(4), availableQuantity: newQty.toFixed(4),
+          unit: item.unit, lastReceivedDate: new Date(),
+          lotNumber: item.lotNumber, expirationDate: item.expirationDate,
+        };
+        if (currentInv) {
+          await tx.update(rawMaterialInventory).set(invData).where(eq(rawMaterialInventory.id, currentInv.id));
+        } else {
+          await tx.insert(rawMaterialInventory).values({
+            rawMaterialId: item.rawMaterialId, warehouseId, ...invData,
+          });
+        }
+        await tx.insert(rawMaterialTransactions).values({
+          rawMaterialId: item.rawMaterialId, warehouseId, transactionType: 'receive',
+          quantity: item.quantity.toFixed(4), previousQuantity: currentQty.toFixed(4),
+          newQuantity: newQty.toFixed(4), unit: item.unit,
+          referenceType: 'purchase_order', referenceId: purchaseOrderId,
+          lotNumber: item.lotNumber, performedBy: receivedBy,
+        });
+      }
+      const poItem = await tx.select().from(purchaseOrderItems)
+        .where(eq(purchaseOrderItems.id, item.purchaseOrderItemId)).limit(1);
+      if (poItem[0]) {
+        const prevReceived = parseFloat(poItem[0].receivedQuantity?.toString() || '0');
+        await tx.update(purchaseOrderItems)
+          .set({ receivedQuantity: (prevReceived + item.quantity).toFixed(4) })
+          .where(eq(purchaseOrderItems.id, item.purchaseOrderItemId));
       }
     }
-  }
-  return receiving;
+    const poItems = await tx.select().from(purchaseOrderItems)
+      .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
+    let allReceived = true;
+    let anyReceived = false;
+    for (const poi of poItems) {
+      const ordered = parseFloat(poi.quantity?.toString() || '0');
+      const received = parseFloat(poi.receivedQuantity?.toString() || '0');
+      if (received >= ordered) { anyReceived = true; }
+      else if (received > 0) { anyReceived = true; allReceived = false; }
+      else { allReceived = false; }
+    }
+    if (allReceived) {
+      await tx.update(purchaseOrders).set({ status: 'received', receivedDate: new Date() })
+        .where(eq(purchaseOrders.id, purchaseOrderId));
+    } else if (anyReceived) {
+      await tx.update(purchaseOrders).set({ status: 'partial' })
+        .where(eq(purchaseOrders.id, purchaseOrderId));
+    }
+    let shipmentToUpdate = shipmentId;
+    if (!shipmentToUpdate) {
+      const linkedShipment = await tx.select().from(shipments)
+        .where(eq(shipments.purchaseOrderId, purchaseOrderId)).limit(1);
+      if (linkedShipment[0]) { shipmentToUpdate = linkedShipment[0].id; }
+    }
+    if (shipmentToUpdate) {
+      if (allReceived) {
+        await tx.update(shipments).set({ status: 'delivered', deliveryDate: new Date() })
+          .where(eq(shipments.id, shipmentToUpdate));
+      } else if (anyReceived) {
+        const currentShipment = await tx.select().from(shipments)
+          .where(eq(shipments.id, shipmentToUpdate)).limit(1);
+        if (currentShipment[0]?.status === 'pending') {
+          await tx.update(shipments).set({ status: 'in_transit' })
+            .where(eq(shipments.id, shipmentToUpdate));
+        }
+      }
+    }
+    return { id: receivingId };
+  });
 }
 
 export async function consumeWorkOrderMaterials(workOrderId: number, performedBy?: number) {
@@ -510,42 +530,59 @@ export async function consumeWorkOrderMaterials(workOrderId: number, performedBy
   if (!db) throw new Error("Database not available");
   const workOrder = await getWorkOrderById(workOrderId);
   if (!workOrder) throw new Error("Work order not found");
-  const materials = await getWorkOrderMaterials(workOrderId);
-  for (const mat of materials) {
-    if (!mat.rawMaterialId) continue;
-    const requiredQty = parseFloat(mat.requiredQuantity?.toString() || '0');
-    const inv = await getRawMaterialInventoryByLocation(mat.rawMaterialId, workOrder.warehouseId || 0);
-    if (!inv) { await updateWorkOrderMaterial(mat.id, { status: 'shortage' }); continue; }
-    const currentQty = parseFloat(inv.quantity?.toString() || '0');
-    const consumeQty = Math.min(requiredQty, currentQty);
-    const newQty = currentQty - consumeQty;
-    await upsertRawMaterialInventory(mat.rawMaterialId, workOrder.warehouseId || 0, {
-      quantity: newQty.toFixed(4), availableQuantity: newQty.toFixed(4),
-    });
-    await createRawMaterialTransaction({
-      rawMaterialId: mat.rawMaterialId, warehouseId: workOrder.warehouseId || 0,
-      transactionType: 'consume', quantity: (-consumeQty).toFixed(4),
-      previousQuantity: currentQty.toFixed(4), newQuantity: newQty.toFixed(4),
-      unit: mat.unit, referenceType: 'work_order', referenceId: workOrderId, performedBy,
-    });
-    await updateWorkOrderMaterial(mat.id, {
-      consumedQuantity: consumeQty.toFixed(4),
-      status: consumeQty >= requiredQty ? 'consumed' : 'partial',
-    });
-  }
-  const updatedMaterials = await getWorkOrderMaterials(workOrderId);
-  const allFullyConsumed = updatedMaterials.every(
-    m => m.status === 'consumed' || m.status === 'pending'
-  );
-  const hasShortageOrPartial = updatedMaterials.some(
-    m => m.status === 'shortage' || m.status === 'partial'
-  );
+  const whId = workOrder.warehouseId || 0;
 
-  if (allFullyConsumed) {
-    await updateWorkOrder(workOrderId, { status: 'completed', actualEndDate: new Date() });
-  } else if (hasShortageOrPartial) {
-    await updateWorkOrder(workOrderId, { status: 'in_progress' });
-  }
+  await db.transaction(async (tx) => {
+    const materials = await tx.select().from(workOrderMaterials)
+      .where(eq(workOrderMaterials.workOrderId, workOrderId));
+
+    for (const mat of materials) {
+      if (!mat.rawMaterialId) continue;
+      const requiredQty = parseFloat(mat.requiredQuantity?.toString() || '0');
+      const invResult = await tx.select().from(rawMaterialInventory)
+        .where(and(eq(rawMaterialInventory.rawMaterialId, mat.rawMaterialId), eq(rawMaterialInventory.warehouseId, whId)))
+        .limit(1);
+      const inv = invResult[0];
+      if (!inv) {
+        await tx.update(workOrderMaterials).set({ status: 'shortage' })
+          .where(eq(workOrderMaterials.id, mat.id));
+        continue;
+      }
+      const currentQty = parseFloat(inv.quantity?.toString() || '0');
+      const consumeQty = Math.min(requiredQty, currentQty);
+      const newQty = currentQty - consumeQty;
+      await tx.update(rawMaterialInventory).set({
+        quantity: newQty.toFixed(4), availableQuantity: newQty.toFixed(4),
+      }).where(eq(rawMaterialInventory.id, inv.id));
+      await tx.insert(rawMaterialTransactions).values({
+        rawMaterialId: mat.rawMaterialId, warehouseId: whId,
+        transactionType: 'consume', quantity: (-consumeQty).toFixed(4),
+        previousQuantity: currentQty.toFixed(4), newQuantity: newQty.toFixed(4),
+        unit: mat.unit, referenceType: 'work_order', referenceId: workOrderId, performedBy,
+      });
+      await tx.update(workOrderMaterials).set({
+        consumedQuantity: consumeQty.toFixed(4),
+        status: consumeQty >= requiredQty ? 'consumed' : 'partial',
+      }).where(eq(workOrderMaterials.id, mat.id));
+    }
+
+    const updatedMaterials = await tx.select().from(workOrderMaterials)
+      .where(eq(workOrderMaterials.workOrderId, workOrderId));
+    const allFullyConsumed = updatedMaterials.every(
+      m => m.status === 'consumed' || !m.rawMaterialId
+    );
+    const hasShortageOrPartial = updatedMaterials.some(
+      m => m.status === 'shortage' || m.status === 'partial'
+    );
+
+    if (allFullyConsumed) {
+      await tx.update(workOrders).set({ status: 'completed', actualEndDate: new Date() })
+        .where(eq(workOrders.id, workOrderId));
+    } else if (hasShortageOrPartial) {
+      await tx.update(workOrders).set({ status: 'in_progress' })
+        .where(eq(workOrders.id, workOrderId));
+    }
+  });
 }
 
 // ============================================
@@ -780,11 +817,21 @@ function toPerGram(costPerUnit: number, costUnit: string): number {
       return costPerUnit / GRAMS_PER_KG;
     case "per_oz":
       return costPerUnit / GRAMS_PER_OZ;
-    case "per_each":
-      return costPerUnit;
     default:
-      return costPerUnit;
+      return costPerUnit / GRAMS_PER_KG;
   }
+}
+
+/**
+ * Calculate the cost for an ingredient line.
+ * For weight-based units (per_lb, per_kg, per_oz), `quantity` is grams.
+ * For per_each, `quantity` is item count (stored in quantityGrams by convention).
+ */
+function ingredientLineCost(quantity: number, costPerUnit: number, costUnit: string): number {
+  if (costUnit === "per_each") {
+    return quantity * costPerUnit;
+  }
+  return quantity * toPerGram(costPerUnit, costUnit);
 }
 
 type RecipeCostLine = {
@@ -808,10 +855,17 @@ async function computeSubRecipeCost(
   recipeId: number,
   quantityGrams: number,
   formulation: "wet" | "dry",
-  depth = 0,
+  visitedIds: Set<number> = new Set(),
 ): Promise<{ total: number; breakdown: RecipeCostLine[] }> {
-  // Guard against cyclic recipe references.
-  if (depth > 8) return { total: 0, breakdown: [] };
+  if (visitedIds.has(recipeId)) {
+    throw new Error(`Cyclic sub-recipe reference detected: recipe ${recipeId} is already an ancestor in this cost tree`);
+  }
+  if (visitedIds.size > 50) {
+    throw new Error(`Sub-recipe nesting too deep (>${visitedIds.size} levels) when processing recipe ${recipeId}`);
+  }
+  const visited = new Set(visitedIds);
+  visited.add(recipeId);
+
   const subRecipe = await getRecipeById(recipeId);
   if (!subRecipe) return { total: 0, breakdown: [] };
   const lines = await getRecipeLines(recipeId);
@@ -826,7 +880,7 @@ async function computeSubRecipeCost(
     const baseGrams = formulation === "dry" && dryGrams > 0 ? dryGrams : wetGrams;
     const grams = baseGrams * scaleFactor;
     if (line.subRecipeId) {
-      const nested = await computeSubRecipeCost(line.subRecipeId, grams, formulation, depth + 1);
+      const nested = await computeSubRecipeCost(line.subRecipeId, grams, formulation, visited);
       breakdown.push({
         lineId: line.id,
         lineNumber: line.lineNumber,
@@ -839,7 +893,8 @@ async function computeSubRecipeCost(
     const ingredient = await getIngredientById(line.ingredientId);
     if (!ingredient) continue;
     const unitCost = parseFloat(ingredient.costPerUnit?.toString() || "0");
-    const cost = grams * toPerGram(unitCost, ingredient.costUnit || "per_kg");
+    const costUnit = ingredient.costUnit || "per_kg";
+    const cost = ingredientLineCost(grams, unitCost, costUnit);
     breakdown.push({
       lineId: line.id,
       lineNumber: line.lineNumber,
@@ -946,9 +1001,48 @@ export async function updateRecipe(id: number, data: Partial<InsertRecipe>) {
   await db.update(recipes).set({ ...data, updatedAt: new Date() }).where(eq(recipes.id, id));
 }
 
-export async function createRecipeLine(data: Omit<InsertRecipeLine, "id" | "createdAt" | "updatedAt">) {
+export async function getRecipeLineById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(recipeLines).where(eq(recipeLines.id, id)).limit(1);
+  return result[0];
+}
+
+/**
+ * Detect whether adding `subRecipeId` as a sub-recipe of `parentRecipeId`
+ * would introduce a cycle in the recipe graph.
+ */
+export async function detectSubRecipeCycle(parentRecipeId: number, subRecipeId: number): Promise<boolean> {
+  if (subRecipeId === parentRecipeId) return true;
+  const visited = new Set<number>();
+  const stack = [subRecipeId];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current === parentRecipeId) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const lines = await getRecipeLines(current);
+    for (const line of lines) {
+      if (line.subRecipeId) {
+        stack.push(line.subRecipeId);
+      }
+    }
+  }
+  return false;
+}
+
+export async function createRecipeLine(
+  data: Omit<InsertRecipeLine, "id" | "createdAt" | "updatedAt">,
+  opts?: { skipCycleCheck?: boolean },
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  if (data.subRecipeId && !opts?.skipCycleCheck) {
+    const isCyclic = await detectSubRecipeCycle(data.recipeRowId, data.subRecipeId);
+    if (isCyclic) {
+      throw new Error(`Adding sub-recipe ${data.subRecipeId} to recipe ${data.recipeRowId} would create a cyclic reference`);
+    }
+  }
   const result = await db.insert(recipeLines).values(data).$returningId();
   return { id: result[0].id };
 }
@@ -956,6 +1050,15 @@ export async function createRecipeLine(data: Omit<InsertRecipeLine, "id" | "crea
 export async function updateRecipeLine(id: number, data: Partial<InsertRecipeLine>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  if (data.subRecipeId) {
+    const existing = await getRecipeLineById(id);
+    if (existing) {
+      const isCyclic = await detectSubRecipeCycle(existing.recipeRowId, data.subRecipeId);
+      if (isCyclic) {
+        throw new Error(`Updating line ${id} with sub-recipe ${data.subRecipeId} would create a cyclic reference`);
+      }
+    }
+  }
   await db.update(recipeLines).set({ ...data, updatedAt: new Date() }).where(eq(recipeLines.id, id));
 }
 
@@ -995,9 +1098,11 @@ export async function calculateRecipeBatchCost(input: {
   const targetFromLbs = input.targetLbs ? input.targetLbs * GRAMS_PER_LB : undefined;
   const requestedBatch = targetFromLbs || input.batchGrams || (input.scaleFactor ? baseBatch * input.scaleFactor : baseBatch);
   const effectiveScale = baseBatch > 0 ? requestedBatch / baseBatch : 1;
+  const visitedIds = new Set<number>([input.recipeId]);
   const lines = await getRecipeLines(input.recipeId);
   const resultLines: RecipeCostLine[] = [];
   const subRecipeCosts: Array<{ recipe: string; grams: number; cost: number; lineCosts: RecipeCostLine[] }> = [];
+  const perEachLineIds = new Set<number>();
 
   for (const line of lines) {
     const wetGrams = parseFloat(line.quantityGrams?.toString() || "0");
@@ -1005,7 +1110,7 @@ export async function calculateRecipeBatchCost(input: {
     const baseGrams = input.formulation === "dry" && dryGrams > 0 ? dryGrams : wetGrams;
     const grams = baseGrams * effectiveScale;
     if (line.subRecipeId) {
-      const nested = await computeSubRecipeCost(line.subRecipeId, grams, input.formulation);
+      const nested = await computeSubRecipeCost(line.subRecipeId, grams, input.formulation, visitedIds);
       const subRecipe = await getRecipeById(line.subRecipeId);
       subRecipeCosts.push({
         recipe: subRecipe?.name || `Sub-recipe ${line.subRecipeId}`,
@@ -1025,7 +1130,11 @@ export async function calculateRecipeBatchCost(input: {
     if (!line.ingredientId) continue;
     const ingredient = await getIngredientById(line.ingredientId);
     if (!ingredient) continue;
-    const cost = grams * toPerGram(parseFloat(ingredient.costPerUnit?.toString() || "0"), ingredient.costUnit || "per_kg");
+    const costUnit = ingredient.costUnit || "per_kg";
+    const cost = ingredientLineCost(grams, parseFloat(ingredient.costPerUnit?.toString() || "0"), costUnit);
+    if (costUnit === "per_each") {
+      perEachLineIds.add(line.id);
+    }
     resultLines.push({
       lineId: line.id,
       lineNumber: line.lineNumber,
@@ -1036,7 +1145,8 @@ export async function calculateRecipeBatchCost(input: {
   }
 
   const totalCost = resultLines.reduce((sum, l) => sum + l.cost, 0);
-  const totalGrams = resultLines.reduce((sum, l) => sum + l.grams, 0);
+  // Exclude per_each lines from gram totals — their quantity is item count, not weight
+  const totalGrams = resultLines.reduce((sum, l) => perEachLineIds.has(l.lineId) ? sum : sum + l.grams, 0);
   const yieldPct = parseFloat(recipe.expectedYieldPct?.toString() || "1");
   const yieldGrams = totalGrams * yieldPct;
   return {
@@ -1067,4 +1177,224 @@ export async function getRecipeCostHistory(recipeId: number) {
   return db.select().from(batchCostSnapshots)
     .where(eq(batchCostSnapshots.recipeId, recipeId))
     .orderBy(desc(batchCostSnapshots.snapshotDate));
+}
+
+// ============================================
+// INGREDIENT VENDOR MANAGEMENT
+// ============================================
+
+export async function getIngredientVendors(ingredientId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    id: ingredientVendors.id,
+    ingredientId: ingredientVendors.ingredientId,
+    vendorId: ingredientVendors.vendorId,
+    isPrimary: ingredientVendors.isPrimary,
+    unitPrice: ingredientVendors.unitPrice,
+    costUnit: ingredientVendors.costUnit,
+    contractStartDate: ingredientVendors.contractStartDate,
+    contractEndDate: ingredientVendors.contractEndDate,
+    minimumOrderQty: ingredientVendors.minimumOrderQty,
+    leadTimeDays: ingredientVendors.leadTimeDays,
+    paymentTerms: ingredientVendors.paymentTerms,
+    lastQuotedAt: ingredientVendors.lastQuotedAt,
+    lastQuotedPrice: ingredientVendors.lastQuotedPrice,
+    quoteValidUntil: ingredientVendors.quoteValidUntil,
+    status: ingredientVendors.status,
+    notes: ingredientVendors.notes,
+    createdAt: ingredientVendors.createdAt,
+    updatedAt: ingredientVendors.updatedAt,
+    vendorName: vendors.name,
+    vendorEmail: vendors.email,
+  })
+    .from(ingredientVendors)
+    .leftJoin(vendors, eq(ingredientVendors.vendorId, vendors.id))
+    .where(eq(ingredientVendors.ingredientId, ingredientId))
+    .orderBy(desc(ingredientVendors.isPrimary));
+}
+
+export async function createIngredientVendor(data: Omit<InsertIngredientVendor, "id" | "createdAt" | "updatedAt">) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ingredientVendors).values(data).$returningId();
+  return { id: result[0].id };
+}
+
+export async function updateIngredientVendor(id: number, data: Partial<InsertIngredientVendor>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(ingredientVendors).set({ ...data, updatedAt: new Date() }).where(eq(ingredientVendors.id, id));
+}
+
+export async function deleteIngredientVendor(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(ingredientVendors).where(eq(ingredientVendors.id, id));
+}
+
+export async function setPrimaryVendor(ingredientId: number, vendorId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.update(ingredientVendors)
+      .set({ isPrimary: false })
+      .where(eq(ingredientVendors.ingredientId, ingredientId));
+    await tx.update(ingredientVendors)
+      .set({ isPrimary: true })
+      .where(and(eq(ingredientVendors.ingredientId, ingredientId), eq(ingredientVendors.vendorId, vendorId)));
+    await tx.update(recipeIngredients)
+      .set({ supplierId: vendorId, updatedAt: new Date() })
+      .where(eq(recipeIngredients.id, ingredientId));
+  });
+}
+
+// ============================================
+// INGREDIENT QUOTE REQUESTS
+// ============================================
+
+export async function createIngredientQuoteRequest(data: Omit<InsertIngredientQuoteRequest, "id" | "createdAt" | "updatedAt">) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ingredientQuoteRequests).values(data).$returningId();
+  return { id: result[0].id };
+}
+
+export async function getIngredientQuoteRequests(filters?: { ingredientId?: number; status?: string; triggerType?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.ingredientId) conditions.push(eq(ingredientQuoteRequests.ingredientId, filters.ingredientId));
+  if (filters?.status) conditions.push(eq(ingredientQuoteRequests.status, filters.status as any));
+  if (filters?.triggerType) conditions.push(eq(ingredientQuoteRequests.triggerType, filters.triggerType as any));
+  const query = db.select().from(ingredientQuoteRequests).orderBy(desc(ingredientQuoteRequests.createdAt));
+  return conditions.length > 0 ? query.where(and(...conditions)) : query;
+}
+
+export async function getIngredientQuoteRequestById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(ingredientQuoteRequests).where(eq(ingredientQuoteRequests.id, id)).limit(1);
+  return result[0];
+}
+
+export async function updateIngredientQuoteRequest(id: number, data: Partial<InsertIngredientQuoteRequest>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(ingredientQuoteRequests).set({ ...data, updatedAt: new Date() }).where(eq(ingredientQuoteRequests.id, id));
+}
+
+// ============================================
+// INGREDIENT COST ALERTS
+// ============================================
+
+export async function createIngredientCostAlert(data: Omit<InsertIngredientCostAlert, "id" | "createdAt">) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(ingredientCostAlerts).values(data).$returningId();
+  return { id: result[0].id };
+}
+
+export async function getIngredientCostAlerts(filters?: { ingredientId?: number; alertType?: string; isRead?: boolean; severity?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.ingredientId) conditions.push(eq(ingredientCostAlerts.ingredientId, filters.ingredientId));
+  if (filters?.alertType) conditions.push(eq(ingredientCostAlerts.alertType, filters.alertType as any));
+  if (typeof filters?.isRead === "boolean") conditions.push(eq(ingredientCostAlerts.isRead, filters.isRead));
+  if (filters?.severity) conditions.push(eq(ingredientCostAlerts.severity, filters.severity as any));
+  const query = db.select().from(ingredientCostAlerts).orderBy(desc(ingredientCostAlerts.createdAt));
+  return conditions.length > 0 ? query.where(and(...conditions)) : query;
+}
+
+export async function markAlertRead(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(ingredientCostAlerts).set({ isRead: true }).where(eq(ingredientCostAlerts.id, id));
+}
+
+export async function dismissAlert(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(ingredientCostAlerts).set({ isDismissed: true }).where(eq(ingredientCostAlerts.id, id));
+}
+
+// ============================================
+// INGREDIENT COST ANALYSIS
+// ============================================
+
+export async function getIngredientCostStats(ingredientId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const ingredient = await getIngredientById(ingredientId);
+  if (!ingredient) return null;
+
+  const currentCost = parseFloat(ingredient.costPerUnit?.toString() || "0");
+  const history = await db.select({
+    costPerUnit: ingredientCostHistory.costPerUnit,
+    effectiveDate: ingredientCostHistory.effectiveDate,
+  })
+    .from(ingredientCostHistory)
+    .where(eq(ingredientCostHistory.ingredientId, ingredientId))
+    .orderBy(desc(ingredientCostHistory.effectiveDate))
+    .limit(100);
+
+  const costs = history.map(h => parseFloat(h.costPerUnit?.toString() || "0"));
+  const avg = costs.length > 0 ? costs.reduce((s, c) => s + c, 0) / costs.length : currentCost;
+  const min = costs.length > 0 ? Math.min(...costs) : currentCost;
+  const max = costs.length > 0 ? Math.max(...costs) : currentCost;
+  const pctFromAvg = avg > 0 ? ((currentCost - avg) / avg) * 100 : 0;
+
+  return {
+    ingredientId,
+    ingredientName: ingredient.name,
+    currentCost,
+    costUnit: ingredient.costUnit,
+    historicalAvg: avg,
+    historicalMin: min,
+    historicalMax: max,
+    pctFromAvg,
+    dataPoints: costs.length,
+    latestDate: history[0]?.effectiveDate || null,
+  };
+}
+
+export async function getIngredientsWithExpiringContracts(daysUntilExpiry: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() + daysUntilExpiry);
+  return db.select({
+    ingredientVendor: ingredientVendors,
+    ingredientName: recipeIngredients.name,
+    vendorName: vendors.name,
+  })
+    .from(ingredientVendors)
+    .leftJoin(recipeIngredients, eq(ingredientVendors.ingredientId, recipeIngredients.id))
+    .leftJoin(vendors, eq(ingredientVendors.vendorId, vendors.id))
+    .where(and(
+      eq(ingredientVendors.status, "active"),
+      sql`${ingredientVendors.contractEndDate} IS NOT NULL AND ${ingredientVendors.contractEndDate} <= ${cutoff}`,
+    ));
+}
+
+export async function getIngredientsAboveCostThreshold(thresholdPct: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const allIngredients = await db.select().from(recipeIngredients).where(eq(recipeIngredients.isActive, true));
+  const results: Array<{ ingredientId: number; name: string; currentCost: number; avgCost: number; pctAbove: number }> = [];
+
+  for (const ing of allIngredients) {
+    const stats = await getIngredientCostStats(ing.id);
+    if (stats && stats.dataPoints > 0 && stats.pctFromAvg > thresholdPct) {
+      results.push({
+        ingredientId: ing.id,
+        name: ing.name,
+        currentCost: stats.currentCost,
+        avgCost: stats.historicalAvg,
+        pctAbove: stats.pctFromAvg,
+      });
+    }
+  }
+  return results;
 }
