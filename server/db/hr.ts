@@ -274,3 +274,121 @@ export async function deleteEmergencyContact(id: number) {
   if (!db) return;
   await db.delete(employeeEmergencyContacts).where(eq(employeeEmergencyContacts.id, id));
 }
+
+// ========================== 
+// Transactional operations
+// ==========================
+
+/**
+ * Atomically create a leave request and adjust the PTO pending balance.
+ * Both operations are wrapped in a DB transaction so a balance-adjustment failure
+ * cannot leave the request in an orphaned state.
+ */
+export async function createLeaveRequestWithPtoAdjustment(
+  leaveData: typeof leaveRequests.$inferInsert,
+  ptoAdjust: { employeeId: number; leaveType: typeof ptoBalances.$inferInsert["leaveType"]; year: number; hours: number },
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return db.transaction(async (tx) => {
+    const result = await tx.insert(leaveRequests).values(leaveData);
+    const existing = await tx
+      .select()
+      .from(ptoBalances)
+      .where(and(
+        eq(ptoBalances.employeeId, ptoAdjust.employeeId),
+        eq(ptoBalances.leaveType, ptoAdjust.leaveType),
+        eq(ptoBalances.year, ptoAdjust.year),
+      ))
+      .limit(1);
+    if (!existing[0]) throw new Error(`No PTO balance record found for employee ${ptoAdjust.employeeId}, leaveType ${ptoAdjust.leaveType}, year ${ptoAdjust.year}`);
+    await tx
+      .update(ptoBalances)
+      .set({ pendingHours: sql`${ptoBalances.pendingHours} + ${ptoAdjust.hours}` })
+      .where(eq(ptoBalances.id, existing[0].id));
+    return { id: result[0].insertId };
+  });
+}
+
+/**
+ * Atomically update a leave request decision and adjust the PTO used/pending balances.
+ */
+export async function decideLeaveRequestWithPtoAdjustment(
+  requestId: number,
+  decision: { status: string; approverId: number; rejectionReason?: string | null },
+  ptoAdjust: { employeeId: number; leaveType: typeof ptoBalances.$inferInsert["leaveType"]; year: number; hours: number; approved: boolean },
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return db.transaction(async (tx) => {
+    await tx
+      .update(leaveRequests)
+      .set({ status: decision.status as any, approverId: decision.approverId, approvedAt: new Date(), rejectionReason: decision.rejectionReason })
+      .where(eq(leaveRequests.id, requestId));
+    const existing = await tx
+      .select()
+      .from(ptoBalances)
+      .where(and(
+        eq(ptoBalances.employeeId, ptoAdjust.employeeId),
+        eq(ptoBalances.leaveType, ptoAdjust.leaveType),
+        eq(ptoBalances.year, ptoAdjust.year),
+      ))
+      .limit(1);
+    if (!existing[0]) throw new Error(`No PTO balance found for employee ${ptoAdjust.employeeId}`);
+    if (ptoAdjust.approved) {
+      await tx
+        .update(ptoBalances)
+        .set({
+          pendingHours: sql`${ptoBalances.pendingHours} - ${ptoAdjust.hours}`,
+          usedHours: sql`${ptoBalances.usedHours} + ${ptoAdjust.hours}`,
+        })
+        .where(eq(ptoBalances.id, existing[0].id));
+    } else {
+      await tx
+        .update(ptoBalances)
+        .set({ pendingHours: sql`${ptoBalances.pendingHours} - ${ptoAdjust.hours}` })
+        .where(eq(ptoBalances.id, existing[0].id));
+    }
+    return { success: true };
+  });
+}
+
+/**
+ * Atomically cancel a leave request and restore PTO pending/used balances.
+ */
+export async function cancelLeaveRequestWithPtoRestore(
+  requestId: number,
+  ptoRestore: { employeeId: number; leaveType: typeof ptoBalances.$inferInsert["leaveType"]; year: number; hours: number; wasApproved: boolean },
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return db.transaction(async (tx) => {
+    await tx
+      .update(leaveRequests)
+      .set({ status: "cancelled" as any })
+      .where(eq(leaveRequests.id, requestId));
+    const existing = await tx
+      .select()
+      .from(ptoBalances)
+      .where(and(
+        eq(ptoBalances.employeeId, ptoRestore.employeeId),
+        eq(ptoBalances.leaveType, ptoRestore.leaveType),
+        eq(ptoBalances.year, ptoRestore.year),
+      ))
+      .limit(1);
+    if (existing[0]) {
+      if (ptoRestore.wasApproved) {
+        await tx
+          .update(ptoBalances)
+          .set({ usedHours: sql`${ptoBalances.usedHours} - ${ptoRestore.hours}` })
+          .where(eq(ptoBalances.id, existing[0].id));
+      } else {
+        await tx
+          .update(ptoBalances)
+          .set({ pendingHours: sql`${ptoBalances.pendingHours} - ${ptoRestore.hours}` })
+          .where(eq(ptoBalances.id, existing[0].id));
+      }
+    }
+    return { success: true };
+  });
+}
