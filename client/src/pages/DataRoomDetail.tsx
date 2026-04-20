@@ -1556,39 +1556,17 @@ function NdaManagement({ dataRoomId, requiresNda }: { dataRoomId: number; requir
   const handleUpload = async () => {
     if (!selectedFile) return;
 
-    // Convert file to base64 and upload to S3
     const reader = new FileReader();
-    reader.onload = async () => {
+    reader.onload = () => {
       const base64 = (reader.result as string).split(',')[1];
-      const key = `nda/${dataRoomId}/${Date.now()}-${selectedFile.name}`;
-      
-      // Upload to S3 via storage API
-      try {
-        const response = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            key,
-            data: base64,
-            contentType: 'application/pdf',
-          }),
-        });
-        
-        if (!response.ok) throw new Error('Upload failed');
-        const { url } = await response.json();
-
-        uploadNdaMutation.mutate({
-          dataRoomId,
-          name: ndaName || selectedFile.name,
-          version: ndaVersion,
-          storageKey: key,
-          storageUrl: url,
-          mimeType: 'application/pdf',
-          fileSize: selectedFile.size,
-        });
-      } catch (error) {
-        toast.error("Failed to upload file");
-      }
+      uploadNdaMutation.mutate({
+        dataRoomId,
+        name: ndaName || selectedFile.name,
+        version: ndaVersion,
+        fileContent: base64,
+        mimeType: 'application/pdf',
+        fileSize: selectedFile.size,
+      });
     };
     reader.readAsDataURL(selectedFile);
   };
