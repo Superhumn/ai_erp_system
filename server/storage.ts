@@ -88,7 +88,8 @@ function isS3Configured(): boolean {
 }
 
 function buildS3ObjectUrl(bucket: string, key: string, region: string): string {
-  return `https://${bucket}.s3.${region}.amazonaws.com/${encodeURI(key)}`;
+  const encodedKey = key.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+  return `https://${bucket}.s3.${region}.amazonaws.com/${encodedKey}`;
 }
 
 function getS3Client(): S3Client {
