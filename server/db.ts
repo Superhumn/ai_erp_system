@@ -6838,6 +6838,13 @@ export async function getEmailAccessRules(dataRoomId: number) {
     .orderBy(desc(dataRoomEmailAccessRules.priority));
 }
 
+export async function getEmailAccessRuleById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(dataRoomEmailAccessRules).where(eq(dataRoomEmailAccessRules.id, id)).limit(1);
+  return result[0] || null;
+}
+
 export async function updateEmailAccessRule(id: number, data: Partial<InsertDataRoomEmailAccessRule>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
