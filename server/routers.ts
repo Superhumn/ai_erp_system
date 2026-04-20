@@ -239,6 +239,16 @@ function verifyPassword(password: string, stored: string): { valid: boolean; nee
   return { valid, needsUpgrade: false };
 }
 
+/** Verify that the calling user owns the data room containing the given email access rule. */
+async function assertEmailAccessRuleOwnership(ruleId: number, userId: number, userRole: string) {
+  const rule = await db.getEmailAccessRuleById(ruleId);
+  if (!rule) throw new TRPCError({ code: 'NOT_FOUND' });
+  const room = await db.getDataRoomById(rule.dataRoomId);
+  if (!room || (room.ownerId !== userId && userRole !== 'admin')) {
+    throw new TRPCError({ code: 'FORBIDDEN' });
+  }
+  return rule;
+}
 
 
 export const appRouter = router({
@@ -14073,12 +14083,7 @@ Ask if they received the original request and if they can provide a quote.`;
           isActive: z.boolean().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const rule = await db.getEmailAccessRuleById(input.id);
-          if (!rule) throw new TRPCError({ code: 'NOT_FOUND' });
-          const room = await db.getDataRoomById(rule.dataRoomId);
-          if (!room || (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin')) {
-            throw new TRPCError({ code: 'FORBIDDEN' });
-          }
+          await assertEmailAccessRuleOwnership(input.id, ctx.user.id, ctx.user.role);
           const { id, ...data } = input;
           await db.updateEmailAccessRule(id, data);
           return { success: true };
@@ -14088,12 +14093,7 @@ Ask if they received the original request and if they can provide a quote.`;
       delete: protectedProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input, ctx }) => {
-          const rule = await db.getEmailAccessRuleById(input.id);
-          if (!rule) throw new TRPCError({ code: 'NOT_FOUND' });
-          const room = await db.getDataRoomById(rule.dataRoomId);
-          if (!room || (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin')) {
-            throw new TRPCError({ code: 'FORBIDDEN' });
-          }
+          await assertEmailAccessRuleOwnership(input.id, ctx.user.id, ctx.user.role);
           await db.deleteEmailAccessRule(input.id);
           return { success: true };
         }),
@@ -14948,7 +14948,7 @@ Ask if they received the original request and if they can provide a quote.`;
           signerTitle: z.string().optional(),
           signerCompany: z.string().optional(),
           signatureType: z.enum(['typed', 'drawn']),
-          signatureData: z.string().max(2_000_000), // 2 MB base64 character limit (~1.5 MB decoded)
+          signatureData: z.string().max(2_000_000), // ~1.43 MB decoded (2 MB base64 chars × 3/4)
           consentCheckbox: z.literal(true),
         }))
         .mutation(async ({ input, ctx }) => {
@@ -15536,12 +15536,7 @@ Ask if they received the original request and if they can provide a quote.`;
           isActive: z.boolean().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const rule = await db.getEmailAccessRuleById(input.id);
-          if (!rule) throw new TRPCError({ code: 'NOT_FOUND' });
-          const room = await db.getDataRoomById(rule.dataRoomId);
-          if (!room || (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin')) {
-            throw new TRPCError({ code: 'FORBIDDEN' });
-          }
+          await assertEmailAccessRuleOwnership(input.id, ctx.user.id, ctx.user.role);
           const { id, ...data } = input;
           await db.updateEmailAccessRule(id, data);
           return { success: true };
@@ -15551,12 +15546,7 @@ Ask if they received the original request and if they can provide a quote.`;
       delete: protectedProcedure
         .input(z.object({ id: z.number() }))
         .mutation(async ({ input, ctx }) => {
-          const rule = await db.getEmailAccessRuleById(input.id);
-          if (!rule) throw new TRPCError({ code: 'NOT_FOUND' });
-          const room = await db.getDataRoomById(rule.dataRoomId);
-          if (!room || (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin')) {
-            throw new TRPCError({ code: 'FORBIDDEN' });
-          }
+          await assertEmailAccessRuleOwnership(input.id, ctx.user.id, ctx.user.role);
           await db.deleteEmailAccessRule(input.id);
           return { success: true };
         }),
