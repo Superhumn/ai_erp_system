@@ -2,28 +2,50 @@
  * Navigation structure guard — prevents regressions to the sidebar layout.
  *
  * If this test fails, it means someone changed the nav groups or their order.
- * The canonical structure was agreed on 2026-04-19.  Do NOT update these
- * assertions without explicit product approval.
+ * The canonical structure was agreed on 2026-04-15 (see CLAUDE.md). Do NOT
+ * update these assertions without explicit product approval.
  */
 import { describe, it, expect } from "vitest";
 import { getMenuGroups } from "./DashboardLayout";
 
 // ── Canonical section order for admin (never reorder / rename without approval) ──
 const CANONICAL_SECTIONS = [
-  "_main",
-  "Sales & Finance",
-  "CRM",
+  "Command Center",
+  "Sales",
+  "Finance",
   "Operations",
-  "_sell",
-  "_ops",
-  "_people",
-  "_tools",
+  "People",
+  "Tools",
 ] as const;
+
+// Items that must NEVER reappear in the sidebar (see CLAUDE.md)
+const BANNED_LABELS = [
+  "Sales & Finance",
+  "CRM Hub",
+  "Contacts",
+  "AI Assistant",
+  "Approval Queue",
+  "Support",
+  "Equity Portal",
+  "Time Tracking",
+  "Inventory Mgmt",
+  "Manufacturing",
+  "Procurement",
+  "Freight",
+  "Financials",
+  "Cases",
+];
+
+const BANNED_SECTION_LABELS = ["Sales & Finance", "CRM", "Communications"];
+
+function labelsOf(role: string) {
+  return getMenuGroups(role).flatMap((g) => g.items.map((i) => i.label));
+}
 
 describe("Sidebar navigation structure", () => {
   const adminGroups = getMenuGroups("admin");
 
-  it("has exactly 8 sections for admin", () => {
+  it("has exactly 6 sections for admin", () => {
     expect(adminGroups.map((g) => g.label)).toEqual([...CANONICAL_SECTIONS]);
   });
 
@@ -34,159 +56,180 @@ describe("Sidebar navigation structure", () => {
     }
   });
 
-  it("_main has Dashboard, Projects, AI Assistant, Approval Queue", () => {
-    const main = adminGroups.find((g) => g.label === "_main")!;
-    expect(main.items.map((i) => i.label)).toEqual([
+  it("Command Center has Dashboard, Projects, Email Inbox, Meetings, Messaging", () => {
+    const cc = adminGroups.find((g) => g.label === "Command Center")!;
+    expect(cc.items.map((i) => i.label)).toEqual([
       "Dashboard",
       "Projects",
-      "AI Assistant",
-      "Approval Queue",
-    ]);
-  });
-
-  it("Sales & Finance contains key finance and sales items", () => {
-    const sf = adminGroups.find((g) => g.label === "Sales & Finance")!;
-    const labels = sf.items.map((i) => i.label);
-    expect(labels).toContain("Sales Hub");
-    expect(labels).toContain("Accounts");
-    expect(labels).toContain("Transactions");
-  });
-
-  it("CRM has CRM Hub, Contacts, Messaging", () => {
-    const crm = adminGroups.find((g) => g.label === "CRM")!;
-    expect(crm.items.map((i) => i.label)).toEqual([
-      "CRM Hub",
-      "Contacts",
+      "Email Inbox",
+      "Meetings",
       "Messaging",
     ]);
   });
 
-  it("Operations contains Operations, Inventory, Logistics", () => {
+  it("Sales contains Orders, CRM, Marketing for admin", () => {
+    const sales = adminGroups.find((g) => g.label === "Sales")!;
+    expect(sales.items.map((i) => i.label)).toEqual([
+      "Orders",
+      "CRM",
+      "Marketing",
+    ]);
+  });
+
+  it("Finance contains Finance, Grants, Fundraising, Investors, Data Room", () => {
+    const fin = adminGroups.find((g) => g.label === "Finance")!;
+    expect(fin.items.map((i) => i.label)).toEqual([
+      "Finance",
+      "Grants",
+      "Fundraising",
+      "Investors",
+      "Data Room",
+    ]);
+  });
+
+  it("Operations has Operations, Logistics, Recipes, Vendors (single consolidated page)", () => {
     const ops = adminGroups.find((g) => g.label === "Operations")!;
-    const labels = ops.items.map((i) => i.label);
-    expect(labels).toContain("Operations");
-    expect(labels).toContain("Inventory");
-    expect(labels).toContain("Logistics");
-  });
-
-  it("_sell contains Orders, CRM, Support for admin", () => {
-    const sell = adminGroups.find((g) => g.label === "_sell")!;
-    const labels = sell.items.map((i) => i.label);
-    expect(labels).toContain("Orders");
-    expect(labels).toContain("CRM");
-    expect(labels).toContain("Support");
-    expect(labels).toContain("Marketing");
-  });
-
-  it("_ops has Inventory, Recipes, Freight, Vendors for admin", () => {
-    const opsGroup = adminGroups.find((g) => g.label === "_ops")!;
-    expect(opsGroup.items.map((i) => i.label)).toEqual([
-      "Inventory",
+    expect(ops.items.map((i) => i.label)).toEqual([
+      "Operations",
+      "Logistics",
       "Recipes",
-      "Freight",
       "Vendors",
     ]);
   });
 
-  it("_people includes People, Recruiting, Investors, and Legal for admin", () => {
-    const people = adminGroups.find((g) => g.label === "_people")!;
-    const labels = people.items.map((i) => i.label);
-    expect(labels).toContain("People");
-    expect(labels).toContain("Recruiting");
-    expect(labels).toContain("Investors");
-    expect(labels).toContain("Legal");
+  it("People has HR, Recruiting, Legal for admin", () => {
+    const people = adminGroups.find((g) => g.label === "People")!;
+    expect(people.items.map((i) => i.label)).toEqual([
+      "HR",
+      "Recruiting",
+      "Legal",
+    ]);
   });
 
-  it("_tools contains SOPs, Code, Settings for admin", () => {
-    const tools = adminGroups.find((g) => g.label === "_tools")!;
-    const labels = tools.items.map((i) => i.label);
-    expect(labels).toContain("SOPs");
-    expect(labels).toContain("Code");
-    expect(labels).toContain("Settings");
-    expect(labels).toContain("Data Room");
-    expect(labels).toContain("Grants");
+  it("Tools has SOPs, Code, Settings, Import, EDI for admin", () => {
+    const tools = adminGroups.find((g) => g.label === "Tools")!;
+    expect(tools.items.map((i) => i.label)).toEqual([
+      "SOPs",
+      "Code",
+      "Settings",
+      "Import",
+      "EDI",
+    ]);
+  });
+
+  describe("banned items never reappear", () => {
+    it.each(["user", "admin", "exec", "ops", "finance", "sales", "legal"])(
+      "%s role sidebar has no banned labels",
+      (role) => {
+        const labels = labelsOf(role);
+        for (const banned of BANNED_LABELS) {
+          expect(labels).not.toContain(banned);
+        }
+      },
+    );
+
+    it.each(["user", "admin", "exec", "ops", "finance", "sales", "legal"])(
+      "%s role has no banned section labels",
+      (role) => {
+        const sections = getMenuGroups(role).map((g) => g.label);
+        for (const banned of BANNED_SECTION_LABELS) {
+          expect(sections).not.toContain(banned);
+        }
+      },
+    );
   });
 
   describe("role gating", () => {
-    it("basic user sees _main, Sales & Finance, CRM, Operations, _people, _tools (no _sell or _ops)", () => {
+    it("basic user sees Command Center, People, Tools only (no Sales/Finance/Operations)", () => {
       const groups = getMenuGroups("user");
       expect(groups.map((g) => g.label)).toEqual([
-        "_main",
-        "Sales & Finance",
+        "Command Center",
+        "People",
+        "Tools",
+      ]);
+    });
+
+    it("ops user sees Sales and Operations, not Finance", () => {
+      const labels = getMenuGroups("ops").map((g) => g.label);
+      expect(labels).toContain("Sales");
+      expect(labels).toContain("Operations");
+      expect(labels).not.toContain("Finance");
+    });
+
+    it("ops user Sales section has Orders only (no CRM / Marketing)", () => {
+      const sales = getMenuGroups("ops").find((g) => g.label === "Sales")!;
+      expect(sales.items.map((i) => i.label)).toEqual(["Orders"]);
+    });
+
+    it("sales user sees Sales but not Finance or Operations", () => {
+      const labels = getMenuGroups("sales").map((g) => g.label);
+      expect(labels).toContain("Sales");
+      expect(labels).not.toContain("Finance");
+      expect(labels).not.toContain("Operations");
+    });
+
+    it("sales user Sales section has Orders, CRM, Marketing", () => {
+      const sales = getMenuGroups("sales").find((g) => g.label === "Sales")!;
+      expect(sales.items.map((i) => i.label)).toEqual([
+        "Orders",
         "CRM",
-        "Operations",
-        "_people",
-        "_tools",
+        "Marketing",
       ]);
     });
 
-    it("ops user sees _sell and _ops", () => {
-      const groups = getMenuGroups("ops");
-      const labels = groups.map((g) => g.label);
-      expect(labels).toContain("_sell");
-      expect(labels).toContain("_ops");
+    it("finance user sees Finance but not Sales or Operations", () => {
+      const labels = getMenuGroups("finance").map((g) => g.label);
+      expect(labels).toContain("Finance");
+      expect(labels).not.toContain("Sales");
+      expect(labels).not.toContain("Operations");
     });
 
-    it("_ops has Inventory, Recipes, Freight, Vendors for ops user", () => {
-      const groups = getMenuGroups("ops");
-      const opsGroup = groups.find((g) => g.label === "_ops")!;
-      expect(opsGroup.items.map((i) => i.label)).toEqual([
-        "Inventory",
-        "Recipes",
-        "Freight",
-        "Vendors",
-      ]);
+    it("Recipes is admin/ops only (exec does NOT see it — trade secrets)", () => {
+      const opsItems = (role: string) =>
+        getMenuGroups(role).find((g) => g.label === "Operations")?.items.map((i) => i.label) ?? [];
+      expect(opsItems("admin")).toContain("Recipes");
+      expect(opsItems("ops")).toContain("Recipes");
+      expect(opsItems("exec")).not.toContain("Recipes");
     });
 
-    it("finance user sees _sell but not _ops", () => {
-      const groups = getMenuGroups("finance");
-      const labels = groups.map((g) => g.label);
-      expect(labels).toContain("_sell");
-      expect(labels).not.toContain("_ops");
+    it("Tools always includes SOPs for all roles", () => {
+      for (const role of ["user", "admin", "exec", "ops", "finance", "sales", "legal"]) {
+        const tools = getMenuGroups(role).find((g) => g.label === "Tools")!;
+        expect(tools.items.map((i) => i.label)).toContain("SOPs");
+      }
     });
 
-    it("sales user sees _sell but not _ops", () => {
-      const groups = getMenuGroups("sales");
-      const labels = groups.map((g) => g.label);
-      expect(labels).toContain("_sell");
-      expect(labels).not.toContain("_ops");
+    it("Code and Settings are admin-only in Tools", () => {
+      const userTools = getMenuGroups("user").find((g) => g.label === "Tools")!.items.map((i) => i.label);
+      expect(userTools).not.toContain("Code");
+      expect(userTools).not.toContain("Settings");
+
+      const adminTools = getMenuGroups("admin").find((g) => g.label === "Tools")!.items.map((i) => i.label);
+      expect(adminTools).toContain("Code");
+      expect(adminTools).toContain("Settings");
     });
 
-    it("exec sees Recipes in _ops", () => {
-      const groups = getMenuGroups("exec");
-      const opsGroup = groups.find((g) => g.label === "_ops")!;
-      expect(opsGroup.items.map((i) => i.label)).toContain("Recipes");
+    it("Import is admin/ops only in Tools", () => {
+      expect(getMenuGroups("user").find((g) => g.label === "Tools")!.items.map((i) => i.label)).not.toContain("Import");
+      expect(getMenuGroups("sales").find((g) => g.label === "Tools")!.items.map((i) => i.label)).not.toContain("Import");
+      expect(getMenuGroups("admin").find((g) => g.label === "Tools")!.items.map((i) => i.label)).toContain("Import");
+      expect(getMenuGroups("ops").find((g) => g.label === "Tools")!.items.map((i) => i.label)).toContain("Import");
     });
 
-    it("_tools always includes SOPs, Code, Settings for all roles", () => {
-      const userTools = getMenuGroups("user").find((g) => g.label === "_tools")!;
-      const labels = userTools.items.map((i) => i.label);
-      expect(labels).toContain("SOPs");
-      expect(labels).toContain("Code");
-      expect(labels).toContain("Settings");
+    it("EDI is admin/ops only in Tools", () => {
+      expect(getMenuGroups("user").find((g) => g.label === "Tools")!.items.map((i) => i.label)).not.toContain("EDI");
+      expect(getMenuGroups("finance").find((g) => g.label === "Tools")!.items.map((i) => i.label)).not.toContain("EDI");
+      expect(getMenuGroups("admin").find((g) => g.label === "Tools")!.items.map((i) => i.label)).toContain("EDI");
+      expect(getMenuGroups("ops").find((g) => g.label === "Tools")!.items.map((i) => i.label)).toContain("EDI");
     });
 
-    it("Data Room, Grants, Import, EDI are admin-only in _tools", () => {
-      const userLabels = getMenuGroups("user").find((g) => g.label === "_tools")!.items.map((i) => i.label);
-      expect(userLabels).not.toContain("Data Room");
-      expect(userLabels).not.toContain("Grants");
-      expect(userLabels).not.toContain("Import");
-      expect(userLabels).not.toContain("EDI");
-
-      const adminLabels = getMenuGroups("admin").find((g) => g.label === "_tools")!.items.map((i) => i.label);
-      expect(adminLabels).toContain("Data Room");
-      expect(adminLabels).toContain("Grants");
-    });
-
-    it("legal user sees Legal in _people", () => {
-      const groups = getMenuGroups("legal");
-      const people = groups.find((g) => g.label === "_people")!;
+    it("legal user sees Legal in People", () => {
+      const people = getMenuGroups("legal").find((g) => g.label === "People")!;
       expect(people.items.map((i) => i.label)).toContain("Legal");
     });
 
-    it("non-legal user does not see Legal in _people", () => {
-      const groups = getMenuGroups("user");
-      const people = groups.find((g) => g.label === "_people")!;
+    it("non-legal user does not see Legal in People", () => {
+      const people = getMenuGroups("user").find((g) => g.label === "People")!;
       expect(people.items.map((i) => i.label)).not.toContain("Legal");
     });
   });
