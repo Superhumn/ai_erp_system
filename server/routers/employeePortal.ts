@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
+import { nanoid } from "nanoid";
 import * as db from "../db";
+import { storagePut } from "../storage";
 import { router, protectedProcedure, createAuditLog } from "./middleware";
 
 const LEAVE_TYPES = [
@@ -259,6 +261,12 @@ export const employeePortalRouter = router({
         const req = await db.getLeaveRequestById(input.id);
         if (!req) throw new TRPCError({ code: "NOT_FOUND", message: "Leave request not found" });
         const target = await db.getEmployeeById(req.employeeId);
+        if (target?.userId === ctx.user.id) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "You cannot approve your own leave request",
+          });
+        }
         const isManager = target?.managerId && target.managerId === ctx.user.id;
         if (!isManager && !["admin", "exec"].includes(ctx.user.role)) {
           throw new TRPCError({ code: "FORBIDDEN", message: "Only managers/admins can decide" });
@@ -281,6 +289,20 @@ export const employeePortalRouter = router({
           });
         } else {
           await db.adjustPtoBalance(req.employeeId, req.leaveType, year, { pending: -hours });
+        }
+        if (target?.userId) {
+          const approved = input.decision === "approved";
+          await db.createNotification({
+            userId: target.userId,
+            type: approved ? "success" : "warning",
+            title: approved ? "Leave request approved" : "Leave request rejected",
+            message: `Your ${req.leaveType} request for ${hours}h (${new Date(req.startDate).toLocaleDateString()}) was ${input.decision}${
+              input.rejectionReason ? `: ${input.rejectionReason}` : ""
+            }`,
+            entityType: "leave_request",
+            entityId: input.id,
+            link: "/hr/me",
+          });
         }
         await createAuditLog(ctx.user.id, input.decision === "approved" ? "approve" : "reject", "leave_request", input.id);
         return { success: true };
@@ -398,6 +420,96 @@ export const employeePortalRouter = router({
         pendingLeaveRequests: pending.filter((r) => reportIds.has(r.employeeId)),
       };
     }),
+
+    // ---- Admin: seed/set PTO balance ----
+    setPtoBalance: protectedProcedure
+      .input(
+        z.object({
+          employeeId: z.number(),
+          leaveType: z.enum(LEAVE_TYPES),
+          year: z.number(),
+          accruedHours: z.number().min(0),
+          carryOverHours: z.number().min(0).optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        if (!["admin", "exec"].includes(ctx.user.role)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Admin only" });
+        }
+        const result = await db.upsertPtoBalance({
+          employeeId: input.employeeId,
+          leaveType: input.leaveType,
+          year: input.year,
+          accruedHours: input.accruedHours.toString(),
+          carryOverHours: (input.carryOverHours ?? 0).toString(),
+        });
+        await createAuditLog(ctx.user.id, "update", "pto_balance", result.id);
+        return result;
+      }),
+
+    adminPtoBalances: protectedProcedure
+      .input(z.object({ employeeId: z.number(), year: z.number().optional() }))
+      .query(async ({ input, ctx }) => {
+        if (!["admin", "exec"].includes(ctx.user.role)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Admin only" });
+        }
+        const year = input.year ?? new Date().getFullYear();
+        return db.getPtoBalances(input.employeeId, year);
+      }),
+
+    // ---- Admin: upload document for employee ----
+    adminUploadDocument: protectedProcedure
+      .input(
+        z.object({
+          employeeId: z.number(),
+          documentType: z.enum([
+            "contract",
+            "invoice",
+            "receipt",
+            "report",
+            "legal",
+            "hr",
+            "other",
+          ]),
+          name: z.string().min(1),
+          fileData: z.string(),
+          mimeType: z.string(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        if (!["admin", "exec"].includes(ctx.user.role)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Admin only" });
+        }
+        const buffer = Buffer.from(input.fileData, "base64");
+        const fileKey = `employee/${input.employeeId}/${nanoid()}-${input.name}`;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType);
+        const result = await db.createDocument({
+          name: input.name,
+          type: input.documentType,
+          category: "hr",
+          fileUrl: url,
+          fileKey,
+          mimeType: input.mimeType,
+          fileSize: buffer.length,
+          uploadedBy: ctx.user.id,
+          referenceType: "employee",
+          referenceId: input.employeeId,
+        });
+        await createAuditLog(ctx.user.id, "create", "document", result.id, input.name);
+        const employee = await db.getEmployeeById(input.employeeId);
+        if (employee?.userId) {
+          await db.createNotification({
+            userId: employee.userId,
+            type: "info",
+            title: "New document shared with you",
+            message: `${input.name} was added to your HR documents`,
+            entityType: "document",
+            entityId: result.id,
+            link: "/hr/me",
+          });
+        }
+        return { id: result.id, url };
+      }),
 });
 
 // Export helpers so tests can reach them

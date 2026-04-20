@@ -220,6 +220,173 @@ function EmployeeTasksSection({ email, name }: { email: string; name: string }) 
   );
 }
 
+// ── HR admin section: PTO balances + HR doc upload ───────────────
+const PTO_LEAVE_TYPES = [
+  "vacation",
+  "sick",
+  "personal",
+  "parental",
+  "bereavement",
+  "unpaid",
+  "other",
+] as const;
+
+function EmployeeHrAdminSection({ employeeId }: { employeeId: number }) {
+  const year = new Date().getFullYear();
+  const utils = trpc.useUtils();
+  const { data: balances } = trpc.employeePortal.adminPtoBalances.useQuery({ employeeId, year });
+  const { data: empDocs } = trpc.employeePortal.documents.useQuery(undefined, {
+    enabled: false,
+  });
+
+  const [leaveType, setLeaveType] = useState<string>("vacation");
+  const [accrued, setAccrued] = useState("");
+  const [carryOver, setCarryOver] = useState("");
+  const [uploadName, setUploadName] = useState("");
+  const [docType, setDocType] = useState<string>("hr");
+
+  const setBalance = trpc.employeePortal.setPtoBalance.useMutation({
+    onSuccess: () => {
+      toast.success("PTO balance updated");
+      setAccrued("");
+      setCarryOver("");
+      utils.employeePortal.adminPtoBalances.invalidate({ employeeId, year });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const uploadDoc = trpc.employeePortal.adminUploadDocument.useMutation({
+    onSuccess: () => {
+      toast.success("Document uploaded");
+      setUploadName("");
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(",")[1];
+      uploadDoc.mutate({
+        employeeId,
+        documentType: docType as any,
+        name: uploadName || file.name,
+        fileData: base64,
+        mimeType: file.type,
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  void empDocs;
+
+  return (
+    <div className="border-t pt-4 space-y-6">
+      <div>
+        <h4 className="text-sm font-semibold text-muted-foreground mb-2">PTO Balances ({year})</h4>
+        {balances && balances.length > 0 ? (
+          <div className="border rounded-lg overflow-hidden mb-3">
+            <Table className="text-sm">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Type</TableHead>
+                  <TableHead className="text-right">Accrued</TableHead>
+                  <TableHead className="text-right">Used</TableHead>
+                  <TableHead className="text-right">Pending</TableHead>
+                  <TableHead className="text-right">Carry-over</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {balances.map((b: any) => (
+                  <TableRow key={b.id}>
+                    <TableCell>{b.leaveType}</TableCell>
+                    <TableCell className="text-right">{b.accruedHours}</TableCell>
+                    <TableCell className="text-right">{b.usedHours}</TableCell>
+                    <TableCell className="text-right">{b.pendingHours}</TableCell>
+                    <TableCell className="text-right">{b.carryOverHours}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground italic mb-3">No balances set for {year}.</p>
+        )}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 items-end">
+          <div>
+            <Label className="text-xs">Type</Label>
+            <Select value={leaveType} onValueChange={setLeaveType}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {PTO_LEAVE_TYPES.map((t) => (
+                  <SelectItem key={t} value={t}>{t}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs">Accrued hours</Label>
+            <Input type="number" step="0.5" value={accrued} onChange={(e) => setAccrued(e.target.value)} />
+          </div>
+          <div>
+            <Label className="text-xs">Carry-over</Label>
+            <Input type="number" step="0.5" value={carryOver} onChange={(e) => setCarryOver(e.target.value)} />
+          </div>
+          <Button
+            size="sm"
+            onClick={() => {
+              const a = parseFloat(accrued);
+              if (isNaN(a) || a < 0) { toast.error("Enter accrued hours"); return; }
+              setBalance.mutate({
+                employeeId,
+                leaveType: leaveType as any,
+                year,
+                accruedHours: a,
+                carryOverHours: carryOver ? parseFloat(carryOver) : 0,
+              });
+            }}
+            disabled={setBalance.isPending}
+          >
+            Set balance
+          </Button>
+        </div>
+      </div>
+
+      <div>
+        <h4 className="text-sm font-semibold text-muted-foreground mb-2">Upload HR Document</h4>
+        <p className="text-xs text-muted-foreground mb-2">
+          Shared to this employee's portal. They receive a notification.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+          <div>
+            <Label className="text-xs">Document type</Label>
+            <Select value={docType} onValueChange={setDocType}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="hr">HR</SelectItem>
+                <SelectItem value="contract">Contract</SelectItem>
+                <SelectItem value="legal">Legal</SelectItem>
+                <SelectItem value="report">Report</SelectItem>
+                <SelectItem value="other">Other</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs">Display name (optional)</Label>
+            <Input value={uploadName} onChange={(e) => setUploadName(e.target.value)} placeholder="Uses filename" />
+          </div>
+          <div>
+            <Label className="text-xs">File</Label>
+            <Input type="file" onChange={handleFile} disabled={uploadDoc.isPending} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════
 export default function PeopleAndEquity() {
   const [search, setSearch] = useState("");
@@ -1283,6 +1450,11 @@ function PersonDetailContent({ person, personGrants, scMap }: { person: UnifiedR
                       <p className="text-sm text-muted-foreground italic">No stakeholder record linked.</p>
                     )}
                   </div>
+
+                  {/* HR admin: PTO balances + HR document upload (employees only) */}
+                  {person.employeeId && (
+                    <EmployeeHrAdminSection employeeId={person.employeeId} />
+                  )}
 
                 </div>
   );

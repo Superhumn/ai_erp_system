@@ -183,6 +183,97 @@ describe("employeePortal", () => {
         caller.employeePortal.decideLeaveRequest({ id: 101, decision: "approved" }),
       ).rejects.toThrow();
     });
+
+    it("blocks an employee from approving their own request", async () => {
+      // User 42 is the employee AND happens to also be listed as their own manager
+      const caller = appRouter.createCaller(ctxFor({ id: 42 }));
+      vi.spyOn(db, "getLeaveRequestById").mockResolvedValue({
+        id: 101,
+        employeeId: 7,
+        leaveType: "vacation",
+        startDate: new Date("2026-06-01"),
+        hours: "8",
+        status: "pending",
+      } as any);
+      vi.spyOn(db, "getEmployeeById").mockResolvedValue({
+        id: 7,
+        userId: 42,
+        managerId: 42,
+      } as any);
+
+      await expect(
+        caller.employeePortal.decideLeaveRequest({ id: 101, decision: "approved" }),
+      ).rejects.toThrow(/cannot approve your own/);
+    });
+
+    it("notifies the employee when approved", async () => {
+      const caller = appRouter.createCaller(ctxFor({ id: 10, role: "user" }));
+      vi.spyOn(db, "getLeaveRequestById").mockResolvedValue({
+        id: 101,
+        employeeId: 7,
+        leaveType: "vacation",
+        startDate: new Date("2026-06-01"),
+        hours: "8",
+        status: "pending",
+      } as any);
+      vi.spyOn(db, "getEmployeeById").mockResolvedValue({
+        id: 7,
+        userId: 42,
+        managerId: 10,
+      } as any);
+      vi.spyOn(db, "updateLeaveRequest").mockResolvedValue(undefined);
+      vi.spyOn(db, "adjustPtoBalance").mockResolvedValue(undefined);
+      vi.spyOn(db, "createAuditLog").mockResolvedValue({ id: 1 });
+      const notify = vi.spyOn(db, "createNotification").mockResolvedValue(null);
+
+      await caller.employeePortal.decideLeaveRequest({ id: 101, decision: "approved" });
+      expect(notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 42,
+          type: "success",
+          entityType: "leave_request",
+          entityId: 101,
+        }),
+      );
+    });
+  });
+
+  describe("setPtoBalance (admin)", () => {
+    it("requires admin role", async () => {
+      const caller = appRouter.createCaller(ctxFor({ role: "user" }));
+      await expect(
+        caller.employeePortal.setPtoBalance({
+          employeeId: 7,
+          leaveType: "vacation",
+          year: 2026,
+          accruedHours: 80,
+        }),
+      ).rejects.toThrow(/Admin only/);
+    });
+
+    it("upserts the balance when admin", async () => {
+      const caller = appRouter.createCaller(ctxFor({ role: "admin" }));
+      const upsert = vi.spyOn(db, "upsertPtoBalance").mockResolvedValue({ id: 5 });
+      vi.spyOn(db, "createAuditLog").mockResolvedValue({ id: 1 });
+
+      const result = await caller.employeePortal.setPtoBalance({
+        employeeId: 7,
+        leaveType: "vacation",
+        year: 2026,
+        accruedHours: 80,
+        carryOverHours: 16,
+      });
+      expect(result.id).toBe(5);
+      expect(upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          employeeId: 7,
+          leaveType: "vacation",
+          year: 2026,
+          accruedHours: "80",
+          carryOverHours: "16",
+        }),
+      );
+    });
   });
 
   describe("onboarding", () => {

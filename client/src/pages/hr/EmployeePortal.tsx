@@ -120,6 +120,8 @@ export default function EmployeePortal() {
   const { data: directory } = trpc.employeePortal.directory.useQuery();
   const { data: emergencyContacts } = trpc.employeePortal.emergencyContacts.useQuery();
   const { data: compensation } = trpc.employeePortal.compensation.useQuery();
+  const { data: myTeam } = trpc.employeePortal.myTeam.useQuery();
+  const hasTeam = (myTeam?.reports?.length ?? 0) > 0;
 
   if (meLoading) {
     return (
@@ -239,7 +241,7 @@ export default function EmployeePortal() {
       </div>
 
       <Tabs defaultValue="profile" className="w-full">
-        <TabsList className="grid w-full grid-cols-4 lg:grid-cols-8">
+        <TabsList className={`grid w-full grid-cols-4 ${hasTeam ? "lg:grid-cols-9" : "lg:grid-cols-8"}`}>
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="pay">Pay</TabsTrigger>
           <TabsTrigger value="timeoff">Time Off</TabsTrigger>
@@ -248,6 +250,16 @@ export default function EmployeePortal() {
           <TabsTrigger value="documents">Documents</TabsTrigger>
           <TabsTrigger value="directory">Directory</TabsTrigger>
           <TabsTrigger value="emergency">Emergency</TabsTrigger>
+          {hasTeam && (
+            <TabsTrigger value="team">
+              Team
+              {(myTeam?.pendingLeaveRequests?.length ?? 0) > 0 && (
+                <span className="ml-1 text-xs bg-primary text-primary-foreground rounded-full px-1.5">
+                  {myTeam?.pendingLeaveRequests.length}
+                </span>
+              )}
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="profile" className="mt-4">
@@ -297,6 +309,19 @@ export default function EmployeePortal() {
             onChange={() => utils.employeePortal.emergencyContacts.invalidate()}
           />
         </TabsContent>
+
+        {hasTeam && (
+          <TabsContent value="team" className="mt-4">
+            <TeamTab
+              reports={myTeam?.reports || []}
+              pending={myTeam?.pendingLeaveRequests || []}
+              onChange={() => {
+                utils.employeePortal.myTeam.invalidate();
+                utils.employeePortal.leaveRequests.invalidate();
+              }}
+            />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );
@@ -1170,5 +1195,171 @@ function EmergencyContactsTab({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// ==================== Team (Manager view) ====================
+function TeamTab({
+  reports,
+  pending,
+  onChange,
+}: {
+  reports: any[];
+  pending: any[];
+  onChange: () => void;
+}) {
+  const [rejectingId, setRejectingId] = useState<number | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+
+  const decide = trpc.employeePortal.decideLeaveRequest.useMutation({
+    onSuccess: () => {
+      toast.success("Decision recorded");
+      setRejectingId(null);
+      setRejectReason("");
+      onChange();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const employeeById = new Map(reports.map((r) => [r.id, r]));
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Pending Approvals ({pending.length})</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {pending.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nothing waiting on you.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Employee</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Dates</TableHead>
+                  <TableHead className="text-right">Hours</TableHead>
+                  <TableHead>Reason</TableHead>
+                  <TableHead />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pending.map((r) => {
+                  const emp = employeeById.get(r.employeeId);
+                  return (
+                    <TableRow key={r.id}>
+                      <TableCell>
+                        {emp ? `${emp.firstName} ${emp.lastName}` : `#${r.employeeId}`}
+                      </TableCell>
+                      <TableCell>{titleCase(r.leaveType)}</TableCell>
+                      <TableCell className="text-sm">
+                        {formatDate(r.startDate)} — {formatDate(r.endDate)}
+                      </TableCell>
+                      <TableCell className="text-right">{r.hours}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground max-w-xs truncate">
+                        {r.reason || "—"}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-2 justify-end">
+                          <Button
+                            size="sm"
+                            onClick={() =>
+                              decide.mutate({ id: r.id, decision: "approved" })
+                            }
+                            disabled={decide.isPending}
+                          >
+                            Approve
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setRejectingId(r.id)}
+                          >
+                            Reject
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Direct Reports ({reports.length})</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {reports.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No direct reports.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Title</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {reports.map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="font-medium">
+                      {r.firstName} {r.lastName}
+                    </TableCell>
+                    <TableCell>{r.jobTitle || "—"}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {r.email || "—"}
+                    </TableCell>
+                    <TableCell>
+                      <Badge className={STATUS_COLORS[r.status] || ""}>{r.status}</Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Dialog open={rejectingId !== null} onOpenChange={(o) => !o && setRejectingId(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reject leave request</DialogTitle>
+            <DialogDescription>
+              Let the employee know why. They'll receive a notification.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            placeholder="Reason (optional)"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRejectingId(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() =>
+                rejectingId &&
+                decide.mutate({
+                  id: rejectingId,
+                  decision: "rejected",
+                  rejectionReason: rejectReason || undefined,
+                })
+              }
+              disabled={decide.isPending}
+            >
+              Reject
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }

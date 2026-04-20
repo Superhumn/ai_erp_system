@@ -221,6 +221,20 @@ export async function getEmployeeBenefits(employeeId: number) {
 export async function upsertEmployeeBenefit(data: typeof employeeBenefits.$inferInsert) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  const existing = await db
+    .select()
+    .from(employeeBenefits)
+    .where(
+      and(
+        eq(employeeBenefits.employeeId, data.employeeId),
+        eq(employeeBenefits.benefitType, data.benefitType),
+      ),
+    )
+    .limit(1);
+  if (existing[0]) {
+    await db.update(employeeBenefits).set(data).where(eq(employeeBenefits.id, existing[0].id));
+    return { id: existing[0].id };
+  }
   const result = await db.insert(employeeBenefits).values(data);
   return { id: result[0].insertId };
 }
