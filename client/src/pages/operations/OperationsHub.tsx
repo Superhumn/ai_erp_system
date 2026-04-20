@@ -8,7 +8,11 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Warehouse, Factory, Building2 } from "lucide-react";
 import { lazy, Suspense } from "react";
-import { Loader2 } from "lucide-react";
+import {
+  Loader2, Search, Play, Pause, CheckCircle,
+  Clock, ClipboardList, MapPin, ShoppingCart, Users, AlertTriangle,
+} from "lucide-react";
+import SpreadsheetTable, { Column } from "@/components/SpreadsheetTable";
 
 const InventoryHub = lazy(() => import("./InventoryHub"));
 const ManufacturingHub = lazy(() => import("./ManufacturingHub"));
@@ -20,6 +24,14 @@ const poStatusOptions = [
   { value: "confirmed", label: "Confirmed", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
   { value: "shipped", label: "Shipped", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
   { value: "received", label: "Received", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+  { value: "cancelled", label: "Cancelled", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
+];
+
+const workOrderStatuses = [
+  { value: "pending", label: "Pending", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
+  { value: "scheduled", label: "Scheduled", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
+  { value: "in_progress", label: "In Progress", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
+  { value: "completed", label: "Completed", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
   { value: "cancelled", label: "Cancelled", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
 ];
 
@@ -247,7 +259,69 @@ function InventoryItemDetailPanel({ item }: { item: any }) {
 }
 
 export default function OperationsHub() {
-  const [tab, setTab] = useState("inventory");
+  const [activeTab, setActiveTab] = useState("inventory");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [procurementSubTab, setProcurementSubTab] = useState("purchase-orders");
+  const [manufacturingSubTab, setManufacturingSubTab] = useState("workorders");
+  const [inventorySubTab, setInventorySubTab] = useState("items");
+
+  // Work order state
+  const [showWorkOrderDialog, setShowWorkOrderDialog] = useState(false);
+  const [expandedWorkOrderId, setExpandedWorkOrderId] = useState<number | string | null>(null);
+
+  // BOM state
+  const [showBomDialog, setShowBomDialog] = useState(false);
+  const [expandedBomId, setExpandedBomId] = useState<number | string | null>(null);
+
+  // Location state
+  const [expandedLocationId, setExpandedLocationId] = useState<number | string | null>(null);
+
+  // Queries
+  const { data: workOrders, isLoading: workOrdersLoading } = trpc.workOrders.list.useQuery();
+  const { data: boms, isLoading: bomsLoading } = trpc.bom.list.useQuery();
+  const { data: locations, isLoading: locationsLoading } = trpc.warehouses.list.useQuery();
+  const { data: purchaseOrders } = trpc.purchaseOrders.list.useQuery();
+  const { data: vendors } = trpc.vendors.list.useQuery();
+  const { data: rawMaterials } = trpc.rawMaterials.list.useQuery();
+
+  // Mutations
+  const updateWorkOrderStatus = trpc.workOrders.update.useMutation();
+  const startProduction = trpc.workOrders.startProduction.useMutation();
+  const completeProduction = trpc.workOrders.completeProduction.useMutation();
+
+  // Stats
+  const stats = useMemo(() => ({
+    pendingPos: purchaseOrders?.filter((p: any) => p.status === "sent" || p.status === "confirmed").length ?? 0,
+    activeVendors: vendors?.filter((v: any) => v.status === "active").length ?? 0,
+    lowStockMaterials: rawMaterials?.filter((m: any) => m.currentStock !== undefined && m.reorderPoint !== undefined && m.currentStock <= m.reorderPoint).length ?? 0,
+    openWorkOrders: workOrders?.filter((w: any) => w.status === "pending" || w.status === "in_progress" || w.status === "scheduled").length ?? 0,
+    exceptions: (rawMaterials?.filter((m: any) => m.currentStock !== undefined && m.reorderPoint !== undefined && m.currentStock < m.reorderPoint).length ?? 0),
+  }), [purchaseOrders, vendors, rawMaterials, workOrders]);
+
+  // Column definitions
+  const workOrderColumns: Column<any>[] = [
+    { key: "id", header: "WO#", type: "text", sortable: true, render: (_row, val) => `WO-${val}` },
+    { key: "productName", header: "Product", type: "text", render: (row) => row.product?.name || row.bom?.name || "—" },
+    { key: "quantity", header: "Qty", type: "number", sortable: true },
+    { key: "status", header: "Status", type: "badge", sortable: true,
+      render: (_row, val) => workOrderStatuses.find(s => s.value === val)?.label || val },
+    { key: "dueDate", header: "Due Date", type: "date", sortable: true },
+  ];
+
+  const bomColumns: Column<any>[] = [
+    { key: "name", header: "Name", type: "text", sortable: true },
+    { key: "version", header: "Version", type: "text", render: (_row, val) => val || "1.0" },
+    { key: "status", header: "Status", type: "badge", sortable: true },
+  ];
+
+  const locationColumns: Column<any>[] = [
+    { key: "name", header: "Name", type: "text", sortable: true },
+    { key: "code", header: "Code", type: "text" },
+    { key: "type", header: "Type", type: "text", render: (_row, val) => val || "Warehouse" },
+    { key: "isActive", header: "Active", type: "text", render: (_row, val) => val ? "Yes" : "No" },
+  ];
+
+  const fallback = <div className="flex items-center justify-center h-48"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
 
   return (
     <div className="p-6 space-y-4">

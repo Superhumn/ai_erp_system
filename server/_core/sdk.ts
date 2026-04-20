@@ -97,9 +97,7 @@ class SDKServer {
       lastSignedIn: new Date(),
     });
 
-    // Strip sensitive fields before returning to context
-    const { passwordHash: _, ...safeUser } = user;
-    return safeUser as typeof user;
+    return user;
   }
 }
 
