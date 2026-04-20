@@ -4,7 +4,7 @@ export function getSessionCookieOptions(
   req: Request
 ): Pick<CookieOptions, "domain" | "httpOnly" | "path" | "sameSite" | "secure"> {
   // req.secure is set by Express based on the trust proxy setting, so it
-  // correctly reflects HTTPS even behind reverse proxies (Railway, Vercel).
+  // correctly reflects HTTPS even behind reverse proxies (Railway).
   const secure = req.secure;
 
   return {

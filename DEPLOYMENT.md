@@ -112,6 +112,7 @@ See `.env.example` for the full list.
 Railway provides HTTPS automatically. For Docker/manual:
 
 **Let's Encrypt:**
+
 ```bash
 certbot certonly --standalone -d yourdomain.com
 cp /etc/letsencrypt/live/yourdomain.com/fullchain.pem nginx/certs/
@@ -137,7 +138,7 @@ See `docs/deployment-setup.md` for GitHub Actions CI/CD configuration with stagi
 
 **Page loads but looks broken** — Build may have failed. Check deployment logs. Verify `dist/public/` was created.
 
-**Slow first load** — Normal for serverless cold starts (3-5s). Keep warm with health check pings. Ensure database is in the same region.
+**Slow first load** — Normal for cold starts (3-5s). Keep warm with health check pings. Ensure database is in the same region.
 
 ## Production Checklist
 
