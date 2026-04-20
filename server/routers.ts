@@ -239,6 +239,16 @@ function verifyPassword(password: string, stored: string): { valid: boolean; nee
   return { valid, needsUpgrade: false };
 }
 
+/** Verify that the calling user owns the data room containing the given email access rule. */
+async function assertEmailAccessRuleOwnership(ruleId: number, userId: number, userRole: string) {
+  const rule = await db.getEmailAccessRuleById(ruleId);
+  if (!rule) throw new TRPCError({ code: 'NOT_FOUND' });
+  const room = await db.getDataRoomById(rule.dataRoomId);
+  if (!room || (room.ownerId !== userId && userRole !== 'admin')) {
+    throw new TRPCError({ code: 'FORBIDDEN' });
+  }
+  return rule;
+}
 
 
 export const appRouter = router({
@@ -10522,111 +10532,6 @@ Ask if they received the original request and if they can provide a quote.`;
           return db.createShopifyLocationMapping(input);
         }),
     }),
-    // Webhook handler (would be called by Shopify webhooks)
-    handleWebhook: publicProcedure
-      .input(z.object({
-        topic: z.string(),
-        shopDomain: z.string(),
-        payload: z.any(),
-        idempotencyKey: z.string(),
-      }))
-      .mutation(async ({ input }) => {
-        // Check idempotency
-        const existing = await db.getWebhookEventByIdempotencyKey(input.idempotencyKey);
-        if (existing) {
-          return { success: true, message: 'Already processed' };
-        }
-        
-        // Get store
-        const store = await db.getShopifyStoreByDomain(input.shopDomain);
-        if (!store) {
-          throw new Error('Unknown store');
-        }
-        
-        // Create webhook event
-        const { id: eventId } = await db.createWebhookEvent({
-          source: 'shopify',
-          topic: input.topic,
-          payload: JSON.stringify(input.payload),
-          idempotencyKey: input.idempotencyKey,
-          status: 'received',
-        });
-        
-        try {
-          // Process based on topic
-          if (input.topic === 'orders/create' || input.topic === 'orders/updated') {
-            // Create/update sales order from Shopify order
-            const shopifyOrder = input.payload;
-            const existingOrder = await db.getSalesOrderByShopifyId(shopifyOrder.id.toString());
-            
-            if (existingOrder) {
-              await db.updateSalesOrder(existingOrder.id, {
-                status: mapShopifyOrderStatusToDb(shopifyOrder.financial_status, shopifyOrder.fulfillment_status),
-                totalAmount: shopifyOrder.total_price,
-              });
-            } else {
-              const { id: orderId } = await db.createSalesOrder({
-                source: 'shopify',
-                shopifyOrderId: shopifyOrder.id.toString(),
-                customerId: undefined,
-                status: mapShopifyOrderStatusToDb(shopifyOrder.financial_status, shopifyOrder.fulfillment_status),
-                orderDate: new Date(shopifyOrder.created_at),
-                totalAmount: shopifyOrder.total_price,
-                currency: shopifyOrder.currency,
-                shippingAddress: JSON.stringify(shopifyOrder.shipping_address),
-              });
-              
-              // Create order lines
-              const createdLines: Array<{ productId: number; quantity: number; unitPrice: number }> = [];
-              for (const item of shopifyOrder.line_items || []) {
-                const product = await db.getProductByShopifySku(store.id, item.variant_id?.toString());
-                if (product) {
-                  await db.createSalesOrderLine({
-                    salesOrderId: orderId,
-                    productId: product.id,
-                    shopifyLineItemId: item.id?.toString(),
-                    sku: item.sku,
-                    quantity: item.quantity?.toString() || '0',
-                    unitPrice: item.price || '0',
-                    totalPrice: (parseFloat(item.price || '0') * (item.quantity || 0)).toString(),
-                  });
-                  createdLines.push({
-                    productId: product.id,
-                    quantity: item.quantity || 0,
-                    unitPrice: parseFloat(item.price || '0'),
-                  });
-                }
-              }
-
-              // Auto-record COGS for Shopify order lines
-              try {
-                const { recordCogs } = await import("./inventoryCostingService");
-                for (const line of createdLines) {
-                  if (line.productId && line.quantity > 0) {
-                    await recordCogs({
-                      productId: line.productId,
-                      quantitySold: line.quantity,
-                      orderId: orderId,
-                      unitRevenue: line.unitPrice,
-                    });
-                  }
-                }
-              } catch (e) {
-                console.warn("[COGS] Failed to auto-record COGS on Shopify order:", e);
-              }
-            }
-          }
-          
-          await db.updateWebhookEvent(eventId, { status: 'processed', processedAt: new Date() });
-          return { success: true };
-        } catch (error) {
-          await db.updateWebhookEvent(eventId, {
-            status: 'failed',
-            errorMessage: error instanceof Error ? error.message : 'Unknown error'
-          });
-          throw error;
-        }
-      }),
     // Sync operations
     sync: router({
       // Sync orders from Shopify store
@@ -11754,7 +11659,10 @@ Ask if they received the original request and if they can provide a quote.`;
     // Archive email
     archiveEmail: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        if (!['admin', 'ops'].includes(ctx.user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN' });
+        }
         const email = await db.getInboundEmailById(input.id);
         // Archive in Gmail — mark as read and move out of inbox
         if (email?.messageId) {
@@ -11783,7 +11691,10 @@ Ask if they received the original request and if they can provide a quote.`;
     // Delete email permanently — also deletes from Gmail via IMAP
     deleteEmail: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        if (!['admin', 'ops'].includes(ctx.user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN' });
+        }
         // Get the email to find its messageId
         const email = await db.getInboundEmailById(input.id);
 
@@ -14229,7 +14140,8 @@ Ask if they received the original request and if they can provide a quote.`;
           priority: z.number().optional(),
           isActive: z.boolean().optional(),
         }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertEmailAccessRuleOwnership(input.id, ctx.user.id, ctx.user.role);
           const { id, ...data } = input;
           await db.updateEmailAccessRule(id, data);
           return { success: true };
@@ -14238,7 +14150,8 @@ Ask if they received the original request and if they can provide a quote.`;
       // Delete a rule
       delete: protectedProcedure
         .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertEmailAccessRuleOwnership(input.id, ctx.user.id, ctx.user.role);
           await db.deleteEmailAccessRule(input.id);
           return { success: true };
         }),
@@ -15099,7 +15012,7 @@ Ask if they received the original request and if they can provide a quote.`;
           signerTitle: z.string().optional(),
           signerCompany: z.string().optional(),
           signatureType: z.enum(['typed', 'drawn']),
-          signatureData: z.string(), // Base64 for drawn, typed name for typed
+          signatureData: z.string().max(2_000_000), // ~1.43 MB decoded (2 MB base64 chars × 3/4)
           consentCheckbox: z.literal(true),
         }))
         .mutation(async ({ input, ctx }) => {
@@ -15682,7 +15595,8 @@ Ask if they received the original request and if they can provide a quote.`;
           priority: z.number().optional(),
           isActive: z.boolean().optional(),
         }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertEmailAccessRuleOwnership(input.id, ctx.user.id, ctx.user.role);
           const { id, ...data } = input;
           await db.updateEmailAccessRule(id, data);
           return { success: true };
@@ -15691,7 +15605,8 @@ Ask if they received the original request and if they can provide a quote.`;
       // Delete a rule
       delete: protectedProcedure
         .input(z.object({ id: z.number() }))
-        .mutation(async ({ input }) => {
+        .mutation(async ({ input, ctx }) => {
+          await assertEmailAccessRuleOwnership(input.id, ctx.user.id, ctx.user.role);
           await db.deleteEmailAccessRule(input.id);
           return { success: true };
         }),

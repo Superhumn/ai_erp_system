@@ -24,6 +24,11 @@ import {
 import { useLocation, useParams } from "wouter";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
+// Helper: return the Google Drive embedded preview URL for a file
+function getGooglePreviewUrl(fileId: string) {
+  return `https://drive.google.com/file/d/${fileId}/preview`;
+}
+
 // Helper: open or download a file URL, handling data: URLs properly
 function openFileUrl(url: string, filename?: string) {
   if (url.startsWith('data:')) {
@@ -79,6 +84,19 @@ export default function DataRoomDetail() {
   const [driveFileBrowseFolderId, setDriveFileBrowseFolderId] = useState("");
   const [driveFileBrowseInput, setDriveFileBrowseInput] = useState("");
   const [selectedDriveFileId, setSelectedDriveFileId] = useState("");
+  const [selectedDoc, setSelectedDoc] = useState<{
+    id?: number;
+    name?: string;
+    fileType?: string;
+    fileSize?: number | null;
+    mimeType?: string | null;
+    storageUrl?: string | null;
+    storageType?: string | null;
+    googleDriveFileId?: string | null;
+    googleDriveWebViewLink?: string | null;
+    [key: string]: unknown;
+  } | null>(null);
+  const [docVisible, setDocVisible] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: room, isLoading: roomLoading, refetch: refetchRoom } = trpc.dataRoom.getById.useQuery({ id: roomId });
@@ -104,6 +122,10 @@ export default function DataRoomDetail() {
     },
     onError: (error) => {
       toast.error(error.message);
+    },
+    onSettled: () => {
+      // Reset the file input so the same file can be selected again
+      if (fileInputRef.current) fileInputRef.current.value = "";
     },
   });
 
@@ -246,6 +268,14 @@ export default function DataRoomDetail() {
       toast.error(error.message);
     },
   });
+
+  // Animate the viewer panel each time a new document is selected
+  useEffect(() => {
+    if (!selectedDoc) { setDocVisible(false); return; }
+    setDocVisible(false);
+    const t = setTimeout(() => setDocVisible(true), 40);
+    return () => clearTimeout(t);
+  }, [selectedDoc?.id]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -467,34 +497,40 @@ export default function DataRoomDetail() {
             </TabsTrigger>
           </TabsList>
 
-          {/* Documents Tab */}
+          {/* Documents Tab — Split-panel Investor Viewer */}
           <TabsContent value="documents" className="mt-4">
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle>Files & Folders</CardTitle>
-                    <CardDescription>
-                      {currentFolderId ? (
-                        <Button 
-                          variant="link" 
-                          className="p-0 h-auto" 
-                          onClick={() => setCurrentFolderId(null)}
-                        >
-                          ← Back to root
-                        </Button>
-                      ) : (
-                        "Organize your documents into folders"
-                      )}
-                    </CardDescription>
-                  </div>
-                  <div className="flex gap-2">
+            <div
+              className="flex rounded-xl border overflow-hidden bg-card shadow-sm"
+              style={{ height: "calc(100vh - 330px)", minHeight: "540px" }}
+            >
+              {/* ── LEFT PANEL: Folder + file tree ── */}
+              <div className="w-72 shrink-0 border-r flex flex-col bg-muted/20">
+                {/* Panel header */}
+                <div className="px-4 py-3 border-b flex items-center gap-2 shrink-0 bg-muted/30">
+                  {currentFolderId ? (
+                    <button
+                      className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                      onClick={() => { setCurrentFolderId(null); setSelectedDoc(null); }}
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5" />
+                      <span>Back</span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <FolderOpen className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">Documents</span>
+                    </div>
+                  )}
+                  <div className="ml-auto flex items-center gap-0.5">
+                    {/* New Folder */}
                     <Dialog open={createFolderOpen} onOpenChange={setCreateFolderOpen}>
                       <DialogTrigger asChild>
-                        <Button variant="outline">
-                          <Folder className="h-4 w-4 mr-2" />
-                          New Folder
-                        </Button>
+                        <button
+                          className="p-1.5 rounded-md hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+                          title="New folder"
+                        >
+                          <Folder className="h-3.5 w-3.5" />
+                        </button>
                       </DialogTrigger>
                       <DialogContent>
                         <DialogHeader>
@@ -524,10 +560,14 @@ export default function DataRoomDetail() {
                         </DialogFooter>
                       </DialogContent>
                     </Dialog>
-                    <Button onClick={() => fileInputRef.current?.click()}>
-                      <Upload className="h-4 w-4 mr-2" />
-                      Upload File
-                    </Button>
+                    {/* Upload */}
+                    <button
+                      className="p-1.5 rounded-md hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+                      title="Upload file"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <Upload className="h-3.5 w-3.5" />
+                    </button>
                     <input
                       ref={fileInputRef}
                       type="file"
@@ -536,122 +576,176 @@ export default function DataRoomDetail() {
                     />
                   </div>
                 </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {/* Folders */}
-                  {folders?.map((folder) => (
-                    <div
-                      key={`folder-${folder.id}`}
-                      className="flex items-center justify-between p-3 rounded-lg border hover:bg-accent cursor-pointer"
-                      onClick={() => setCurrentFolderId(folder.id)}
-                    >
-                      <div className="flex items-center gap-3">
-                        <Folder className="h-5 w-5 text-blue-500" />
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{folder.name}</span>
-                          {folder.googleDriveFolderId && (
-                            <Badge variant="outline" className="text-xs">
-                              <Cloud className="h-3 w-3 mr-1" />
-                              Google Drive
-                            </Badge>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                            <Button variant="ghost" size="icon">
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent>
-                            <DropdownMenuItem
-                              className="text-destructive"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                deleteFolderMutation.mutate({ id: folder.id });
-                              }}
-                            >
-                              <Trash2 className="h-4 w-4 mr-2" />
-                              Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                    </div>
-                  ))}
 
-                  {/* Documents */}
-                  {documents?.map((doc) => (
-                    <div
-                      key={`doc-${doc.id}`}
-                      className="flex items-center justify-between p-3 rounded-lg border hover:bg-accent"
-                    >
-                      <div className="flex items-center gap-3">
-                        {getFileIcon(doc.fileType)}
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium">{doc.name}</span>
-                            {doc.storageType === 'google_drive' && (
-                              <Badge variant="outline" className="text-xs">
-                                <Cloud className="h-3 w-3 mr-1" />
-                                Google Drive
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="text-sm text-muted-foreground">
-                            {doc.fileSize ? `${(doc.fileSize / 1024).toFixed(1)} KB` : "Unknown size"}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {(doc.storageUrl || doc.googleDriveWebViewLink) && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => openFileUrl(doc.googleDriveWebViewLink || doc.storageUrl!, doc.name)}
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
+                {/* File / folder list */}
+                <ScrollArea className="flex-1">
+                  <div className="p-2 space-y-0.5">
+                    {/* Folders */}
+                    {folders?.map((folder) => (
+                      <button
+                        key={`folder-${folder.id}`}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm hover:bg-accent transition-colors text-left group"
+                        onClick={() => { setCurrentFolderId(folder.id); setSelectedDoc(null); }}
+                      >
+                        <Folder className="h-4 w-4 text-blue-500 shrink-0" />
+                        <span className="flex-1 truncate">{folder.name}</span>
+                        {folder.googleDriveFolderId && (
+                          <Cloud className="h-3 w-3 text-muted-foreground/50 shrink-0" />
                         )}
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent>
-                            {doc.storageUrl && (
-                              <DropdownMenuItem onClick={() => openFileUrl(doc.storageUrl!, doc.name)}>
-                                <Download className="h-4 w-4 mr-2" />
-                                Download
-                              </DropdownMenuItem>
-                            )}
-                            <DropdownMenuItem
-                              className="text-destructive"
-                              onClick={() => deleteDocMutation.mutate({ id: doc.id })}
-                            >
-                              <Trash2 className="h-4 w-4 mr-2" />
-                              Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                    </div>
-                  ))}
+                        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      </button>
+                    ))}
 
-                  {!folders?.length && !documents?.length && (
-                    <div className="text-center py-12 text-muted-foreground">
-                      <FolderOpen className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                      <p>No files or folders yet</p>
-                      <p className="text-sm">Upload files or create folders to get started</p>
+                    {/* Documents */}
+                    {documents?.map((doc) => {
+                      const isSelected = selectedDoc?.id === doc.id;
+                      return (
+                        <button
+                          key={`doc-${doc.id}`}
+                          className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-150 text-left border-l-2 ${
+                            isSelected
+                              ? "bg-primary/10 border-primary"
+                              : "border-transparent hover:bg-accent"
+                          }`}
+                          onClick={() => setSelectedDoc(doc)}
+                        >
+                          <span className="shrink-0">{getFileIcon(doc.fileType)}</span>
+                          <span className="flex-1 truncate">{doc.name}</span>
+                          {doc.storageType === "google_drive" && (
+                            <Cloud className="h-3 w-3 text-muted-foreground/50 shrink-0" />
+                          )}
+                        </button>
+                      );
+                    })}
+
+                    {!folders?.length && !documents?.length && (
+                      <div className="text-center py-10 text-muted-foreground">
+                        <FolderOpen className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                        <p className="text-xs">No files yet</p>
+                      </div>
+                    )}
+                  </div>
+                </ScrollArea>
+              </div>
+
+              {/* ── RIGHT PANEL: Document viewer ── */}
+              <div className="flex-1 flex flex-col overflow-hidden">
+                {selectedDoc ? (
+                  <>
+                    {/* Viewer toolbar */}
+                    <div className="px-5 py-3 border-b flex items-center gap-3 shrink-0 bg-muted/10">
+                      <span className="shrink-0">{getFileIcon(selectedDoc.fileType)}</span>
+                      <span className="text-sm font-medium truncate flex-1">{selectedDoc.name}</span>
+                      {selectedDoc.fileSize && (
+                        <span className="text-xs text-muted-foreground shrink-0">
+                          {(selectedDoc.fileSize / 1024).toFixed(1)} KB
+                        </span>
+                      )}
+                      {selectedDoc.storageType === "google_drive" && (
+                        <Badge variant="outline" className="text-xs shrink-0">
+                          <Cloud className="h-3 w-3 mr-1" />
+                          Drive
+                        </Badge>
+                      )}
                     </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
+
+                    {/* Viewer body — animated on selection */}
+                    <div
+                      className="flex-1 overflow-hidden"
+                      style={{
+                        opacity: docVisible ? 1 : 0,
+                        transform: docVisible ? "translateX(0)" : "translateX(14px)",
+                        transition: "opacity 0.35s ease, transform 0.35s ease",
+                      }}
+                    >
+                      {(() => {
+                        const ft = (selectedDoc.fileType || "").toLowerCase();
+                        const isImg = ["png","jpg","jpeg","gif","webp","svg"].includes(ft);
+                        const isOffice = ["doc","docx","xls","xlsx","ppt","pptx"].includes(ft);
+
+                        if (selectedDoc.storageType === "google_drive") {
+                          const drivePreviewUrl = selectedDoc.googleDriveFileId
+                            ? getGooglePreviewUrl(selectedDoc.googleDriveFileId)
+                            : selectedDoc.googleDriveWebViewLink ?? null;
+                          if (drivePreviewUrl) {
+                            return (
+                              <iframe
+                                key={selectedDoc.id}
+                                src={drivePreviewUrl}
+                                className="w-full h-full border-0"
+                                sandbox="allow-same-origin"
+                                referrerPolicy="no-referrer"
+                                allow="autoplay"
+                                title={selectedDoc.name}
+                              />
+                            );
+                          }
+                        }
+
+                        if (!selectedDoc.storageUrl) {
+                          return (
+                            <div className="flex-1 flex flex-col items-center justify-center gap-3 h-full text-muted-foreground">
+                              <FileText className="h-14 w-14 opacity-20" />
+                              <p className="text-sm font-medium">Preview not available</p>
+                              <p className="text-xs opacity-70">No file URL found.</p>
+                            </div>
+                          );
+                        }
+
+                        // Images
+                        if (isImg) {
+                          return (
+                            <div className="flex items-center justify-center h-full p-6">
+                              <img
+                                key={selectedDoc.id}
+                                src={selectedDoc.storageUrl}
+                                alt={selectedDoc.name}
+                                className="max-w-full max-h-full object-contain rounded-lg"
+                              />
+                            </div>
+                          );
+                        }
+
+                        // Office files: MS Office Online viewer
+                        if (isOffice) {
+                          return (
+                            <iframe
+                              key={selectedDoc.id}
+                              src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(selectedDoc.storageUrl)}`}
+                              className="w-full h-full border-0"
+                              allow="autoplay"
+                              title={selectedDoc.name}
+                            />
+                          );
+                        }
+
+                        // PDF, txt, html, csv — direct URL
+                        return (
+                          <iframe
+                            key={selectedDoc.id}
+                            src={selectedDoc.storageUrl}
+                            className="w-full h-full border-0"
+                            sandbox="allow-same-origin"
+                            referrerPolicy="no-referrer"
+                            title={selectedDoc.name}
+                          />
+                        );
+                      })()}
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center gap-4 text-muted-foreground">
+                    <div className="w-16 h-16 rounded-2xl bg-muted/40 flex items-center justify-center">
+                      <FileText className="h-8 w-8 opacity-25" />
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm font-medium">No document selected</p>
+                      <p className="text-xs mt-1 opacity-70">Choose a file from the panel on the left to preview it here</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </TabsContent>
 
           {/* Share Links Tab */}
@@ -1492,6 +1586,8 @@ export default function DataRoomDetail() {
             </Tabs>
           </DialogContent>
         </Dialog>
+
+
       </div>
   );
 }

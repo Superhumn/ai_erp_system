@@ -2,7 +2,11 @@ import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Warehouse, Factory, Building2 } from "lucide-react";
 import { lazy, Suspense } from "react";
-import { Loader2 } from "lucide-react";
+import {
+  Loader2, Search, Play, Pause, CheckCircle,
+  Clock, ClipboardList, MapPin, ShoppingCart, Users, AlertTriangle,
+} from "lucide-react";
+import SpreadsheetTable, { Column } from "@/components/SpreadsheetTable";
 
 const InventoryHub = lazy(() => import("./InventoryHub"));
 const ManufacturingHub = lazy(() => import("./ManufacturingHub"));
