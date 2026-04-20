@@ -83,6 +83,7 @@
     "react-resizable-panels": "^3.0.6",
     "react-router-dom": "^7.13.0",
     "recharts": "^2.15.2",
+    "sanitize-html": "^2.17.2",
     "sonner": "^2.0.7",
     "ssh2-sftp-client": "^12.0.1",
     "streamdown": "^1.4.0",
@@ -93,8 +94,7 @@
     "vaul": "^1.1.2",
     "wouter": "^3.7.1",
     "xlsx": "^0.18.5",
-    "zod": "^4.1.12",
-    "sanitize-html": "^2.17.2"
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "@babel/parser": "^7.28.6",
@@ -102,6 +102,7 @@
     "@playwright/test": "^1.58.2",
     "@tailwindcss/typography": "^0.5.15",
     "@tailwindcss/vite": "^4.1.3",
+    "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/express": "4.17.21",
