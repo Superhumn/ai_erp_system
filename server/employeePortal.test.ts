@@ -60,8 +60,7 @@ describe("employeePortal", () => {
     it("creates a request and bumps pending PTO", async () => {
       const caller = appRouter.createCaller(ctxFor());
       vi.spyOn(db, "getEmployeeByUserId").mockResolvedValue({ id: 7, userId: 42 } as any);
-      vi.spyOn(db, "createLeaveRequest").mockResolvedValue({ id: 101 });
-      const adjust = vi.spyOn(db, "adjustPtoBalance").mockResolvedValue(undefined);
+      const createWithAdj = vi.spyOn(db, "createLeaveRequestWithPtoAdjustment").mockResolvedValue({ id: 101 });
       vi.spyOn(db, "createAuditLog").mockResolvedValue({ id: 1 });
 
       const result = await caller.employeePortal.submitLeaveRequest({
@@ -73,7 +72,10 @@ describe("employeePortal", () => {
       });
 
       expect(result.id).toBe(101);
-      expect(adjust).toHaveBeenCalledWith(7, "vacation", 2026, { pending: 24 });
+      expect(createWithAdj).toHaveBeenCalledWith(
+        expect.objectContaining({ employeeId: 7, leaveType: "vacation", hours: "24" }),
+        expect.objectContaining({ employeeId: 7, leaveType: "vacation", year: 2026, hours: 24 }),
+      );
     });
 
     it("rejects invalid date ranges", async () => {
@@ -134,12 +136,14 @@ describe("employeePortal", () => {
         hours: "8",
         status: "pending",
       } as any);
-      vi.spyOn(db, "updateLeaveRequest").mockResolvedValue(undefined);
-      const adjust = vi.spyOn(db, "adjustPtoBalance").mockResolvedValue(undefined);
+      const cancelWithRestore = vi.spyOn(db, "cancelLeaveRequestWithPtoRestore").mockResolvedValue({ success: true });
       vi.spyOn(db, "createAuditLog").mockResolvedValue({ id: 1 });
 
       await caller.employeePortal.cancelLeaveRequest({ id: 101 });
-      expect(adjust).toHaveBeenCalledWith(7, "vacation", 2026, { pending: -8 });
+      expect(cancelWithRestore).toHaveBeenCalledWith(
+        101,
+        expect.objectContaining({ employeeId: 7, leaveType: "vacation", year: 2026, hours: 8, wasApproved: false }),
+      );
     });
   });
 
@@ -155,8 +159,7 @@ describe("employeePortal", () => {
         status: "pending",
       } as any);
       vi.spyOn(db, "getEmployeeById").mockResolvedValue({ id: 7, managerId: 10 } as any);
-      vi.spyOn(db, "updateLeaveRequest").mockResolvedValue(undefined);
-      const adjust = vi.spyOn(db, "adjustPtoBalance").mockResolvedValue(undefined);
+      const decideWithAdj = vi.spyOn(db, "decideLeaveRequestWithPtoAdjustment").mockResolvedValue({ success: true });
       vi.spyOn(db, "createAuditLog").mockResolvedValue({ id: 1 });
 
       const result = await caller.employeePortal.decideLeaveRequest({
@@ -164,7 +167,11 @@ describe("employeePortal", () => {
         decision: "approved",
       });
       expect(result.success).toBe(true);
-      expect(adjust).toHaveBeenCalledWith(7, "vacation", 2026, { pending: -16, used: 16 });
+      expect(decideWithAdj).toHaveBeenCalledWith(
+        101,
+        expect.objectContaining({ status: "approved", approverId: 10 }),
+        expect.objectContaining({ employeeId: 7, leaveType: "vacation", year: 2026, hours: 16, approved: true }),
+      );
     });
 
     it("rejects non-managers, non-admins", async () => {
