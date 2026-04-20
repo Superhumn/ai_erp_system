@@ -12614,7 +12614,7 @@ Ask if they received the original request and if they can provide a quote.`;
         .mutation(async ({ input, ctx }) => {
           // Upload to S3
           const buffer = Buffer.from(input.base64Content, 'base64');
-          const key = `dataroom/${input.dataRoomId}/${nanoid()}-${input.name}`;
+          const key = `dataroom/${input.dataRoomId}/${nanoid()}-${input.name.replace(/[/\\]/g, '_')}`;
           const { url } = await storagePut(key, buffer, input.mimeType);
 
           // Create document record
@@ -15103,7 +15103,7 @@ Ask if they received the original request and if they can provide a quote.`;
           if (ndaDoc.dataRoomId !== input.dataRoomId) throw new TRPCError({ code: 'BAD_REQUEST', message: 'NDA document does not belong to this data room' });
 
           // Get IP address from request
-          const ipAddress = ctx.req.headers['x-forwarded-for'] as string || ctx.req.socket.remoteAddress || 'unknown';
+          const ipAddress = (ctx.req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || ctx.req.socket.remoteAddress || 'unknown';
           const userAgent = ctx.req.headers['user-agent'] || '';
 
           // Store signature image if drawn
