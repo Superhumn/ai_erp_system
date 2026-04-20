@@ -1659,7 +1659,7 @@ function NdaManagement({ dataRoomId, requiresNda }: { dataRoomId: number; requir
         dataRoomId,
         name: ndaName || selectedFile.name,
         version: ndaVersion,
-        base64Content: base64,
+        fileContent: base64,
         mimeType: 'application/pdf',
         fileSize: selectedFile.size,
       });

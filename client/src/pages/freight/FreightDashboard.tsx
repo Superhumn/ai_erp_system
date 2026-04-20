@@ -1,4 +1,4 @@
-import React, { useState, lazy } from "react";
+import React, { lazy, Suspense, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";

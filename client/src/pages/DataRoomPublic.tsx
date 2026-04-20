@@ -1276,6 +1276,10 @@ function NdaSigningGate({
       toast.error("Please provide your signature");
       return;
     }
+    if (!consentChecked) {
+      toast.error("Please accept the terms to proceed");
+      return;
+    }
     signMutation.mutate({
       ndaDocumentId: activeNda.id,
       dataRoomId,

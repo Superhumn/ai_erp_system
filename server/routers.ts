@@ -12525,8 +12525,7 @@ Ask if they received the original request and if they can provide a quote.`;
         .mutation(async ({ input, ctx }) => {
           // Upload to S3
           const buffer = Buffer.from(input.base64Content, 'base64');
-          const safeName = input.name.replace(/[/\\]/g, '_');
-          const key = `dataroom/${input.dataRoomId}/${nanoid()}-${safeName}`;
+          const key = `dataroom/${input.dataRoomId}/${nanoid()}-${input.name.replace(/[/\\]/g, '_')}`;
           const { url } = await storagePut(key, buffer, input.mimeType);
 
           // Create document record
@@ -14922,7 +14921,7 @@ Ask if they received the original request and if they can provide a quote.`;
           dataRoomId: z.number(),
           name: z.string(),
           version: z.string().optional(),
-          base64Content: z.string(),
+          fileContent: z.string(),
           mimeType: z.string().optional(),
           fileSize: z.number().optional(),
           pageCount: z.number().optional(),
@@ -14931,18 +14930,18 @@ Ask if they received the original request and if they can provide a quote.`;
           allowDrawnSignature: z.boolean().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const { base64Content, ...rest } = input;
-          const buffer = Buffer.from(base64Content, 'base64');
-          const safeName = input.name.replace(/[/\\]/g, '_');
-          const fileKey = `nda/${input.dataRoomId}/${nanoid()}-${safeName}`;
-          const { url } = await storagePut(fileKey, buffer, input.mimeType || 'application/pdf');
+          const { fileContent, ...rest } = input;
+          const buffer = Buffer.from(fileContent, 'base64');
+          const key = `nda/${input.dataRoomId}/${Date.now()}-${input.name.replace(/[/\\]/g, '_')}`;
+          const mimeType = input.mimeType || 'application/pdf';
+          const { url } = await storagePut(key, buffer, mimeType);
           const { id } = await db.createNdaDocument({
             ...rest,
-            storageKey: fileKey,
+            storageKey: key,
             storageUrl: url,
             uploadedBy: ctx.user.id,
           });
-          return { id };
+          return { id, url };
         }),
 
       update: protectedProcedure
@@ -15022,12 +15021,8 @@ Ask if they received the original request and if they can provide a quote.`;
           if (!ndaDoc) throw new TRPCError({ code: 'NOT_FOUND', message: 'NDA document not found' });
           if (ndaDoc.dataRoomId !== input.dataRoomId) throw new TRPCError({ code: 'BAD_REQUEST', message: 'NDA document does not belong to this data room' });
 
-          // Get IP address from request (take first entry from x-forwarded-for)
-          const rawForwardedFor = ctx.req.headers['x-forwarded-for'];
-          const forwardedFor = Array.isArray(rawForwardedFor) ? rawForwardedFor[0] : rawForwardedFor;
-          const ipAddress = (forwardedFor ? forwardedFor.split(',')[0].trim() : null)
-            || ctx.req.socket.remoteAddress
-            || 'unknown';
+          // Get IP address from request
+          const ipAddress = (ctx.req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || ctx.req.socket.remoteAddress || 'unknown';
           const userAgent = ctx.req.headers['user-agent'] || '';
 
           // Store signature image if drawn

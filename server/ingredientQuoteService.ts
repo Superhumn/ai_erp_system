@@ -7,7 +7,7 @@
 
 import { invokeLLM } from "./_core/llm";
 import * as manufacturingDb from "./db/manufacturing";
-import * as emailService from "./_core/emailService";
+import { sendEmail } from "./_core/email";
 import { getDb } from "./db/connection";
 import {
   vendorRfqs, vendorQuotes, vendorRfqInvitations,
@@ -179,9 +179,8 @@ export async function sendIngredientRfqToVendors(quoteRequestId: number): Promis
 
     try {
       const emailContent = await generateIngredientRfqEmail(ingredient, vendor, qr);
-      await emailService.queueEmail({
-        templateName: "RFQ",
-        to: { email: vendor.email, name: vendor.name },
+      await sendEmail({
+        to: vendor.email,
         subject: emailContent.subject,
         payload: { html_body: emailContent.htmlBody },
       });
@@ -218,8 +217,11 @@ The HTML should be simple and professional. Keep it under 200 words.`,
   });
 
   try {
-    const text = result.choices[0].message.content;
-    const match = typeof text === "string" ? text.match(/\{[\s\S]*\}/) : null;
+    const rawText = result.choices[0].message.content;
+    if (typeof rawText !== 'string') {
+      throw new Error('Unexpected LLM response format');
+    }
+    const match = rawText.match(/\{[\s\S]*\}/);
     if (match) return JSON.parse(match[0]);
   } catch { /* fall through to default */ }
 
@@ -286,7 +288,7 @@ Provide a concise 2-3 sentence recommendation. Plain text only.`,
       maxTokens: 200,
     });
     const rawContent = llmResult.choices[0].message.content;
-    analysisText = typeof rawContent === "string" ? rawContent : `Best quote is $${bestQuote.unitPrice} (${bestQuote.pctVsCurrent.toFixed(1)}% vs current).`;
+    analysisText = typeof rawContent === 'string' ? rawContent : `Best quote is $${bestQuote.unitPrice} (${bestQuote.pctVsCurrent.toFixed(1)}% vs current). ${savings > 0 ? `Potential savings of $${savings.toFixed(4)}/unit.` : "No savings vs current cost."}`;
   } catch {
     analysisText = `Best quote is $${bestQuote.unitPrice} (${bestQuote.pctVsCurrent.toFixed(1)}% vs current). ${savings > 0 ? `Potential savings of $${savings.toFixed(4)}/unit.` : "No savings vs current cost."}`;
   }

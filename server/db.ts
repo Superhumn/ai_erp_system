@@ -12498,3 +12498,6 @@ export async function updateInvestmentCommitment(id: number, data: Partial<Inser
   if (!db) throw new Error("Database not available");
   await db.update(investmentCommitments).set({ ...data, updatedAt: new Date() } as any).where(eq(investmentCommitments.id, id));
 }
+
+// Re-export transactional PTO helpers defined in the modular db layer
+export { createLeaveRequestWithPtoAdjustment, decideLeaveRequestWithPtoAdjustment, cancelLeaveRequestWithPtoRestore } from "./db/hr";

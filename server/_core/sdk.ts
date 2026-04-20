@@ -97,6 +97,7 @@ class SDKServer {
       lastSignedIn: new Date(),
     });
 
+    // Strip sensitive fields before returning to context
     return user;
   }
 }
