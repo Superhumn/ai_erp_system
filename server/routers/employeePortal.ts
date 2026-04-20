@@ -222,12 +222,11 @@ export const employeePortalRouter = router({
           return { success: true };
         }
         const wasApproved = req.status === "approved";
+        const year = new Date(req.startDate).getFullYear();
         await db.updateLeaveRequest(input.id, { status: "cancelled" });
         if (wasApproved) {
-          const year = new Date(req.startDate).getFullYear();
           await db.adjustPtoBalance(req.employeeId, req.leaveType, year, { pending: Number(req.hours), used: -Number(req.hours) });
         } else {
-          const year = new Date(req.startDate).getFullYear();
           await db.adjustPtoBalance(req.employeeId, req.leaveType, year, { pending: -Number(req.hours) });
         }
         await createAuditLog(ctx.user.id, "update", "leave_request", input.id, "cancelled");
