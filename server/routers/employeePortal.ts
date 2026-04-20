@@ -196,25 +196,18 @@ export const employeePortalRouter = router({
           throw new TRPCError({ code: "BAD_REQUEST", message: "End date is before start date" });
         }
         const employee = await requireEmployee(ctx.user.id);
-        const result = await db.createLeaveRequestWithPtoAdjustment(
-      {
-        employeeId: employee.id,
-        leaveType: input.leaveType,
-        startDate: input.startDate,
-        endDate: input.endDate,
-        hours: input.hours.toString(),
-        reason: input.reason,
-        status: "pending",
-      },
-      {
-        employeeId: employee.id,
-        leaveType: input.leaveType,
-        year: input.startDate.getFullYear(),
-        hours: input.hours,
-      },
-    );
-    await createAuditLog(ctx.user.id, "create", "leave_request", result.id);
-    return result;
+        const result = await db.createLeaveRequest({
+          employeeId: employee.id,
+          leaveType: input.leaveType,
+          startDate: input.startDate,
+          endDate: input.endDate,
+          hours: input.hours.toString(),
+          reason: input.reason,
+          status: "pending",
+        });
+        await db.adjustPtoBalance(employee.id, input.leaveType, input.startDate.getFullYear(), { pending: input.hours });
+        await createAuditLog(ctx.user.id, "create", "leave_request", result.id);
+        return result;
       }),
 
     cancelLeaveRequest: protectedProcedure
@@ -229,18 +222,15 @@ export const employeePortalRouter = router({
           return { success: true };
         }
         const wasApproved = req.status === "approved";
-    await db.cancelLeaveRequestWithPtoRestore(
-      input.id,
-      {
-        employeeId: req.employeeId,
-        leaveType: req.leaveType,
-        year: new Date(req.startDate).getFullYear(),
-        hours: Number(req.hours),
-        wasApproved,
-      },
-    );
-    await createAuditLog(ctx.user.id, "update", "leave_request", input.id, "cancelled");
-    return { success: true };
+        const year = new Date(req.startDate).getFullYear();
+        await db.updateLeaveRequest(input.id, { status: "cancelled" });
+        if (wasApproved) {
+          await db.adjustPtoBalance(req.employeeId, req.leaveType, year, { pending: Number(req.hours), used: -Number(req.hours) });
+        } else {
+          await db.adjustPtoBalance(req.employeeId, req.leaveType, year, { pending: -Number(req.hours) });
+        }
+        await createAuditLog(ctx.user.id, "update", "leave_request", input.id, "cancelled");
+        return { success: true };
       }),
 
     // Manager/admin action — approve/reject
@@ -264,24 +254,17 @@ export const employeePortalRouter = router({
           throw new TRPCError({ code: "BAD_REQUEST", message: "Request already decided" });
         }
         const year = new Date(req.startDate).getFullYear();
-    const hours = Number(req.hours);
-    await db.decideLeaveRequestWithPtoAdjustment(
-      input.id,
-      {
-        status: input.decision,
-        approverId: ctx.user.id,
-        rejectionReason: input.rejectionReason,
-      },
-      {
-        employeeId: req.employeeId,
-        leaveType: req.leaveType,
-        year,
-        hours,
-        approved: input.decision === "approved",
-      },
-    );
-    await createAuditLog(ctx.user.id, input.decision === "approved" ? "approve" : "reject", "leave_request", input.id);
-    return { success: true };
+        const hours = Number(req.hours);
+        await db.updateLeaveRequest(input.id, {
+          status: input.decision,
+          approverId: ctx.user.id,
+          rejectionReason: input.rejectionReason,
+        });
+        if (input.decision === "approved") {
+          await db.adjustPtoBalance(req.employeeId, req.leaveType, year, { pending: -hours, used: hours });
+        }
+        await createAuditLog(ctx.user.id, input.decision === "approved" ? "approve" : "reject", "leave_request", input.id);
+        return { success: true };
       }),
 
     // ---- Onboarding ----

@@ -266,9 +266,7 @@ export const appRouter = router({
   auth: router({
     me: publicProcedure.query(opts => {
       if (!opts.ctx.user) return null;
-      // Strip sensitive fields from user response
-      const { passwordHash, ...safeUser } = opts.ctx.user;
-      return safeUser;
+      return opts.ctx.user;
     }),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);

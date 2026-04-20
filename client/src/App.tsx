@@ -95,6 +95,7 @@ const CustomsClearance = lazy(() => import("./pages/freight/CustomsClearance"));
 const CustomsDetail = lazy(() => import("./pages/freight/CustomsDetail"));
 
 // HR
+const HRHub = lazy(() => import("./pages/hr/HRHub"));
 const Employees = lazy(() => import("./pages/hr/Employees"));
 const EmployeePortal = lazy(() => import("./pages/hr/EmployeePortal"));
 const Payroll = lazy(() => import("./pages/hr/Payroll"));

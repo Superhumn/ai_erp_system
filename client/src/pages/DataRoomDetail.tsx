@@ -84,7 +84,18 @@ export default function DataRoomDetail() {
   const [driveFileBrowseFolderId, setDriveFileBrowseFolderId] = useState("");
   const [driveFileBrowseInput, setDriveFileBrowseInput] = useState("");
   const [selectedDriveFileId, setSelectedDriveFileId] = useState("");
-  const [selectedDoc, setSelectedDoc] = useState<{ id: string; name: string; googleDriveFileId?: string | null; googleDriveWebViewLink?: string | null; storageUrl?: string | null; storageType?: string | null } | null>(null);
+  const [selectedDoc, setSelectedDoc] = useState<{
+    id?: number;
+    name?: string;
+    fileType?: string;
+    fileSize?: number | null;
+    mimeType?: string | null;
+    storageUrl?: string | null;
+    storageType?: string | null;
+    googleDriveFileId?: string | null;
+    googleDriveWebViewLink?: string | null;
+    [key: string]: unknown;
+  } | null>(null);
   const [docVisible, setDocVisible] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
