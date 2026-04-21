@@ -102,7 +102,7 @@ export function getMenuGroups(role: string = "user") {
     groups.push({
       label: "Finance",
       items: [
-        { icon: BarChart3, label: "Finance", path: "/finance/reports" },
+        { icon: BarChart3, label: "Finance", path: "/finance" },
         { icon: Award, label: "Grants", path: "/grants/submitter" },
         { icon: TrendingUp, label: "Fundraising", path: "/crm/campaigns" },
         { icon: Users, label: "Investors", path: "/crm/investors" },
