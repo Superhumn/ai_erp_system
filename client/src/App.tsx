@@ -63,7 +63,6 @@ const POReceiving = lazy(() => import("./pages/operations/POReceiving"));
 const Forecasting = lazy(() => import("./pages/operations/Forecasting"));
 const CoreOperations = lazy(() => import("./pages/operations/CoreOperations"));
 const EmailInbox = lazy(() => import("./pages/operations/EmailInbox"));
-const Logistics = lazy(() => import("./pages/operations/Logistics"));
 const Procurement = lazy(() => import("./pages/operations/Procurement"));
 const ManufacturingHub = lazy(() => import("./pages/operations/ManufacturingHub"));
 const ProcurementHub = lazy(() => import("./pages/operations/ProcurementHub"));
@@ -259,7 +258,6 @@ function Router() {
           <Route path="/operations/forecasting" component={Forecasting} />
           <Route path="/operations/core" component={CoreOperations} />
           <Route path="/operations/email-inbox" component={EmailInbox} />
-          <Route path="/operations/logistics" component={Logistics} />
           <Route path="/operations/procurement" component={Procurement} />
           <Route path="/operations/manufacturing-hub" component={ManufacturingHub} />
           <Route path="/operations/procurement-hub" component={ProcurementHub} />
@@ -303,6 +301,7 @@ function Router() {
           <Route path="/hr/ai" component={HRAIInsights} />
           <Route path="/hr/equity-portal" component={EquityPortal} />
           <Route path="/hr/equity-reports" component={EquityReports} />
+          <Route path="/hr/investors" component={InvestorsHub} />
           <Route path="/hr/time-tracking" component={TimeTracking} />
 
           {/* Legal */}

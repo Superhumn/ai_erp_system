@@ -105,7 +105,7 @@ export function getMenuGroups(role: string = "user") {
         { icon: BarChart3, label: "Finance", path: "/finance" },
         { icon: Award, label: "Grants", path: "/grants/submitter" },
         { icon: TrendingUp, label: "Fundraising", path: "/crm/campaigns" },
-        { icon: Users, label: "Investors", path: "/crm/investors" },
+        { icon: Users, label: "Investors", path: "/hr/investors" },
         { icon: FolderLock, label: "Data Room", path: "/dataroom/1" },
       ],
     });

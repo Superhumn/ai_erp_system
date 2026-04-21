@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useState } from "react";
+import React, { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,8 +15,6 @@ import {
 import { Link } from "wouter";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
-
-const LogisticsHub = lazy(() => import("../operations/LogisticsHub"));
 
 export default function FreightDashboard() {
   const [tab, setTab] = useState("rfqs");
