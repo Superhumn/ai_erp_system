@@ -11670,7 +11670,8 @@ Ask if they received the original request and if they can provide a quote.`;
           throw new TRPCError({ code: 'FORBIDDEN' });
         }
         const email = await db.getInboundEmailById(input.id);
-        // Archive in Gmail — mark as read and move out of inbox
+        // Archive in Gmail — remove the INBOX label (Gmail's archive is a
+        // move to [Gmail]/All Mail) and mark as read since the user acted on it.
         if (email?.messageId) {
           try {
             const { getImapConfig } = await import("./_core/emailInboxScanner");
@@ -11679,12 +11680,31 @@ Ask if they received the original request and if they can provide a quote.`;
             if (config) {
               const client = new ImapFlow({ host: config.host, port: config.port, secure: config.secure, auth: config.auth, logger: false });
               await client.connect();
-              await client.mailboxOpen("INBOX");
-              const uids = await client.search({ header: { "message-id": email.messageId } }, { uid: true });
-              if (uids && uids.length > 0) {
-                await client.messageFlagsAdd(uids, ["\\Seen"], { uid: true });
+              try {
+                const lock = await client.getMailboxLock("INBOX");
+                try {
+                  const uids = await client.search({ header: { "message-id": email.messageId } }, { uid: true });
+                  if (uids && uids.length > 0) {
+                    await client.messageFlagsAdd(uids, ["\\Seen"], { uid: true });
+                    // Move out of INBOX to archive. Gmail exposes the archive
+                    // destination as "[Gmail]/All Mail"; fall back to "Archive"
+                    // for non-Gmail IMAP servers.
+                    try {
+                      await client.messageMove(uids, "[Gmail]/All Mail", { uid: true });
+                    } catch {
+                      try {
+                        await client.messageMove(uids, "Archive", { uid: true });
+                      } catch (moveErr) {
+                        console.warn(`[Email] Could not move message out of INBOX:`, moveErr instanceof Error ? moveErr.message : moveErr);
+                      }
+                    }
+                  }
+                } finally {
+                  lock.release();
+                }
+              } finally {
+                await client.logout();
               }
-              await client.logout();
             }
           } catch (e) {
             console.warn(`[Email] Failed to archive in Gmail:`, e instanceof Error ? e.message : e);
