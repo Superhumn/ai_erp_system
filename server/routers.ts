@@ -11160,6 +11160,7 @@ Ask if they received the original request and if they can provide a quote.`;
         since: z.string().optional(), // ISO date string
         unseenOnly: z.boolean().optional(),
         limit: z.number().optional(),
+        markAsSeen: z.boolean().optional(),
       }).optional())
       .mutation(async ({ input }) => {
         const { scanAndCategorizeInbox, getImapConfig } = await import("./_core/emailInboxScanner");
@@ -11171,6 +11172,9 @@ Ask if they received the original request and if they can provide a quote.`;
         const since = input?.since ? new Date(input.since) : undefined;
         const limit = input?.limit || 100;
         const unseenOnly = input?.unseenOnly ?? false; // Default: scan ALL emails, not just unseen
+        // Don't touch the \Seen flag unless the caller opts in — otherwise Gmail
+        // marks the message as read even though the user never opened it in the ERP.
+        const markAsSeen = input?.markAsSeen ?? false;
 
         let totalProcessed = 0;
         let totalAttachmentsParsed = 0;
@@ -11184,17 +11188,19 @@ Ask if they received the original request and if they can provide a quote.`;
               limit,
               since,
               fullAiParsing: true,
-              markAsSeen: true,
+              markAsSeen,
             });
 
             for (const { email } of parsedResults) {
               try {
                 await db.createInboundEmail?.({
+                  messageId: email.messageId,
                   fromEmail: email.from.address,
                   fromName: email.from.name || "",
                   toEmail: email.to.join(", ") || "inbox",
                   subject: email.subject,
-                  bodyText: email.bodyText?.substring(0, 10000) || "",
+                  bodyText: email.bodyText || "",
+                  bodyHtml: email.bodyHtml || null,
                   receivedAt: email.date,
                   status: "parsed",
                   category: email.categorization?.category || "other",

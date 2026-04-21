@@ -850,7 +850,10 @@ async function startServer() {
             try {
               const { scanResult, parsedResults } = await scanAndCategorizeInbox(
                 { host: inbox.host!, port: inbox.port, secure: true, auth: { user: inbox.user!, pass: inbox.password! } },
-                { unseenOnly: true, limit: 50, fullAiParsing: true, markAsSeen: true }
+                // Leave the \Seen flag alone — the ERP tracks read state via
+                // parsingStatus; flipping it in IMAP would mark the message read
+                // in the upstream mailbox (Gmail) before the user ever opens it.
+                { unseenOnly: true, limit: 50, fullAiParsing: true, markAsSeen: false }
               );
 
               // Save each email to DB and parse attachments
@@ -858,11 +861,13 @@ async function startServer() {
                 try {
                   // Save inbound email record
                   const savedEmail = await db.createInboundEmail?.({
+                    messageId: email.messageId,
                     fromEmail: email.from.address,
                     fromName: email.from.name || "",
                     toEmail: email.to.join(", ") || "inbox",
                     subject: email.subject,
-                    bodyText: email.bodyText?.substring(0, 10000) || "",
+                    bodyText: email.bodyText || "",
+                    bodyHtml: email.bodyHtml || null,
                     receivedAt: email.date,
                     status: "parsed",
                     category: email.categorization?.category || "other",
