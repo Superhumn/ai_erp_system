@@ -70,7 +70,6 @@ const ProcurementHub = lazy(() => import("./pages/operations/ProcurementHub"));
 const LogisticsHub = lazy(() => import("./pages/operations/LogisticsHub"));
 const InventoryHub = lazy(() => import("./pages/operations/InventoryHub"));
 const OperationsHub = lazy(() => import("./pages/operations/OperationsHub"));
-const InventoryManagementHub = lazy(() => import("./pages/operations/InventoryManagementHub"));
 const DocumentImport = lazy(() => import("./pages/operations/DocumentImport"));
 const Profitability = lazy(() => import("./pages/operations/Profitability"));
 const ReconciliationReport = lazy(() => import("./pages/operations/ReconciliationReport"));
@@ -99,13 +98,8 @@ const HRHub = lazy(() => import("./pages/hr/HRHub"));
 const Employees = lazy(() => import("./pages/hr/Employees"));
 const EmployeePortal = lazy(() => import("./pages/hr/EmployeePortal"));
 const Payroll = lazy(() => import("./pages/hr/Payroll"));
-const EquityPortal = lazy(() => import("./pages/hr/EquityPortal"));
 const EquityReports = lazy(() => import("./pages/hr/EquityReports"));
 const InvestorsHub = lazy(() => import("./pages/hr/InvestorsHub"));
-const TimeTracking = lazy(() => import("./pages/hr/TimeTracking"));
-
-// CX
-const CustomerSupport = lazy(() => import("./pages/cx/CustomerSupport"));
 
 // Marketing
 const ContentHub = lazy(() => import("./pages/marketing/ContentHub"));
@@ -268,7 +262,6 @@ function Router() {
           <Route path="/operations/procurement-hub" component={ProcurementHub} />
           <Route path="/operations/logistics-hub" component={LogisticsHub} />
           <Route path="/operations/inventory-hub" component={InventoryHub} />
-          <Route path="/operations/inventory-management" component={InventoryManagementHub} />
           <Route path="/operations/profitability" component={Profitability} />
           <Route path="/operations/document-import" component={DocumentImport} />
           <Route path="/operations/reconciliation" component={ReconciliationReport} />
@@ -293,9 +286,6 @@ function Router() {
           <Route path="/freight/customs" component={CustomsClearance} />
           <Route path="/freight/customs/:id" component={CustomsDetail} />
 
-          {/* CX */}
-          <Route path="/cx/support" component={CustomerSupport} />
-
           {/* Marketing */}
           <Route path="/marketing" component={ContentHub} />
 
@@ -308,9 +298,7 @@ function Router() {
           <Route path="/hr/employees" component={Employees} />
           <Route path="/hr/payroll" component={Payroll} />
           <Route path="/hr/ai" component={HRAIInsights} />
-          <Route path="/hr/equity-portal" component={EquityPortal} />
           <Route path="/hr/equity-reports" component={EquityReports} />
-          <Route path="/hr/time-tracking" component={TimeTracking} />
 
           {/* Legal */}
           <Route path="/legal" component={LegalHub} />

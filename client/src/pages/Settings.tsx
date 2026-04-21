@@ -181,7 +181,6 @@ export default function Settings() {
               {[
                 { label: "Copacker Portal", path: "/portal/copacker", color: "text-blue-600" },
                 { label: "Vendor Portal", path: "/portal/vendor", color: "text-green-600" },
-                { label: "Employee View", path: "/hr/equity-portal", color: "text-purple-600" },
               ].map((p) => (
                 <button key={p.path} className="w-full flex items-center justify-between py-1.5 text-sm hover:text-primary transition-colors text-left" onClick={() => navigate(p.path)}>
                   <span>{p.label}</span>
