@@ -22,13 +22,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
+import { DetailSheet } from "@/components/DetailSheet";
 import {
   Truck,
   Package,
   Ship,
   Plane,
-  X,
-  DollarSign,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/format";
@@ -59,52 +58,12 @@ const customsStatusOptions = [
   { value: "n/a", label: "N/A", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
 ];
 
-// Shipment Detail Panel
-function ShipmentDetailPanel({ shipment, onClose, onStatusChange }: {
-  shipment: any;
-  onClose: () => void;
-  onStatusChange: (id: number, status: string) => void;
-}) {
-  const statusOption = shipmentStatusOptions.find(s => s.value === shipment.status);
-  const modeIcon = shipment.mode === "air" ? Plane : shipment.mode === "sea" ? Ship : Truck;
-  const ModeIcon = modeIcon;
-
+// Detail body for the side-sheet panel. Pure presentation — the sheet
+// wrapper (title, close, actions) is provided by <DetailSheet>.
+function ShipmentDetailBody({ shipment }: { shipment: any }) {
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-start justify-between">
-        <div>
-          <h3 className="text-lg font-semibold flex items-center gap-2">
-            <ModeIcon className="h-5 w-5" />
-            {shipment.trackingNumber || `Shipment #${shipment.id}`}
-            <Badge className={statusOption?.color}>{statusOption?.label}</Badge>
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            {shipment.origin} → {shipment.destination}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {shipment.status === "pending" && (
-            <Button size="sm" variant="outline" onClick={() => onStatusChange(shipment.id, "picked_up")}>
-              Mark Picked Up
-            </Button>
-          )}
-          {shipment.status === "picked_up" && (
-            <Button size="sm" variant="outline" onClick={() => onStatusChange(shipment.id, "in_transit")}>
-              Mark In Transit
-            </Button>
-          )}
-          {shipment.status === "in_transit" && (
-            <Button size="sm" variant="outline" onClick={() => onStatusChange(shipment.id, "delivered")}>
-              Mark Delivered
-            </Button>
-          )}
-          <Button size="sm" variant="ghost" onClick={onClose}>
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-5 gap-4">
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3">
         <div className="bg-muted/50 rounded-lg p-3">
           <div className="text-xs text-muted-foreground mb-1">Mode</div>
           <div className="font-semibold capitalize">{shipment.mode || "Ground"}</div>
@@ -115,13 +74,15 @@ function ShipmentDetailPanel({ shipment, onClose, onStatusChange }: {
         </div>
         <div className="bg-muted/50 rounded-lg p-3">
           <div className="text-xs text-muted-foreground mb-1">Weight</div>
-          <div className="font-semibold">{shipment.weight || "-"} {shipment.weightUnit || "kg"}</div>
+          <div className="font-semibold">
+            {shipment.weight || "-"} {shipment.weightUnit || "kg"}
+          </div>
         </div>
         <div className="bg-muted/50 rounded-lg p-3">
           <div className="text-xs text-muted-foreground mb-1">Est. Delivery</div>
           <div className="font-semibold">{formatDate(shipment.estimatedDelivery)}</div>
         </div>
-        <div className="bg-muted/50 rounded-lg p-3">
+        <div className="bg-muted/50 rounded-lg p-3 col-span-2">
           <div className="text-xs text-muted-foreground mb-1">Cost</div>
           <div className="font-semibold">{formatCurrency(shipment.cost)}</div>
         </div>
@@ -130,7 +91,9 @@ function ShipmentDetailPanel({ shipment, onClose, onStatusChange }: {
       {shipment.notes && (
         <div>
           <h4 className="text-sm font-medium mb-1">Notes</h4>
-          <p className="text-sm text-muted-foreground bg-muted/30 rounded p-2">{shipment.notes}</p>
+          <p className="text-sm text-muted-foreground bg-muted/30 rounded p-2">
+            {shipment.notes}
+          </p>
         </div>
       )}
     </div>
@@ -296,14 +259,13 @@ function CreateShipmentDialog({
 }
 
 export default function LogisticsHub() {
-  const [expandedShipmentId, setExpandedShipmentId] = useState<number | string | null>(null);
+  const [selectedShipment, setSelectedShipment] = useState<any | null>(null);
   const [shipmentDialogOpen, setShipmentDialogOpen] = useState(false);
 
   // Queries
   const { data: shipments, isLoading: shipmentsLoading, refetch: refetchShipments } = trpc.shipments.list.useQuery();
   const { data: customsData } = trpc.customs.clearances.list.useQuery();
 
-  // Build customs lookup by shipmentId
   const customsByShipment = (customsData || []).reduce((acc: Record<number, any>, c: any) => {
     if (c.shipmentId) acc[c.shipmentId] = c;
     return acc;
@@ -311,9 +273,13 @@ export default function LogisticsHub() {
 
   // Mutations
   const updateShipmentStatus = trpc.shipments.update.useMutation({
-    onSuccess: () => {
+    onSuccess: (_data, vars: any) => {
       toast.success("Shipment status updated");
       refetchShipments();
+      // Keep panel in sync with new status
+      setSelectedShipment((cur: any) =>
+        cur && cur.id === vars.id ? { ...cur, status: vars.status } : cur,
+      );
     },
     onError: (err: any) => toast.error(err.message),
   });
@@ -327,7 +293,6 @@ export default function LogisticsHub() {
     onError: (err: any) => toast.error(err.message),
   });
 
-  // Enrich shipments with customs status and type info
   const enrichedShipments = (shipments || []).map((s: any) => {
     const customs = customsByShipment[s.id];
     return {
@@ -341,7 +306,6 @@ export default function LogisticsHub() {
     };
   });
 
-  // Column definitions
   const shipmentColumns: Column<any>[] = [
     { key: "trackingNumber", header: "Tracking #", type: "text", sortable: true },
     { key: "_type", header: "Type", type: "badge", options: [
@@ -363,7 +327,6 @@ export default function LogisticsHub() {
     { key: "_poOrOrder", header: "PO/Order #", type: "text" },
   ];
 
-  // Stats
   const stats = {
     totalShipments: shipments?.length || 0,
     inTransit: shipments?.filter((s: any) => s.status === "in_transit").length || 0,
@@ -372,78 +335,127 @@ export default function LogisticsHub() {
     delivered: shipments?.filter((s: any) => s.status === "delivered").length || 0,
   };
 
+  const selectedStatus = selectedShipment
+    ? shipmentStatusOptions.find((s) => s.value === selectedShipment.status)
+    : null;
+  const ModeIcon = selectedShipment
+    ? selectedShipment.mode === "air"
+      ? Plane
+      : selectedShipment.mode === "sea"
+      ? Ship
+      : Truck
+    : Package;
+
   return (
     <div className="p-6 space-y-6 animate-fade-in">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-semibold flex items-center gap-2">
-              <Truck className="h-8 w-8" />
-              Logistics Hub
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              Shipments with customs status -- click any row to expand
-            </p>
-          </div>
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-semibold flex items-center gap-2">
+            <Truck className="h-8 w-8" />
+            Logistics Hub
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            Shipments with customs status — click any row to open details
+          </p>
         </div>
-
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <Card className="p-4">
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats.totalShipments}</div>
-            <div className="text-xs text-muted-foreground">Total Shipments</div>
-          </Card>
-          <Card className="p-4">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-amber-600">{stats.pending}</div>
-            <div className="text-xs text-muted-foreground">Pending</div>
-          </Card>
-          <Card className="p-4">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-blue-600">{stats.inTransit}</div>
-            <div className="text-xs text-muted-foreground">In Transit</div>
-          </Card>
-          <Card className="p-4">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-orange-600">{stats.inCustoms}</div>
-            <div className="text-xs text-muted-foreground">In Customs</div>
-          </Card>
-          <Card className="p-4">
-            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{stats.delivered}</div>
-            <div className="text-xs text-muted-foreground">Delivered</div>
-          </Card>
-        </div>
-
-        {/* Single Shipments Table */}
-        <Card>
-          <CardContent className="pt-6">
-            <SpreadsheetTable
-              data={enrichedShipments}
-              columns={shipmentColumns}
-              isLoading={shipmentsLoading}
-              emptyMessage="No shipments found"
-              showSearch
-              showFilters
-              showExport
-              onAdd={() => setShipmentDialogOpen(true)}
-              expandable
-              expandedRowId={expandedShipmentId}
-              onExpandChange={setExpandedShipmentId}
-              renderExpanded={(shipment, onClose) => (
-                <ShipmentDetailPanel
-                  shipment={shipment}
-                  onClose={onClose}
-                  onStatusChange={(id, status) => updateShipmentStatus.mutate({ id, status } as any)}
-                />
-              )}
-              compact
-            />
-          </CardContent>
-        </Card>
-
-        {/* Create dialog */}
-        <CreateShipmentDialog
-          open={shipmentDialogOpen}
-          onOpenChange={setShipmentDialogOpen}
-          onSubmit={(data) => createShipment.mutate(data)}
-        />
       </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <Card className="p-4">
+          <div className="text-xl font-semibold tracking-[-0.02em]">{stats.totalShipments}</div>
+          <div className="text-xs text-muted-foreground">Total Shipments</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xl font-semibold tracking-[-0.02em] text-amber-600">{stats.pending}</div>
+          <div className="text-xs text-muted-foreground">Pending</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xl font-semibold tracking-[-0.02em] text-blue-600">{stats.inTransit}</div>
+          <div className="text-xs text-muted-foreground">In Transit</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xl font-semibold tracking-[-0.02em] text-orange-600">{stats.inCustoms}</div>
+          <div className="text-xs text-muted-foreground">In Customs</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{stats.delivered}</div>
+          <div className="text-xs text-muted-foreground">Delivered</div>
+        </Card>
+      </div>
+
+      {/* Shipments table — row click opens side-sheet */}
+      <Card>
+        <CardContent className="pt-6">
+          <SpreadsheetTable
+            data={enrichedShipments}
+            columns={shipmentColumns}
+            isLoading={shipmentsLoading}
+            emptyMessage="No shipments found"
+            showSearch
+            showFilters
+            showExport
+            onAdd={() => setShipmentDialogOpen(true)}
+            onRowClick={(row) => setSelectedShipment(row)}
+            expandedRowId={selectedShipment?.id ?? null}
+            compact
+          />
+        </CardContent>
+      </Card>
+
+      <DetailSheet
+        open={!!selectedShipment}
+        onOpenChange={(o) => !o && setSelectedShipment(null)}
+        width="md"
+        title={
+          selectedShipment && (
+            <span className="flex items-center gap-2">
+              <ModeIcon className="h-4 w-4" />
+              {selectedShipment.trackingNumber || `Shipment #${selectedShipment.id}`}
+              {selectedStatus && (
+                <Badge className={selectedStatus.color}>{selectedStatus.label}</Badge>
+              )}
+            </span>
+          )
+        }
+        subtitle={
+          selectedShipment && (
+            <>
+              {selectedShipment.origin} → {selectedShipment.destination}
+            </>
+          )
+        }
+        actions={
+          selectedShipment && (
+            <>
+              {selectedShipment.status === "pending" && (
+                <Button size="sm" variant="outline" onClick={() => updateShipmentStatus.mutate({ id: selectedShipment.id, status: "picked_up" } as any)}>
+                  Mark Picked Up
+                </Button>
+              )}
+              {selectedShipment.status === "picked_up" && (
+                <Button size="sm" variant="outline" onClick={() => updateShipmentStatus.mutate({ id: selectedShipment.id, status: "in_transit" } as any)}>
+                  Mark In Transit
+                </Button>
+              )}
+              {selectedShipment.status === "in_transit" && (
+                <Button size="sm" variant="outline" onClick={() => updateShipmentStatus.mutate({ id: selectedShipment.id, status: "delivered" } as any)}>
+                  Mark Delivered
+                </Button>
+              )}
+            </>
+          )
+        }
+      >
+        {selectedShipment && <ShipmentDetailBody shipment={selectedShipment} />}
+      </DetailSheet>
+
+      <CreateShipmentDialog
+        open={shipmentDialogOpen}
+        onOpenChange={setShipmentDialogOpen}
+        onSubmit={(data) => createShipment.mutate(data)}
+      />
+    </div>
   );
 }
