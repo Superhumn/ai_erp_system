@@ -869,7 +869,14 @@ export default function CopackerPortal() {
       </Card>
 
       {/* Shared Recipe Detail Dialog */}
-      <Dialog open={!!viewSharedRecipeId} onOpenChange={() => setViewSharedRecipeId(null)}>
+      <Dialog
+        open={!!viewSharedRecipeId}
+        onOpenChange={(open) => {
+          if (!open) {
+            setViewSharedRecipeId(null);
+          }
+        }}
+      >
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
