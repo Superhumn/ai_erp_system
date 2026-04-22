@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { projectTasks, aiAgentTasks, type InsertAiAgentTask } from "../drizzle/schema";
 import { getDb } from "./db/connection";
-import { createAiAgentTask, updateAiAgentTask, createAiAgentLog } from "./db";
+import { updateAiAgentTask, createAiAgentLog } from "./db";
 
 type AgentTaskType = InsertAiAgentTask["taskType"];
 type AgentPriority = InsertAiAgentTask["priority"];
@@ -27,35 +27,44 @@ export async function assignProjectTaskToAgent(input: AssignToAgentInput) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const agentTask = await createAiAgentTask({
-    taskType: input.agentTaskType,
-    priority: input.priority ?? "medium",
-    status: input.requiresApproval === false ? "approved" : "pending_approval",
-    taskData: JSON.stringify(input.taskData),
-    aiReasoning: input.reasoning ?? "Assigned from project task",
-    aiConfidence: input.confidence != null ? input.confidence.toFixed(2) : undefined,
-    relatedEntityType: "projectTask",
-    relatedEntityId: input.projectTaskId,
-    requiresApproval: input.requiresApproval !== false,
-  } as InsertAiAgentTask);
+  const agentStatus = input.requiresApproval === false ? "approved" : "pending_approval";
+  const projectStatus = input.requiresApproval === false ? "in_progress" : "review";
 
-  await db.update(projectTasks).set({
-    assigneeType: "ai_agent",
-    assigneeAgentTaskId: agentTask.id,
-    aiReasoning: input.reasoning,
-    aiConfidence: input.confidence != null ? input.confidence.toFixed(2) : undefined,
-    status: "in_progress",
-  }).where(eq(projectTasks.id, input.projectTaskId));
+  const { agentTaskId } = await db.transaction(async (tx) => {
+    const agentResult = await tx.insert(aiAgentTasks).values({
+      taskType: input.agentTaskType,
+      priority: input.priority ?? "medium",
+      status: agentStatus,
+      taskData: JSON.stringify(input.taskData),
+      aiReasoning: input.reasoning ?? "Assigned from project task",
+      aiConfidence: input.confidence != null ? input.confidence.toFixed(2) : undefined,
+      relatedEntityType: "projectTask",
+      relatedEntityId: input.projectTaskId,
+      requiresApproval: input.requiresApproval !== false,
+    } as InsertAiAgentTask);
+
+    const newAgentTaskId = agentResult[0].insertId;
+
+    await tx.update(projectTasks).set({
+      assigneeType: "ai_agent",
+      assigneeAgentTaskId: newAgentTaskId,
+      aiReasoning: input.reasoning,
+      aiConfidence: input.confidence != null ? input.confidence.toFixed(2) : undefined,
+      status: projectStatus,
+    }).where(eq(projectTasks.id, input.projectTaskId));
+
+    return { agentTaskId: newAgentTaskId };
+  });
 
   await createAiAgentLog({
-    taskId: agentTask.id,
+    taskId: agentTaskId,
     action: "task_created",
     status: "info",
     message: `Project task #${input.projectTaskId} assigned to AI agent`,
     details: JSON.stringify({ projectTaskId: input.projectTaskId, actorUserId: input.actorUserId }),
   });
 
-  return { agentTaskId: agentTask.id };
+  return { agentTaskId };
 }
 
 /**
@@ -102,6 +111,12 @@ export async function syncAgentStatusToProjectTask(agentTaskId: number) {
 
   const [agentTask] = await db.select().from(aiAgentTasks).where(eq(aiAgentTasks.id, agentTaskId)).limit(1);
   if (!agentTask || agentTask.relatedEntityType !== "projectTask" || !agentTask.relatedEntityId) return;
+
+  // Verify the project task is still owned by this agent task before patching,
+  // so a late status update from a superseded agent task cannot overwrite a
+  // subsequently reassigned (human or different agent) task.
+  const [projectTask] = await db.select().from(projectTasks).where(eq(projectTasks.id, agentTask.relatedEntityId)).limit(1);
+  if (!projectTask || projectTask.assigneeType !== "ai_agent" || projectTask.assigneeAgentTaskId !== agentTaskId) return;
 
   const mapped = mapAgentStatusToProjectStatus(agentTask.status);
   if (!mapped) return;
