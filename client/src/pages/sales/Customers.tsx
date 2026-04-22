@@ -490,12 +490,12 @@ export default function Customers() {
         }
         actions={
           selectedCustomer && (
-            <Link href={`/sales/customers/${selectedCustomer.id}`}>
-              <Button size="sm" variant="outline">
+            <Button asChild size="sm" variant="outline">
+              <Link href={`/sales/customers/${selectedCustomer.id}`}>
                 Open full page
                 <ExternalLink className="h-3.5 w-3.5 ml-1.5" />
-              </Button>
-            </Link>
+              </Link>
+            </Button>
           )
         }
       >
