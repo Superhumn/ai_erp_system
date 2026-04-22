@@ -47,6 +47,8 @@ import {
   ChevronDown,
   ChevronRight,
   AlertTriangle,
+  Bot,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -65,6 +67,41 @@ const priorityOptions = [
   { value: "high", label: "High", color: "text-orange-500" },
   { value: "urgent", label: "Urgent", color: "text-red-500" },
 ];
+
+// AI agent task types that can take execution of a project task.
+// Mirrors the enum on aiAgentTasks.taskType.
+const agentTaskTypeOptions: { value: string; label: string }[] = [
+  { value: "send_email", label: "Send email" },
+  { value: "reply_email", label: "Reply to email" },
+  { value: "vendor_followup", label: "Vendor follow-up" },
+  { value: "send_rfq", label: "Send RFQ" },
+  { value: "send_quote_request", label: "Send quote request" },
+  { value: "generate_po", label: "Generate purchase order" },
+  { value: "generate_invoice", label: "Generate invoice" },
+  { value: "reconcile_payment", label: "Reconcile payment" },
+  { value: "update_inventory", label: "Update inventory" },
+  { value: "reorder_materials", label: "Reorder materials" },
+  { value: "create_shipment", label: "Create shipment" },
+  { value: "create_work_order", label: "Create work order" },
+  { value: "create_vendor", label: "Create vendor" },
+  { value: "create_customer", label: "Create customer" },
+  { value: "create_material", label: "Create material" },
+  { value: "create_product", label: "Create product" },
+  { value: "create_bom", label: "Create BOM" },
+  { value: "approve_po", label: "Approve PO" },
+  { value: "approve_invoice", label: "Approve invoice" },
+  { value: "invoice_price_review", label: "Review invoice pricing" },
+  { value: "ingredient_rfq", label: "Ingredient RFQ" },
+  { value: "query", label: "Research / query" },
+];
+
+const sourceLabels: Record<string, string> = {
+  manual: "Manual",
+  email: "Email",
+  meeting: "Meeting",
+  ai_generated: "AI-generated",
+  crm_deal: "CRM deal",
+};
 
 function formatDate(value: string | Date | null | undefined) {
   if (!value) return "-";
@@ -138,6 +175,8 @@ function KanbanColumn({
   color,
   projects,
   onProjectChange,
+  onAssignToAi,
+  onReassignToHuman,
 }: {
   title: string;
   status: string;
@@ -147,6 +186,8 @@ function KanbanColumn({
   color: string;
   projects?: any[];
   onProjectChange?: (taskId: number, projectId: number) => void;
+  onAssignToAi?: (task: any) => void;
+  onReassignToHuman?: (task: any) => void;
 }) {
   return (
     <div className="flex-1 min-w-[220px] max-w-[280px]">
@@ -159,6 +200,8 @@ function KanbanColumn({
             onStatusChange={onStatusChange}
             projects={projects}
             onProjectChange={onProjectChange}
+            onAssignToAi={onAssignToAi}
+            onReassignToHuman={onReassignToHuman}
           />
         ))}
         {tasks.length === 0 && (
@@ -177,11 +220,15 @@ function ProjectSwimlane({
   tasks,
   onTaskClick,
   onStatusChange,
+  onAssignToAi,
+  onReassignToHuman,
 }: {
   project: { id: number; name: string; status?: string };
   tasks: any[];
   onTaskClick: (task: any) => void;
   onStatusChange: (taskId: number, newStatus: string) => void;
+  onAssignToAi?: (task: any) => void;
+  onReassignToHuman?: (task: any) => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const projectTasks = tasks.filter((t: any) => t.projectId === project.id);
@@ -242,6 +289,8 @@ function ProjectSwimlane({
                   onTaskClick={onTaskClick}
                   onStatusChange={onStatusChange}
                   color=""
+                  onAssignToAi={onAssignToAi}
+                  onReassignToHuman={onReassignToHuman}
                 />
               </div>
             ))}
@@ -256,10 +305,14 @@ function UnassignedSwimlane({
   tasks,
   onTaskClick,
   onStatusChange,
+  onAssignToAi,
+  onReassignToHuman,
 }: {
   tasks: any[];
   onTaskClick: (task: any) => void;
   onStatusChange: (taskId: number, newStatus: string) => void;
+  onAssignToAi?: (task: any) => void;
+  onReassignToHuman?: (task: any) => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const unassignedTasks = tasks.filter((t: any) => !t.projectId || t.projectId === 0);
@@ -306,6 +359,8 @@ function UnassignedSwimlane({
                   onTaskClick={onTaskClick}
                   onStatusChange={onStatusChange}
                   color=""
+                  onAssignToAi={onAssignToAi}
+                  onReassignToHuman={onReassignToHuman}
                 />
               </div>
             ))}
@@ -322,16 +377,21 @@ function KanbanCard({
   onStatusChange,
   projects,
   onProjectChange,
+  onAssignToAi,
+  onReassignToHuman,
 }: {
   task: any;
   onClick: () => void;
   onStatusChange: (taskId: number, newStatus: string) => void;
   projects?: any[];
   onProjectChange?: (taskId: number, projectId: number) => void;
+  onAssignToAi?: (task: any) => void;
+  onReassignToHuman?: (task: any) => void;
 }) {
   const priority = priorityOptions.find((p) => p.value === task.priority);
   const dlStatus = getDeadlineStatus(task.dueDate, task.status);
   const dlClass = deadlineIndicatorClass(dlStatus);
+  const isAi = task.assigneeType === "ai_agent";
 
   return (
     <Card
@@ -339,13 +399,14 @@ function KanbanCard({
         "cursor-pointer hover:shadow-md transition-all border",
         dlStatus === "overdue" && "border-red-300 bg-red-50/50 dark:bg-red-950/20",
         dlStatus === "approaching" && "border-amber-300 bg-amber-50/30 dark:bg-amber-950/20",
+        isAi && "border-violet-300/70 bg-violet-50/30 dark:bg-violet-950/20",
       )}
       onClick={onClick}
     >
       <CardContent className="p-3">
         {/* Title row with status menu */}
         <div className="flex items-start justify-between gap-1.5">
-          <h4 className="font-medium text-sm line-clamp-2 flex-1">{task.title}</h4>
+          <h4 className="font-medium text-sm line-clamp-2 flex-1">{task.name || task.title}</h4>
           <DropdownMenu>
             <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
               <Button variant="ghost" size="sm" className="h-6 w-6 p-0 shrink-0 opacity-0 group-hover:opacity-100 hover:opacity-100 focus:opacity-100 transition-opacity">
@@ -364,6 +425,29 @@ function KanbanCard({
                   {s.label}
                 </DropdownMenuItem>
               ))}
+              {(onAssignToAi || onReassignToHuman) && <div className="border-t my-1" />}
+              {!isAi && onAssignToAi && (
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAssignToAi(task);
+                  }}
+                >
+                  <Bot className="h-3 w-3 mr-1.5" />
+                  Assign to AI
+                </DropdownMenuItem>
+              )}
+              {isAi && onReassignToHuman && (
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onReassignToHuman(task);
+                  }}
+                >
+                  <User className="h-3 w-3 mr-1.5" />
+                  Reassign to human
+                </DropdownMenuItem>
+              )}
               {projects && projects.length > 0 && onProjectChange && (
                 <>
                   <div className="border-t my-1" />
@@ -412,10 +496,32 @@ function KanbanCard({
                 {formatDate(task.dueDate)}
               </Badge>
             )}
+            {isAi && (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-violet-600 border-violet-400/60 bg-violet-50 dark:bg-violet-950/30">
+                <Bot className="h-2.5 w-2.5 mr-0.5" />
+                AI
+                {task.aiConfidence != null && (
+                  <span className="ml-1 opacity-70">{Math.round(Number(task.aiConfidence))}%</span>
+                )}
+              </Badge>
+            )}
+            {task.sourceType && task.sourceType !== "manual" && (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-muted-foreground">
+                <Sparkles className="h-2.5 w-2.5 mr-0.5" />
+                {sourceLabels[task.sourceType] ?? task.sourceType}
+              </Badge>
+            )}
           </div>
 
           {/* Assignee avatar */}
-          {task.assignee ? (
+          {isAi ? (
+            <div
+              className="h-6 w-6 rounded-full flex items-center justify-center shrink-0 bg-violet-500 text-white"
+              title="Assigned to AI agent"
+            >
+              <Bot className="h-3.5 w-3.5" />
+            </div>
+          ) : task.assignee ? (
             <div
               className={cn(
                 "h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0",
@@ -440,24 +546,33 @@ function KanbanCard({
 }
 
 // Task Detail Panel (for spreadsheet view)
-function TaskDetailPanel({ task, onClose, onStatusChange, projects, onProjectChange }: {
+function TaskDetailPanel({ task, onClose, onStatusChange, projects, onProjectChange, onAssignToAi, onReassignToHuman }: {
   task: any;
   onClose: () => void;
   onStatusChange: (taskId: number, status: string) => void;
   projects?: any[];
   onProjectChange?: (taskId: number, projectId: number) => void;
+  onAssignToAi?: (task: any) => void;
+  onReassignToHuman?: (task: any) => void;
 }) {
   const statusOption = taskStatusOptions.find(s => s.value === task.status);
   const priority = priorityOptions.find(p => p.value === task.priority);
   const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && task.status !== "completed";
+  const isAi = task.assigneeType === "ai_agent";
 
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-lg font-semibold flex items-center gap-2">
-            {task.title}
+            {task.name || task.title}
             <Badge className={statusOption?.color}>{statusOption?.label}</Badge>
+            {isAi && (
+              <Badge variant="outline" className="text-xs text-violet-600 border-violet-400/60 bg-violet-50">
+                <Bot className="h-3 w-3 mr-1" />
+                AI agent
+              </Badge>
+            )}
             {isOverdue && (
               <Badge variant="destructive" className="text-xs">
                 <AlertCircle className="h-3 w-3 mr-1" />
@@ -522,10 +637,12 @@ function TaskDetailPanel({ task, onClose, onStatusChange, projects, onProjectCha
         </div>
         <div className="bg-muted/50 rounded-lg p-3">
           <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-            <User className="h-3 w-3" />
+            {isAi ? <Bot className="h-3 w-3" /> : <User className="h-3 w-3" />}
             Assignee
           </div>
-          <div className="font-semibold">{task.assignee?.name || "Unassigned"}</div>
+          <div className="font-semibold">
+            {isAi ? "AI agent" : task.assignee?.name || "Unassigned"}
+          </div>
         </div>
         <div className="bg-muted/50 rounded-lg p-3">
           <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
@@ -544,6 +661,46 @@ function TaskDetailPanel({ task, onClose, onStatusChange, projects, onProjectCha
           </p>
         </div>
       )}
+
+      {isAi && task.aiReasoning && (
+        <div className="border border-violet-300/60 rounded-lg bg-violet-50/60 dark:bg-violet-950/20 p-3">
+          <div className="flex items-center gap-2 mb-1">
+            <Sparkles className="h-3.5 w-3.5 text-violet-600" />
+            <h4 className="text-sm font-medium text-violet-900 dark:text-violet-200">AI reasoning</h4>
+            {task.aiConfidence != null && (
+              <Badge variant="outline" className="text-[10px] text-violet-700 border-violet-400/60">
+                {Math.round(Number(task.aiConfidence))}% confidence
+              </Badge>
+            )}
+          </div>
+          <p className="text-sm text-violet-900/80 dark:text-violet-200/80 whitespace-pre-wrap">
+            {task.aiReasoning}
+          </p>
+        </div>
+      )}
+
+      {task.sourceType && task.sourceType !== "manual" && (
+        <div className="text-xs text-muted-foreground flex items-center gap-2">
+          <Sparkles className="h-3 w-3" />
+          Source: {sourceLabels[task.sourceType] ?? task.sourceType}
+          {task.sourceRefType && task.sourceRefId ? ` #${task.sourceRefId} (${task.sourceRefType})` : null}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 pt-2">
+        {!isAi && onAssignToAi && (
+          <Button size="sm" variant="outline" onClick={() => onAssignToAi(task)}>
+            <Bot className="h-3.5 w-3.5 mr-1.5" />
+            Assign to AI
+          </Button>
+        )}
+        {isAi && onReassignToHuman && (
+          <Button size="sm" variant="outline" onClick={() => onReassignToHuman(task)}>
+            <User className="h-3.5 w-3.5 mr-1.5" />
+            Reassign to human
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
@@ -597,6 +754,69 @@ export default function Projects() {
     },
     onError: (err: any) => toast.error(err.message),
   });
+
+  // The tRPC router has grown large enough that v11's type inference
+  // truncates the client-side AppRouter type before reaching `taskBridge`.
+  // The server router IS registered and the call works at runtime; we cast
+  // here to bypass the truncation. See server/routers/index.ts baseRouter.
+  const taskBridge = (trpc as any).taskBridge as {
+    toAgent: { useMutation: (opts: any) => { mutate: (input: any) => void; isPending: boolean } };
+    toHuman: { useMutation: (opts: any) => { mutate: (input: any) => void; isPending: boolean } };
+  };
+
+  const assignToAgent = taskBridge.toAgent.useMutation({
+    onSuccess: () => {
+      toast.success("Task sent to AI agent (approval queue)");
+      setAssignAiTask(null);
+      refetchTasks();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const reassignToHuman = taskBridge.toHuman.useMutation({
+    onSuccess: () => {
+      toast.success("Task reassigned to human");
+      refetchTasks();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const [assignAiTask, setAssignAiTask] = useState<any>(null);
+  const [assignAiForm, setAssignAiForm] = useState({
+    agentTaskType: "send_email",
+    reasoning: "",
+    confidence: "80",
+    priority: "medium",
+    requiresApproval: true,
+  });
+
+  const openAssignAi = (task: any) => {
+    setAssignAiTask(task);
+    setAssignAiForm({
+      agentTaskType: "send_email",
+      reasoning: "",
+      confidence: "80",
+      priority: task.priority === "critical" ? "urgent" : task.priority || "medium",
+      requiresApproval: true,
+    });
+  };
+
+  const handleAssignAiSubmit = () => {
+    if (!assignAiTask) return;
+    assignToAgent.mutate({
+      projectTaskId: assignAiTask.id,
+      agentTaskType: assignAiForm.agentTaskType as any,
+      taskData: { projectTaskId: assignAiTask.id, title: assignAiTask.name || assignAiTask.title, description: assignAiTask.description },
+      reasoning: assignAiForm.reasoning || undefined,
+      confidence: assignAiForm.confidence ? Number(assignAiForm.confidence) : undefined,
+      priority: assignAiForm.priority as any,
+      requiresApproval: assignAiForm.requiresApproval,
+    });
+  };
+
+  const handleReassignHuman = (task: any) => {
+    reassignToHuman.mutate({ projectTaskId: task.id, assigneeId: task.assigneeId ?? null });
+  };
 
   // Filter tasks
   const filteredTasks = useMemo(() => {
@@ -824,6 +1044,8 @@ export default function Projects() {
                 tasks={filteredTasks}
                 onTaskClick={setSelectedTask}
                 onStatusChange={handleStatusChange}
+                onAssignToAi={openAssignAi}
+                onReassignToHuman={handleReassignHuman}
               />
             ))}
 
@@ -832,6 +1054,8 @@ export default function Projects() {
               tasks={filteredTasks}
               onTaskClick={setSelectedTask}
               onStatusChange={handleStatusChange}
+              onAssignToAi={openAssignAi}
+              onReassignToHuman={handleReassignHuman}
             />
 
             {(projects || []).length === 0 && filteredTasks.length === 0 && (
@@ -856,10 +1080,12 @@ export default function Projects() {
                 expandedRowId={expandedTaskId}
                 onExpandChange={setExpandedTaskId}
                 renderExpanded={(task, onClose) => (
-                  <TaskDetailPanel 
-                    task={task} 
+                  <TaskDetailPanel
+                    task={task}
                     onClose={onClose}
                     onStatusChange={handleStatusChange}
+                    onAssignToAi={openAssignAi}
+                    onReassignToHuman={handleReassignHuman}
                   />
                 )}
                 onCellEdit={(rowId, key, value) => {
@@ -904,6 +1130,14 @@ export default function Projects() {
                 }}
                 onStatusChange={(id, status) => {
                   handleStatusChange(id, status);
+                  setSelectedTask(null);
+                }}
+                onAssignToAi={(task) => {
+                  setSelectedTask(null);
+                  openAssignAi(task);
+                }}
+                onReassignToHuman={(task) => {
+                  handleReassignHuman(task);
                   setSelectedTask(null);
                 }}
               />
@@ -1023,6 +1257,103 @@ export default function Projects() {
               <Button onClick={handleCreateTask} disabled={createTask.isPending}>
                 {createTask.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 Create Task
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Assign-to-AI Dialog */}
+        <Dialog open={!!assignAiTask} onOpenChange={(open) => !open && setAssignAiTask(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Bot className="h-4 w-4 text-violet-600" />
+                Assign to AI agent
+              </DialogTitle>
+              <DialogDescription>
+                Hand this task to an AI agent. It will appear in the approval queue (if approval is required) before the agent executes it.
+              </DialogDescription>
+            </DialogHeader>
+            {assignAiTask && (
+              <div className="space-y-4">
+                <div className="text-sm bg-muted/50 rounded p-3">
+                  <div className="font-semibold">{assignAiTask.name || assignAiTask.title}</div>
+                  {assignAiTask.description && (
+                    <div className="text-xs text-muted-foreground mt-1 line-clamp-2">{assignAiTask.description}</div>
+                  )}
+                </div>
+                <div>
+                  <Label>Agent action</Label>
+                  <Select
+                    value={assignAiForm.agentTaskType}
+                    onValueChange={(v) => setAssignAiForm({ ...assignAiForm, agentTaskType: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {agentTaskTypeOptions.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>Instructions / reasoning for the agent</Label>
+                  <Textarea
+                    rows={3}
+                    placeholder="What should the agent do? Any context it needs?"
+                    value={assignAiForm.reasoning}
+                    onChange={(e) => setAssignAiForm({ ...assignAiForm, reasoning: e.target.value })}
+                  />
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <Label>Confidence</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={assignAiForm.confidence}
+                      onChange={(e) => setAssignAiForm({ ...assignAiForm, confidence: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label>Priority</Label>
+                    <Select
+                      value={assignAiForm.priority}
+                      onValueChange={(v) => setAssignAiForm({ ...assignAiForm, priority: v })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="low">Low</SelectItem>
+                        <SelectItem value="medium">Medium</SelectItem>
+                        <SelectItem value="high">High</SelectItem>
+                        <SelectItem value="urgent">Urgent</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-end">
+                    <label className="flex items-center gap-2 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={assignAiForm.requiresApproval}
+                        onChange={(e) => setAssignAiForm({ ...assignAiForm, requiresApproval: e.target.checked })}
+                      />
+                      Requires approval
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setAssignAiTask(null)}>Cancel</Button>
+              <Button onClick={handleAssignAiSubmit} disabled={assignToAgent.isPending}>
+                {assignToAgent.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                <Bot className="h-3.5 w-3.5 mr-1.5" />
+                Assign to AI
               </Button>
             </DialogFooter>
           </DialogContent>

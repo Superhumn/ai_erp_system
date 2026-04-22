@@ -17,6 +17,7 @@ import { hrRouter } from "./hr";
 import { employeePortalRouter } from "./employeePortal";
 import { legalRouter } from "./legal";
 import { projectsRouter } from "./projects";
+import { taskAssignmentSubRouter } from "./taskAssignment";
 import { dataRoomRouter } from "./dataRoom";
 import { settingsRouter } from "./settings";
 import { aiRouter } from "./ai";
@@ -35,6 +36,9 @@ const baseRouter = router({
 
   // Employee self-service portal
   employeePortal: employeePortalRouter,
+
+  // Human <-> AI task assignment bridge (Lightfield-style task lifecycle)
+  taskBridge: taskAssignmentSubRouter,
 });
 
 export const appRouter = mergeRouters(
