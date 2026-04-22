@@ -13113,7 +13113,7 @@ Ask if they received the original request and if they can provide a quote.`;
           results.push({ name: driveFolder.name, type: 'folder', status: 'created' });
         }
 
-        // Process files — download actual content instead of just linking
+        // Process files — store by reference in Google Drive (no download)
         for (const driveFile of syncResult.files) {
           if (existingDocsByDriveId.has(driveFile.id)) {
             results.push({ name: driveFile.name, type: 'file', status: 'exists' });
@@ -13128,49 +13128,22 @@ Ask if they received the original request and if they can provide a quote.`;
             fileFolderId = folderMap.get(parentDriveId) || existingFoldersByDriveId.get(parentDriveId) || null;
           }
 
-          // Create file record first (fast), download content async later
-          const isGoogleWorkspaceFile = driveFile.mimeType.startsWith('application/vnd.google-apps.');
-          const displayName = isGoogleWorkspaceFile ? `${driveFile.name}.pdf` : driveFile.name;
-          const fileType = getSimpleFileType(isGoogleWorkspaceFile ? 'application/pdf' : driveFile.mimeType);
-          let storageType: 'google_drive' | 's3' = 'google_drive';
-          let storageUrl: string | undefined = driveFile.webViewLink || undefined;
-          let storageKey: string | undefined = undefined;
+          const displayName = driveFile.name;
+          const fileType = getSimpleFileType(driveFile.mimeType);
           const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
             ? parseInt(driveFile.size)
             : undefined;
-
-          // Download small files and store them (as S3 or base64 fallback)
-          if (fileSize && fileSize < 2 * 1024 * 1024) {
-            try {
-              const downloaded = await downloadDriveFile(accessToken, driveFile.id, driveFile.mimeType);
-              if ('buffer' in downloaded && downloaded.buffer.length < 5 * 1024 * 1024) {
-                try {
-                  const fileKey = `dataroom/${input.dataRoomId}/${Date.now()}-${driveFile.name}`;
-                  const result = await storagePut(fileKey, downloaded.buffer, downloaded.exportedMimeType);
-                  storageUrl = result.url;
-                  storageKey = result.key;
-                  storageType = 's3';
-                } catch {
-                  // Storage not configured — store as base64 data URL
-                  storageUrl = `data:${downloaded.exportedMimeType};base64,${downloaded.buffer.toString('base64')}`;
-                  storageType = 's3';
-                }
-              }
-            } catch { /* download failed, keep Google link */ }
-          }
-
-          const effectiveMimeType = isGoogleWorkspaceFile ? 'application/pdf' : driveFile.mimeType;
 
           await db.createDataRoomDocument({
             dataRoomId: input.dataRoomId,
             folderId: fileFolderId,
             name: displayName,
             fileType,
-            mimeType: effectiveMimeType,
+            mimeType: driveFile.mimeType,
             fileSize,
-            storageType,
-            storageUrl,
-            storageKey,
+            storageType: 'google_drive',
+            storageUrl: driveFile.webViewLink || undefined,
+            storageKey: undefined,
             googleDriveFileId: driveFile.id,
             googleDriveWebViewLink: driveFile.webViewLink,
             thumbnailUrl: driveFile.thumbnailLink,
@@ -13329,58 +13302,23 @@ Ask if they received the original request and if they can provide a quote.`;
               }
             }
 
-            // Download the actual file content from Google Drive
-            const downloaded = await downloadDriveFile(accessToken, driveFile.id, driveFile.mimeType);
-
-            // Determine display name — exported Google Workspace files get .pdf extension
-            const isGoogleWorkspaceFile = driveFile.mimeType.startsWith('application/vnd.google-apps.');
-            const displayName = isGoogleWorkspaceFile
-              ? `${driveFile.name}.pdf`
-              : driveFile.name;
-
-            // Determine the effective MIME type and file type after export
-            const effectiveMimeType = ('exportedMimeType' in downloaded)
-              ? downloaded.exportedMimeType
-              : driveFile.mimeType;
-            const fileType = getSimpleFileType(effectiveMimeType);
-
-            let storageType: 'google_drive' | 's3' = 'google_drive';
-            let storageUrl: string | undefined;
-            let storageKey: string | undefined;
-            let fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
+            // Store by reference in Google Drive (no download)
+            const displayName = driveFile.name;
+            const fileType = getSimpleFileType(driveFile.mimeType);
+            const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
               ? parseInt(driveFile.size)
               : undefined;
-
-            if ('buffer' in downloaded) {
-              fileSize = downloaded.buffer.length;
-              // Try to store via storagePut (S3/storage proxy)
-              try {
-                const fileKey = `dataroom/${input.dataRoomId}/${nanoid()}-${displayName}`;
-                const result = await storagePut(fileKey, downloaded.buffer, downloaded.exportedMimeType);
-                storageUrl = result.url;
-                storageKey = result.key;
-                storageType = 's3';
-              } catch {
-                // Storage not configured — store as base64 data URL
-                if (downloaded.buffer.length < 5 * 1024 * 1024) {
-                  storageUrl = `data:${downloaded.exportedMimeType};base64,${downloaded.buffer.toString('base64')}`;
-                  storageType = 's3';
-                }
-              }
-            } else {
-              console.warn(`[GoogleDrive Sync] Failed to download ${driveFile.name}: ${downloaded.error}`);
-            }
 
             await db.createDataRoomDocument({
               dataRoomId: input.dataRoomId,
               folderId,
               name: displayName,
               fileType,
-              mimeType: effectiveMimeType,
+              mimeType: driveFile.mimeType,
               fileSize,
-              storageType,
-              storageUrl,
-              storageKey,
+              storageType: 'google_drive',
+              storageUrl: driveFile.webViewLink || undefined,
+              storageKey: undefined,
               googleDriveFileId: driveFile.id,
               googleDriveWebViewLink: driveFile.webViewLink,
               thumbnailUrl: driveFile.thumbnailLink,
@@ -13455,49 +13393,23 @@ Ask if they received the original request and if they can provide a quote.`;
             throw new TRPCError({ code: 'CONFLICT', message: 'This file has already been synced to this data room' });
           }
 
-          const downloaded = await downloadDriveFile(accessToken, driveFile.id, driveFile.mimeType);
-
-          const isGoogleWorkspaceFile = driveFile.mimeType.startsWith('application/vnd.google-apps.');
-          const displayName = isGoogleWorkspaceFile ? `${driveFile.name}.pdf` : driveFile.name;
-
-          const effectiveMimeType = ('exportedMimeType' in downloaded) ? downloaded.exportedMimeType : driveFile.mimeType;
-          const fileType = getSimpleFileType(effectiveMimeType);
-
-          let storageType: 'google_drive' | 's3' = 'google_drive';
-          let storageUrl: string | undefined;
-          let storageKey: string | undefined;
-          let fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
+          // Store by reference in Google Drive (no download)
+          const displayName = driveFile.name;
+          const fileType = getSimpleFileType(driveFile.mimeType);
+          const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
             ? parseInt(driveFile.size)
             : undefined;
-
-          if ('buffer' in downloaded) {
-            fileSize = downloaded.buffer.length;
-            try {
-              const fileKey = `dataroom/${input.dataRoomId}/${nanoid()}-${displayName}`;
-              const result = await storagePut(fileKey, downloaded.buffer, downloaded.exportedMimeType);
-              storageUrl = result.url;
-              storageKey = result.key;
-              storageType = 's3';
-            } catch {
-              if (downloaded.buffer.length < 5 * 1024 * 1024) {
-                storageUrl = `data:${downloaded.exportedMimeType};base64,${downloaded.buffer.toString('base64')}`;
-                storageType = 's3';
-              }
-            }
-          } else {
-            throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: `Failed to download file: ${downloaded.error}` });
-          }
 
           await db.createDataRoomDocument({
             dataRoomId: input.dataRoomId,
             folderId: input.folderId ?? null,
             name: displayName,
             fileType,
-            mimeType: effectiveMimeType,
+            mimeType: driveFile.mimeType,
             fileSize,
-            storageType,
-            storageUrl,
-            storageKey,
+            storageType: 'google_drive',
+            storageUrl: driveFile.webViewLink || undefined,
+            storageKey: undefined,
             googleDriveFileId: driveFile.id,
             googleDriveWebViewLink: driveFile.webViewLink,
             thumbnailUrl: driveFile.thumbnailLink,

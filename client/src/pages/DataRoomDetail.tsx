@@ -807,7 +807,7 @@ export default function DataRoomDetail() {
                                 key={selectedDoc.id}
                                 src={drivePreviewUrl}
                                 className="w-full h-full border-0"
-                                sandbox="allow-same-origin"
+                             sandbox="allow-same-origin allow-scripts allow-popups"
                                 referrerPolicy="no-referrer"
                                 allow="autoplay"
                                 title={selectedDoc.name}
