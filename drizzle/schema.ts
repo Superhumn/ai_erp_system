@@ -891,16 +891,33 @@ export const projectTasks = mysqlTable("project_tasks", {
   name: varchar("name", { length: 255 }).notNull(),
   description: text("description"),
   assigneeId: int("assigneeId"),
+  // Who owns execution: a human user or an AI agent. When "ai_agent", the
+  // linked aiAgentTasks row carries approval/execution state.
+  assigneeType: mysqlEnum("assigneeType", ["human", "ai_agent"]).default("human").notNull(),
+  assigneeAgentTaskId: int("assigneeAgentTaskId"),
   status: mysqlEnum("status", ["todo", "in_progress", "review", "completed", "cancelled"]).default("todo").notNull(),
   priority: mysqlEnum("priority", ["low", "medium", "high", "critical"]).default("medium").notNull(),
   dueDate: timestamp("dueDate"),
   completedDate: timestamp("completedDate"),
   estimatedHours: decimal("estimatedHours", { precision: 10, scale: 2 }),
   actualHours: decimal("actualHours", { precision: 10, scale: 2 }),
+  // Lightfield-style CRM linkage + provenance
+  accountId: int("accountId"),
+  opportunityId: int("opportunityId"),
+  sourceType: mysqlEnum("sourceType", ["manual", "email", "meeting", "ai_generated", "crm_deal"]).default("manual").notNull(),
+  sourceRefType: varchar("sourceRefType", { length: 64 }),
+  sourceRefId: int("sourceRefId"),
+  // External string ID for sources whose identifier isn't a DB int — e.g.
+  // RFC 822 Message-ID for emails, Fireflies recording URL for meetings.
+  sourceExternalId: varchar("sourceExternalId", { length: 255 }),
+  aiReasoning: text("aiReasoning"),
+  aiConfidence: decimal("aiConfidence", { precision: 5, scale: 2 }),
   createdBy: int("createdBy"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
+export type ProjectTask = typeof projectTasks.$inferSelect;
+export type InsertProjectTask = typeof projectTasks.$inferInsert;
 
 // ============================================
 // AUDIT & SYSTEM
