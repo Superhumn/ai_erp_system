@@ -288,7 +288,8 @@ function parseDueHint(hint: string | undefined, meetingDate: Date | undefined): 
   if (!Number.isNaN(direct.getTime())) return direct;
   // Relative: "by Friday", "next week", "EOD" — leave to user; just return undefined.
   // (We could parse with chrono-node but adding a dep isn't worth it for a free-text hint.)
-  return meetingDate ? new Date(meetingDate.getTime() + 7 * 24 * 60 * 60 * 1000) : undefined;
+  void meetingDate;
+  return undefined;
 }
 
 async function logExtraction(ctx: MeetingContext, index: number, item: FirefliesActionItem, payload: Record<string, unknown>): Promise<void> {
