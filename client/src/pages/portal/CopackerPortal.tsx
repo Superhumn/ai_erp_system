@@ -117,6 +117,7 @@ export default function CopackerPortal() {
   // --- Detail view ---
   const [viewUpdateId, setViewUpdateId] = useState<number | null>(null);
   const [viewInvoiceId, setViewInvoiceId] = useState<number | null>(null);
+  const [viewSharedRecipeId, setViewSharedRecipeId] = useState<number | null>(null);
 
   // ---- Queries ----
   const { data: warehouse } = trpc.copackerPortal.getWarehouse.useQuery();
@@ -126,6 +127,11 @@ export default function CopackerPortal() {
   const { data: inventoryUpdates, refetch: refetchUpdates } = (trpc.copackerPortal as any).getInventoryUpdates.useQuery();
   const { data: invoices, refetch: refetchInvoices } = (trpc.copackerPortal as any).getInvoices.useQuery();
   const { data: shippingDocs, refetch: refetchShipDocs } = (trpc.copackerPortal as any).getShippingDocuments.useQuery();
+  const { data: sharedRecipes } = (trpc.copackerPortal as any).getSharedRecipes.useQuery();
+  const { data: sharedRecipeDetail } = (trpc.copackerPortal as any).getSharedRecipeDetail.useQuery(
+    { recipeId: viewSharedRecipeId! },
+    { enabled: !!viewSharedRecipeId }
+  );
   const { data: updateDetail } = (trpc.copackerPortal as any).getInventoryUpdateDetail.useQuery(
     { id: viewUpdateId! },
     { enabled: !!viewUpdateId }
@@ -791,6 +797,196 @@ export default function CopackerPortal() {
           )}
         </CardContent>
       </Card>
+
+      {/* Shared Recipes */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Shared Recipes</CardTitle>
+              <CardDescription>
+                Recipes and production procedures shared with your facility
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {!sharedRecipes?.length ? (
+            <div className="text-center py-6 text-muted-foreground">
+              No recipes have been shared with your facility yet
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Recipe ID</TableHead>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Batch (g)</TableHead>
+                  <TableHead className="text-right">Yield %</TableHead>
+                  <TableHead>Includes</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sharedRecipes.map((r: any) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="font-mono text-xs">{r.recipeId}</TableCell>
+                    <TableCell className="font-medium">{r.name}</TableCell>
+                    <TableCell className="capitalize">{r.category}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="capitalize">{r.status}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm">
+                      {parseFloat(r.baseBatchGrams?.toString() ?? "0").toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm">
+                      {(parseFloat(r.expectedYieldPct?.toString() ?? "0") * 100).toFixed(1)}%
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {[r.shareIngredients ? "Ingredients" : null, r.shareProcedures ? "Procedures" : null]
+                        .filter(Boolean)
+                        .join(" + ") || "—"}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-xs"
+                        onClick={() => setViewSharedRecipeId(r.id)}
+                      >
+                        <Eye className="h-3 w-3 mr-1" />
+                        View
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Shared Recipe Detail Dialog */}
+      <Dialog
+        open={!!viewSharedRecipeId}
+        onOpenChange={(open) => {
+          if (!open) {
+            setViewSharedRecipeId(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {sharedRecipeDetail?.recipe?.name ?? "Recipe"}
+            </DialogTitle>
+            <DialogDescription>
+              {sharedRecipeDetail?.recipe?.recipeId
+                ? `Recipe ${sharedRecipeDetail.recipe.recipeId} · v${sharedRecipeDetail.recipe.version}`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {sharedRecipeDetail ? (
+            <div className="space-y-4 text-sm">
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <div className="text-muted-foreground text-xs">Category</div>
+                  <div className="font-medium capitalize">{sharedRecipeDetail.recipe.category}</div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground text-xs">Base batch (g)</div>
+                  <div className="font-medium font-mono">
+                    {parseFloat(sharedRecipeDetail.recipe.baseBatchGrams?.toString() ?? "0").toLocaleString()}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground text-xs">Expected yield</div>
+                  <div className="font-medium font-mono">
+                    {(parseFloat(sharedRecipeDetail.recipe.expectedYieldPct?.toString() ?? "0") * 100).toFixed(1)}%
+                  </div>
+                </div>
+              </div>
+
+              {sharedRecipeDetail.share?.notes ? (
+                <Alert>
+                  <AlertTitle>Notes from operations</AlertTitle>
+                  <AlertDescription>{sharedRecipeDetail.share.notes}</AlertDescription>
+                </Alert>
+              ) : null}
+
+              {sharedRecipeDetail.shareIngredients ? (
+                <div>
+                  <div className="font-medium mb-2">Ingredients</div>
+                  {sharedRecipeDetail.lines?.length ? (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>#</TableHead>
+                          <TableHead>Ingredient / Sub-recipe</TableHead>
+                          <TableHead className="text-right">Wet (g)</TableHead>
+                          <TableHead className="text-right">Dry (g)</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {sharedRecipeDetail.lines.map((line: any) => (
+                          <TableRow key={line.id}>
+                            <TableCell>{line.lineNumber}</TableCell>
+                            <TableCell>
+                              {line.subRecipeId
+                                ? <Badge variant="secondary">Sub-recipe #{line.subRecipeId}</Badge>
+                                : <span>Ingredient #{line.ingredientId}</span>}
+                            </TableCell>
+                            <TableCell className="text-right font-mono">{line.quantityGrams}</TableCell>
+                            <TableCell className="text-right font-mono">{line.quantityGramsDry ?? "—"}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  ) : (
+                    <div className="text-muted-foreground text-xs">No ingredient lines defined</div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-xs text-muted-foreground italic">
+                  Ingredients are withheld for this share.
+                </div>
+              )}
+
+              {sharedRecipeDetail.shareProcedures ? (
+                <div>
+                  <div className="font-medium mb-2">Procedures</div>
+                  {sharedRecipeDetail.procedures?.length ? (
+                    <ol className="space-y-2 list-decimal list-inside">
+                      {sharedRecipeDetail.procedures.map((p: any) => (
+                        <li key={p.id}>
+                          <span>{p.instruction}</span>
+                          {(p.durationMinutes || p.temperatureF) ? (
+                            <span className="text-muted-foreground ml-2 text-xs">
+                              {p.durationMinutes ? `${p.durationMinutes} min` : ""}
+                              {p.durationMinutes && p.temperatureF ? " · " : ""}
+                              {p.temperatureF ? `${p.temperatureF}°F` : ""}
+                            </span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <div className="text-muted-foreground text-xs">No procedure steps defined</div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-xs text-muted-foreground italic">
+                  Procedures are withheld for this share.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-sm text-muted-foreground py-6 text-center">Loading…</div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ============ DIALOGS ============ */}
 

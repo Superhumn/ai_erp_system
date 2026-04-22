@@ -8227,6 +8227,53 @@ Provide a brief status summary, any missing documents, and next steps.`;
         return { id: result.id, url };
       }),
 
+    // --- Shared recipes (read-only view of recipes shared with this copacker) ---
+    getSharedRecipes: copackerProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role === 'copacker' && !ctx.user.linkedWarehouseId) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'No warehouse assigned to this account' });
+      }
+      // Admin/ops viewing the portal see nothing unless they're linked to a warehouse.
+      const warehouseId = ctx.user.linkedWarehouseId;
+      if (!warehouseId) return [];
+      return manufacturingDb.getRecipesSharedWithWarehouse(warehouseId);
+    }),
+
+    getSharedRecipeDetail: copackerProcedure
+      .input(z.object({ recipeId: z.number() }))
+      .query(async ({ input, ctx }) => {
+        const warehouseId = ctx.user.linkedWarehouseId;
+        if (ctx.user.role === 'copacker' && !warehouseId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'No warehouse assigned to this account' });
+        }
+        // Gate by share row unless caller is admin/ops.
+        let share = warehouseId
+          ? await manufacturingDb.getRecipeShareForWarehouse(input.recipeId, warehouseId)
+          : undefined;
+        if (ctx.user.role === 'copacker' && !share) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'This recipe is not shared with your facility' });
+        }
+        const recipe = await manufacturingDb.getRecipeById(input.recipeId);
+        if (!recipe) throw new TRPCError({ code: 'NOT_FOUND', message: 'Recipe not found' });
+
+        const shareIngredients = share?.shareIngredients ?? true;
+        const shareProcedures = share?.shareProcedures ?? true;
+
+        const lines = shareIngredients
+          ? await manufacturingDb.getRecipeLines(input.recipeId)
+          : [];
+        const procedures = shareProcedures
+          ? await manufacturingDb.getRecipeProcedures(input.recipeId)
+          : [];
+        return {
+          recipe,
+          share: share ?? null,
+          lines,
+          procedures,
+          shareIngredients,
+          shareProcedures,
+        };
+      }),
+
     // Get current biweekly period info
     getCurrentPeriod: copackerProcedure.query(async () => {
       const now = new Date();
@@ -9053,6 +9100,66 @@ Provide a brief status summary, any missing documents, and next steps.`;
           userId: ctx.user?.id,
           formulation: input.formulation,
         });
+      }),
+    // List copackers a recipe is shared with
+    listShares: opsProcedure
+      .input(z.object({ recipeId: z.number() }))
+      .query(({ input }) => manufacturingDb.getRecipeShares(input.recipeId)),
+    // Share (or update share settings) for a recipe with a copacker warehouse
+    share: opsProcedure
+      .input(z.object({
+        recipeId: z.number(),
+        warehouseId: z.number(),
+        shareIngredients: z.boolean().optional(),
+        shareProcedures: z.boolean().optional(),
+        notes: z.string().nullish(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const warehouse = await db.getWarehouseById(input.warehouseId);
+        if (!warehouse) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Warehouse not found" });
+        }
+        if (warehouse.type !== "copacker") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Recipes can only be shared with warehouses of type 'copacker'",
+          });
+        }
+        const result = await manufacturingDb.upsertRecipeShare({
+          recipeId: input.recipeId,
+          warehouseId: input.warehouseId,
+          shareIngredients: input.shareIngredients,
+          shareProcedures: input.shareProcedures,
+          notes: input.notes === undefined ? undefined : input.notes,
+          sharedBy: ctx.user?.id,
+        });
+        await createAuditLog(
+          ctx.user.id,
+          result.created ? "create" : "update",
+          "recipe_copacker_share",
+          result.id,
+          `recipe:${input.recipeId} → warehouse:${input.warehouseId}`,
+        );
+        return result;
+      }),
+    unshare: opsProcedure
+      .input(z.object({ recipeId: z.number(), warehouseId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const existingShares = await manufacturingDb.getRecipeShares(input.recipeId);
+        const shareToRemove = existingShares.find((share) => share.warehouseId === input.warehouseId);
+
+        await manufacturingDb.removeRecipeShare(input.recipeId, input.warehouseId);
+
+        if (shareToRemove) {
+          await createAuditLog(
+            ctx.user.id,
+            "delete",
+            "recipe_copacker_share",
+            shareToRemove.id,
+            `recipe:${input.recipeId} × warehouse:${input.warehouseId}`,
+          );
+        }
+        return { success: true };
       }),
   }),
 
