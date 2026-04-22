@@ -33,7 +33,7 @@ export async function assignProjectTaskToAgent(input: AssignToAgentInput) {
     status: input.requiresApproval === false ? "approved" : "pending_approval",
     taskData: JSON.stringify(input.taskData),
     aiReasoning: input.reasoning ?? "Assigned from project task",
-    aiConfidence: input.confidence != null ? input.confidence.toFixed(2) : "100.00",
+    aiConfidence: input.confidence != null ? input.confidence.toFixed(2) : undefined,
     relatedEntityType: "projectTask",
     relatedEntityId: input.projectTaskId,
     requiresApproval: input.requiresApproval !== false,
