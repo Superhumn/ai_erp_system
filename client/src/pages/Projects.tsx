@@ -406,7 +406,7 @@ function KanbanCard({
       <CardContent className="p-3">
         {/* Title row with status menu */}
         <div className="flex items-start justify-between gap-1.5">
-          <h4 className="font-medium text-sm line-clamp-2 flex-1">{task.name || task.title}</h4>
+          <h4 className="font-medium text-sm line-clamp-2 flex-1">{task.name}</h4>
           <DropdownMenu>
             <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
               <Button variant="ghost" size="sm" className="h-6 w-6 p-0 shrink-0 opacity-0 group-hover:opacity-100 hover:opacity-100 focus:opacity-100 transition-opacity">
@@ -565,7 +565,7 @@ function TaskDetailPanel({ task, onClose, onStatusChange, projects, onProjectCha
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-lg font-semibold flex items-center gap-2">
-            {task.name || task.title}
+            {task.name}
             <Badge className={statusOption?.color}>{statusOption?.label}</Badge>
             {isAi && (
               <Badge variant="outline" className="text-xs text-violet-600 border-violet-400/60 bg-violet-50">
@@ -806,7 +806,7 @@ export default function Projects() {
     assignToAgent.mutate({
       projectTaskId: assignAiTask.id,
       agentTaskType: assignAiForm.agentTaskType as any,
-      taskData: { projectTaskId: assignAiTask.id, title: assignAiTask.name || assignAiTask.title, description: assignAiTask.description },
+      taskData: { projectTaskId: assignAiTask.id, title: assignAiTask.name, description: assignAiTask.description },
       reasoning: assignAiForm.reasoning || undefined,
       confidence: assignAiForm.confidence ? Number(assignAiForm.confidence) : undefined,
       priority: assignAiForm.priority as any,
@@ -832,7 +832,7 @@ export default function Projects() {
 
   // Column definitions for spreadsheet view
   const taskColumns: Column<any>[] = [
-    { key: "title", header: "Task", type: "text", sortable: true, editable: true },
+    { key: "name", header: "Task", type: "text", sortable: true, editable: true },
     { key: "project", header: "Project", type: "text", render: (row) => row.project?.name || "-" },
     { key: "status", header: "Status", type: "status", options: taskStatusOptions, editable: true, filterable: true },
     { key: "priority", header: "Priority", type: "badge", options: priorityOptions, editable: true, filterable: true },
@@ -1277,7 +1277,7 @@ export default function Projects() {
             {assignAiTask && (
               <div className="space-y-4">
                 <div className="text-sm bg-muted/50 rounded p-3">
-                  <div className="font-semibold">{assignAiTask.name || assignAiTask.title}</div>
+                  <div className="font-semibold">{assignAiTask.name}</div>
                   {assignAiTask.description && (
                     <div className="text-xs text-muted-foreground mt-1 line-clamp-2">{assignAiTask.description}</div>
                   )}

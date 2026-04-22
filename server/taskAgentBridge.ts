@@ -139,6 +139,7 @@ export type CreateFromSourceInput = {
   sourceType: "email" | "meeting" | "ai_generated" | "crm_deal";
   sourceRefType?: string;
   sourceRefId?: number;
+  sourceExternalId?: string;
   priority?: "low" | "medium" | "high" | "critical";
   dueDate?: Date;
   assigneeId?: number;
@@ -162,6 +163,7 @@ export async function createProjectTaskFromSource(input: CreateFromSourceInput) 
     sourceType: input.sourceType,
     sourceRefType: input.sourceRefType,
     sourceRefId: input.sourceRefId,
+    sourceExternalId: input.sourceExternalId,
     priority: input.priority ?? "medium",
     dueDate: input.dueDate,
     aiReasoning: input.aiReasoning,

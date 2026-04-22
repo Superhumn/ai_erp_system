@@ -907,6 +907,9 @@ export const projectTasks = mysqlTable("project_tasks", {
   sourceType: mysqlEnum("sourceType", ["manual", "email", "meeting", "ai_generated", "crm_deal"]).default("manual").notNull(),
   sourceRefType: varchar("sourceRefType", { length: 64 }),
   sourceRefId: int("sourceRefId"),
+  // External string ID for sources whose identifier isn't a DB int — e.g.
+  // RFC 822 Message-ID for emails, Fireflies recording URL for meetings.
+  sourceExternalId: varchar("sourceExternalId", { length: 255 }),
   aiReasoning: text("aiReasoning"),
   aiConfidence: decimal("aiConfidence", { precision: 5, scale: 2 }),
   createdBy: int("createdBy"),
