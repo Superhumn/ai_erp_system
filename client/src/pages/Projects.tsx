@@ -65,7 +65,7 @@ const priorityOptions = [
   { value: "low", label: "Low", color: "text-gray-500" },
   { value: "medium", label: "Medium", color: "text-blue-500" },
   { value: "high", label: "High", color: "text-orange-500" },
-  { value: "urgent", label: "Urgent", color: "text-red-500" },
+  { value: "critical", label: "Urgent", color: "text-red-500" },
 ];
 
 // AI agent task types that can take execution of a project task.
