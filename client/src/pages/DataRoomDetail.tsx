@@ -181,16 +181,10 @@ export default function DataRoomDetail() {
   const handleDeleteAll = async () => {
     setIsDeletingAll(true);
     try {
-      if (documents) {
-        for (const doc of documents) {
-          await deleteDocMutation.mutateAsync({ id: doc.id });
-        }
-      }
-      if (folders) {
-        for (const folder of folders) {
-          await deleteFolderMutation.mutateAsync({ id: folder.id });
-        }
-      }
+      await Promise.all([
+        ...(documents || []).map((doc) => deleteDocMutation.mutateAsync({ id: doc.id })),
+        ...(folders || []).map((folder) => deleteFolderMutation.mutateAsync({ id: folder.id })),
+      ]);
       setSelectedDoc(null);
       toast.success("All files and folders deleted");
       setDeleteAllOpen(false);
@@ -780,8 +774,8 @@ export default function DataRoomDetail() {
                         className="h-7 w-7 shrink-0 text-destructive hover:text-destructive"
                         title="Delete file"
                         onClick={() => {
-                          if (confirm(`Delete "${selectedDoc.name}"?`)) {
-                            deleteDocMutation.mutate({ id: selectedDoc.id as number });
+                          if (selectedDoc.id != null && confirm(`Delete "${selectedDoc.name}"?`)) {
+                            deleteDocMutation.mutate({ id: selectedDoc.id });
                           }
                         }}
                       >
