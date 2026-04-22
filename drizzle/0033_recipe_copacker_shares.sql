@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS `recipe_copacker_shares` (
   `sharedBy` int,
   `sharedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT `recipe_copacker_shares_id` PRIMARY KEY(`id`),
-  CONSTRAINT `recipe_copacker_shares_recipe_warehouse_idx` UNIQUE(`recipeId`,`warehouseId`)
+  CONSTRAINT `recipe_copacker_shares_recipe_warehouse_idx` UNIQUE(`recipeId`,`warehouseId`),
+  KEY `recipe_copacker_shares_warehouse_sharedAt_idx` (`warehouseId`,`sharedAt`)
 );
 --> statement-breakpoint
 
