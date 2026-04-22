@@ -123,6 +123,8 @@ export default function Transactions() {
           </p>
         </div>
         <button
+          type="button"
+          aria-pressed={cogsOnly}
           onClick={() => setCogsOnly(!cogsOnly)}
           className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-md border transition-colors ${
             cogsOnly
