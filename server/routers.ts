@@ -9145,14 +9145,20 @@ Provide a brief status summary, any missing documents, and next steps.`;
     unshare: opsProcedure
       .input(z.object({ recipeId: z.number(), warehouseId: z.number() }))
       .mutation(async ({ input, ctx }) => {
+        const existingShares = await manufacturingDb.getRecipeShares(input.recipeId);
+        const shareToRemove = existingShares.find((share) => share.warehouseId === input.warehouseId);
+
         await manufacturingDb.removeRecipeShare(input.recipeId, input.warehouseId);
-        await createAuditLog(
-          ctx.user.id,
-          "delete",
-          "recipe_copacker_share",
-          input.recipeId,
-          `recipe:${input.recipeId} × warehouse:${input.warehouseId}`,
-        );
+
+        if (shareToRemove) {
+          await createAuditLog(
+            ctx.user.id,
+            "delete",
+            "recipe_copacker_share",
+            shareToRemove.id,
+            `recipe:${input.recipeId} × warehouse:${input.warehouseId}`,
+          );
+        }
         return { success: true };
       }),
   }),
