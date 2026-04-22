@@ -57,7 +57,7 @@ import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { AICommandBar } from './AICommandBar';
 import { useTheme } from "@/contexts/ThemeContext";
-// FloatingAIAssistant removed â toolbar only
+// FloatingAIAssistant removed - toolbar only
 import { toast } from "sonner";
 import {
   Tooltip,
@@ -353,7 +353,7 @@ function DashboardLayoutContent({
             </div>
           </SidebarHeader>
 
-          {/* Flat navigation â all items visible, no dropdowns */}
+          {/* Flat navigation - all items visible, no dropdowns */}
           <SidebarContent className="overflow-y-auto px-2 py-2">
             <nav className="flex flex-col gap-px">
               {getMenuGroups(user?.role).map((group, gi) => (
@@ -469,7 +469,7 @@ function DashboardLayoutContent({
         <main className="flex-1 overflow-auto p-3 pb-3 md:p-4 md:pb-4 lg:p-5 lg:pb-5">{children}</main>
       </SidebarInset>
 
-      {/* Floating AI removed â using toolbar only */}
+      {/* Floating AI removed - using toolbar only */}
     </>
   );
 }
