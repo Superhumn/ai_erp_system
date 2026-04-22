@@ -358,14 +358,14 @@ function DashboardLayoutContent({
             <nav className="flex flex-col gap-px">
               {getMenuGroups(user?.role).map((group, gi) => (
                 <div key={group.label}>
-                  {gi > 0 && !isCollapsed && <div className="border-t border-border/30 my-1.5" />}
+                  {gi > 0 && !isCollapsed && <div className="border-t border-border/30 my-1" />}
                   {group.items.map(item => {
                     const isActive = location === item.path;
                     const btn = (
                       <button
                         key={item.path}
                         onClick={() => setLocation(item.path)}
-                        className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] transition-colors duration-100 w-full ${
+                        className={`flex items-center gap-2 px-2 py-1 rounded-md text-[13px] transition-colors duration-100 w-full ${
                           isActive
                             ? "bg-accent text-foreground font-medium"
                             : "text-sidebar-foreground hover:bg-accent/60 hover:text-foreground"
