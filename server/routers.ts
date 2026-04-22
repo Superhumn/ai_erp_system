@@ -9130,7 +9130,7 @@ Provide a brief status summary, any missing documents, and next steps.`;
           warehouseId: input.warehouseId,
           shareIngredients: input.shareIngredients,
           shareProcedures: input.shareProcedures,
-          notes: input.notes ?? undefined,
+          notes: input.notes === undefined ? undefined : input.notes,
           sharedBy: ctx.user?.id,
         });
         await createAuditLog(
