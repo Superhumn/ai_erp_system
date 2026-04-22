@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -67,17 +67,11 @@ export default function ManufacturingHub() {
   const { data: workOrders, isLoading: workOrdersLoading, refetch: refetchWorkOrders } = trpc.workOrders.list.useQuery();
   const { data: locations } = trpc.warehouses.list.useQuery();
 
-  // Keep the side-sheet in sync with the refetched list.
-  const syncSelected = (id: number) => {
-    const next = (workOrders || []).find((w: any) => w.id === id);
-    if (next) setSelectedWorkOrder(next);
-  };
-
-  // Mutations
+    // Mutations
   const updateWorkOrderStatus = trpc.workOrders.update.useMutation({
     onSuccess: (_d, vars: any) => {
       toast.success("Work order updated");
-      refetchWorkOrders().then(() => syncSelected(vars.id));
+      refetchWorkOrders();
     },
     onError: (err: any) => toast.error(err.message),
   });
@@ -85,7 +79,7 @@ export default function ManufacturingHub() {
   const startProduction = trpc.workOrders.startProduction.useMutation({
     onSuccess: (_d, vars: any) => {
       toast.success("Production started - materials will be consumed");
-      refetchWorkOrders().then(() => syncSelected(vars.id));
+      refetchWorkOrders();
     },
     onError: (err: any) => toast.error(err.message),
   });
@@ -93,10 +87,18 @@ export default function ManufacturingHub() {
   const completeProduction = trpc.workOrders.completeProduction.useMutation({
     onSuccess: (_d, vars: any) => {
       toast.success("Production completed - finished goods added to inventory");
-      refetchWorkOrders().then(() => syncSelected(vars.id));
+      refetchWorkOrders();
     },
     onError: (err: any) => toast.error(err.message),
   });
+
+  // Keep the selected work order in sync whenever the list is refetched.
+  useEffect(() => {
+    if (!selectedWorkOrder) return;
+    const fresh = (workOrders || []).find((w: any) => w.id === selectedWorkOrder.id);
+    if (fresh) setSelectedWorkOrder(fresh);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workOrders]);
 
   // Selection state for bulk actions
   const [selectedWorkOrders, setSelectedWorkOrders] = useState<Set<number | string>>(new Set());
