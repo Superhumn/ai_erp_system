@@ -101,6 +101,7 @@ export const projectsRouter = router({
         sourceType: z.enum(['manual', 'email', 'meeting', 'ai_generated', 'crm_deal']).optional(),
         sourceRefType: z.string().optional(),
         sourceRefId: z.number().optional(),
+        sourceExternalId: z.string().max(255).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const result = await db.createProjectTask({ ...input, createdBy: ctx.user.id });
