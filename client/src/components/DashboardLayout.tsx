@@ -15,14 +15,8 @@ import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
   SidebarProvider,
   SidebarTrigger,
   useSidebar,
@@ -37,65 +31,34 @@ import {
   Users,
   Scale,
   Settings,
-  FileText,
-  Warehouse,
   Truck,
   Mail,
-  ChevronDown,
-  Bell,
-  MapPin,
-  ArrowLeftRight,
-  ArrowRightLeft,
-  ClipboardCheck,
-  ClipboardList,
   FolderLock,
   Target,
   BarChart3,
-  CircleDollarSign,
-  Wrench,
   Factory,
   UserCircle,
-  Receipt,
-  Landmark,
   Network,
   Upload,
-  LineChart,
-  Megaphone,
-  FileBarChart,
-  Clock,
   Sun,
   Moon,
   Mic,
   MessageSquare,
   BookOpen,
-  Handshake,
-  FlaskConical,
   Award,
-  DollarSign,
-  Banknote,
   TrendingUp,
   Code2,
-  Headphones,
   PenTool,
   UserPlus,
-  Bot,
-  Heart,
-  Building2,
   Package,
 } from "lucide-react";
-import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { AICommandBar } from './AICommandBar';
 import { useTheme } from "@/contexts/ThemeContext";
 // FloatingAIAssistant removed â toolbar only
 import { toast } from "sonner";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { Input } from "./ui/input";
 import {
   Tooltip,
   TooltipContent,
@@ -107,103 +70,91 @@ export function getMenuGroups(role: string = "user") {
   const hasFinance = ["admin", "exec", "finance"].includes(role);
   const hasOps = ["admin", "exec", "ops"].includes(role);
   const hasLegal = ["admin", "exec", "legal"].includes(role);
-  const hasSales = ["admin", "exec", "ops", "finance", "sales"].includes(role);
-  return [
-  {
-    label: "_main",
+  const hasSales = ["admin", "exec", "sales"].includes(role);
+  const inSalesSection = hasSales || role === "ops";
+  const groups: Array<{ label: string; items: Array<{ icon: typeof LayoutDashboard; label: string; path: string }> }> = [];
+
+  groups.push({
+    label: "Command Center",
     items: [
       { icon: LayoutDashboard, label: "Dashboard", path: "/" },
       { icon: Target, label: "Projects", path: "/projects" },
-      { icon: Bot, label: "AI Assistant", path: "/ai" },
-      { icon: ClipboardList, label: "Approval Queue", path: "/ai/approvals" },
-    ],
-  },
-  {
-    label: "Sales & Finance",
-    items: [
-      { icon: ShoppingCart, label: "Sales Hub", path: "/sales/hub" },
-      { icon: Heart, label: "Fundraising CRM", path: "/crm" },
-      { icon: Users, label: "Investors", path: "/crm/investors" },
-      { icon: Target, label: "Campaigns", path: "/crm/campaigns" },
-      { icon: DollarSign, label: "Accounts", path: "/finance/accounts" },
-      { icon: TrendingUp, label: "Transactions", path: "/finance/transactions" },
-      { icon: FlaskConical, label: "R&D Tax Credit", path: "/finance/rd-tax-credit" },
-    ],
-  },
-  {
-    label: "CRM",
-    items: [
-      { icon: Target, label: "CRM Hub", path: "/crm/hub" },
-      { icon: Users, label: "Contacts", path: "/crm/contacts" },
-      { icon: MessageSquare, label: "Messaging", path: "/crm/messaging" },
-    ],
-  },
-  {
-    label: "Operations",
-    items: [
-      { icon: Package, label: "Operations", path: "/operations" },
-      { icon: Package, label: "Inventory", path: "/operations/inventory-hub" },
-      { icon: ClipboardList, label: "Inventory Mgmt", path: "/operations/inventory-management" },
-      { icon: Warehouse, label: "Manufacturing", path: "/operations/manufacturing-hub" },
-      { icon: Building2, label: "Procurement", path: "/operations/procurement-hub" },
-      { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
       { icon: Mail, label: "Email Inbox", path: "/operations/email-inbox" },
       { icon: Mic, label: "Meetings", path: "/meetings" },
       { icon: MessageSquare, label: "Messaging", path: "/messaging" },
     ],
-  },
-  ...(hasSales || isAdmin ? [{
-    label: "_sell",
+  });
+
+  if (inSalesSection) {
+    groups.push({
+      label: "Sales",
+      items: [
+        { icon: ShoppingCart, label: "Orders", path: "/sales/orders" },
+        ...(hasSales ? [
+          { icon: UserCircle, label: "CRM", path: "/crm/hub" },
+          { icon: PenTool, label: "Marketing", path: "/marketing" },
+        ] : []),
+      ],
+    });
+  }
+
+  if (hasFinance) {
+    groups.push({
+      label: "Finance",
+      items: [
+        { icon: BarChart3, label: "Finance", path: "/finance" },
+        { icon: Award, label: "Grants", path: "/grants/submitter" },
+        { icon: TrendingUp, label: "Fundraising", path: "/crm/campaigns" },
+        { icon: Users, label: "Investors", path: "/hr/investors" },
+        { icon: FolderLock, label: "Data Room", path: "/dataroom/1" },
+      ],
+    });
+  }
+
+  if (hasOps) {
+    groups.push({
+      label: "Operations",
+      items: [
+        { icon: Package, label: "Operations", path: "/operations" },
+        { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
+        // Recipes restricted to admin + ops only (trade secrets) — exec excluded
+        ...(role === "admin" || role === "ops" ? [
+          { icon: Factory, label: "Recipes", path: "/operations/recipes" },
+        ] : []),
+        { icon: Users, label: "Vendors", path: "/operations/vendors" },
+      ],
+    });
+  }
+
+  groups.push({
+    label: "People",
     items: [
-      ...(hasOps || isAdmin ? [{ icon: ShoppingCart, label: "Orders", path: "/sales/orders" }] : []),
-      { icon: UserCircle, label: "CRM", path: "/crm/hub" },
-      { icon: Headphones, label: "Support", path: "/cx/support" },
-      ...(isAdmin ? [{ icon: PenTool, label: "Marketing", path: "/marketing" }] : []),
-      ...(hasFinance || isAdmin ? [{ icon: BarChart3, label: "Financials", path: "/finance/reports" }] : []),
-      ...(isAdmin ? [{ icon: TrendingUp, label: "Fundraising", path: "/crm/campaigns" }] : []),
-    ],
-  }] : []),
-  ...(hasOps || isAdmin ? [{
-    label: "_ops",
-    items: [
-      { icon: Warehouse, label: "Inventory", path: "/operations/inventory-hub" },
-      { icon: Factory, label: "Recipes", path: "/operations/recipes" },
-      { icon: Truck, label: "Freight", path: "/freight" },
-      { icon: Users, label: "Vendors", path: "/operations/vendors" },
-    ],
-  }] : []),
-  {
-    label: "_people",
-    items: [
-      ...(isAdmin ? [
-        { icon: Users, label: "People", path: "/hr/employees" },
-        { icon: UserPlus, label: "Recruiting", path: "/hr/recruiting" },
-        { icon: FileBarChart, label: "Investors", path: "/hr/investors" },
-      ] : [
-        { icon: Clock, label: "Time Tracking", path: "/hr/time-tracking" },
-        { icon: LineChart, label: "Equity Portal", path: "/hr/equity-portal" },
-      ]),
-      ...(hasLegal || isAdmin ? [
+      { icon: Users, label: "HR", path: "/hr" },
+      { icon: UserPlus, label: "Recruiting", path: "/hr/recruiting" },
+      ...(hasLegal ? [
         { icon: Scale, label: "Legal", path: "/legal" },
-        { icon: Scale, label: "Cases", path: "/legal/cases" },
       ] : []),
     ],
-  },
-  {
-    label: "_tools",
+  });
+
+  groups.push({
+    label: "Tools",
     items: [
       { icon: BookOpen, label: "SOPs", path: "/sops" },
       ...(isAdmin ? [
-        { icon: FolderLock, label: "Data Room", path: "/dataroom/1" },
-        { icon: Award, label: "Grants", path: "/grants/submitter" },
+        { icon: Code2, label: "Code", path: "/code" },
+        { icon: Settings, label: "Settings", path: "/settings" },
+      ] : []),
+      ...(hasOps ? [
         { icon: Upload, label: "Import", path: "/import" },
+      ] : []),
+      ...(role === "ops" || isAdmin ? [
         { icon: Network, label: "EDI", path: "/edi" },
       ] : []),
-      { icon: Code2, label: "Code", path: "/code" },
-      { icon: Settings, label: "Settings", path: "/settings" },
     ],
-  },
-];
+  });
+
+  return groups;
 }
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
@@ -277,7 +228,6 @@ function DashboardLayoutContent({
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
-  const [openGroups, setOpenGroups] = useState<string[]>(["Command Center", "Buy", "Sell"]);
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -335,14 +285,6 @@ function DashboardLayoutContent({
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [setLocation]);
-
-  const toggleGroup = useCallback((label: string) => {
-    setOpenGroups(prev =>
-      prev.includes(label)
-        ? prev.filter(g => g !== label)
-        : [...prev, label]
-    );
-  }, []);
 
   // Find active menu item for mobile header (memoized to avoid recalculation)
   const activeMenuItem = useMemo(() => getMenuGroups(user?.role)

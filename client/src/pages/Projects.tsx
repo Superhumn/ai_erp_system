@@ -28,6 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
+import { DetailSheet } from "@/components/DetailSheet";
 import {
   FolderKanban,
   LayoutGrid,
@@ -552,7 +553,6 @@ export default function Projects() {
   const [viewMode, setViewMode] = useState<"kanban" | "spreadsheet">("kanban");
   const [isTaskDialogOpen, setIsTaskDialogOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<any>(null);
-  const [expandedTaskId, setExpandedTaskId] = useState<number | string | null>(null);
   const [filterProject, setFilterProject] = useState<string>("all");
   const [filterPriority, setFilterPriority] = useState<string>("all");
   
@@ -852,16 +852,8 @@ export default function Projects() {
                 showSearch
                 showFilters
                 showExport
-                expandable
-                expandedRowId={expandedTaskId}
-                onExpandChange={setExpandedTaskId}
-                renderExpanded={(task, onClose) => (
-                  <TaskDetailPanel 
-                    task={task} 
-                    onClose={onClose}
-                    onStatusChange={handleStatusChange}
-                  />
-                )}
+                onRowClick={(task) => setSelectedTask(task)}
+                expandedRowId={selectedTask?.id ?? null}
                 onCellEdit={(rowId, key, value) => {
                   if (key === "status") {
                     handleStatusChange(rowId as number, value);
@@ -890,26 +882,28 @@ export default function Projects() {
           </Card>
         )}
 
-        {/* Task Detail Dialog (for Kanban view) */}
-        <Dialog open={!!selectedTask} onOpenChange={() => setSelectedTask(null)}>
-          <DialogContent className="max-w-2xl">
-            {selectedTask && (
-              <TaskDetailPanel
-                task={selectedTask}
-                onClose={() => setSelectedTask(null)}
-                projects={projects}
-                onProjectChange={(id, projectId) => {
-                  handleProjectChange(id, projectId);
-                  setSelectedTask(null);
-                }}
-                onStatusChange={(id, status) => {
-                  handleStatusChange(id, status);
-                  setSelectedTask(null);
-                }}
-              />
-            )}
-          </DialogContent>
-        </Dialog>
+        {/* Shared task detail side-panel (drives both kanban + spreadsheet) */}
+        <DetailSheet
+          open={!!selectedTask}
+          onOpenChange={(o) => !o && setSelectedTask(null)}
+          width="md"
+        >
+          {selectedTask && (
+            <TaskDetailPanel
+              task={selectedTask}
+              onClose={() => setSelectedTask(null)}
+              projects={projects}
+              onProjectChange={(id, projectId) => {
+                handleProjectChange(id, projectId);
+                setSelectedTask(null);
+              }}
+              onStatusChange={(id, status) => {
+                handleStatusChange(id, status);
+                setSelectedTask(null);
+              }}
+            />
+          )}
+        </DetailSheet>
 
         {/* Create Task Dialog */}
         <Dialog open={isTaskDialogOpen} onOpenChange={setIsTaskDialogOpen}>

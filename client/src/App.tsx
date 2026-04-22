@@ -63,14 +63,12 @@ const POReceiving = lazy(() => import("./pages/operations/POReceiving"));
 const Forecasting = lazy(() => import("./pages/operations/Forecasting"));
 const CoreOperations = lazy(() => import("./pages/operations/CoreOperations"));
 const EmailInbox = lazy(() => import("./pages/operations/EmailInbox"));
-const Logistics = lazy(() => import("./pages/operations/Logistics"));
 const Procurement = lazy(() => import("./pages/operations/Procurement"));
 const ManufacturingHub = lazy(() => import("./pages/operations/ManufacturingHub"));
 const ProcurementHub = lazy(() => import("./pages/operations/ProcurementHub"));
 const LogisticsHub = lazy(() => import("./pages/operations/LogisticsHub"));
 const InventoryHub = lazy(() => import("./pages/operations/InventoryHub"));
 const OperationsHub = lazy(() => import("./pages/operations/OperationsHub"));
-const InventoryManagementHub = lazy(() => import("./pages/operations/InventoryManagementHub"));
 const DocumentImport = lazy(() => import("./pages/operations/DocumentImport"));
 const Profitability = lazy(() => import("./pages/operations/Profitability"));
 const ReconciliationReport = lazy(() => import("./pages/operations/ReconciliationReport"));
@@ -103,9 +101,6 @@ const EquityPortal = lazy(() => import("./pages/hr/EquityPortal"));
 const EquityReports = lazy(() => import("./pages/hr/EquityReports"));
 const InvestorsHub = lazy(() => import("./pages/hr/InvestorsHub"));
 const TimeTracking = lazy(() => import("./pages/hr/TimeTracking"));
-
-// CX
-const CustomerSupport = lazy(() => import("./pages/cx/CustomerSupport"));
 
 // Marketing
 const ContentHub = lazy(() => import("./pages/marketing/ContentHub"));
@@ -218,6 +213,7 @@ function Router() {
           <Route path="/settings/shopify" component={ShopifySettings} />
 
           {/* Finance */}
+          <Route path="/finance" component={FinanceHub} />
           <Route path="/finance/accounts" component={Accounts} />
           <Route path="/finance/invoices" component={Invoices} />
           <Route path="/finance/payments" component={Payments} />
@@ -262,13 +258,11 @@ function Router() {
           <Route path="/operations/forecasting" component={Forecasting} />
           <Route path="/operations/core" component={CoreOperations} />
           <Route path="/operations/email-inbox" component={EmailInbox} />
-          <Route path="/operations/logistics" component={Logistics} />
           <Route path="/operations/procurement" component={Procurement} />
           <Route path="/operations/manufacturing-hub" component={ManufacturingHub} />
           <Route path="/operations/procurement-hub" component={ProcurementHub} />
           <Route path="/operations/logistics-hub" component={LogisticsHub} />
           <Route path="/operations/inventory-hub" component={InventoryHub} />
-          <Route path="/operations/inventory-management" component={InventoryManagementHub} />
           <Route path="/operations/profitability" component={Profitability} />
           <Route path="/operations/document-import" component={DocumentImport} />
           <Route path="/operations/reconciliation" component={ReconciliationReport} />
@@ -293,9 +287,6 @@ function Router() {
           <Route path="/freight/customs" component={CustomsClearance} />
           <Route path="/freight/customs/:id" component={CustomsDetail} />
 
-          {/* CX */}
-          <Route path="/cx/support" component={CustomerSupport} />
-
           {/* Marketing */}
           <Route path="/marketing" component={ContentHub} />
 
@@ -310,6 +301,7 @@ function Router() {
           <Route path="/hr/ai" component={HRAIInsights} />
           <Route path="/hr/equity-portal" component={EquityPortal} />
           <Route path="/hr/equity-reports" component={EquityReports} />
+          <Route path="/hr/investors" component={InvestorsHub} />
           <Route path="/hr/time-tracking" component={TimeTracking} />
 
           {/* Legal */}

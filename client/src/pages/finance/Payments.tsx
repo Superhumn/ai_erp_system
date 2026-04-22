@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -22,24 +22,65 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { CreditCard, Plus, Search, Loader2 } from "lucide-react";
+import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
+import { DetailSheet } from "@/components/DetailSheet";
+import { CreditCard, Plus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
-import { getStatusColor } from "@/lib/statusColors";
+
+const typeOptions = [
+  { value: "received", label: "Received", color: "bg-green-500/10 text-green-600" },
+  { value: "made", label: "Made", color: "bg-blue-500/10 text-blue-600" },
+];
+
+const statusOptions = [
+  { value: "pending", label: "Pending", color: "bg-amber-500/8 text-amber-600" },
+  { value: "completed", label: "Completed", color: "bg-emerald-500/8 text-emerald-600" },
+  { value: "failed", label: "Failed", color: "bg-red-500/8 text-red-600" },
+  { value: "cancelled", label: "Cancelled", color: "bg-gray-500/8 text-gray-600" },
+];
+
+function PaymentSummaryBody({ p }: { p: any }) {
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 text-sm">
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1">Date</div>
+          <div className="font-medium">
+            {p.paymentDate ? format(new Date(p.paymentDate), "MMM d, yyyy") : "—"}
+          </div>
+        </div>
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1">Method</div>
+          <div className="font-medium capitalize">
+            {p.paymentMethod?.replace(/_/g, " ") || "—"}
+          </div>
+        </div>
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1">Reference</div>
+          <div className="font-mono text-sm">{p.referenceNumber || "—"}</div>
+        </div>
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1">Amount</div>
+          <div className="font-mono font-semibold">{formatCurrency(p.amount)}</div>
+        </div>
+      </div>
+      {p.notes && (
+        <div>
+          <h4 className="text-sm font-medium mb-1">Notes</h4>
+          <p className="text-sm text-muted-foreground bg-muted/30 rounded p-2 whitespace-pre-wrap">
+            {p.notes}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function Payments() {
-  const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [selectedPayment, setSelectedPayment] = useState<any | null>(null);
   const [formData, setFormData] = useState({
     type: "received" as "received" | "made",
     amount: "",
@@ -57,23 +98,23 @@ export default function Payments() {
       setFormData({ type: "received", amount: "", paymentMethod: "bank_transfer", referenceNumber: "", notes: "" });
       utils.payments.list.invalidate();
     },
-    onError: (error) => {
-      toast.error(error.message);
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const columns: Column<any>[] = [
+    { key: "paymentNumber", header: "Payment #", type: "text", sortable: true },
+    { key: "type", header: "Type", type: "badge", options: typeOptions, filterable: true },
+    { key: "paymentDate", header: "Date", type: "date", sortable: true },
+    {
+      key: "paymentMethod",
+      header: "Method",
+      type: "text",
+      render: (_row, val) => (typeof val === "string" ? val.replace(/_/g, " ") : "—"),
     },
-  });
-
-  const filteredPayments = payments?.filter((payment) => {
-    const matchesSearch =
-      payment.paymentNumber.toLowerCase().includes(search.toLowerCase()) ||
-      payment.referenceNumber?.toLowerCase().includes(search.toLowerCase());
-    const matchesType = typeFilter === "all" || payment.type === typeFilter;
-    return matchesSearch && matchesType;
-  });
-
-  const typeColors: Record<string, string> = {
-    received: "bg-green-500/10 text-green-600",
-    made: "bg-blue-500/10 text-blue-600",
-  };
+    { key: "referenceNumber", header: "Reference", type: "text" },
+    { key: "amount", header: "Amount", type: "currency", sortable: true },
+    { key: "status", header: "Status", type: "status", options: statusOptions, filterable: true },
+  ];
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -87,6 +128,10 @@ export default function Payments() {
     });
   };
 
+  const selectedStatus = selectedPayment
+    ? statusOptions.find((s) => s.value === selectedPayment.status)
+    : null;
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
@@ -96,7 +141,7 @@ export default function Payments() {
             Payments
           </h1>
           <p className="text-muted-foreground mt-1">
-            Track incoming and outgoing payments.
+            Track incoming and outgoing payments — click any row for details.
           </p>
         </div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
@@ -110,9 +155,7 @@ export default function Payments() {
             <form onSubmit={handleSubmit}>
               <DialogHeader>
                 <DialogTitle>Record Payment</DialogTitle>
-                <DialogDescription>
-                  Record a new payment transaction.
-                </DialogDescription>
+                <DialogDescription>Record a new payment transaction.</DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid grid-cols-2 gap-4">
@@ -197,78 +240,38 @@ export default function Payments() {
       </div>
 
       <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-4 flex-wrap">
-            <div className="relative flex-1 min-w-[200px] max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search payments..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger className="w-[150px]">
-                <SelectValue placeholder="Type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="received">Received</SelectItem>
-                <SelectItem value="made">Made</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : !filteredPayments || filteredPayments.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <CreditCard className="h-12 w-12 mx-auto mb-4 opacity-20" />
-              <p>No payments found</p>
-              <p className="text-sm">Record your first payment to get started.</p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Payment #</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Method</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredPayments.map((payment) => (
-                  <TableRow key={payment.id}>
-                    <TableCell className="font-mono">{payment.paymentNumber}</TableCell>
-                    <TableCell>
-                      <Badge className={typeColors[payment.type]}>{payment.type}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      {payment.paymentDate
-                        ? format(new Date(payment.paymentDate), "MMM d, yyyy")
-                        : "-"}
-                    </TableCell>
-                    <TableCell className="capitalize">{payment.paymentMethod?.replace(/_/g, " ") || "-"}</TableCell>
-                    <TableCell className="text-right font-mono">
-                      {formatCurrency(payment.amount)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={getStatusColor(payment.status)}>{payment.status}</Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+        <CardContent className="pt-6">
+          <SpreadsheetTable
+            data={(payments || []) as any[]}
+            columns={columns}
+            isLoading={isLoading}
+            emptyMessage="No payments yet — record your first payment to get started."
+            showSearch
+            showFilters
+            showExport
+            onRowClick={(row) => setSelectedPayment(row)}
+            expandedRowId={selectedPayment?.id ?? null}
+            compact
+          />
         </CardContent>
       </Card>
+
+      <DetailSheet
+        open={!!selectedPayment}
+        onOpenChange={(o) => !o && setSelectedPayment(null)}
+        width="md"
+        title={
+          selectedPayment && (
+            <span className="flex items-center gap-2 font-mono">
+              {selectedPayment.paymentNumber}
+              {selectedStatus && <Badge className={selectedStatus.color}>{selectedStatus.label}</Badge>}
+            </span>
+          )
+        }
+        subtitle={selectedPayment?.type === "received" ? "Received" : selectedPayment?.type === "made" ? "Made" : undefined}
+      >
+        {selectedPayment && <PaymentSummaryBody p={selectedPayment} />}
+      </DetailSheet>
     </div>
   );
 }
