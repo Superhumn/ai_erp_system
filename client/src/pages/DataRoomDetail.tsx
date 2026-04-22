@@ -60,9 +60,12 @@ export default function DataRoomDetail() {
   const roomId = parseInt(params.id || "0");
   const [, setLocation] = useLocation();
   const [currentFolderId, setCurrentFolderId] = useState<number | null>(null);
+  const [folderStack, setFolderStack] = useState<Array<{ id: number; name: string }>>([]);
   const [createFolderOpen, setCreateFolderOpen] = useState(false);
   const [createLinkOpen, setCreateLinkOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [newLink, setNewLink] = useState({
     name: "",
@@ -155,9 +158,13 @@ export default function DataRoomDetail() {
   });
 
   const deleteDocMutation = trpc.dataRoom.documents.delete.useMutation({
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       toast.success("Document deleted");
+      if (selectedDoc?.id === variables.id) setSelectedDoc(null);
       refetchDocuments();
+    },
+    onError: (error) => {
+      toast.error(error.message);
     },
   });
 
@@ -166,7 +173,35 @@ export default function DataRoomDetail() {
       toast.success("Folder deleted");
       refetchFolders();
     },
+    onError: (error) => {
+      toast.error(error.message);
+    },
   });
+
+  const handleDeleteAll = async () => {
+    setIsDeletingAll(true);
+    try {
+      if (documents) {
+        for (const doc of documents) {
+          await deleteDocMutation.mutateAsync({ id: doc.id });
+        }
+      }
+      if (folders) {
+        for (const folder of folders) {
+          await deleteFolderMutation.mutateAsync({ id: folder.id });
+        }
+      }
+      setSelectedDoc(null);
+      toast.success("All files and folders deleted");
+      setDeleteAllOpen(false);
+      refetchDocuments();
+      refetchFolders();
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to delete some files");
+    } finally {
+      setIsDeletingAll(false);
+    }
+  };
 
   const utils = trpc.useUtils();
 
@@ -510,7 +545,12 @@ export default function DataRoomDetail() {
                   {currentFolderId ? (
                     <button
                       className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                      onClick={() => { setCurrentFolderId(null); setSelectedDoc(null); }}
+                      onClick={() => {
+                        const prev = folderStack[folderStack.length - 2];
+                        setFolderStack(folderStack.slice(0, -1));
+                        setCurrentFolderId(prev ? prev.id : null);
+                        setSelectedDoc(null);
+                      }}
                     >
                       <ArrowLeft className="h-3.5 w-3.5" />
                       <span>Back</span>
@@ -574,6 +614,16 @@ export default function DataRoomDetail() {
                       className="hidden"
                       onChange={handleFileUpload}
                     />
+                    {/* Delete All */}
+                    {(!!folders?.length || !!documents?.length) && (
+                      <button
+                        className="p-1.5 rounded-md hover:bg-accent transition-colors text-muted-foreground hover:text-destructive"
+                        title="Delete all files"
+                        onClick={() => setDeleteAllOpen(true)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -582,39 +632,105 @@ export default function DataRoomDetail() {
                   <div className="p-2 space-y-0.5">
                     {/* Folders */}
                     {folders?.map((folder) => (
-                      <button
+                      <div
                         key={`folder-${folder.id}`}
-                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm hover:bg-accent transition-colors text-left group"
-                        onClick={() => { setCurrentFolderId(folder.id); setSelectedDoc(null); }}
+                        className="w-full flex items-center rounded-lg text-sm hover:bg-accent transition-colors group"
                       >
-                        <Folder className="h-4 w-4 text-blue-500 shrink-0" />
-                        <span className="flex-1 truncate">{folder.name}</span>
-                        {folder.googleDriveFolderId && (
-                          <Cloud className="h-3 w-3 text-muted-foreground/50 shrink-0" />
-                        )}
-                        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
-                      </button>
+                        <button
+                          className="flex items-center gap-2.5 flex-1 min-w-0 text-left px-3 py-2"
+                          onClick={() => {
+                            setFolderStack([...folderStack, { id: folder.id, name: folder.name }]);
+                            setCurrentFolderId(folder.id);
+                            setSelectedDoc(null);
+                          }}
+                        >
+                          <Folder className="h-4 w-4 text-blue-500 shrink-0" />
+                          <span className="flex-1 truncate">{folder.name}</span>
+                          {folder.googleDriveFolderId && (
+                            <Cloud className="h-3 w-3 text-muted-foreground/50 shrink-0" />
+                          )}
+                          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                        </button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              className="p-1.5 mr-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-muted-foreground/10 shrink-0"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <MoreVertical className="h-3.5 w-3.5 text-muted-foreground" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onClick={() => {
+                                if (confirm(`Delete folder "${folder.name}" and all its contents?`)) {
+                                  deleteFolderMutation.mutate({ id: folder.id });
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Delete Folder
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     ))}
 
                     {/* Documents */}
                     {documents?.map((doc) => {
                       const isSelected = selectedDoc?.id === doc.id;
                       return (
-                        <button
+                        <div
                           key={`doc-${doc.id}`}
-                          className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-150 text-left border-l-2 ${
+                          className={`w-full flex items-center rounded-lg text-sm transition-all duration-150 border-l-2 group ${
                             isSelected
                               ? "bg-primary/10 border-primary"
                               : "border-transparent hover:bg-accent"
                           }`}
-                          onClick={() => setSelectedDoc(doc)}
                         >
-                          <span className="shrink-0">{getFileIcon(doc.fileType)}</span>
-                          <span className="flex-1 truncate">{doc.name}</span>
-                          {doc.storageType === "google_drive" && (
-                            <Cloud className="h-3 w-3 text-muted-foreground/50 shrink-0" />
-                          )}
-                        </button>
+                          <button
+                            className="flex items-center gap-2.5 flex-1 min-w-0 text-left px-3 py-2"
+                            onClick={() => setSelectedDoc(doc)}
+                          >
+                            <span className="shrink-0">{getFileIcon(doc.fileType)}</span>
+                            <span className="flex-1 truncate">{doc.name}</span>
+                            {doc.storageType === "google_drive" && (
+                              <Cloud className="h-3 w-3 text-muted-foreground/50 shrink-0" />
+                            )}
+                          </button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                className="p-1.5 mr-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-muted-foreground/10 shrink-0"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <MoreVertical className="h-3.5 w-3.5 text-muted-foreground" />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              {doc.storageUrl && (
+                                <DropdownMenuItem
+                                  onClick={() => openFileUrl(doc.storageUrl as string, doc.name)}
+                                >
+                                  <Download className="h-4 w-4 mr-2" />
+                                  Download
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                onClick={() => {
+                                  if (confirm(`Delete "${doc.name}"?`)) {
+                                    deleteDocMutation.mutate({ id: doc.id });
+                                  }
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
                       );
                     })}
 
@@ -647,6 +763,30 @@ export default function DataRoomDetail() {
                           Drive
                         </Badge>
                       )}
+                      {selectedDoc.storageUrl && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 shrink-0"
+                          title="Download"
+                          onClick={() => openFileUrl(selectedDoc.storageUrl as string, selectedDoc.name)}
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0 text-destructive hover:text-destructive"
+                        title="Delete file"
+                        onClick={() => {
+                          if (confirm(`Delete "${selectedDoc.name}"?`)) {
+                            deleteDocMutation.mutate({ id: selectedDoc.id as number });
+                          }
+                        }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
 
                     {/* Viewer body — animated on selection */}
@@ -1445,6 +1585,33 @@ export default function DataRoomDetail() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        {/* Delete All Confirmation Dialog */}
+        <Dialog open={deleteAllOpen} onOpenChange={setDeleteAllOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete All Files</DialogTitle>
+              <DialogDescription>
+                This will permanently delete all {(documents?.length || 0) + (folders?.length || 0)} items
+                ({documents?.length || 0} file{(documents?.length || 0) !== 1 ? "s" : ""} and{" "}
+                {folders?.length || 0} folder{(folders?.length || 0) !== 1 ? "s" : ""}) in the current view.
+                This action cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteAllOpen(false)} disabled={isDeletingAll}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleDeleteAll}
+                disabled={isDeletingAll}
+              >
+                {isDeletingAll ? "Deleting..." : "Delete All"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Google Drive Sync Dialog */}
         <Dialog open={googleDriveSyncOpen} onOpenChange={(open) => {
