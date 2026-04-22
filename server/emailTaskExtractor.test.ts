@@ -53,6 +53,9 @@ function makeLlmResponse(payload: object): any {
   };
 }
 
+// NOTE: snake_case keys here are intentional – this object represents the raw
+// JSON payload that the LLM returns (matching CLASSIFY_SCHEMA).  The
+// classifyEmail() function maps them to camelCase before returning.
 const actionablePayload = {
   is_actionable: true,
   importance: 75,
@@ -292,7 +295,7 @@ describe("classifyEmail – LLM response parsing and normalization", () => {
     expect(result.reasoning).toBe("");
   });
 
-  it("clamps importance and confidence to [0, 100]", async () => {
+  it("clamps importance above 100 to 100 and confidence below 0 to 0", async () => {
     mockInvokeLLM.mockResolvedValue(
       makeLlmResponse({ ...actionablePayload, importance: 150, confidence: -5 })
     );
@@ -300,6 +303,16 @@ describe("classifyEmail – LLM response parsing and normalization", () => {
     const result = await classifyEmail(validEmail);
     expect(result.importance).toBe(100);
     expect(result.confidence).toBe(0);
+  });
+
+  it("clamps importance below 0 to 0 and confidence above 100 to 100", async () => {
+    mockInvokeLLM.mockResolvedValue(
+      makeLlmResponse({ ...actionablePayload, importance: -20, confidence: 200 })
+    );
+
+    const result = await classifyEmail(validEmail);
+    expect(result.importance).toBe(0);
+    expect(result.confidence).toBe(100);
   });
 
   it("normalizes 'urgent' priority string to 'critical'", async () => {
@@ -356,14 +369,22 @@ describe("classifyEmail – LLM response parsing and normalization", () => {
     expect(result.tasks[0].dueHint).toBeUndefined();
   });
 
-  it("falls back to 'other' for an unrecognised category string", async () => {
+  it("preserves an unrecognised category string as-is (no normalisation)", async () => {
     mockInvokeLLM.mockResolvedValue(
       makeLlmResponse({ ...actionablePayload, category: "unknown_category" })
     );
 
     const result = await classifyEmail(validEmail);
-    // The category value comes straight from parsed JSON; the type cast keeps it
+    // classifyEmail casts but does not validate; the raw string is passed through
     expect(result.category).toBe("unknown_category");
+  });
+
+  it("falls back to 'other' when the LLM omits the category field", async () => {
+    const { category: _omit, ...noCategory } = actionablePayload;
+    mockInvokeLLM.mockResolvedValue(makeLlmResponse(noCategory));
+
+    const result = await classifyEmail(validEmail);
+    expect(result.category).toBe("other");
   });
 });
 
