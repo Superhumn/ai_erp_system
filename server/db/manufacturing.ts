@@ -1135,6 +1135,7 @@ export async function upsertRecipeShare(data: {
         shareProcedures: data.shareProcedures ?? existing[0].shareProcedures,
         notes: data.notes === undefined ? existing[0].notes : data.notes,
         sharedBy: data.sharedBy ?? existing[0].sharedBy,
+        sharedAt: new Date(),
       })
       .where(eq(recipeCopackerShares.id, existing[0].id));
     return { id: existing[0].id, created: false };
