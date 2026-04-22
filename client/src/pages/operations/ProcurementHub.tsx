@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,7 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs";
 import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
+import { DetailSheet } from "@/components/DetailSheet";
 import { QuickCreateButton } from "@/components/QuickCreateDialog";
 import {
   ShoppingCart,
@@ -1029,11 +1030,33 @@ export default function ProcurementHub() {
   const [isVendorDialogOpen, setIsVendorDialogOpen] = useState(false);
   const [isMaterialDialogOpen, setIsMaterialDialogOpen] = useState(false);
   const [isSendPoDialogOpen, setIsSendPoDialogOpen] = useState(false);
-  const [selectedPo, setSelectedPo] = useState<any>(null);
+  const [poToSend, setPoToSend] = useState<any>(null);
   const [emailMessage, setEmailMessage] = useState("");
-  const [expandedPoId, setExpandedPoId] = useState<number | string | null>(null);
-  const [expandedVendorId, setExpandedVendorId] = useState<number | string | null>(null);
-  const [expandedMaterialId, setExpandedMaterialId] = useState<number | string | null>(null);
+  const [selectedPo, setSelectedPo] = useState<any | null>(null);
+  const [selectedVendor, setSelectedVendor] = useState<any | null>(null);
+  const [selectedMaterial, setSelectedMaterial] = useState<any | null>(null);
+
+  // Keep selected detail objects in sync when lists refetch.
+  useEffect(() => {
+    if (!selectedPo) return;
+    const fresh = (purchaseOrders || []).find((p: any) => p.id === selectedPo.id);
+    if (fresh) setSelectedPo(fresh);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [purchaseOrders]);
+
+  useEffect(() => {
+    if (!selectedVendor) return;
+    const fresh = (vendors || []).find((v: any) => v.id === selectedVendor.id);
+    if (fresh) setSelectedVendor(fresh);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vendors]);
+
+  useEffect(() => {
+    if (!selectedMaterial) return;
+    const fresh = (rawMaterials || []).find((m: any) => m.id === selectedMaterial.id);
+    if (fresh) setSelectedMaterial(fresh);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawMaterials]);
   
   // Bulk selection state
   const [selectedPos, setSelectedPos] = useState<Set<number | string>>(new Set());
@@ -1094,7 +1117,7 @@ export default function ProcurementHub() {
     onSuccess: () => {
       toast.success("PO sent to supplier");
       setIsSendPoDialogOpen(false);
-      setSelectedPo(null);
+      setPoToSend(null);
       refetchPos();
     },
     onError: (err: any) => toast.error(err.message),
@@ -1346,15 +1369,15 @@ export default function ProcurementHub() {
   };
 
   const handleSendPoToSupplier = () => {
-    if (!selectedPo) return;
+    if (!poToSend) return;
     sendPoToSupplier.mutate({
-      poId: selectedPo.id,
+      poId: poToSend.id,
       message: emailMessage || undefined,
     });
   };
 
   const openSendDialog = (po: any) => {
-    setSelectedPo(po);
+    setPoToSend(po);
     setEmailMessage("");
     setIsSendPoDialogOpen(true);
   };
@@ -1515,17 +1538,8 @@ export default function ProcurementHub() {
                   showExport
                   onAdd={() => setIsPoDialogOpen(true)}
                   addLabel="New PO"
-                  expandable
-                  expandedRowId={expandedPoId}
-                  onExpandChange={setExpandedPoId}
-                  renderExpanded={(po, onClose) => (
-                    <PoDetailPanel 
-                      po={po} 
-                      onClose={onClose}
-                      onSendToSupplier={openSendDialog}
-                      onStatusChange={handleUpdatePoStatus}
-                    />
-                  )}
+                  onRowClick={(po) => setSelectedPo(po)}
+                  expandedRowId={selectedPo?.id ?? null}
                   onCellEdit={handlePoCellEdit}
                   selectedRows={selectedPos}
                   onSelectionChange={setSelectedPos}
@@ -1557,12 +1571,8 @@ export default function ProcurementHub() {
                   showExport
                   onAdd={() => setIsVendorDialogOpen(true)}
                   addLabel="New Vendor"
-                  expandable
-                  expandedRowId={expandedVendorId}
-                  onExpandChange={setExpandedVendorId}
-                  renderExpanded={(vendor, onClose) => (
-                    <VendorDetailPanel vendor={vendor} onClose={onClose} />
-                  )}
+                  onRowClick={(vendor) => setSelectedVendor(vendor)}
+                  expandedRowId={selectedVendor?.id ?? null}
                   onCellEdit={handleVendorCellEdit}
                   selectedRows={selectedVendors}
                   onSelectionChange={setSelectedVendors}
@@ -1594,12 +1604,8 @@ export default function ProcurementHub() {
                   showExport
                   onAdd={() => setIsMaterialDialogOpen(true)}
                   addLabel="New Material"
-                  expandable
-                  expandedRowId={expandedMaterialId}
-                  onExpandChange={setExpandedMaterialId}
-                  renderExpanded={(material, onClose) => (
-                    <MaterialDetailPanel material={material} onClose={onClose} />
-                  )}
+                  onRowClick={(material) => setSelectedMaterial(material)}
+                  expandedRowId={selectedMaterial?.id ?? null}
                   onCellEdit={handleMaterialCellEdit}
                   selectedRows={selectedMaterials}
                   onSelectionChange={setSelectedMaterials}
@@ -1616,6 +1622,42 @@ export default function ProcurementHub() {
           </TabsContent>
 
         </Tabs>
+
+        {/* Side panels for PO / Vendor / Material */}
+        <DetailSheet
+          open={!!selectedPo}
+          onOpenChange={(o) => !o && setSelectedPo(null)}
+          width="lg"
+        >
+          {selectedPo && (
+            <PoDetailPanel
+              po={selectedPo}
+              onClose={() => setSelectedPo(null)}
+              onSendToSupplier={openSendDialog}
+              onStatusChange={handleUpdatePoStatus}
+            />
+          )}
+        </DetailSheet>
+
+        <DetailSheet
+          open={!!selectedVendor}
+          onOpenChange={(o) => !o && setSelectedVendor(null)}
+          width="md"
+        >
+          {selectedVendor && (
+            <VendorDetailPanel vendor={selectedVendor} onClose={() => setSelectedVendor(null)} />
+          )}
+        </DetailSheet>
+
+        <DetailSheet
+          open={!!selectedMaterial}
+          onOpenChange={(o) => !o && setSelectedMaterial(null)}
+          width="md"
+        >
+          {selectedMaterial && (
+            <MaterialDetailPanel material={selectedMaterial} onClose={() => setSelectedMaterial(null)} />
+          )}
+        </DetailSheet>
 
         {/* Create PO Dialog */}
         <Dialog open={isPoDialogOpen} onOpenChange={setIsPoDialogOpen}>
@@ -1791,7 +1833,7 @@ export default function ProcurementHub() {
             <DialogHeader>
               <DialogTitle>Send PO to Supplier</DialogTitle>
               <DialogDescription>
-                Send PO #{selectedPo?.poNumber} to {selectedPo?.vendor?.name}
+                Send PO #{poToSend?.poNumber} to {poToSend?.vendor?.name}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">

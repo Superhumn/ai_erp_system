@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -21,26 +21,89 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { ShoppingCart, Plus, Search, Loader2 } from "lucide-react";
+import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
+import { DetailSheet } from "@/components/DetailSheet";
+import { ShoppingCart, Plus, Loader2, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { Link } from "wouter";
 import { formatCurrency } from "@/lib/format";
-import { getStatusColor } from "@/lib/statusColors";
+
+const orderStatusOptions = [
+  { value: "draft", label: "Draft", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
+  { value: "pending", label: "Pending", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
+  { value: "confirmed", label: "Confirmed", color: "bg-blue-500/8 text-blue-600 dark:text-blue-400" },
+  { value: "processing", label: "Processing", color: "bg-violet-500/8 text-violet-600 dark:text-violet-400" },
+  { value: "shipped", label: "Shipped", color: "bg-indigo-500/8 text-indigo-600 dark:text-indigo-400" },
+  { value: "delivered", label: "Delivered", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+  { value: "cancelled", label: "Cancelled", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
+];
+
+function OrderSummaryBody({ order }: { order: any }) {
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 text-sm">
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1">Customer</div>
+          <div className="font-medium">{order._customerName || "—"}</div>
+        </div>
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1">Order Date</div>
+          <div className="font-medium">
+            {order.orderDate ? format(new Date(order.orderDate), "MMM d, yyyy") : "—"}
+          </div>
+        </div>
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1">Items</div>
+          <div className="font-medium">{order._itemCount ?? "—"}</div>
+        </div>
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1">Total</div>
+          <div className="font-semibold font-mono">{formatCurrency(order.totalAmount)}</div>
+        </div>
+      </div>
+
+      <div className="rounded-lg border p-3 text-sm space-y-1.5">
+        <div className="flex justify-between text-muted-foreground">
+          <span>Subtotal</span>
+          <span className="font-mono">{formatCurrency(order.subtotal)}</span>
+        </div>
+        <div className="flex justify-between text-muted-foreground">
+          <span>Tax</span>
+          <span className="font-mono">{formatCurrency(order.taxAmount)}</span>
+        </div>
+        <div className="flex justify-between text-muted-foreground">
+          <span>Shipping</span>
+          <span className="font-mono">{formatCurrency(order.shippingAmount)}</span>
+        </div>
+        {order.discountAmount && parseFloat(order.discountAmount) !== 0 && (
+          <div className="flex justify-between text-muted-foreground">
+            <span>Discount</span>
+            <span className="font-mono">-{formatCurrency(order.discountAmount)}</span>
+          </div>
+        )}
+        <div className="flex justify-between pt-1.5 border-t font-semibold">
+          <span>Total</span>
+          <span className="font-mono">{formatCurrency(order.totalAmount)}</span>
+        </div>
+      </div>
+
+      {order.notes && (
+        <div>
+          <h4 className="text-sm font-medium mb-1">Notes</h4>
+          <p className="text-sm text-muted-foreground bg-muted/30 rounded p-2 whitespace-pre-wrap">
+            {order.notes}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function Orders() {
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
-  const [selectedOrders, setSelectedOrders] = useState<Set<number>>(new Set());
+  const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
+  const [selectedOrders, setSelectedOrders] = useState<Set<number | string>>(new Set());
   const [formData, setFormData] = useState({
     customerId: 0,
     subtotal: "",
@@ -53,13 +116,14 @@ export default function Orders() {
   const { data: orders, isLoading } = trpc.orders.list.useQuery();
   const { data: customers } = trpc.customers.list.useQuery();
   const createCustomer = trpc.customers.create.useMutation();
+
   const bulkDeleteOrders = trpc.orders.bulkDelete.useMutation({
     onSuccess: (data) => {
       toast.success(`Deleted ${data.deleted} order(s)`);
       setSelectedOrders(new Set());
       utils.orders.list.invalidate();
     },
-    onError: (error) => toast.error(error.message),
+    onError: (err: any) => toast.error(err.message),
   });
 
   const createOrder = trpc.orders.create.useMutation({
@@ -71,16 +135,60 @@ export default function Orders() {
       utils.orders.list.invalidate();
       utils.customers.list.invalidate();
     },
-    onError: (error) => {
-      toast.error(error.message);
-    },
+    onError: (err: any) => toast.error(err.message),
   });
 
-  const filteredOrders = orders?.filter((order) => {
-    const matchesSearch = order.orderNumber.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilter === "all" || order.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  // Enrich orders for dense display: resolve customer name and item count.
+  const customerById = useMemo(() => {
+    const map = new Map<number, string>();
+    (customers || []).forEach((c: any) => map.set(c.id, c.name));
+    return map;
+  }, [customers]);
+
+  const enrichedOrders = useMemo(
+    () =>
+      (orders || []).map((o: any) => ({
+        ...o,
+        _customerName: o.customerId
+          ? customerById.get(o.customerId) || `Customer #${o.customerId}`
+          : "—",
+        _itemCount: o.items?.length ?? o.itemCount ?? null,
+      })),
+    [orders, customerById],
+  );
+
+  // Dense column set: most fields visible at a glance.
+  const columns: Column<any>[] = [
+    { key: "orderNumber", header: "Order #", type: "text", sortable: true },
+    { key: "_customerName", header: "Customer", type: "text", sortable: true },
+    { key: "orderDate", header: "Date", type: "date", sortable: true },
+    { key: "status", header: "Status", type: "status", options: orderStatusOptions, filterable: true },
+    { key: "_itemCount", header: "Items", type: "number", sortable: true },
+    { key: "subtotal", header: "Subtotal", type: "currency", sortable: true },
+    { key: "taxAmount", header: "Tax", type: "currency" },
+    { key: "shippingAmount", header: "Shipping", type: "currency" },
+    { key: "discountAmount", header: "Discount", type: "currency" },
+    { key: "totalAmount", header: "Total", type: "currency", sortable: true },
+    {
+      key: "notes",
+      header: "Notes",
+      type: "text",
+      render: (_row, val) => {
+        const s = typeof val === "string" ? val : "";
+        return s.length > 40 ? s.slice(0, 40) + "…" : s || "—";
+      },
+    },
+  ];
+
+  const bulkActions = [
+    { key: "delete", label: "Delete", variant: "destructive" as const },
+  ];
+
+  const handleBulkAction = (action: string, ids: Set<number | string>) => {
+    if (action === "delete") {
+      bulkDeleteOrders.mutate({ ids: Array.from(ids).map((id) => Number(id)) });
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,6 +211,10 @@ export default function Orders() {
     });
   };
 
+  const selectedStatus = selectedOrder
+    ? orderStatusOptions.find((s) => s.value === selectedOrder.status)
+    : null;
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
@@ -112,7 +224,7 @@ export default function Orders() {
             Sales Orders
           </h1>
           <p className="text-muted-foreground mt-1">
-            Manage customer orders and track fulfillment.
+            Manage customer orders — click any row for a summary, or open the full page.
           </p>
         </div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
@@ -126,9 +238,7 @@ export default function Orders() {
             <form onSubmit={handleSubmit}>
               <DialogHeader>
                 <DialogTitle>Create Order</DialogTitle>
-                <DialogDescription>
-                  Create a new sales order.
-                </DialogDescription>
+                <DialogDescription>Create a new sales order.</DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="space-y-2">
@@ -156,7 +266,9 @@ export default function Orders() {
                         value={newCustomerName}
                         onChange={(e) => setNewCustomerName(e.target.value)}
                       />
-                      <p className="text-xs text-muted-foreground">No customers yet — type a name and it will be created with the order</p>
+                      <p className="text-xs text-muted-foreground">
+                        No customers yet — type a name and it will be created with the order
+                      </p>
                     </div>
                   )}
                 </div>
@@ -223,110 +335,54 @@ export default function Orders() {
       </div>
 
       <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-4 flex-wrap">
-            <div className="relative flex-1 min-w-[200px] max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search orders..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[150px]">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="draft">Draft</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="confirmed">Confirmed</SelectItem>
-                <SelectItem value="processing">Processing</SelectItem>
-                <SelectItem value="shipped">Shipped</SelectItem>
-                <SelectItem value="delivered">Delivered</SelectItem>
-                <SelectItem value="cancelled">Cancelled</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : !filteredOrders || filteredOrders.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <ShoppingCart className="h-12 w-12 mx-auto mb-4 opacity-20" />
-              <p>No orders found</p>
-              <p className="text-sm">Create your first order to get started.</p>
-            </div>
-          ) : (
-            <Table>
-              {selectedOrders.size > 0 && (
-                <div className="flex items-center gap-2 px-3 py-2 bg-primary/5 border-b rounded-t-lg">
-                  <span className="text-xs font-medium">{selectedOrders.size} selected</span>
-                  <Button size="sm" variant="destructive" className="h-6 text-xs" onClick={() => bulkDeleteOrders.mutate({ ids: Array.from(selectedOrders) })} disabled={bulkDeleteOrders.isPending}>
-                    {bulkDeleteOrders.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
-                    Delete Selected
-                  </Button>
-                  <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setSelectedOrders(new Set())}>Clear</Button>
-                </div>
-              )}
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-8">
-                    <input type="checkbox" className="rounded" checked={selectedOrders.size === (filteredOrders?.length || 0) && selectedOrders.size > 0} onChange={(e) => {
-                      if (e.target.checked) setSelectedOrders(new Set(filteredOrders?.map(o => o.id) || []));
-                      else setSelectedOrders(new Set());
-                    }} />
-                  </TableHead>
-                  <TableHead>Order #</TableHead>
-                  <TableHead>Customer</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredOrders.map((order) => (
-                  <TableRow
-                    key={order.id}
-                    className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => window.location.href = `/sales/orders/${order.id}`}
-                  >
-                    <TableCell className="w-8" onClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox" className="rounded" checked={selectedOrders.has(order.id)} onChange={(e) => {
-                        const next = new Set(selectedOrders);
-                        if (e.target.checked) next.add(order.id); else next.delete(order.id);
-                        setSelectedOrders(next);
-                      }} />
-                    </TableCell>
-                    <TableCell className="font-mono">
-                      <Link href={`/sales/orders/${order.id}`}>
-                        <span className="text-primary hover:underline">{order.orderNumber}</span>
-                      </Link>
-                    </TableCell>
-                    <TableCell className="font-medium">{customers?.find((c) => c.id === order.customerId)?.name || (order.customerId ? `Customer #${order.customerId}` : "-")}</TableCell>
-                    <TableCell>
-                      {order.orderDate
-                        ? format(new Date(order.orderDate), "MMM d, yyyy")
-                        : "-"}
-                    </TableCell>
-                    <TableCell className="text-right font-mono">
-                      {formatCurrency(order.totalAmount)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={getStatusColor(order.status)}>{order.status}</Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+        <CardContent className="pt-6">
+          <SpreadsheetTable
+            data={enrichedOrders}
+            columns={columns}
+            isLoading={isLoading}
+            emptyMessage="No orders yet — create your first order to get started."
+            showSearch
+            showFilters
+            showExport
+            onRowClick={(row) => setSelectedOrder(row)}
+            expandedRowId={selectedOrder?.id ?? null}
+            selectedRows={selectedOrders}
+            onSelectionChange={setSelectedOrders}
+            bulkActions={bulkActions}
+            onBulkAction={handleBulkAction}
+            compact
+          />
         </CardContent>
       </Card>
+
+      <DetailSheet
+        open={!!selectedOrder}
+        onOpenChange={(o) => !o && setSelectedOrder(null)}
+        width="md"
+        title={
+          selectedOrder && (
+            <span className="flex items-center gap-2 font-mono">
+              {selectedOrder.orderNumber}
+              {selectedStatus && (
+                <Badge className={selectedStatus.color}>{selectedStatus.label}</Badge>
+              )}
+            </span>
+          )
+        }
+        subtitle={selectedOrder?._customerName}
+        actions={
+          selectedOrder && (
+            <Button asChild size="sm" variant="outline">
+              <Link href={`/sales/orders/${selectedOrder.id}`}>
+                Open full page
+                <ExternalLink className="h-3.5 w-3.5 ml-1.5" />
+              </Link>
+            </Button>
+          )
+        }
+      >
+        {selectedOrder && <OrderSummaryBody order={selectedOrder} />}
+      </DetailSheet>
     </div>
   );
 }

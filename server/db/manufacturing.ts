@@ -16,7 +16,8 @@ import {
   ingredientVendors, InsertIngredientVendor,
   ingredientQuoteRequests, InsertIngredientQuoteRequest,
   ingredientCostAlerts, InsertIngredientCostAlert,
-  vendors,
+  recipeCopackerShares, InsertRecipeCopackerShare,
+  vendors, warehouses,
 } from "../../drizzle/schema";
 import { getDb } from "./connection";
 
@@ -1082,6 +1083,123 @@ export async function createRecipeProcedure(data: Omit<InsertRecipeProcedure, "i
   if (!db) throw new Error("Database not available");
   const result = await db.insert(recipeProcedures).values(data).$returningId();
   return { id: result[0].id };
+}
+
+// ---- Recipe ↔ copacker sharing ------------------------------------------
+
+export async function getRecipeShares(recipeId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({
+      id: recipeCopackerShares.id,
+      recipeId: recipeCopackerShares.recipeId,
+      warehouseId: recipeCopackerShares.warehouseId,
+      warehouseName: warehouses.name,
+      warehouseCode: warehouses.code,
+      shareIngredients: recipeCopackerShares.shareIngredients,
+      shareProcedures: recipeCopackerShares.shareProcedures,
+      notes: recipeCopackerShares.notes,
+      sharedBy: recipeCopackerShares.sharedBy,
+      sharedAt: recipeCopackerShares.sharedAt,
+    })
+    .from(recipeCopackerShares)
+    .innerJoin(warehouses, eq(warehouses.id, recipeCopackerShares.warehouseId))
+    .where(eq(recipeCopackerShares.recipeId, recipeId))
+    .orderBy(warehouses.name);
+}
+
+export async function upsertRecipeShare(data: {
+  recipeId: number;
+  warehouseId: number;
+  shareIngredients?: boolean;
+  shareProcedures?: boolean;
+  notes?: string | null;
+  sharedBy?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = await db
+    .select()
+    .from(recipeCopackerShares)
+    .where(and(
+      eq(recipeCopackerShares.recipeId, data.recipeId),
+      eq(recipeCopackerShares.warehouseId, data.warehouseId),
+    ))
+    .limit(1);
+  if (existing.length > 0) {
+    await db
+      .update(recipeCopackerShares)
+      .set({
+        shareIngredients: data.shareIngredients ?? existing[0].shareIngredients,
+        shareProcedures: data.shareProcedures ?? existing[0].shareProcedures,
+        notes: data.notes === undefined ? existing[0].notes : data.notes,
+        sharedBy: data.sharedBy ?? existing[0].sharedBy,
+        sharedAt: new Date(),
+      })
+      .where(eq(recipeCopackerShares.id, existing[0].id));
+    return { id: existing[0].id, created: false };
+  }
+  const payload: InsertRecipeCopackerShare = {
+    recipeId: data.recipeId,
+    warehouseId: data.warehouseId,
+    shareIngredients: data.shareIngredients ?? true,
+    shareProcedures: data.shareProcedures ?? true,
+    notes: data.notes ?? null,
+    sharedBy: data.sharedBy ?? null,
+  };
+  const result = await db.insert(recipeCopackerShares).values(payload).$returningId();
+  return { id: result[0].id, created: true };
+}
+
+export async function removeRecipeShare(recipeId: number, warehouseId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .delete(recipeCopackerShares)
+    .where(and(
+      eq(recipeCopackerShares.recipeId, recipeId),
+      eq(recipeCopackerShares.warehouseId, warehouseId),
+    ));
+}
+
+export async function getRecipesSharedWithWarehouse(warehouseId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({
+      shareId: recipeCopackerShares.id,
+      shareIngredients: recipeCopackerShares.shareIngredients,
+      shareProcedures: recipeCopackerShares.shareProcedures,
+      notes: recipeCopackerShares.notes,
+      sharedAt: recipeCopackerShares.sharedAt,
+      id: recipes.id,
+      recipeId: recipes.recipeId,
+      name: recipes.name,
+      category: recipes.category,
+      status: recipes.status,
+      version: recipes.version,
+      baseBatchGrams: recipes.baseBatchGrams,
+      expectedYieldPct: recipes.expectedYieldPct,
+    })
+    .from(recipeCopackerShares)
+    .innerJoin(recipes, eq(recipes.id, recipeCopackerShares.recipeId))
+    .where(eq(recipeCopackerShares.warehouseId, warehouseId))
+    .orderBy(desc(recipeCopackerShares.sharedAt));
+}
+
+export async function getRecipeShareForWarehouse(recipeId: number, warehouseId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db
+    .select()
+    .from(recipeCopackerShares)
+    .where(and(
+      eq(recipeCopackerShares.recipeId, recipeId),
+      eq(recipeCopackerShares.warehouseId, warehouseId),
+    ))
+    .limit(1);
+  return result[0];
 }
 
 export async function calculateRecipeBatchCost(input: {

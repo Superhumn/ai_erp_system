@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -7,8 +7,9 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import SpreadsheetTable, { Column } from "@/components/SpreadsheetTable";
 import { QuickCreateButton, QuickCreateDialog } from "@/components/QuickCreateDialog";
+import { DetailSheet } from "@/components/DetailSheet";
 import {
-  Search, Plus, Clock, Play, Pause, CheckCircle, X, AlertTriangle, ClipboardList
+  Search, Plus, Clock, Play, Pause, CheckCircle, X, ClipboardList
 } from "lucide-react";
 
 // Status options
@@ -20,44 +21,11 @@ const workOrderStatuses = [
   { value: "cancelled", label: "Cancelled", color: "bg-red-500/8 text-red-600 dark:text-red-400" },
 ];
 
-// Detail Panel Component
-function WorkOrderDetailPanel({ workOrder, onClose, onStatusChange, onStartProduction, onCompleteProduction }: {
-  workOrder: any;
-  onClose: () => void;
-  onStatusChange: (id: number, status: string) => void;
-  onStartProduction?: (id: number) => void;
-  onCompleteProduction?: (id: number, completedQuantity: string) => void;
-}) {
-  const statusOption = workOrderStatuses.find(s => s.value === workOrder.status);
-
+// Side-sheet body for a work order (pure presentation)
+function WorkOrderDetailBody({ workOrder }: { workOrder: any }) {
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-start justify-between">
-        <div>
-          <h3 className="text-lg font-semibold">WO-{workOrder.id}</h3>
-          <p className="text-sm text-muted-foreground">{workOrder.product?.name || workOrder.bom?.name}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Badge className={statusOption?.color}>{statusOption?.label}</Badge>
-          {(workOrder.status === "pending" || workOrder.status === "draft" || workOrder.status === "scheduled") && (
-            <Button size="sm" onClick={() => onStartProduction?.(workOrder.id)}>
-              <Play className="h-4 w-4 mr-1" /> Start Production
-            </Button>
-          )}
-          {workOrder.status === "in_progress" && (
-            <>
-              <Button size="sm" variant="outline" onClick={() => onStatusChange(workOrder.id, "scheduled")}>
-                <Pause className="h-4 w-4 mr-1" /> Pause
-              </Button>
-              <Button size="sm" onClick={() => onCompleteProduction?.(workOrder.id, workOrder.quantity)}>
-                <CheckCircle className="h-4 w-4 mr-1" /> Complete Production
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-4 gap-4 text-sm">
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 text-sm">
         <div className="p-3 bg-muted rounded-lg">
           <div className="text-muted-foreground">Quantity</div>
           <div className="font-medium">{workOrder.quantity}</div>
@@ -92,16 +60,16 @@ function WorkOrderDetailPanel({ workOrder, onClose, onStatusChange, onStartProdu
 
 export default function ManufacturingHub() {
   const [searchTerm, setSearchTerm] = useState("");
-  const [expandedWorkOrderId, setExpandedWorkOrderId] = useState<number | string | null>(null);
+  const [selectedWorkOrder, setSelectedWorkOrder] = useState<any | null>(null);
   const [showWorkOrderDialog, setShowWorkOrderDialog] = useState(false);
 
   // Queries
   const { data: workOrders, isLoading: workOrdersLoading, refetch: refetchWorkOrders } = trpc.workOrders.list.useQuery();
   const { data: locations } = trpc.warehouses.list.useQuery();
 
-  // Mutations
+    // Mutations
   const updateWorkOrderStatus = trpc.workOrders.update.useMutation({
-    onSuccess: () => {
+    onSuccess: (_d, vars: any) => {
       toast.success("Work order updated");
       refetchWorkOrders();
     },
@@ -109,7 +77,7 @@ export default function ManufacturingHub() {
   });
 
   const startProduction = trpc.workOrders.startProduction.useMutation({
-    onSuccess: () => {
+    onSuccess: (_d, vars: any) => {
       toast.success("Production started - materials will be consumed");
       refetchWorkOrders();
     },
@@ -117,12 +85,20 @@ export default function ManufacturingHub() {
   });
 
   const completeProduction = trpc.workOrders.completeProduction.useMutation({
-    onSuccess: () => {
+    onSuccess: (_d, vars: any) => {
       toast.success("Production completed - finished goods added to inventory");
       refetchWorkOrders();
     },
     onError: (err: any) => toast.error(err.message),
   });
+
+  // Keep the selected work order in sync whenever the list is refetched.
+  useEffect(() => {
+    if (!selectedWorkOrder) return;
+    const fresh = (workOrders || []).find((w: any) => w.id === selectedWorkOrder.id);
+    if (fresh) setSelectedWorkOrder(fresh);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workOrders]);
 
   // Selection state for bulk actions
   const [selectedWorkOrders, setSelectedWorkOrders] = useState<Set<number | string>>(new Set());
@@ -294,24 +270,52 @@ export default function ManufacturingHub() {
               showSearch
               onAdd={() => setShowWorkOrderDialog(true)}
               addLabel="New Work Order"
-              expandedRowId={expandedWorkOrderId}
-              onExpandChange={setExpandedWorkOrderId}
+              onRowClick={(row) => setSelectedWorkOrder(row)}
+              expandedRowId={selectedWorkOrder?.id ?? null}
               selectedRows={selectedWorkOrders}
               onSelectionChange={setSelectedWorkOrders}
               bulkActions={workOrderBulkActions}
               onBulkAction={handleWorkOrderBulkAction}
-              renderExpanded={(workOrder, onClose) => (
-                <WorkOrderDetailPanel
-                  workOrder={workOrder}
-                  onClose={onClose}
-                  onStatusChange={(id, status) => updateWorkOrderStatus.mutate({ id, status } as any)}
-                  onStartProduction={(id) => startProduction.mutate({ id })}
-                  onCompleteProduction={(id, completedQuantity) => completeProduction.mutate({ id, completedQuantity })}
-                />
-              )}
             />
           </CardContent>
         </Card>
+
+        <DetailSheet
+          open={!!selectedWorkOrder}
+          onOpenChange={(o) => !o && setSelectedWorkOrder(null)}
+          width="md"
+          title={selectedWorkOrder && (
+            <span className="flex items-center gap-2">
+              WO-{selectedWorkOrder.id}
+              {(() => {
+                const s = workOrderStatuses.find(s => s.value === selectedWorkOrder.status);
+                return s ? <Badge className={s.color}>{s.label}</Badge> : null;
+              })()}
+            </span>
+          )}
+          subtitle={selectedWorkOrder && (selectedWorkOrder.product?.name || selectedWorkOrder.bom?.name)}
+          actions={selectedWorkOrder && (
+            <>
+              {(selectedWorkOrder.status === "pending" || selectedWorkOrder.status === "draft" || selectedWorkOrder.status === "scheduled") && (
+                <Button size="sm" onClick={() => startProduction.mutate({ id: selectedWorkOrder.id })}>
+                  <Play className="h-4 w-4 mr-1" /> Start Production
+                </Button>
+              )}
+              {selectedWorkOrder.status === "in_progress" && (
+                <>
+                  <Button size="sm" variant="outline" onClick={() => updateWorkOrderStatus.mutate({ id: selectedWorkOrder.id, status: "scheduled" } as any)}>
+                    <Pause className="h-4 w-4 mr-1" /> Pause
+                  </Button>
+                  <Button size="sm" onClick={() => completeProduction.mutate({ id: selectedWorkOrder.id, completedQuantity: selectedWorkOrder.quantity })}>
+                    <CheckCircle className="h-4 w-4 mr-1" /> Complete
+                  </Button>
+                </>
+              )}
+            </>
+          )}
+        >
+          {selectedWorkOrder && <WorkOrderDetailBody workOrder={selectedWorkOrder} />}
+        </DetailSheet>
 
         {/* Quick Create Dialogs */}
         <QuickCreateDialog

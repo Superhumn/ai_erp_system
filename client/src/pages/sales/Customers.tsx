@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -23,24 +22,77 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Users, Plus, Search, Loader2, RefreshCw, ShoppingBag, Upload } from "lucide-react";
-import { useLocation } from "wouter";
+import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
+import { DetailSheet } from "@/components/DetailSheet";
+import { Users, Plus, Loader2, RefreshCw, ShoppingBag, Upload, ExternalLink, Mail, Phone, MapPin } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "wouter";
-import { getStatusColor } from "@/lib/statusColors";
+import { format } from "date-fns";
+
+const customerStatusOptions = [
+  { value: "active", label: "Active", color: "bg-emerald-500/8 text-emerald-600 dark:text-emerald-400" },
+  { value: "inactive", label: "Inactive", color: "bg-gray-500/8 text-gray-600 dark:text-gray-400" },
+  { value: "prospect", label: "Prospect", color: "bg-amber-500/8 text-amber-600 dark:text-amber-400" },
+];
+
+const sourceOptions = [
+  { value: "shopify", label: "Shopify", color: "bg-green-500/10 text-green-600" },
+  { value: "manual", label: "Manual", color: "bg-gray-500/10 text-gray-600" },
+];
+
+function CustomerSummaryBody({ customer }: { customer: any }) {
+  const location = [customer.city, customer.state, customer.country].filter(Boolean).join(", ");
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 text-sm">
+        <div className="bg-muted/50 rounded-lg p-3 col-span-2">
+          <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1.5">
+            <Mail className="h-3 w-3" /> Email
+          </div>
+          <div className="font-medium">{customer.email || "—"}</div>
+        </div>
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1.5">
+            <Phone className="h-3 w-3" /> Phone
+          </div>
+          <div className="font-medium">{customer.phone || "—"}</div>
+        </div>
+        <div className="bg-muted/50 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mb-1">Type</div>
+          <div className="font-medium capitalize">{customer.type || "—"}</div>
+        </div>
+        <div className="bg-muted/50 rounded-lg p-3 col-span-2">
+          <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1.5">
+            <MapPin className="h-3 w-3" /> Location
+          </div>
+          <div className="font-medium">
+            {customer.address ? <>{customer.address}<br /></> : null}
+            {location || "—"}
+            {customer.postalCode ? ` ${customer.postalCode}` : ""}
+          </div>
+        </div>
+      </div>
+
+      {customer.notes && (
+        <div>
+          <h4 className="text-sm font-medium mb-1">Notes</h4>
+          <p className="text-sm text-muted-foreground bg-muted/30 rounded p-2 whitespace-pre-wrap">
+            {customer.notes}
+          </p>
+        </div>
+      )}
+
+      {customer.lastSyncedAt && (
+        <p className="text-xs text-muted-foreground">
+          Last synced {format(new Date(customer.lastSyncedAt), "MMM d, yyyy 'at' p")}
+        </p>
+      )}
+    </div>
+  );
+}
 
 export default function Customers() {
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [sourceFilter, setSourceFilter] = useState<string>("all");
+  const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isSyncOpen, setIsSyncOpen] = useState(false);
   const [syncCredentials, setSyncCredentials] = useState({
@@ -90,16 +142,16 @@ export default function Customers() {
     },
   });
 
-  const filteredCustomers = useMemo(() => customers?.filter((customer) => {
-    const matchesSearch =
-      customer.name.toLowerCase().includes(search.toLowerCase()) ||
-      customer.email?.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilter === "all" || customer.status === statusFilter;
-    const matchesSource = sourceFilter === "all" ||
-      (sourceFilter === "shopify" && customer.shopifyCustomerId) ||
-      (sourceFilter === "manual" && !customer.shopifyCustomerId);
-    return matchesSearch && matchesStatus && matchesSource;
-  }), [customers, search, statusFilter, sourceFilter]);
+  // Enrich for dense display — derive source + a single-line location.
+  const enrichedCustomers = useMemo(
+    () =>
+      (customers || []).map((c: any) => ({
+        ...c,
+        _source: c.shopifyCustomerId ? "shopify" : "manual",
+        _location: [c.city, c.state, c.country].filter(Boolean).join(", ") || "—",
+      })),
+    [customers],
+  );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -128,12 +180,37 @@ export default function Customers() {
     });
   };
 
-  const getSourceBadge = (customer: any) => {
-    if (customer.shopifyCustomerId) {
-      return <Badge variant="outline" className="bg-green-500/10 text-green-600 text-xs">Shopify</Badge>;
-    }
-    return <Badge variant="outline" className="bg-gray-500/10 text-gray-600 text-xs">Manual</Badge>;
-  };
+  const columns: Column<any>[] = [
+    { key: "name", header: "Name", type: "text", sortable: true },
+    { key: "email", header: "Email", type: "text", sortable: true },
+    { key: "phone", header: "Phone", type: "text" },
+    { key: "type", header: "Type", type: "text" },
+    {
+      key: "status",
+      header: "Status",
+      type: "status",
+      options: customerStatusOptions,
+      filterable: true,
+    },
+    {
+      key: "_source",
+      header: "Source",
+      type: "badge",
+      options: sourceOptions,
+      filterable: true,
+    },
+    { key: "_location", header: "Location", type: "text" },
+    { key: "lastSyncedAt", header: "Last Synced", type: "date", sortable: true },
+    {
+      key: "notes",
+      header: "Notes",
+      type: "text",
+      render: (_row, val) => {
+        const s = typeof val === "string" ? val : "";
+        return s.length > 40 ? s.slice(0, 40) + "…" : s || "—";
+      },
+    },
+  ];
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -374,99 +451,56 @@ export default function Customers() {
         </div>
       )}
 
-      {/* Filters */}
+      {/* Customers Table */}
       <Card>
         <CardContent className="pt-6">
-          <div className="flex gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search customers..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[150px]">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="inactive">Inactive</SelectItem>
-                <SelectItem value="prospect">Prospect</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={sourceFilter} onValueChange={setSourceFilter}>
-              <SelectTrigger className="w-[150px]">
-                <SelectValue placeholder="Source" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Sources</SelectItem>
-                <SelectItem value="shopify">Shopify</SelectItem>
-                <SelectItem value="manual">Manual</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <SpreadsheetTable
+            data={enrichedCustomers}
+            columns={columns}
+            isLoading={isLoading}
+            emptyMessage="No customers yet — add manually or sync from Shopify."
+            showSearch
+            showFilters
+            showExport
+            onRowClick={(row) => setSelectedCustomer(row)}
+            expandedRowId={selectedCustomer?.id ?? null}
+            compact
+          />
         </CardContent>
       </Card>
 
-      {/* Customers Table */}
-      <Card>
-        <CardContent className="p-0">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : filteredCustomers?.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>No customers found</p>
-              <p className="text-sm mt-1">Add customers manually or sync from Shopify</p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Phone</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Source</TableHead>
-                  <TableHead>Last Synced</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredCustomers?.map((customer) => (
-                  <TableRow key={customer.id} className="cursor-pointer hover:bg-muted/50">
-                    <TableCell className="font-medium">
-                      <Link href={`/sales/customers/${customer.id}`}>
-                        <span className="hover:underline">{customer.name}</span>
-                      </Link>
-                    </TableCell>
-                    <TableCell>{customer.email || "-"}</TableCell>
-                    <TableCell>{customer.phone || "-"}</TableCell>
-                    <TableCell className="capitalize">{customer.type}</TableCell>
-                    <TableCell>
-                      <Badge className={getStatusColor(customer.status)}>
-                        {customer.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{getSourceBadge(customer)}</TableCell>
-                    <TableCell className="text-muted-foreground text-sm">
-                      {customer.lastSyncedAt 
-                        ? new Date(customer.lastSyncedAt).toLocaleDateString()
-                        : "-"}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+      <DetailSheet
+        open={!!selectedCustomer}
+        onOpenChange={(o) => !o && setSelectedCustomer(null)}
+        width="md"
+        title={
+          selectedCustomer && (
+            <span className="flex items-center gap-2">
+              {selectedCustomer.name}
+              {(() => {
+                const s = customerStatusOptions.find((x) => x.value === selectedCustomer.status);
+                return s ? <Badge className={s.color}>{s.label}</Badge> : null;
+              })()}
+            </span>
+          )
+        }
+        subtitle={
+          selectedCustomer &&
+          (selectedCustomer.type === "business" ? "Business" : "Individual")
+        }
+        actions={
+          selectedCustomer && (
+            <Button asChild size="sm" variant="outline">
+              <Link href={`/sales/customers/${selectedCustomer.id}`}>
+                Open full page
+                <ExternalLink className="h-3.5 w-3.5 ml-1.5" />
+              </Link>
+            </Button>
+          )
+        }
+      >
+        {selectedCustomer && <CustomerSummaryBody customer={selectedCustomer} />}
+      </DetailSheet>
     </div>
   );
 }

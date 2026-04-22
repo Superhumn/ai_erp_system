@@ -28,6 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
+import { DetailSheet } from "@/components/DetailSheet";
 import {
   FolderKanban,
   LayoutGrid,
@@ -709,7 +710,6 @@ export default function Projects() {
   const [viewMode, setViewMode] = useState<"kanban" | "spreadsheet">("kanban");
   const [isTaskDialogOpen, setIsTaskDialogOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<any>(null);
-  const [expandedTaskId, setExpandedTaskId] = useState<number | string | null>(null);
   const [filterProject, setFilterProject] = useState<string>("all");
   const [filterPriority, setFilterPriority] = useState<string>("all");
   
