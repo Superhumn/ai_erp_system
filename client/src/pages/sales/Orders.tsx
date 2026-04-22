@@ -372,12 +372,12 @@ export default function Orders() {
         subtitle={selectedOrder?._customerName}
         actions={
           selectedOrder && (
-            <Link href={`/sales/orders/${selectedOrder.id}`}>
-              <Button size="sm" variant="outline">
+            <Button asChild size="sm" variant="outline">
+              <Link href={`/sales/orders/${selectedOrder.id}`}>
                 Open full page
                 <ExternalLink className="h-3.5 w-3.5 ml-1.5" />
-              </Button>
-            </Link>
+              </Link>
+            </Button>
           )
         }
       >
