@@ -87,7 +87,7 @@ export async function reassignProjectTaskToHuman(projectTaskId: number, humanUse
     assigneeType: "human",
     assigneeId: humanUserId ?? null,
     assigneeAgentTaskId: null,
-    status: task.status === "in_progress" ? "in_progress" : "todo",
+    status: task.status,
   }).where(eq(projectTasks.id, projectTaskId));
 }
 
