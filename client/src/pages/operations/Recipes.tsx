@@ -8,7 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Calculator, Link2, Plus } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Calculator, Link2, Plus, Share2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Recipes() {
@@ -73,6 +74,37 @@ export default function Recipes() {
   );
 
   const [syncProductId, setSyncProductId] = useState<string>("");
+
+  // --- Copacker sharing ---
+  const [shareRecipeId, setShareRecipeId] = useState<number | null>(null);
+  const { data: copackerWarehouses } = trpc.warehouses.list.useQuery({ type: "copacker" });
+  const {
+    data: shares,
+    refetch: refetchShares,
+  } = trpc.recipes.listShares.useQuery(
+    { recipeId: shareRecipeId! },
+    { enabled: !!shareRecipeId },
+  );
+  const shareRecipe = trpc.recipes.share.useMutation({
+    onSuccess: () => { toast.success("Share updated"); refetchShares(); },
+    onError: (err) => toast.error(err.message),
+  });
+  const unshareRecipe = trpc.recipes.unshare.useMutation({
+    onSuccess: () => { toast.success("Share removed"); refetchShares(); },
+    onError: (err) => toast.error(err.message),
+  });
+  const shareRecipeName = useMemo(
+    () => recipes?.find((r) => r.id === shareRecipeId)?.name ?? "",
+    [recipes, shareRecipeId],
+  );
+  const shareByWarehouse = useMemo(() => {
+    const m = new Map<number, { shareIngredients: boolean; shareProcedures: boolean }>();
+    (shares ?? []).forEach((s: any) => m.set(s.warehouseId, {
+      shareIngredients: !!s.shareIngredients,
+      shareProcedures: !!s.shareProcedures,
+    }));
+    return m;
+  }, [shares]);
 
   return (
     <div className="p-6 space-y-6">
@@ -200,6 +232,10 @@ export default function Recipes() {
                       <Calculator className="h-4 w-4 mr-1" />
                       Cost
                     </Button>
+                    <Button variant="ghost" size="sm" onClick={() => setShareRecipeId(recipe.id)}>
+                      <Share2 className="h-4 w-4 mr-1" />
+                      Share
+                    </Button>
                   </TableCell>
                 </TableRow>
               )) : (
@@ -209,6 +245,113 @@ export default function Recipes() {
           </Table>
         </CardContent>
       </Card>
+
+      <Dialog open={shareRecipeId != null} onOpenChange={(open) => !open && setShareRecipeId(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Share recipe with copackers</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 pt-2">
+            <p className="text-sm text-muted-foreground">
+              Choose which copacker facilities can see <span className="font-medium">{shareRecipeName}</span>{" "}
+              in their portal. Toggle which parts (ingredients, procedures) each copacker receives.
+            </p>
+            {!copackerWarehouses?.length ? (
+              <p className="text-sm text-muted-foreground">
+                No copacker locations configured. Add a warehouse with type "copacker" first.
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Copacker</TableHead>
+                    <TableHead className="text-center">Ingredients</TableHead>
+                    <TableHead className="text-center">Procedures</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {copackerWarehouses.map((wh: any) => {
+                    const current = shareByWarehouse.get(wh.id);
+                    const isShared = !!current;
+                    return (
+                      <TableRow key={wh.id}>
+                        <TableCell>
+                          <div className="font-medium text-sm">{wh.name}</div>
+                          {wh.code ? <div className="text-xs text-muted-foreground font-mono">{wh.code}</div> : null}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Checkbox
+                            checked={current?.shareIngredients ?? true}
+                            disabled={!isShared || shareRecipe.isPending}
+                            onCheckedChange={(v) => {
+                              if (!shareRecipeId) return;
+                              shareRecipe.mutate({
+                                recipeId: shareRecipeId,
+                                warehouseId: wh.id,
+                                shareIngredients: !!v,
+                                shareProcedures: current?.shareProcedures ?? true,
+                              });
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Checkbox
+                            checked={current?.shareProcedures ?? true}
+                            disabled={!isShared || shareRecipe.isPending}
+                            onCheckedChange={(v) => {
+                              if (!shareRecipeId) return;
+                              shareRecipe.mutate({
+                                recipeId: shareRecipeId,
+                                warehouseId: wh.id,
+                                shareIngredients: current?.shareIngredients ?? true,
+                                shareProcedures: !!v,
+                              });
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {isShared ? (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={unshareRecipe.isPending}
+                              onClick={() => {
+                                if (!shareRecipeId) return;
+                                unshareRecipe.mutate({ recipeId: shareRecipeId, warehouseId: wh.id });
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4 mr-1" />
+                              Unshare
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              disabled={shareRecipe.isPending}
+                              onClick={() => {
+                                if (!shareRecipeId) return;
+                                shareRecipe.mutate({
+                                  recipeId: shareRecipeId,
+                                  warehouseId: wh.id,
+                                  shareIngredients: true,
+                                  shareProcedures: true,
+                                });
+                              }}
+                            >
+                              <Share2 className="h-4 w-4 mr-1" />
+                              Share
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {selectedRecipeId && selectedRecipe && (
         <Card>

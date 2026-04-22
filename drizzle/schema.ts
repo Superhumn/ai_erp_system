@@ -1872,6 +1872,24 @@ export type InsertBatchCostSnapshot = typeof batchCostSnapshots.$inferInsert;
 export type BomVersionHistory = typeof bomVersionHistory.$inferSelect;
 export type InsertBomVersionHistory = typeof bomVersionHistory.$inferInsert;
 
+// Per-copacker recipe sharing. A recipe is visible in a copacker's portal only
+// if a row exists here for their linked warehouse.
+export const recipeCopackerShares = mysqlTable("recipe_copacker_shares", {
+  id: int("id").autoincrement().primaryKey(),
+  recipeId: int("recipeId").notNull().references(() => recipes.id),
+  warehouseId: int("warehouseId").notNull().references(() => warehouses.id),
+  shareIngredients: boolean("shareIngredients").default(true).notNull(),
+  shareProcedures: boolean("shareProcedures").default(true).notNull(),
+  notes: text("notes"),
+  sharedBy: int("sharedBy").references(() => users.id),
+  sharedAt: timestamp("sharedAt").defaultNow().notNull(),
+}, (table) => ({
+  recipeWarehouseIdx: uniqueIndex("recipe_copacker_shares_recipe_warehouse_idx").on(table.recipeId, table.warehouseId),
+}));
+
+export type RecipeCopackerShare = typeof recipeCopackerShares.$inferSelect;
+export type InsertRecipeCopackerShare = typeof recipeCopackerShares.$inferInsert;
+
 // ============================================
 // COPACKER PORTAL
 // ============================================
