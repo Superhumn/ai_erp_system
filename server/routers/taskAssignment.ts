@@ -25,7 +25,7 @@ export const taskAssignmentSubRouter = router({
       .input(z.object({
         projectTaskId: z.number(),
         agentTaskType: agentTaskTypeEnum,
-        taskData: z.any().optional(),
+        taskData: z.record(z.unknown()).optional(),
         reasoning: z.string().optional(),
         confidence: z.number().min(0).max(100).optional(),
         priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
@@ -35,7 +35,7 @@ export const taskAssignmentSubRouter = router({
         const result = await assignProjectTaskToAgent({
           projectTaskId: input.projectTaskId,
           agentTaskType: input.agentTaskType,
-          taskData: (input.taskData ?? {}) as Record<string, unknown>,
+          taskData: input.taskData ?? {},
           reasoning: input.reasoning,
           confidence: input.confidence,
           priority: input.priority,
