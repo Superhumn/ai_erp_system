@@ -74,11 +74,11 @@ export async function queueFirefliesActionItemsForApproval(params: {
   preferredProjectId?: number;
   preferredAssigneeId?: number;
 }): Promise<number> {
-  if (!params.meetingId || !params.firefliesId) return 0;
+  if (!params.meetingId) return 0;
   return extractFirefliesActionItems({
     meetingId: params.meetingId,
     meetingTitle: params.meetingTitle,
-    firefliesId: params.firefliesId,
+    firefliesId: params.firefliesId ?? `meeting-${params.meetingId}`,
     actionItems: params.actionItems,
     participants: params.participants,
   });
