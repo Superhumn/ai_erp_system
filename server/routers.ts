@@ -192,7 +192,10 @@ async function getValidGoogleToken(userId: number): Promise<{ accessToken: strin
   }
   
   // Check if token needs refresh
-  if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
+  if (token.expiresAt && new Date(token.expiresAt) < new Date()) {
+    if (!token.refreshToken) {
+      return { accessToken: '', error: 'Google token has expired. Please reconnect your Google account.' };
+    }
     const refreshed = await refreshGoogleToken(token.refreshToken);
     
     if (refreshed.accessToken && refreshed.expiresAt) {
@@ -13249,8 +13252,8 @@ Ask if they received the original request and if they can provide a quote.`;
           }
 
           // Get existing folders and documents to avoid duplicates
-          const existingFolders = await db.getDataRoomFolders(input.dataRoomId, null);
-          const existingDocs = await db.getDataRoomDocuments(input.dataRoomId, null);
+          const existingFolders = await db.getDataRoomFolders(input.dataRoomId);
+          const existingDocs = await db.getDataRoomDocuments(input.dataRoomId);
           const existingFoldersByDriveId = new Map(
             existingFolders
               .filter(f => f.googleDriveFolderId)
