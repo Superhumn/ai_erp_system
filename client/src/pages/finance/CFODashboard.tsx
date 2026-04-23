@@ -479,45 +479,6 @@ export default function CFODashboard() {
         </Card>
       </div>
 
-      {/* Benchmark scorecard */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Target className="h-4 w-4 text-emerald-600" /> Series B benchmark scorecard
-          </CardTitle>
-          <CardDescription className="text-xs">
-            Top quartile / On track / Below benchmark — sourced from ICONIQ, Bessemer, OpenView SaaS surveys.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-            {[
-              { label: "Runway (mo)",        v: runwayMonths,          band: BENCHMARKS.runway,        target: "≥18",   lower: false, display: `${runwayMonths}` },
-              { label: "Burn multiple",      v: burnMultiple,          band: BENCHMARKS.burnMult,      target: "≤1.0",  lower: true,  display: burnMultiple !== null ? burnMultiple.toFixed(2) : "—" },
-              { label: "Rule of 40",         v: rule40,                band: BENCHMARKS.rule40,        target: "≥40",   lower: false, display: `${rule40.toFixed(0)}` },
-              { label: "Gross margin",       v: grossMarginPct,        band: BENCHMARKS.grossMargin,   target: "≥70%",  lower: false, display: grossMarginPct !== null ? `${grossMarginPct.toFixed(0)}%` : "—" },
-              { label: "MoM growth",         v: momGrowth,             band: BENCHMARKS.mom,           target: "≥15%",  lower: false, display: `${momGrowth.toFixed(1)}%` },
-              { label: "LTV : CAC",          v: unitEcon.ratio ?? null, band: BENCHMARKS.ltvCac,       target: "≥3x",   lower: false, display: unitEcon.ratio ? `${unitEcon.ratio.toFixed(1)}x` : "—" },
-              { label: "Top customer %",     v: concentration.topPct,  band: BENCHMARKS.concentration, target: "≤15%",  lower: true,  display: `${concentration.topPct.toFixed(0)}%` },
-              { label: "CAC payback (mo)",   v: unitEcon.cacPayback ?? null, band: BENCHMARKS.cacPayback, target: "≤12", lower: true, display: unitEcon.cacPayback ? `${unitEcon.cacPayback.toFixed(0)}` : "—" },
-            ].map((b, i) => (
-              <div key={i} className="border rounded-lg p-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">{b.label}</span>
-                  <Badge variant="outline" className="text-[9px] h-4">{b.target}</Badge>
-                </div>
-                <div className={`text-base font-bold mt-0.5 ${benchColor(b.v, b.band, b.lower)}`}>
-                  {b.display}
-                </div>
-                <div className="text-[10px] text-muted-foreground">
-                  {benchLabel(b.v, b.band, b.lower)}
-                </div>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
       {/* Strategy AI accordion */}
       <Card>
         <CardHeader className="pb-2">
