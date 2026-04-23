@@ -329,22 +329,49 @@ export default function CFODashboard() {
         </Button>
       </div>
 
-      {/* Hero KPI strip */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
-        <KpiCard icon={DollarSign} label="Cash" value={fmtCompact(cashPosition)}
-                 sub={zeroCashDate ? `Zero cash ~${zeroCashDate}` : undefined} />
-        <KpiCard icon={TrendingUp} label="ARR" value={fmtCompact(arr)}
-                 sub={netNewArr !== 0 ? `Net new ${fmtCompact(netNewArr)}` : "From trailing 3mo"} />
-        <KpiCard icon={Flame} label="Net Burn" value={`${fmtCompact(estimatedBurn)}/mo`}
-                 sub="Trailing 3mo est." />
+      {/* ── 1 · LIQUIDITY ───────────────────────────────────── */}
+      <div className="flex items-baseline gap-2 pt-1">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">1 · Liquidity</h3>
+        <span className="text-[11px] text-muted-foreground/70">Can we pay the bills, and for how long?</span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <KpiCard icon={DollarSign} label="Cash" value={fmtCompact(cashPosition)} sub="Across all accounts" />
+        <KpiCard icon={Flame} label="Net Burn" value={`${fmtCompact(estimatedBurn)}/mo`} sub="Trailing 3mo est." />
         <KpiCard icon={Clock} label="Runway"
                  value={`${runwayMonths} mo`}
                  tone={benchColor(runwayMonths, BENCHMARKS.runway)}
                  hint={benchLabel(runwayMonths, BENCHMARKS.runway)} />
+        <KpiCard icon={Activity} label="Zero-cash date"
+                 value={zeroCashDate ?? "—"}
+                 sub={zeroCashDate ? "At current burn" : "No burn detected"} />
+      </div>
+
+      {/* ── 2 · GROWTH QUALITY ──────────────────────────────── */}
+      <div className="flex items-baseline gap-2 pt-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">2 · Growth Quality</h3>
+        <span className="text-[11px] text-muted-foreground/70">How fast, and is it durable?</span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <KpiCard icon={TrendingUp} label="ARR" value={fmtCompact(arr)} sub="From trailing 3mo avg" />
+        <KpiCard icon={Zap} label="Net New ARR"
+                 value={fmtCompact(netNewArr)}
+                 tone={netNewArr >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}
+                 sub="MoM change × 12" />
         <KpiCard icon={Activity} label="MoM Growth"
                  value={`${momGrowth >= 0 ? "+" : ""}${momGrowth.toFixed(1)}%`}
                  tone={benchColor(momGrowth, BENCHMARKS.mom)}
                  hint={benchLabel(momGrowth, BENCHMARKS.mom)} />
+        <KpiCard icon={TrendingUp} label="YoY Growth"
+                 value={`${yoyGrowth >= 0 ? "+" : ""}${yoyGrowth.toFixed(0)}%`}
+                 sub="vs 12 months ago" />
+      </div>
+
+      {/* ── 3 · CAPITAL EFFICIENCY ──────────────────────────── */}
+      <div className="flex items-baseline gap-2 pt-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">3 · Capital Efficiency</h3>
+        <span className="text-[11px] text-muted-foreground/70">How much growth per dollar burned?</span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         <KpiCard icon={PieChart} label="Burn Multiple"
                  value={burnMultiple !== null ? burnMultiple.toFixed(2) : "—"}
                  tone={benchColor(burnMultiple, BENCHMARKS.burnMult, true)}
@@ -353,6 +380,10 @@ export default function CFODashboard() {
                  value={`${rule40.toFixed(0)}`}
                  tone={benchColor(rule40, BENCHMARKS.rule40)}
                  hint={benchLabel(rule40, BENCHMARKS.rule40)} />
+        <KpiCard icon={BarChart3} label="Gross Margin"
+                 value={grossMarginPct !== null ? `${grossMarginPct.toFixed(0)}%` : "—"}
+                 tone={benchColor(grossMarginPct, BENCHMARKS.grossMargin)}
+                 hint={grossMarginPct !== null ? benchLabel(grossMarginPct, BENCHMARKS.grossMargin) : "Needs model"} />
         <KpiCard icon={Users} label="LTV : CAC"
                  value={unitEcon.ratio ? `${unitEcon.ratio.toFixed(1)}x` : "—"}
                  tone={benchColor(unitEcon.ratio, BENCHMARKS.ltvCac)}
@@ -407,7 +438,11 @@ export default function CFODashboard() {
         </Card>
       </div>
 
-      {/* Concentration + AR aging */}
+      {/* ── 4 · RISK RADAR ──────────────────────────────────── */}
+      <div className="flex items-baseline gap-2 pt-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">4 · Risk Radar</h3>
+        <span className="text-[11px] text-muted-foreground/70">Concentration and collections exposure.</span>
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <Card>
           <CardHeader className="pb-2">
@@ -479,7 +514,11 @@ export default function CFODashboard() {
         </Card>
       </div>
 
-      {/* Strategy AI accordion */}
+      {/* ── 5 · ACTIONS ─────────────────────────────────────── */}
+      <div className="flex items-baseline gap-2 pt-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">5 · Actions</h3>
+        <span className="text-[11px] text-muted-foreground/70">Click a topic to generate analysis grounded in your current metrics.</span>
+      </div>
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
