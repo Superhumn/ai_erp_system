@@ -1036,6 +1036,11 @@ export default function ProcurementHub() {
   const [selectedVendor, setSelectedVendor] = useState<any | null>(null);
   const [selectedMaterial, setSelectedMaterial] = useState<any | null>(null);
 
+  // Queries
+  const { data: purchaseOrders, isLoading: posLoading, refetch: refetchPos } = trpc.purchaseOrders.list.useQuery();
+  const { data: vendors, isLoading: vendorsLoading, refetch: refetchVendors } = trpc.vendors.list.useQuery();
+  const { data: rawMaterials, isLoading: materialsLoading, refetch: refetchMaterials } = trpc.rawMaterials.list.useQuery();
+
   // Keep selected detail objects in sync when lists refetch.
   useEffect(() => {
     if (!selectedPo) return;
@@ -1085,11 +1090,6 @@ export default function ProcurementHub() {
     reorderPoint: "100",
     leadTimeDays: "14",
   });
-
-  // Queries
-  const { data: purchaseOrders, isLoading: posLoading, refetch: refetchPos } = trpc.purchaseOrders.list.useQuery();
-  const { data: vendors, isLoading: vendorsLoading, refetch: refetchVendors } = trpc.vendors.list.useQuery();
-  const { data: rawMaterials, isLoading: materialsLoading, refetch: refetchMaterials } = trpc.rawMaterials.list.useQuery();
 
   // Integration status
   const { data: integrationStatus } = trpc.integrations.getStatus.useQuery();
