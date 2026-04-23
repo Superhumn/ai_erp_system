@@ -343,7 +343,15 @@ export default function CFODashboard() {
                  hint={benchLabel(runwayMonths, BENCHMARKS.runway)} />
         <KpiCard icon={Activity} label="Zero-cash date"
                  value={zeroCashDate ?? "—"}
-                 sub={zeroCashDate ? "At current burn" : "No burn detected"} />
+                 sub={
+                   cashPosition <= 0
+                     ? "No cash available"
+                     : estimatedBurn <= 0
+                       ? "No burn detected"
+                       : zeroCashDate
+                         ? "At current burn"
+                         : "At current burn"
+                 } />
       </div>
 
       <Card>
