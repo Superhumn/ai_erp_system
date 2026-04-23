@@ -37,7 +37,7 @@ import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
-import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType, downloadDriveFile } from "./_core/googleDrive";
+import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems } from "./_core/quickbooks";
 import { listAllTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { queueFirefliesActionItemsForApproval } from "./firefliesSyncService";
@@ -12959,92 +12959,6 @@ Ask if they received the original request and if they can provide a quote.`;
           return { success: true };
         }),
     }),
-
-    // Re-download all documents that still have storageType='google_drive' and no storageUrl
-    redownloadAll: protectedProcedure
-      .input(z.object({ dataRoomId: z.number() }))
-      .mutation(async ({ input, ctx }) => {
-        const room = await db.getDataRoomById(input.dataRoomId);
-        if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
-        if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
-          throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-        }
-
-        const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
-        if (error) {
-          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
-        }
-
-        // Get all documents that are still google_drive type with no storageUrl
-        const allDocs = await db.getDataRoomDocuments(input.dataRoomId);
-        const docsToRedownload = allDocs.filter(
-          (d) => d.storageType === 'google_drive' && !d.storageUrl && d.googleDriveFileId
-        );
-
-        let successCount = 0;
-        let failCount = 0;
-
-        for (const doc of docsToRedownload) {
-          try {
-            const downloaded = await downloadDriveFile(
-              accessToken,
-              doc.googleDriveFileId!,
-              doc.mimeType || 'application/octet-stream'
-            );
-
-            if ('error' in downloaded) {
-              console.warn(`[RedownloadAll] Failed to download ${doc.name}: ${downloaded.error}`);
-              failCount++;
-              continue;
-            }
-
-            const isGoogleWorkspaceFile = (doc.mimeType || '').startsWith('application/vnd.google-apps.');
-            const effectiveMimeType = downloaded.exportedMimeType;
-            const displayName = isGoogleWorkspaceFile && !doc.name.endsWith('.pdf')
-              ? `${doc.name}.pdf`
-              : doc.name;
-
-            let newStorageUrl: string | undefined;
-            let newStorageKey: string | undefined;
-
-            // Try S3 first
-            try {
-              const fileKey = `dataroom/${input.dataRoomId}/${nanoid()}-${displayName}`;
-              const result = await storagePut(fileKey, downloaded.buffer, effectiveMimeType);
-              newStorageUrl = result.url;
-              newStorageKey = result.key;
-            } catch {
-              // S3 not configured — store as base64 data URL for files < 5MB
-              if (downloaded.buffer.length < 5 * 1024 * 1024) {
-                newStorageUrl = `data:${effectiveMimeType};base64,${downloaded.buffer.toString('base64')}`;
-              }
-            }
-
-            if (newStorageUrl) {
-              await db.updateDataRoomDocument(doc.id, {
-                storageUrl: newStorageUrl,
-                storageKey: newStorageKey,
-                storageType: 's3',
-                mimeType: effectiveMimeType,
-                name: displayName,
-                fileSize: downloaded.buffer.length,
-              } as any);
-              successCount++;
-            } else {
-              failCount++;
-            }
-          } catch (e) {
-            console.warn(`[RedownloadAll] Error processing ${doc.name}:`, e);
-            failCount++;
-          }
-        }
-
-        return {
-          total: docsToRedownload.length,
-          success: successCount,
-          failed: failCount,
-        };
-      }),
 
     // Sync from Google Drive — one-click sync of an entire Drive folder (and subfolders) into the data room
     syncFromDrive: protectedProcedure

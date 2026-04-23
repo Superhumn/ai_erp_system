@@ -59,41 +59,38 @@ function formatFileSize(bytes: number | null): string {
  * FULL content is always visible (not just a thumbnail or partial preview).
  *
  * Priority order:
- *  1. Google Drive files  → /preview URL (supports all types, full scroll)
- *  2. S3 Office files     → Microsoft Office Online embed (full workbook/doc)
- *  3. S3 PDF / txt / html → direct URL (native browser viewer)
+ *  1. Google Drive files  → our server-side proxy endpoint that streams the
+ *                            file via OAuth. The browser sees it as a
+ *                            same-origin asset, so Google's third-party
+ *                            iframe block doesn't apply and the folder can
+ *                            stay private.
+ *  2. Office files        → Microsoft Office Online embed (full workbook/doc)
+ *  3. PDF / txt / html    → direct URL (native browser viewer)
  *  4. Images              → returns storageUrl; caller renders as <img>
  *  5. Anything else       → null (show "preview unavailable")
  */
-function getViewerSrc(doc: DocumentItem): { src: string | null; isImg: boolean } {
+function getViewerSrc(doc: DocumentItem, linkCode?: string): { src: string | null; isImg: boolean } {
   const ft = (doc.fileType || "").toLowerCase();
   const isImg = ["png", "jpg", "jpeg", "gif", "svg", "webp"].includes(ft);
   const isOffice = ["doc", "docx", "xls", "xlsx", "ppt", "pptx"].includes(ft);
 
-  // ── Google Drive: always use /preview (full, iframe-safe, all types)
-  if (doc.googleDriveFileId) {
-    return { src: `https://drive.google.com/file/d/${doc.googleDriveFileId}/preview`, isImg: false };
-  }
-  if (doc.googleDriveWebViewLink) {
-    // Extract file ID from any Drive/Docs URL pattern
-    const m = doc.googleDriveWebViewLink.match(/\/d\/([^/?#]+)/);
-    if (m) {
-      return { src: `https://drive.google.com/file/d/${m[1]}/preview`, isImg: false };
-    }
+  // ── Google Drive: stream through our own proxy so private folders work
+  //    without exposing OAuth tokens to the browser and without requiring
+  //    the viewer's browser to be signed into a Google account.
+  if (doc.googleDriveFileId && doc.id != null) {
+    const qs = linkCode ? `?linkCode=${encodeURIComponent(linkCode)}` : "";
+    return { src: `/api/drive/proxy/${doc.id}${qs}`, isImg: false };
   }
 
   if (!doc.storageUrl) return { src: null, isImg: false };
 
-  // ── Images
   if (isImg) return { src: doc.storageUrl, isImg: true };
 
-  // ── Office files: route through Microsoft Office Online Viewer
   if (isOffice) {
     const encoded = encodeURIComponent(doc.storageUrl);
     return { src: `https://view.officeapps.live.com/op/embed.aspx?src=${encoded}`, isImg: false };
   }
 
-  // ── Everything else (PDF, txt, html, csv …): direct URL
   return { src: doc.storageUrl, isImg: false };
 }
 
@@ -586,7 +583,7 @@ export default function DataRoomPublic() {
               className={`w-full h-full ${pageDirection === "left" ? "dr-page-left" : "dr-page-right"}`}
             >
               {(() => {
-                const { src, isImg } = getViewerSrc(doc);
+                const { src, isImg } = getViewerSrc(doc, linkCode);
                 if (isImg && src) {
                   return (
                     <div className="flex items-center justify-center h-full p-6">

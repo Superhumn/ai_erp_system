@@ -733,6 +733,88 @@ async function startServer() {
     return handleGoogleOAuthCallback(req, res, redirectUri);
   });
 
+  // Google Drive streaming proxy — fetches a Drive file's bytes using the
+  // connected account's OAuth token (with service-account fallback) and pipes
+  // them straight to the browser. This lets the data room viewer iframe load
+  // private Drive files from our own origin, bypassing Google's third-party
+  // iframe block, without ever persisting the file to our storage.
+  //
+  // Access control:
+  //   - authenticated user must own the data room, OR
+  //   - linkCode query param must resolve to an active share link for the
+  //     data room that contains this document.
+  app.get('/api/drive/proxy/:documentId', async (req, res) => {
+    try {
+      const documentId = parseInt(req.params.documentId, 10);
+      if (!Number.isFinite(documentId)) return res.status(400).send('Invalid document id');
+
+      const doc = await db.getDataRoomDocumentById(documentId);
+      if (!doc) return res.status(404).send('Document not found');
+      if (!doc.googleDriveFileId) return res.status(400).send('Not a Google Drive document');
+
+      const dataRoom = await db.getDataRoomById(doc.dataRoomId);
+      if (!dataRoom) return res.status(404).send('Data room not found');
+
+      // Resolve who the Drive OAuth token should come from and authorize the
+      // request. The data room owner's token is always the one used to fetch
+      // the file — viewers never need their own Google connection.
+      let ownerUserId: number | null = null;
+      const linkCode = typeof req.query.linkCode === 'string' ? req.query.linkCode : null;
+
+      if (linkCode) {
+        const link = await db.getDataRoomLinkByCode(linkCode);
+        if (!link || !link.isActive) return res.status(403).send('Share link is not active');
+        if (link.expiresAt && new Date(link.expiresAt) < new Date()) return res.status(403).send('Share link has expired');
+        if (link.dataRoomId !== doc.dataRoomId) return res.status(403).send('Document not in this data room');
+        ownerUserId = dataRoom.ownerId;
+      } else {
+        const { sdk } = await import('./sdk');
+        let user: any = null;
+        try { user = await sdk.authenticateRequest(req); } catch { /* unauthenticated */ }
+        if (!user) return res.status(401).send('Not authenticated');
+        if (user.id !== dataRoom.ownerId) return res.status(403).send('Forbidden');
+        ownerUserId = user.id;
+      }
+
+      if (!ownerUserId) return res.status(500).send('Unable to resolve Drive owner');
+
+      const { accessToken, error: tokenError } = await getValidGoogleToken(ownerUserId);
+      if (tokenError || !accessToken) {
+        return res.status(502).send(`Google Drive not connected: ${tokenError || 'no token'}`);
+      }
+
+      const { resolveDriveStreamUrl, driveFetch } = await import('./googleDrive');
+      const { url, outMime } = resolveDriveStreamUrl(doc.googleDriveFileId, doc.mimeType || '');
+
+      const driveResponse = await driveFetch(url, accessToken);
+      if (!driveResponse.ok || !driveResponse.body) {
+        const body = await driveResponse.text().catch(() => '');
+        return res.status(driveResponse.status || 502).send(`Drive fetch failed: ${driveResponse.status}. ${body}`);
+      }
+
+      res.setHeader('Content-Type', driveResponse.headers.get('content-type') || outMime || 'application/octet-stream');
+      const len = driveResponse.headers.get('content-length');
+      if (len) res.setHeader('Content-Length', len);
+      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(doc.name || 'file')}"`);
+      res.setHeader('Cache-Control', 'private, max-age=60');
+
+      // Pipe Drive's response body to the client. Node's fetch returns a web
+      // ReadableStream; convert it to a Node stream for res.pipe semantics.
+      const { Readable } = await import('node:stream');
+      const nodeStream = Readable.fromWeb(driveResponse.body as any);
+      nodeStream.pipe(res);
+      nodeStream.on('error', (err) => {
+        console.error('[DriveProxy] Stream error:', err);
+        if (!res.headersSent) res.status(502);
+        res.end();
+      });
+    } catch (err: any) {
+      console.error('[DriveProxy] Handler error:', err);
+      if (!res.headersSent) res.status(500).send(`Proxy error: ${err.message}`);
+      else res.end();
+    }
+  });
+
   // Shopify OAuth callback
   app.get('/api/shopify/callback', oauthCallbackLimiter, async (req, res) => {
     const { code, shop, state } = req.query;
@@ -1242,7 +1324,7 @@ async function startServer() {
         console.log("[Data Room Sync] Starting daily auto-sync");
         setInterval(async () => {
           try {
-            const { syncDriveFolder, downloadDriveFile, getSimpleFileType } = await import("../routers").then(() => import("./googleDrive"));
+            const { syncDriveFolder, getSimpleFileType } = await import("../routers").then(() => import("./googleDrive"));
             const rooms = await db.getDataRooms();
             for (const room of rooms) {
               if (room.googleDriveFolderId) {
@@ -1251,7 +1333,6 @@ async function startServer() {
                   try {
                     const syncResult = await syncDriveFolder(roomAccessToken, room.googleDriveFolderId);
                     if (syncResult.success && syncResult.files.length > 0) {
-                      // Check for new files not yet in the data room
                       const existingDocs = await db.getDataRoomDocuments(room.id);
                       const existingDriveIds = new Set(
                         existingDocs.filter(d => d.googleDriveFileId).map(d => d.googleDriveFileId!)
@@ -1261,30 +1342,16 @@ async function startServer() {
                       for (const driveFile of syncResult.files) {
                         if (existingDriveIds.has(driveFile.id)) continue;
 
-                        // Download actual file content
-                        const downloaded = await downloadDriveFile(roomAccessToken, driveFile.id, driveFile.mimeType);
-                        const isGoogleWorkspaceFile = driveFile.mimeType.startsWith('application/vnd.google-apps.');
-                        const displayName = isGoogleWorkspaceFile ? `${driveFile.name}.pdf` : driveFile.name;
-                        const effectiveMimeType = ('exportedMimeType' in downloaded) ? downloaded.exportedMimeType : driveFile.mimeType;
-                        const fileType = getSimpleFileType(effectiveMimeType);
-
-                        let storageUrl: string | undefined;
-                        let storageType: string = 'google_drive';
-
-                        if ('buffer' in downloaded && downloaded.buffer.length < 5 * 1024 * 1024) {
-                          storageUrl = `data:${downloaded.exportedMimeType};base64,${downloaded.buffer.toString('base64')}`;
-                          storageType = 's3';
-                        }
-
+                        // Metadata-only record. Content stays in Drive and is
+                        // streamed on demand via /api/drive/proxy/:documentId.
                         await db.createDataRoomDocument({
                           dataRoomId: room.id,
                           folderId: null,
-                          name: displayName,
-                          fileType,
-                          mimeType: effectiveMimeType,
-                          fileSize: ('buffer' in downloaded) ? downloaded.buffer.length : (driveFile.size ? parseInt(driveFile.size) : undefined),
-                          storageType: storageType as any,
-                          storageUrl,
+                          name: driveFile.name,
+                          fileType: getSimpleFileType(driveFile.mimeType),
+                          mimeType: driveFile.mimeType,
+                          fileSize: driveFile.size ? parseInt(driveFile.size) : undefined,
+                          storageType: 'google_drive',
                           googleDriveFileId: driveFile.id,
                           googleDriveWebViewLink: driveFile.webViewLink,
                           thumbnailUrl: driveFile.thumbnailLink,
