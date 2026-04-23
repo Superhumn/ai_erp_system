@@ -5,6 +5,7 @@ import net from "net";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { migrate } from "drizzle-orm/mysql2/migrator";
+import mysql from "mysql2/promise";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import rateLimit from "express-rate-limit";
 import { registerOAuthRoutes } from "./oauth";
@@ -61,9 +62,14 @@ async function runMigrationsAtStartup() {
   }
   try {
     console.log("[migrate] Running pending database migrations...");
-    const migrationDb = drizzle(url);
-    await migrate(migrationDb, { migrationsFolder });
-    console.log("[migrate] Migrations completed successfully");
+    const pool = mysql.createPool(url);
+    const migrationDb = drizzle(pool);
+    try {
+      await migrate(migrationDb, { migrationsFolder });
+      console.log("[migrate] Migrations completed successfully");
+    } finally {
+      await pool.end();
+    }
   } catch (error) {
     console.error("[migrate] Migration failed:", error);
     throw error;
