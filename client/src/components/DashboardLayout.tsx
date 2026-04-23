@@ -336,7 +336,7 @@ function DashboardLayoutContent({
           disableTransition={isResizing}
         >
           {/* Lightfield-style header: logo + wordmark */}
-          <SidebarHeader className="h-14 justify-center border-b border-sidebar-border">
+          <SidebarHeader className="h-10 justify-center border-b border-sidebar-border">
             <div className="flex items-center gap-2.5 px-3 transition-all w-full">
               <button
                 onClick={toggleSidebar}
@@ -456,7 +456,7 @@ function DashboardLayoutContent({
 
       <SidebarInset className="flex flex-col bg-background">
         {/* Top bar: AI search + agent status + notifications */}
-        <header className="flex h-12 items-center justify-between gap-3 border-b border-border bg-background px-4 sticky top-0 z-40">
+        <header className="flex h-10 items-center justify-between gap-3 border-b border-border bg-background px-4 sticky top-0 z-40">
           <div className="flex items-center gap-2 shrink-0">
             {isMobile && <SidebarTrigger className="h-8 w-8 rounded-md" />}
           </div>
@@ -466,7 +466,7 @@ function DashboardLayoutContent({
             <NotificationCenter />
           </div>
         </header>
-        <main className="flex-1 overflow-auto p-3 pb-3 md:p-4 md:pb-4 lg:p-5 lg:pb-5">{children}</main>
+        <main className="flex-1 overflow-auto p-3">{children}</main>
       </SidebarInset>
 
       {/* Floating AI removed - using toolbar only */}
