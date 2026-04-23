@@ -3354,7 +3354,7 @@ export const dataRoomChecklistItems = mysqlTable("dataRoomChecklistItems", {
   checklistId: int("checklistId").notNull(),
   dataRoomId: int("dataRoomId").notNull(),
   categoryName: varchar("categoryName", { length: 255 }),
-  itemName: varchar("itemName", { length: 255 }).notNull(),
+  itemName: varchar("itemName", { length: 255 }).notNull().$default(() => ''),
   itemDescription: text("itemDescription"),
   requirement: mysqlEnum("requirement", ["required", "optional", "conditional"]).default("required").notNull(),
   status: mysqlEnum("status", ["missing", "pending", "uploaded", "approved", "rejected", "waived", "not_applicable", "complete", "partial"]).default("missing").notNull(),

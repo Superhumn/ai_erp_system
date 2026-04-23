@@ -10327,10 +10327,11 @@ export async function createStandardChecklist(
         dataRoomId,
         categoryName: category.name,
         itemName: item.name,
-        matchKeywords: item.keywords ? JSON.stringify(item.keywords) : undefined,
+        requirement: 'required',
+        matchKeywords: item.keywords ? JSON.stringify(item.keywords) : null,
         sortOrder: sortOrder++,
         status: 'missing',
-      } as any);
+      });
     }
   }
 

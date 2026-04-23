@@ -20,8 +20,72 @@ import {
 import { getDb } from "./connection";
 
 interface DDCategory { name: string; items: Array<{ name: string; keywords?: string[] }> }
-const STANDARD_DD_CATEGORIES: Record<string, DDCategory> = {};
-const SERIES_B_DD_CATEGORIES: Record<string, DDCategory> = {};
+const STANDARD_DD_CATEGORIES: Record<string, DDCategory> = {
+  corporate: {
+    name: "Corporate Documents",
+    items: [
+      { name: "Certificate of Incorporation", keywords: ["incorporation", "certificate", "articles"] },
+      { name: "Bylaws / Operating Agreement", keywords: ["bylaws", "operating agreement"] },
+      { name: "Board Minutes", keywords: ["board minutes", "board resolutions"] },
+      { name: "Shareholder Agreement", keywords: ["shareholder", "stockholder"] },
+      { name: "Cap Table", keywords: ["cap table", "capitalization", "equity"] },
+      { name: "Good Standing Certificate", keywords: ["good standing"] },
+    ],
+  },
+  financial: {
+    name: "Financial Documents",
+    items: [
+      { name: "Audited Financial Statements", keywords: ["audited", "financial statements", "audit"] },
+      { name: "Tax Returns (3 years)", keywords: ["tax return", "1120", "tax filing"] },
+      { name: "Revenue Projections", keywords: ["revenue projection", "forecast", "financial model"] },
+      { name: "Accounts Receivable Aging", keywords: ["accounts receivable", "AR aging"] },
+      { name: "Accounts Payable Aging", keywords: ["accounts payable", "AP aging"] },
+      { name: "Bank Statements", keywords: ["bank statement"] },
+    ],
+  },
+  legal: {
+    name: "Legal & Compliance",
+    items: [
+      { name: "Material Contracts", keywords: ["contract", "agreement", "material"] },
+      { name: "Litigation Summary", keywords: ["litigation", "lawsuit", "legal proceedings"] },
+      { name: "IP Portfolio", keywords: ["intellectual property", "patent", "trademark", "IP"] },
+      { name: "Regulatory Licenses", keywords: ["license", "permit", "regulatory"] },
+      { name: "Insurance Policies", keywords: ["insurance", "policy", "coverage"] },
+    ],
+  },
+  operations: {
+    name: "Operations",
+    items: [
+      { name: "Org Chart", keywords: ["org chart", "organization", "team structure"] },
+      { name: "Key Employee List", keywords: ["employee", "key personnel", "management team"] },
+      { name: "Employee Benefits Summary", keywords: ["benefits", "401k", "health insurance"] },
+      { name: "Vendor Agreements", keywords: ["vendor", "supplier", "procurement"] },
+      { name: "Customer Contracts", keywords: ["customer contract", "client agreement"] },
+    ],
+  },
+};
+const SERIES_B_DD_CATEGORIES: Record<string, DDCategory> = {
+  ...STANDARD_DD_CATEGORIES,
+  growth: {
+    name: "Growth & Market",
+    items: [
+      { name: "Market Analysis", keywords: ["market analysis", "TAM", "SAM", "market size"] },
+      { name: "Competitive Landscape", keywords: ["competitive", "competitor", "market position"] },
+      { name: "Customer Acquisition Metrics", keywords: ["CAC", "customer acquisition", "LTV"] },
+      { name: "Unit Economics", keywords: ["unit economics", "margin", "contribution"] },
+      { name: "Growth Strategy Deck", keywords: ["growth strategy", "expansion plan"] },
+    ],
+  },
+  technology: {
+    name: "Technology & Product",
+    items: [
+      { name: "Product Roadmap", keywords: ["product roadmap", "feature plan"] },
+      { name: "Technical Architecture", keywords: ["architecture", "tech stack", "infrastructure"] },
+      { name: "Security Audit Report", keywords: ["security audit", "penetration test", "SOC 2"] },
+      { name: "Data Privacy Compliance", keywords: ["GDPR", "CCPA", "data privacy", "privacy policy"] },
+    ],
+  },
+};
 
 // Data Rooms
 export async function createDataRoom(data: InsertDataRoom) {
@@ -1624,9 +1688,8 @@ export async function createStandardChecklist(
         dataRoomId,
         categoryName: category.name,
         itemName: item.name,
-        itemDescription: undefined,
         requirement: 'required',
-        matchKeywords: JSON.stringify(item.keywords),
+        matchKeywords: item.keywords ? JSON.stringify(item.keywords) : null,
         sortOrder: sortOrder++,
         status: 'missing',
       });
