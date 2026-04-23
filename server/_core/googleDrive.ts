@@ -204,13 +204,7 @@ export async function syncDriveFolder(
   }
   
   try {
-    // Start with the root folder's files
-    const { files: rootFiles, error: rootFileError } = await listDriveFiles(accessToken, folderId);
-    if (!rootFileError) {
-      allFiles.push(...rootFiles);
-    }
-    
-    // Sync subfolders
+    // Sync root folder and all subfolders recursively
     await syncRecursive(folderId, 1);
     
     return {

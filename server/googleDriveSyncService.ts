@@ -130,7 +130,6 @@ export async function syncGoogleDriveFolder(options: SyncOptions): Promise<SyncR
             name: driveFolder.name,
             googleDriveFolderId: driveFolder.id,
           } as any);
-          const folderId = typeof folderResult === 'number' ? folderResult : (folderResult as any).id;
 
           folderMapping.set(driveFolder.id, folderResult.id);
           foldersCreated++;
