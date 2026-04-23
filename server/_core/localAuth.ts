@@ -15,6 +15,7 @@ import { isEmailConfigured, sendEmail } from "./email";
 
 const SALT_LENGTH = 32;
 const HASH_ITERATIONS = 600000;
+const HASH_ITERATIONS_LEGACY = 100000; // iteration count used before April 2026
 const KEY_LENGTH = 64;
 const DIGEST = "sha512";
 
@@ -118,10 +119,17 @@ function getClientIp(req: Request): string {
 }
 
 /**
- * Hash a password using PBKDF2
+ * Hash a password using PBKDF2 with a given iteration count.
+ */
+function hashPasswordWithIterations(password: string, salt: string, iterations: number): string {
+  return pbkdf2Sync(password, salt, iterations, KEY_LENGTH, DIGEST).toString("hex");
+}
+
+/**
+ * Hash a password using PBKDF2 (current iteration count)
  */
 function hashPassword(password: string, salt: string): string {
-  return pbkdf2Sync(password, salt, HASH_ITERATIONS, KEY_LENGTH, DIGEST).toString("hex");
+  return hashPasswordWithIterations(password, salt, HASH_ITERATIONS);
 }
 
 function generateSalt(): string {
@@ -129,12 +137,24 @@ function generateSalt(): string {
 }
 
 /**
- * Verify a password against a hash
+ * Verify a password against a hash.
+ * Returns { valid, needsUpgrade } where needsUpgrade is true when the stored
+ * hash was produced with the legacy iteration count and should be re-hashed.
  */
-function verifyPassword(password: string, salt: string, hash: string): boolean {
-  const passwordHash = hashPassword(password, salt);
-  if (passwordHash.length !== hash.length) return false;
-  return timingSafeEqual(Buffer.from(passwordHash), Buffer.from(hash));
+function verifyPassword(password: string, salt: string, hash: string): { valid: boolean; needsUpgrade: boolean } {
+  const passwordHash = hashPasswordWithIterations(password, salt, HASH_ITERATIONS);
+  if (passwordHash.length === hash.length && timingSafeEqual(Buffer.from(passwordHash), Buffer.from(hash))) {
+    return { valid: true, needsUpgrade: false };
+  }
+
+  // Fallback: try the legacy iteration count for accounts created before the
+  // HASH_ITERATIONS increase (100k → 600k, April 2026).
+  const legacyHash = hashPasswordWithIterations(password, salt, HASH_ITERATIONS_LEGACY);
+  if (legacyHash.length === hash.length && timingSafeEqual(Buffer.from(legacyHash), Buffer.from(hash))) {
+    return { valid: true, needsUpgrade: true };
+  }
+
+  return { valid: false, needsUpgrade: false };
 }
 
 /**
@@ -389,11 +409,20 @@ export function registerLocalAuthRoutes(app: Express) {
       }
 
       // Verify password
-      const isValid = verifyPassword(password, credentials.salt, credentials.passwordHash);
+      const { valid: isValid, needsUpgrade } = verifyPassword(password, credentials.salt, credentials.passwordHash);
       if (!isValid) {
         const failedUser = await db.getUserByOpenId(credentials.openId);
         await logAuthEvent("view", "auth_login_failed", failedUser?.id, clientIp, email.toLowerCase());
         return res.status(401).json({ error: "Invalid email or password" });
+      }
+
+      // Transparently upgrade legacy hashes (100k → 600k iterations)
+      if (needsUpgrade) {
+        const newSalt = generateSalt();
+        const newHash = hashPassword(password, newSalt);
+        await db.updateLocalAuthCredential(credentials.openId, { passwordHash: newHash, salt: newSalt }).catch((err) => {
+          console.error("[Local Auth] Failed to upgrade password hash for openId=%s: %s", credentials.openId, err?.message || err);
+        });
       }
 
       // Update user's last signed in timestamp
@@ -462,7 +491,7 @@ export function registerLocalAuthRoutes(app: Express) {
       }
 
       // Verify current password
-      const isValid = verifyPassword(currentPassword, credentials.salt, credentials.passwordHash);
+      const { valid: isValid } = verifyPassword(currentPassword, credentials.salt, credentials.passwordHash);
       if (!isValid) {
         return res.status(401).json({ error: "Current password is incorrect" });
       }
