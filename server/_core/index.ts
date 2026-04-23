@@ -3,6 +3,8 @@ import express from "express";
 import { createServer } from "http";
 import net from "net";
 import { sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/mysql2";
+import { migrate } from "drizzle-orm/mysql2/migrator";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import rateLimit from "express-rate-limit";
 import { registerOAuthRoutes } from "./oauth";
@@ -41,6 +43,31 @@ function serveStatic(app: import("express").Express) {
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.sendFile(path.resolve(distPath, "index.html"));
   });
+}
+
+async function runMigrationsAtStartup() {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    console.warn("[migrate] DATABASE_URL is not set, skipping migrations");
+    return;
+  }
+  // Resolve the migrations folder relative to this file so it works both in
+  // development (server/_core/index.ts → ../../drizzle) and in production
+  // (dist/_core/index.js → ../../drizzle, since the Dockerfile copies drizzle/).
+  const migrationsFolder = path.resolve(import.meta.dirname, "../../drizzle");
+  if (!fs.existsSync(migrationsFolder)) {
+    console.warn(`[migrate] Migrations folder not found at ${migrationsFolder}, skipping auto-migration`);
+    return;
+  }
+  try {
+    console.log("[migrate] Running pending database migrations...");
+    const migrationDb = drizzle(url);
+    await migrate(migrationDb, { migrationsFolder });
+    console.log("[migrate] Migrations completed successfully");
+  } catch (error) {
+    console.error("[migrate] Migration failed:", error);
+    throw error;
+  }
 }
 
 async function verifyDatabaseReadiness() {
@@ -377,6 +404,7 @@ async function startServer() {
 
   validateRequiredSecrets();
   validateCriticalConfig();
+  await runMigrationsAtStartup();
   await verifyDatabaseReadiness();
 
   // Ensure critical tables exist + cleanup placeholders
