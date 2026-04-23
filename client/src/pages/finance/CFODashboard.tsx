@@ -162,8 +162,21 @@ export default function CFODashboard() {
     monthlyRevenue.slice(-3).reduce((s, b) => s + b.revenue, 0) / 3, [monthlyRevenue]);
   const momGrowth = lastMonthRev > 0
     ? ((thisMonthRev - lastMonthRev) / lastMonthRev) * 100 : 0;
-  const yoyRev = monthlyRevenue[0]?.revenue ?? 0;
-  const yoyGrowth = yoyRev > 0 ? ((thisMonthRev - yoyRev) / yoyRev) * 100 : 0;
+
+  // YoY: compare current month to the same calendar month 12 months ago
+  const yoyBaseRev = useMemo(() => {
+    const now = new Date();
+    const sameMonthLastYear = new Date(now.getFullYear() - 1, now.getMonth(), 1);
+    const key = `${sameMonthLastYear.getFullYear()}-${sameMonthLastYear.getMonth()}`;
+    let total = 0;
+    for (const inv of (invoicesList ?? [])) {
+      const d = new Date((inv as any).issueDate || (inv as any).createdAt);
+      if (`${d.getFullYear()}-${d.getMonth()}` === key)
+        total += parseFloat((inv as any).totalAmount || "0");
+    }
+    return total;
+  }, [invoicesList]);
+  const yoyGrowth = yoyBaseRev > 0 ? ((thisMonthRev - yoyBaseRev) / yoyBaseRev) * 100 : 0;
 
   const arr = threeMonthAvgRev * 12;
   const netNewArr = (thisMonthRev - lastMonthRev) * 12;
@@ -394,7 +407,7 @@ export default function CFODashboard() {
                  hint={benchLabel(momGrowth, BENCHMARKS.mom)} />
         <KpiCard icon={TrendingUp} label="YoY Growth"
                  value={`${yoyGrowth >= 0 ? "+" : ""}${yoyGrowth.toFixed(0)}%`}
-                 sub="vs 12 months ago" />
+                 sub="vs same month last year" />
       </div>
 
       <Card>
