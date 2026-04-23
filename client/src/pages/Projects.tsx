@@ -781,6 +781,7 @@ export default function Projects() {
     onError: (err: any) => toast.error(err.message),
   });
 
+  const [expandedTaskId, setExpandedTaskId] = useState<number | null>(null);
   const [assignAiTask, setAssignAiTask] = useState<any>(null);
   const [assignAiForm, setAssignAiForm] = useState({
     agentTaskType: "send_email",

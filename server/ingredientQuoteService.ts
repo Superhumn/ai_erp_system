@@ -182,7 +182,7 @@ export async function sendIngredientRfqToVendors(quoteRequestId: number): Promis
       await sendEmail({
         to: vendor.email,
         subject: emailContent.subject,
-        payload: { html_body: emailContent.htmlBody },
+        html: emailContent.htmlBody,
       });
       invitationsSent++;
     } catch {
