@@ -346,6 +346,29 @@ export default function CFODashboard() {
                  sub={zeroCashDate ? "At current burn" : "No burn detected"} />
       </div>
 
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Clock className="h-4 w-4 text-cyan-600" /> Cash runway — 18mo scenarios
+          </CardTitle>
+          <CardDescription className="text-xs">Bear (-25% rev) · Base (flat) · Bull (+20% rev) · dashed line = zero cash</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={runwayProjection}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+              <XAxis dataKey="month" tick={{ fontSize: 10 }} interval={2} />
+              <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 10 }} width={55} />
+              <Tooltip content={<ChartTip />} />
+              <ReferenceLine y={0} stroke={CHART.burn} strokeDasharray="3 3" />
+              <Area type="monotone" dataKey="Bull" stroke={CHART.grossProfit} fill={CHART.grossProfit} fillOpacity={0.12} />
+              <Area type="monotone" dataKey="Base" stroke={CHART.cash}        fill={CHART.cash}        fillOpacity={0.18} />
+              <Area type="monotone" dataKey="Bear" stroke={CHART.burn}        fill={CHART.burn}        fillOpacity={0.1}  />
+            </AreaChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
       {/* ── 2 · GROWTH QUALITY ──────────────────────────────── */}
       <div className="flex items-baseline gap-2 pt-2">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">2 · Growth Quality</h3>
@@ -365,6 +388,28 @@ export default function CFODashboard() {
                  value={`${yoyGrowth >= 0 ? "+" : ""}${yoyGrowth.toFixed(0)}%`}
                  sub="vs 12 months ago" />
       </div>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-blue-600" /> Revenue trajectory — trailing 12mo
+          </CardTitle>
+          <CardDescription className="text-xs">
+            3mo avg {fmtCompact(threeMonthAvgRev)} · YoY {yoyGrowth >= 0 ? "+" : ""}{yoyGrowth.toFixed(0)}%
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={monthlyRevenue}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+              <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 10 }} width={55} />
+              <Tooltip content={<ChartTip />} />
+              <Bar dataKey="revenue" fill={CHART.revenue} radius={[3, 3, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
 
       {/* ── 3 · CAPITAL EFFICIENCY ──────────────────────────── */}
       <div className="flex items-baseline gap-2 pt-2">
@@ -388,54 +433,6 @@ export default function CFODashboard() {
                  value={unitEcon.ratio ? `${unitEcon.ratio.toFixed(1)}x` : "—"}
                  tone={benchColor(unitEcon.ratio, BENCHMARKS.ltvCac)}
                  hint={unitEcon.ratio ? benchLabel(unitEcon.ratio, BENCHMARKS.ltvCac) : "Add KPI goals"} />
-      </div>
-
-      {/* Runway chart + Revenue trajectory */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Clock className="h-4 w-4 text-cyan-600" /> Cash runway — 18mo scenarios
-            </CardTitle>
-            <CardDescription className="text-xs">Bear (-25% rev), Base (flat), Bull (+20% rev)</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={runwayProjection}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                <XAxis dataKey="month" tick={{ fontSize: 10 }} interval={2} />
-                <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 10 }} width={55} />
-                <Tooltip content={<ChartTip />} />
-                <ReferenceLine y={0} stroke={CHART.burn} strokeDasharray="3 3" />
-                <Area type="monotone" dataKey="Bull" stroke={CHART.grossProfit} fill={CHART.grossProfit} fillOpacity={0.12} />
-                <Area type="monotone" dataKey="Base" stroke={CHART.cash}        fill={CHART.cash}        fillOpacity={0.18} />
-                <Area type="monotone" dataKey="Bear" stroke={CHART.burn}        fill={CHART.burn}        fillOpacity={0.1}  />
-              </AreaChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-blue-600" /> Revenue trajectory — trailing 12mo
-            </CardTitle>
-            <CardDescription className="text-xs">
-              3mo avg {fmtCompact(threeMonthAvgRev)} · YoY {yoyGrowth >= 0 ? "+" : ""}{yoyGrowth.toFixed(0)}%
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={monthlyRevenue}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-                <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 10 }} width={55} />
-                <Tooltip content={<ChartTip />} />
-                <Bar dataKey="revenue" fill={CHART.revenue} radius={[3, 3, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
       </div>
 
       {/* ── 4 · RISK RADAR ──────────────────────────────────── */}
