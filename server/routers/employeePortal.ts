@@ -246,7 +246,8 @@ export const employeePortalRouter = router({
         const req = await db.getLeaveRequestById(input.id);
         if (!req) throw new TRPCError({ code: "NOT_FOUND", message: "Leave request not found" });
         const target = await db.getEmployeeById(req.employeeId);
-        const isManager = target?.managerId && target.managerId === ctx.user.id;
+        const actingEmployee = await db.getEmployeeByUserId(ctx.user.id);
+        const isManager = actingEmployee != null && target?.managerId != null && target.managerId === actingEmployee.id;
         if (!isManager && !["admin", "exec"].includes(ctx.user.role)) {
           throw new TRPCError({ code: "FORBIDDEN", message: "Only managers/admins can decide" });
         }
@@ -367,8 +368,11 @@ export const employeePortalRouter = router({
 
     // ---- Team (for managers) ----
     myTeam: protectedProcedure.query(async ({ ctx }) => {
+      const actingEmployee = await db.getEmployeeByUserId(ctx.user.id);
       const all = await db.getEmployees();
-      const reports = all.filter((e) => e.managerId === ctx.user.id);
+      const reports = actingEmployee
+        ? all.filter((e) => e.managerId === actingEmployee.id)
+        : [];
       const pending = await db.getLeaveRequests({ status: "pending" });
       const reportIds = new Set(reports.map((r) => r.id));
       return {
