@@ -24,8 +24,6 @@ import {
   FileText,
   Sparkles,
   Loader2,
-  ChevronDown,
-  ChevronUp,
   BarChart3,
   TrendingUp,
   TrendingDown,
@@ -36,12 +34,6 @@ import {
   Upload,
   Plus,
   DollarSign,
-  Flame,
-  Clock,
-  Shield,
-  Presentation,
-  Calculator,
-  Activity,
 } from "lucide-react";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
@@ -336,70 +328,8 @@ export default function FinancialReports() {
   const [modelCategory, setModelCategory] = useState<string>("all");
   const [kpiYear, setKpiYear] = useState(new Date().getFullYear());
 
-  // CFO Strategy state
-  const [expandedStrategy, setExpandedStrategy] = useState<string | null>(null);
-  const [strategyResults, setStrategyResults] = useState<Record<string, string>>({});
-
-  // CFO Strategy data sources
+  // Banking data (shown in the Banking card at the bottom)
   const { data: bankBalances } = trpc.banking.balances.useQuery();
-  const { data: invoicesList } = trpc.invoices.list.useQuery();
-
-  const cashPosition = useMemo(() =>
-    bankBalances?.accounts?.reduce(
-      (sum: number, a: any) => sum + (a.currentBalance ?? a.availableBalance ?? 0), 0
-    ) ?? 0, [bankBalances]);
-
-  const monthlyRevenue = useMemo(() => {
-    if (!invoicesList) return 0;
-    const now = new Date();
-    const thisMonth = invoicesList.filter((i: any) => {
-      const d = new Date(i.issueDate || i.createdAt);
-      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-    });
-    return thisMonth.reduce((s: number, i: any) => s + parseFloat(i.totalAmount || "0"), 0);
-  }, [invoicesList]);
-
-  const lastMonthRevenue = useMemo(() => {
-    if (!invoicesList) return 0;
-    const now = new Date();
-    const lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const prev = invoicesList.filter((i: any) => {
-      const d = new Date(i.issueDate || i.createdAt);
-      return d.getMonth() === lm.getMonth() && d.getFullYear() === lm.getFullYear();
-    });
-    return prev.reduce((s: number, i: any) => s + parseFloat(i.totalAmount || "0"), 0);
-  }, [invoicesList]);
-
-  const revenueGrowth = lastMonthRevenue > 0
-    ? Math.round(((monthlyRevenue - lastMonthRevenue) / lastMonthRevenue) * 100)
-    : 0;
-
-  const estimatedBurn = useMemo(() => {
-    // rough: cash change over last month as burn proxy
-    return Math.max(monthlyRevenue * 0.7, 10000); // fallback estimate
-  }, [monthlyRevenue]);
-
-  const runwayMonths = estimatedBurn > 0 ? Math.round((cashPosition / estimatedBurn) * 10) / 10 : 0;
-
-  const strategyMutation = trpc.financialReports.aiAnalysis.useMutation({
-    onSuccess: (data, variables: any) => {
-      const stratId = variables?.strategyId;
-      if (stratId) {
-        setStrategyResults((prev) => ({ ...prev, [stratId]: data.analysis }));
-      }
-    },
-  });
-
-  const handleStrategyClick = (id: string, prompt: string) => {
-    if (expandedStrategy === id) {
-      setExpandedStrategy(null);
-      return;
-    }
-    setExpandedStrategy(id);
-    if (!strategyResults[id]) {
-      strategyMutation.mutate({ reportType: "cfo_strategy", reportData: prompt, strategyId: id });
-    }
-  };
 
   const generateMutation = trpc.financialReports.generate.useMutation({
     onSuccess: (data) => {
@@ -749,64 +679,6 @@ export default function FinancialReports() {
           <span className="ml-2 text-sm text-muted-foreground">Generating report...</span>
         </div>
       )}
-
-      {/* ── CFO Strategy (top of page) ────────────────────────── */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2">
-            <Activity className="h-5 w-5" />
-            CFO Strategy
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="border rounded-lg p-3">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1"><DollarSign className="h-3 w-3" /> Cash Position</div>
-              <p className="text-lg font-bold">{fmtCompact(cashPosition)}</p>
-            </div>
-            <div className="border rounded-lg p-3">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1"><Flame className="h-3 w-3" /> Monthly Burn</div>
-              <p className="text-lg font-bold">{fmtCompact(estimatedBurn)}</p>
-            </div>
-            <div className="border rounded-lg p-3">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1"><Clock className="h-3 w-3" /> Runway</div>
-              <p className={`text-lg font-bold ${runwayMonths > 12 ? "text-green-600" : runwayMonths > 6 ? "text-yellow-600" : "text-red-600"}`}>{runwayMonths} mo</p>
-            </div>
-            <div className="border rounded-lg p-3">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1"><TrendingUp className="h-3 w-3" /> Revenue Growth</div>
-              <p className={`text-lg font-bold ${revenueGrowth >= 0 ? "text-green-600" : "text-red-600"}`}>{revenueGrowth >= 0 ? "+" : ""}{revenueGrowth}%</p>
-            </div>
-          </div>
-          <div className="border rounded-lg divide-y">
-            {[
-              { id: "fundraising", icon: Target, label: "Fundraising Readiness Check", prompt: `Analyze fundraising readiness: cash=${cashPosition}, burn=${estimatedBurn}, runway=${runwayMonths}mo, MoM growth=${revenueGrowth}%. Assess investor-readiness metrics, data room checklist, and recommended fundraising timeline.` },
-              { id: "board_report", icon: Presentation, label: "Board Report Generator", prompt: `Generate board report data: revenue=${monthlyRevenue}, cash=${cashPosition}, burn=${estimatedBurn}, runway=${runwayMonths}mo, growth=${revenueGrowth}%. Include KPI summary, financial highlights, risks, and asks.` },
-              { id: "scenario", icon: BarChart3, label: "Scenario Planning", prompt: `Run scenario analysis with current metrics: cash=${cashPosition}, burn=${estimatedBurn}, revenue=${monthlyRevenue}. Model 3 scenarios: conservative (flat growth), base (${revenueGrowth}% MoM), aggressive (2x growth). Show runway and hiring capacity for each.` },
-              { id: "tax", icon: Calculator, label: "Tax Planning", prompt: `Analyze tax planning: revenue=${monthlyRevenue * 12}/yr estimated. Identify estimated quarterly tax liability, R&D tax credit eligibility, deduction opportunities, and entity structure considerations for a startup.` },
-              { id: "compliance", icon: Shield, label: "Compliance Checklist", prompt: `Generate SOX/audit readiness checklist for a startup: assess internal controls, financial reporting procedures, revenue recognition compliance, data security, and audit preparation status. Include priority ratings.` },
-              { id: "working_capital", icon: Activity, label: "Working Capital Analysis", prompt: `Analyze working capital: cash=${cashPosition}, monthly revenue=${monthlyRevenue}. Assess accounts receivable health, payable optimization, inventory efficiency, and cash conversion cycle. Recommend improvements.` },
-            ].map(({ id, icon: Icon, label, prompt }) => (
-              <div key={id}>
-                <button className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/50 transition-colors" onClick={() => handleStrategyClick(id, prompt)}>
-                  <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <span className="text-sm font-medium flex-1">{label}</span>
-                  {strategyMutation.isPending && expandedStrategy === id ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                  ) : expandedStrategy === id ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
-                </button>
-                {expandedStrategy === id && strategyResults[id] && (
-                  <div className="px-4 pb-4">
-                    <div className="bg-muted/30 rounded-lg p-4 text-sm whitespace-pre-wrap leading-relaxed">
-                      <div className="flex items-center gap-2 mb-2 text-xs text-muted-foreground"><Sparkles className="h-3 w-3" /> AI Analysis</div>
-                      {strategyResults[id]}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
 
       {/* ── Financial Charts ─────────────────────────────────── */}
       {revenueCogsChartData.length > 0 && (
@@ -1234,25 +1106,6 @@ export default function FinancialReports() {
                   </button>
                 ))}
               </div>
-            </CardContent>
-          </Card>
-          <Card className="py-2">
-            <CardHeader className="pb-1 px-3">
-              <CardTitle className="text-xs text-muted-foreground uppercase tracking-wider">CFO Strategy</CardTitle>
-            </CardHeader>
-            <CardContent className="px-2 py-0 space-y-0.5">
-              {[
-                { id: "fundraising", label: "Fundraising Readiness" },
-                { id: "board_report", label: "Board Report" },
-                { id: "scenario", label: "Scenario Planning" },
-                { id: "tax", label: "Tax Planning" },
-                { id: "compliance", label: "Compliance Checklist" },
-                { id: "working_capital", label: "Working Capital" },
-              ].map(s => (
-                <button key={s.id} className={`w-full text-left px-2 py-1.5 text-xs rounded-lg hover:bg-muted transition-colors ${expandedStrategy === s.id ? "bg-primary/10 text-primary font-medium" : ""}`} onClick={() => handleStrategyClick(s.id, s.label)}>
-                  {s.label}
-                </button>
-              ))}
             </CardContent>
           </Card>
           <Card className="py-2">

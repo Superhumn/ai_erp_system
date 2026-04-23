@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { DollarSign, BarChart3, FlaskConical } from "lucide-react";
+import { DollarSign, BarChart3, FlaskConical, Zap } from "lucide-react";
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 
 const AccountsAndTransactions = lazy(() => import("./AccountsAndTransactions"));
 const FinancialReports = lazy(() => import("./FinancialReports"));
+const CFODashboard = lazy(() => import("./CFODashboard"));
 const RdTaxCredit = lazy(() => import("./RdTaxCredit"));
 
 const fallback = (
@@ -25,7 +26,7 @@ export default function FinanceHub() {
           Finance
         </h1>
         <p className="text-muted-foreground mt-1">
-          Accounts, transactions, reports, and R&D tax credits
+          Accounts, transactions, reports, CFO strategy, and R&D tax credits
         </p>
       </div>
 
@@ -34,6 +35,10 @@ export default function FinanceHub() {
           <TabsTrigger value="ledger" className="flex items-center gap-1.5">
             <DollarSign className="h-4 w-4" />
             Accounts & Transactions
+          </TabsTrigger>
+          <TabsTrigger value="cfo" className="flex items-center gap-1.5">
+            <Zap className="h-4 w-4" />
+            CFO
           </TabsTrigger>
           <TabsTrigger value="reports" className="flex items-center gap-1.5">
             <BarChart3 className="h-4 w-4" />
@@ -47,6 +52,9 @@ export default function FinanceHub() {
 
         <TabsContent value="ledger">
           <Suspense fallback={fallback}><AccountsAndTransactions /></Suspense>
+        </TabsContent>
+        <TabsContent value="cfo">
+          <Suspense fallback={fallback}><CFODashboard /></Suspense>
         </TabsContent>
         <TabsContent value="reports">
           <Suspense fallback={fallback}><FinancialReports /></Suspense>
