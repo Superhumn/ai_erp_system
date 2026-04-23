@@ -165,12 +165,12 @@ const CodeEditor = lazy(() => import("./pages/Code"));
 const ApprovalQueue = lazy(() => import("./pages/ai/ApprovalQueue"));
 
 // AI Analytics Pages
-import FinanceAI from "./pages/finance/FinanceAI";
-import HRAIInsights from "./pages/hr/HRAIInsights";
-import ManufacturingAI from "./pages/operations/ManufacturingAI";
-import LegalAI from "./pages/legal/LegalAI";
-import ProjectsAI from "./pages/projects/ProjectsAI";
-import SupplierScoring from "./pages/operations/SupplierScoring";
+const FinanceAI = lazy(() => import("./pages/finance/FinanceAI"));
+const HRAIInsights = lazy(() => import("./pages/hr/HRAIInsights"));
+const ManufacturingAI = lazy(() => import("./pages/operations/ManufacturingAI"));
+const LegalAI = lazy(() => import("./pages/legal/LegalAI"));
+const ProjectsAI = lazy(() => import("./pages/projects/ProjectsAI"));
+const SupplierScoring = lazy(() => import("./pages/operations/SupplierScoring"));
 
 // Autonomous Supply Chain
 const AutonomousDashboard = lazy(() => import("./pages/autonomous/Dashboard"));
