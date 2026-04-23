@@ -212,6 +212,29 @@ export default function CFODashboard() {
 
   const rule40 = (yoyGrowth || 0) + (ebitdaMarginPct ?? 0);
 
+  // Margin trajectory from financial model (multi-year projection)
+  const marginTrajectory = useMemo(() => {
+    const rows = modelData ?? [];
+    const byYear: Record<number, { revenue: number; gp: number; eb: number }> = {};
+    for (const r of rows) {
+      const y = (r as any).year;
+      if (!y) continue;
+      if (!byYear[y]) byYear[y] = { revenue: 0, gp: 0, eb: 0 };
+      const val = parseFloat((r as any).projectedValue ?? "0");
+      const name = ((r as any).metricName || "").toLowerCase();
+      if (name === "revenue") byYear[y].revenue += val;
+      else if (name === "gross profit") byYear[y].gp += val;
+      else if (name === "ebitda") byYear[y].eb += val;
+    }
+    return Object.entries(byYear)
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .map(([yr, d]) => ({
+        year: `Y${yr}`,
+        "Gross Margin %": d.revenue > 0 ? Math.round((d.gp / d.revenue) * 1000) / 10 : 0,
+        "EBITDA Margin %": d.revenue > 0 ? Math.round((d.eb / d.revenue) * 1000) / 10 : 0,
+      }));
+  }, [modelData]);
+
   // ── Unit economics from KPI goals ──────────────────────────
   const unitEcon = useMemo(() => {
     const find = (needle: string) => {
@@ -455,6 +478,32 @@ export default function CFODashboard() {
                  tone={benchColor(unitEcon.ratio, BENCHMARKS.ltvCac)}
                  hint={unitEcon.ratio ? benchLabel(unitEcon.ratio, BENCHMARKS.ltvCac) : "Add KPI goals"} />
       </div>
+
+      {marginTrajectory.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 text-violet-600" /> Margin trajectory — financial model
+            </CardTitle>
+            <CardDescription className="text-xs">
+              Projected gross and EBITDA margin % by year. Series B benchmark: gross ≥70%, EBITDA improving.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={marginTrajectory}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                <XAxis dataKey="year" tick={{ fontSize: 10 }} />
+                <YAxis tickFormatter={(v: number) => `${v.toFixed(0)}%`} tick={{ fontSize: 10 }} width={45} />
+                <Tooltip content={<ChartTip />} />
+                <ReferenceLine y={70} stroke={CHART.grossProfit} strokeDasharray="2 3" label={{ value: "70% target", fontSize: 9, fill: CHART.grossProfit, position: "insideTopRight" }} />
+                <Line type="monotone" dataKey="Gross Margin %" stroke={CHART.grossProfit} strokeWidth={2} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="EBITDA Margin %" stroke={CHART.ebitda} strokeWidth={2} dot={{ r: 3 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
 
       {/* ── 4 · RISK RADAR ──────────────────────────────────── */}
       <div className="flex items-baseline gap-2 pt-2">
