@@ -800,29 +800,22 @@ export default function DataRoomDetail() {
                         const isImg = ["png","jpg","jpeg","gif","webp","svg"].includes(ft);
                         const isOffice = ["doc","docx","xls","xlsx","ppt","pptx"].includes(ft);
 
-                        // Prefer our S3 copy over Drive's /preview iframe.
-                        // Drive refuses to render private files in a third-party
-                        // iframe unless the viewer's browser is signed into a
-                        // Google account with access, showing a "content is
-                        // blocked" screen. Our synced S3 copy has no such
-                        // restriction.
-                        if (selectedDoc.storageType === "google_drive" && !selectedDoc.storageUrl) {
-                          const drivePreviewUrl = selectedDoc.googleDriveFileId
-                            ? getGooglePreviewUrl(selectedDoc.googleDriveFileId)
-                            : selectedDoc.googleDriveWebViewLink ?? null;
-                          if (drivePreviewUrl) {
-                            return (
-                              <iframe
-                                key={selectedDoc.id}
-                                src={drivePreviewUrl}
-                                className="w-full h-full border-0"
-                                sandbox="allow-same-origin allow-scripts allow-popups"
-                                referrerPolicy="no-referrer"
-                                allow="autoplay"
-                                title={selectedDoc.name}
-                              />
-                            );
-                          }
+                        // Google Drive files: stream through our own proxy
+                        // endpoint. The server uses the connected Google
+                        // account's OAuth token to fetch the bytes on demand,
+                        // so the folder can stay private and the browser
+                        // never sees Google's third-party iframe block.
+                        if (selectedDoc.storageType === "google_drive" && selectedDoc.id != null) {
+                          return (
+                            <iframe
+                              key={selectedDoc.id}
+                              src={`/api/drive/proxy/${selectedDoc.id}`}
+                              className="w-full h-full border-0"
+                              referrerPolicy="no-referrer"
+                              allow="autoplay"
+                              title={selectedDoc.name}
+                            />
+                          );
                         }
 
                         if (!selectedDoc.storageUrl) {
@@ -830,11 +823,7 @@ export default function DataRoomDetail() {
                             <div className="flex-1 flex flex-col items-center justify-center gap-3 h-full text-muted-foreground">
                               <FileText className="h-14 w-14 opacity-20" />
                               <p className="text-sm font-medium">Preview not available</p>
-                              <p className="text-xs opacity-70">
-                                {selectedDoc.storageType === "google_drive"
-                                  ? "This file is in Google Drive but hasn't been synced to local storage yet. Run the Drive sync, or share the folder with the connected Google account so the server can download it."
-                                  : "No file URL found."}
-                              </p>
+                              <p className="text-xs opacity-70">No file URL found.</p>
                             </div>
                           );
                         }

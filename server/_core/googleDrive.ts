@@ -17,7 +17,7 @@ import {
  * private folders that are shared with the service account be read even when
  * the logged-in user has no direct access.
  */
-async function driveFetch(url: string, userAccessToken: string): Promise<Response> {
+export async function driveFetch(url: string, userAccessToken: string): Promise<Response> {
   const primary = await fetch(url, {
     headers: { Authorization: `Bearer ${userAccessToken}` },
   });
@@ -280,6 +280,26 @@ export async function getFileMetadata(
   } catch (error: any) {
     return { file: null, error: error.message };
   }
+}
+
+/**
+ * Resolve the Drive URL to fetch a file's bytes from, plus the effective
+ * output MIME type after any Google Workspace → PDF/PNG export conversion.
+ * Used by the streaming proxy endpoint so the browser gets a viewable file
+ * without the server having to buffer it.
+ */
+export function resolveDriveStreamUrl(fileId: string, mimeType: string): { url: string; outMime: string } {
+  const exportType = GOOGLE_DOCS_EXPORT_TYPES[mimeType];
+  if (exportType) {
+    return {
+      url: `${GOOGLE_DRIVE_API}/files/${fileId}/export?mimeType=${encodeURIComponent(exportType.mimeType)}`,
+      outMime: exportType.mimeType,
+    };
+  }
+  return {
+    url: `${GOOGLE_DRIVE_API}/files/${fileId}?alt=media&supportsAllDrives=true`,
+    outMime: mimeType,
+  };
 }
 
 /**
