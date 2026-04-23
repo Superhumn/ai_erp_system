@@ -12743,6 +12743,43 @@ Ask if they received the original request and if they can provide a quote.`;
           await db.deleteDataRoomLink(input.id);
           return { success: true };
         }),
+
+      // Owner preview: get or create a permanent no-gate link so the owner
+      // can see the exact investor view without needing a share link.
+      getOrCreateOwnerPreviewLink: protectedProcedure
+        .input(z.object({ dataRoomId: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const room = await db.getDataRoomById(input.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
+          // Look for an existing owner-preview link
+          const allLinks = await db.getDataRoomLinks(input.dataRoomId);
+          const existing = allLinks.find((l) => l.name === '__owner_preview__');
+          if (existing) return { linkCode: existing.linkCode };
+
+          // Create a permanent, no-gate link
+          const linkCode = `owner-preview-${nanoid(12)}`;
+          await db.createDataRoomLink({
+            dataRoomId: input.dataRoomId,
+            linkCode,
+            name: '__owner_preview__',
+            password: null,
+            expiresAt: null,
+            maxViews: null,
+            allowDownload: true,
+            allowPrint: true,
+            requireEmail: false,
+            requireName: false,
+            requireCompany: false,
+            requirePhone: false,
+            isActive: true,
+            createdBy: ctx.user.id,
+          });
+          return { linkCode };
+        }),
     }),
 
     // Visitors and analytics

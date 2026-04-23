@@ -199,6 +199,15 @@ export default function DataRoomDetail() {
 
   const utils = trpc.useUtils();
 
+  const ownerPreviewMutation = trpc.dataRoom.links.getOrCreateOwnerPreviewLink.useMutation({
+    onSuccess: (data) => {
+      window.open(`/share/${data.linkCode}`, '_blank');
+    },
+    onError: (error) => {
+      toast.error(error.message || 'Failed to open preview');
+    },
+  });
+
   const blockVisitorMutation = trpc.dataRoom.visitors.block.useMutation({
     onSuccess: () => {
       toast.success("Visitor blocked");
@@ -397,17 +406,11 @@ export default function DataRoomDetail() {
           </Button>
           <Button
             variant="outline"
-            onClick={() => {
-              const firstLink = links?.[0];
-              if (firstLink) {
-                window.open(`/share/${firstLink.linkCode}`, '_blank');
-              } else {
-                toast.error("No share link exists yet. Create one first.");
-              }
-            }}
+            onClick={() => ownerPreviewMutation.mutate({ dataRoomId: roomId })}
+            disabled={ownerPreviewMutation.isPending}
           >
             <ExternalLink className="h-4 w-4 mr-2" />
-            Preview
+            {ownerPreviewMutation.isPending ? 'Opening...' : 'Preview as Investor'}
           </Button>
           <Button
             variant="outline"
@@ -1002,7 +1005,7 @@ export default function DataRoomDetail() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {links.map((link) => (
+                      {links.filter((link) => link.name !== '__owner_preview__').map((link) => (
                         <TableRow key={link.id}>
                           <TableCell>
                             <div className="font-medium">{link.name || "Unnamed Link"}</div>
