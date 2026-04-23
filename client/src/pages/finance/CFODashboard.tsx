@@ -365,6 +365,44 @@ export default function CFODashboard() {
         </Button>
       </div>
 
+      {/* Executive summary banner — section health + top concern */}
+      {(() => {
+        const dot = (ok: boolean, warn: boolean) =>
+          ok ? "bg-emerald-500" : warn ? "bg-amber-500" : "bg-red-500";
+        const liquidityDot = dot(runwayMonths >= 18, runwayMonths >= 12);
+        const growthDot    = dot(momGrowth >= 15, momGrowth >= 8);
+        const efficiencyDot = burnMultiple === null
+          ? "bg-muted-foreground"
+          : dot(burnMultiple <= 1, burnMultiple <= 2);
+        const riskDot      = dot(concentration.topPct <= 15 && arAging.d90 === 0, concentration.topPct <= 25);
+
+        let headline = "All sections on track.";
+        if (runwayMonths > 0 && runwayMonths < 6)
+          headline = `Runway ${runwayMonths}mo — cash is the headline. Cut burn or accelerate a raise this week.`;
+        else if (concentration.topPct > 40)
+          headline = `Customer concentration ${concentration.topPct.toFixed(0)}% — diversification should be a board topic.`;
+        else if (runwayMonths > 0 && runwayMonths < 12)
+          headline = `Runway ${runwayMonths}mo — plan the next raise in the current quarter.`;
+        else if (burnMultiple !== null && burnMultiple > 3)
+          headline = `Burn multiple ${burnMultiple.toFixed(2)} — growth efficiency is off; revisit pricing or CAC.`;
+        else if (momGrowth < 3)
+          headline = `Growth slowing (${momGrowth.toFixed(1)}% MoM). Pipeline review recommended.`;
+        else if (arAging.d90 > 0)
+          headline = `${fmtCompact(arAging.d90)} AR over 60 days — trigger collections cadence.`;
+
+        return (
+          <div className="border rounded-lg bg-muted/30 px-3 py-2 flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-3 text-[11px] uppercase tracking-wider text-muted-foreground">
+              <span className="flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${liquidityDot}`} />Liquidity</span>
+              <span className="flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${growthDot}`} />Growth</span>
+              <span className="flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${efficiencyDot}`} />Efficiency</span>
+              <span className="flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${riskDot}`} />Risk</span>
+            </div>
+            <span className="text-xs text-foreground flex-1 min-w-0">{headline}</span>
+          </div>
+        );
+      })()}
+
       {/* ── 1 · LIQUIDITY ───────────────────────────────────── */}
       <div className="flex items-baseline gap-2 pt-1">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">1 · Liquidity</h3>
