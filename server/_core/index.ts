@@ -49,7 +49,9 @@ function serveStatic(app: import("express").Express) {
 async function runMigrationsAtStartup() {
   const url = process.env.DATABASE_URL;
   if (!url) {
-    console.warn("[migrate] DATABASE_URL is not set, skipping migrations");
+    // In production validateRequiredSecrets() already throws; this guard only
+    // applies to local dev where DATABASE_URL may legitimately be absent.
+    console.warn("[migrate] DATABASE_URL is not set, skipping auto-migration");
     return;
   }
   // Resolve the migrations folder relative to this file so it works both in
@@ -71,7 +73,11 @@ async function runMigrationsAtStartup() {
       await pool.end();
     }
   } catch (error) {
-    console.error("[migrate] Migration failed:", error);
+    console.error(
+      `[migrate] Migration failed at ${migrationsFolder}. ` +
+      "Verify that the migration files exist and DATABASE_URL is correct.",
+      error
+    );
     throw error;
   }
 }
