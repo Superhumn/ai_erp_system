@@ -34,3 +34,67 @@ Any change to `getMenuGroups()` will fail CI.
 
 `Sales & Finance`, `CRM` (as section), `Communications` (as section), `AI Assistant`,
 `Approval Queue`, `Support`, `Equity Portal`, `Time Tracking`, `Inventory Mgmt`
+
+---
+
+## Stack
+
+- **Frontend:** React 19 + Vite 7 + Tailwind v4 + Radix UI + wouter (routing) + TanStack Query + tRPC 11 client
+- **Backend:** Express 4 + tRPC 11 + Drizzle ORM + MySQL (via `mysql2`)
+- **Tests:** Vitest (unit) + Playwright (e2e)
+- **Language:** TypeScript 5.9, ESM
+- **Package manager:** pnpm
+
+## Commands
+
+| Command              | Purpose                                                       |
+|----------------------|---------------------------------------------------------------|
+| `pnpm dev`           | Dev server (tsx watch on `server/_core/index.ts`)             |
+| `pnpm build`         | Build client (vite) + bundle server (esbuild) to `dist/`      |
+| `pnpm check`         | Typecheck (`tsc --noEmit`)                                    |
+| `pnpm check:strict`  | Typecheck with `tsconfig.strict.json`                         |
+| `pnpm test`          | Vitest unit tests                                             |
+| `pnpm test:e2e`      | Playwright e2e tests                                          |
+| `pnpm db:push`       | Generate + apply Drizzle migrations                           |
+| `pnpm format`        | Prettier write                                                |
+
+## Repo map
+
+```
+client/src/          React app
+  pages/             Top-level routes + feature folders
+                     (ai, autonomous, crm, edi, finance, freight, grants,
+                      hr, legal, marketing, operations, ...)
+  components/        Shared UI (DashboardLayout, AIChatBox, ...)
+  _core/hooks/       Reusable hooks
+server/              Express + tRPC backend
+  _core/             Entry point, tRPC setup, infra (llm, email,
+                     oauth, gmail, googleDrive, quickbooks, shopify, ...)
+  routers/           Per-feature tRPC routers (preferred home for new routes)
+  routers/index.ts   Router aggregation
+  routers.ts         LEGACY (21k lines) — see warning below
+  db/                Preferred home for new DB helpers
+  db.ts              LEGACY (12k lines) — see warning below
+shared/              Types + constants used by both client and server
+drizzle/             SQL migrations + schema.ts (6.4k lines)
+scripts/             One-off imports / cleanups
+e2e/                 Playwright specs
+docs/                Feature + integration docs
+```
+
+## Large-file warnings
+
+Do **not** read these in full. Use `grep` / `rg` or `Read` with `offset`/`limit`.
+
+- `server/routers.ts` — **21,798 lines**. New routes go in `server/routers/<feature>.ts`, not here.
+- `server/db.ts` — **12,503 lines**. New DB helpers go in `server/db/`.
+- `drizzle/schema.ts` — **6,413 lines**. Drizzle table definitions.
+
+## Conventions
+
+- **New API routes:** add a file under `server/routers/<feature>.ts` and register it in `server/routers/index.ts`.
+- **New pages:** add under `client/src/pages/<feature>/`, route in `client/src/App.tsx` (wouter).
+- **Cross-boundary types:** live in `shared/types.ts`.
+- **DB changes:** edit `drizzle/schema.ts`, run `pnpm db:push`.
+- **UI:** Tailwind utilities + Radix primitives (shadcn config in `components.json`).
+- **Sidebar:** never modify `DashboardLayout.tsx`'s `getMenuGroups()` — it's the contract enforced by the tests referenced above.
