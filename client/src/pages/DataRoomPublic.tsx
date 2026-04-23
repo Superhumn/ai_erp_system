@@ -59,42 +59,41 @@ function formatFileSize(bytes: number | null): string {
  * FULL content is always visible (not just a thumbnail or partial preview).
  *
  * Priority order:
- *  1. Google Drive files  → /preview URL (supports all types, full scroll)
- *  2. S3 Office files     → Microsoft Office Online embed (full workbook/doc)
- *  3. S3 PDF / txt / html → direct URL (native browser viewer)
- *  4. Images              → returns storageUrl; caller renders as <img>
- *  5. Anything else       → null (show "preview unavailable")
+ *  1. Our own S3 copy       → always safe, works for anonymous viewers
+ *  2. Google Drive /preview → only when no S3 copy exists (viewer must be
+ *                             signed into a Google account with access, or
+ *                             Google shows "This content is blocked")
+ *  3. Nothing available     → null (show "preview unavailable")
  */
 function getViewerSrc(doc: DocumentItem): { src: string | null; isImg: boolean } {
   const ft = (doc.fileType || "").toLowerCase();
   const isImg = ["png", "jpg", "jpeg", "gif", "svg", "webp"].includes(ft);
   const isOffice = ["doc", "docx", "xls", "xlsx", "ppt", "pptx"].includes(ft);
 
-  // ── Google Drive: always use /preview (full, iframe-safe, all types)
+  // ── Prefer our S3 copy whenever we have one; Drive /preview refuses to
+  //    render in iframes for private files unless the viewer's browser is
+  //    already signed into a Google account with access.
+  if (doc.storageUrl) {
+    if (isImg) return { src: doc.storageUrl, isImg: true };
+    if (isOffice) {
+      const encoded = encodeURIComponent(doc.storageUrl);
+      return { src: `https://view.officeapps.live.com/op/embed.aspx?src=${encoded}`, isImg: false };
+    }
+    return { src: doc.storageUrl, isImg: false };
+  }
+
+  // ── Fall back to Google Drive preview when we have no local copy
   if (doc.googleDriveFileId) {
     return { src: `https://drive.google.com/file/d/${doc.googleDriveFileId}/preview`, isImg: false };
   }
   if (doc.googleDriveWebViewLink) {
-    // Extract file ID from any Drive/Docs URL pattern
     const m = doc.googleDriveWebViewLink.match(/\/d\/([^/?#]+)/);
     if (m) {
       return { src: `https://drive.google.com/file/d/${m[1]}/preview`, isImg: false };
     }
   }
 
-  if (!doc.storageUrl) return { src: null, isImg: false };
-
-  // ── Images
-  if (isImg) return { src: doc.storageUrl, isImg: true };
-
-  // ── Office files: route through Microsoft Office Online Viewer
-  if (isOffice) {
-    const encoded = encodeURIComponent(doc.storageUrl);
-    return { src: `https://view.officeapps.live.com/op/embed.aspx?src=${encoded}`, isImg: false };
-  }
-
-  // ── Everything else (PDF, txt, html, csv …): direct URL
-  return { src: doc.storageUrl, isImg: false };
+  return { src: null, isImg: false };
 }
 
 function getFileIcon(fileType: string) {
