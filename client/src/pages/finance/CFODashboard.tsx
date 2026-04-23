@@ -19,9 +19,11 @@ function fmtCompact(value: number | string | null | undefined): string {
   if (value === null || value === undefined) return "—";
   const num = typeof value === "string" ? parseFloat(value) : value;
   if (!Number.isFinite(num)) return "—";
-  if (Math.abs(num) >= 1_000_000) return `$${(num / 1_000_000).toFixed(1)}M`;
-  if (Math.abs(num) >= 1_000) return `$${(num / 1_000).toFixed(0)}K`;
-  return `$${num.toFixed(0)}`;
+  const sign = num < 0 ? "-" : "";
+  const abs = Math.abs(num);
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(0)}K`;
+  return `${sign}$${abs.toFixed(0)}`;
 }
 
 function fmtAxis(value: number): string {
@@ -162,8 +164,21 @@ export default function CFODashboard() {
     monthlyRevenue.slice(-3).reduce((s, b) => s + b.revenue, 0) / 3, [monthlyRevenue]);
   const momGrowth = lastMonthRev > 0
     ? ((thisMonthRev - lastMonthRev) / lastMonthRev) * 100 : 0;
-  const yoyRev = monthlyRevenue[0]?.revenue ?? 0;
-  const yoyGrowth = yoyRev > 0 ? ((thisMonthRev - yoyRev) / yoyRev) * 100 : 0;
+
+  // YoY: compare current month to the same calendar month 12 months ago
+  const yoyBaseRev = useMemo(() => {
+    const now = new Date();
+    const sameMonthLastYear = new Date(now.getFullYear() - 1, now.getMonth(), 1);
+    const key = `${sameMonthLastYear.getFullYear()}-${sameMonthLastYear.getMonth()}`;
+    let total = 0;
+    for (const inv of (invoicesList ?? [])) {
+      const d = new Date((inv as any).issueDate || (inv as any).createdAt);
+      if (`${d.getFullYear()}-${d.getMonth()}` === key)
+        total += parseFloat((inv as any).totalAmount || "0");
+    }
+    return total;
+  }, [invoicesList]);
+  const yoyGrowth = yoyBaseRev > 0 ? ((thisMonthRev - yoyBaseRev) / yoyBaseRev) * 100 : 0;
 
   const arr = threeMonthAvgRev * 12;
   const netNewArr = (thisMonthRev - lastMonthRev) * 12;
@@ -198,6 +213,29 @@ export default function CFODashboard() {
   }, [modelData]);
 
   const rule40 = (yoyGrowth || 0) + (ebitdaMarginPct ?? 0);
+
+  // Margin trajectory from financial model (multi-year projection)
+  const marginTrajectory = useMemo(() => {
+    const rows = modelData ?? [];
+    const byYear: Record<number, { revenue: number; gp: number; eb: number }> = {};
+    for (const r of rows) {
+      const y = (r as any).year;
+      if (!y) continue;
+      if (!byYear[y]) byYear[y] = { revenue: 0, gp: 0, eb: 0 };
+      const val = parseFloat((r as any).projectedValue ?? "0");
+      const name = ((r as any).metricName || "").toLowerCase();
+      if (name === "revenue") byYear[y].revenue += val;
+      else if (name === "gross profit") byYear[y].gp += val;
+      else if (name === "ebitda") byYear[y].eb += val;
+    }
+    return Object.entries(byYear)
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .map(([yr, d]) => ({
+        year: `Y${yr}`,
+        "Gross Margin %": d.revenue > 0 ? Math.round((d.gp / d.revenue) * 1000) / 10 : 0,
+        "EBITDA Margin %": d.revenue > 0 ? Math.round((d.eb / d.revenue) * 1000) / 10 : 0,
+      }));
+  }, [modelData]);
 
   // ── Unit economics from KPI goals ──────────────────────────
   const unitEcon = useMemo(() => {
@@ -329,22 +367,140 @@ export default function CFODashboard() {
         </Button>
       </div>
 
-      {/* Hero KPI strip */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
-        <KpiCard icon={DollarSign} label="Cash" value={fmtCompact(cashPosition)}
-                 sub={zeroCashDate ? `Zero cash ~${zeroCashDate}` : undefined} />
-        <KpiCard icon={TrendingUp} label="ARR" value={fmtCompact(arr)}
-                 sub={netNewArr !== 0 ? `Net new ${fmtCompact(netNewArr)}` : "From trailing 3mo"} />
-        <KpiCard icon={Flame} label="Net Burn" value={`${fmtCompact(estimatedBurn)}/mo`}
-                 sub="Trailing 3mo est." />
+      {/* Executive summary banner — section health + top concern */}
+      {(() => {
+        const dot = (ok: boolean, warn: boolean) =>
+          ok ? "bg-emerald-500" : warn ? "bg-amber-500" : "bg-red-500";
+        const liquidityDot = dot(runwayMonths >= 18, runwayMonths >= 12);
+        const growthDot    = dot(momGrowth >= 15, momGrowth >= 8);
+        const efficiencyDot = burnMultiple === null
+          ? "bg-muted-foreground"
+          : dot(burnMultiple <= 1, burnMultiple <= 2);
+        const riskDot      = dot(concentration.topPct <= 15 && arAging.d90 === 0, concentration.topPct <= 25);
+
+        let headline = "All sections on track.";
+        if (runwayMonths > 0 && runwayMonths < 6)
+          headline = `Runway ${runwayMonths}mo — cash is the headline. Cut burn or accelerate a raise this week.`;
+        else if (concentration.topPct > 40)
+          headline = `Customer concentration ${concentration.topPct.toFixed(0)}% — diversification should be a board topic.`;
+        else if (runwayMonths > 0 && runwayMonths < 12)
+          headline = `Runway ${runwayMonths}mo — plan the next raise in the current quarter.`;
+        else if (burnMultiple !== null && burnMultiple > 3)
+          headline = `Burn multiple ${burnMultiple.toFixed(2)} — growth efficiency is off; revisit pricing or CAC.`;
+        else if (momGrowth < 3)
+          headline = `Growth slowing (${momGrowth.toFixed(1)}% MoM). Pipeline review recommended.`;
+        else if (arAging.d90 > 0)
+          headline = `${fmtCompact(arAging.d90)} AR over 60 days — trigger collections cadence.`;
+
+        return (
+          <div className="border rounded-lg bg-muted/30 px-3 py-2 flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-3 text-[11px] uppercase tracking-wider text-muted-foreground">
+              <span className="flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${liquidityDot}`} />Liquidity</span>
+              <span className="flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${growthDot}`} />Growth</span>
+              <span className="flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${efficiencyDot}`} />Efficiency</span>
+              <span className="flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${riskDot}`} />Risk</span>
+            </div>
+            <span className="text-xs text-foreground flex-1 min-w-0">{headline}</span>
+          </div>
+        );
+      })()}
+
+      {/* ── 1 · LIQUIDITY ───────────────────────────────────── */}
+      <div className="flex items-baseline gap-2 pt-1">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">1 · Liquidity</h3>
+        <span className="text-[11px] text-muted-foreground/70">Can we pay the bills, and for how long?</span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <KpiCard icon={DollarSign} label="Cash" value={fmtCompact(cashPosition)} sub="Across all accounts" />
+        <KpiCard icon={Flame} label="Net Burn" value={`${fmtCompact(estimatedBurn)}/mo`} sub="Trailing 3mo est." />
         <KpiCard icon={Clock} label="Runway"
                  value={`${runwayMonths} mo`}
                  tone={benchColor(runwayMonths, BENCHMARKS.runway)}
                  hint={benchLabel(runwayMonths, BENCHMARKS.runway)} />
+        <KpiCard icon={Activity} label="Zero-cash date"
+                 value={zeroCashDate ?? "—"}
+                 sub={
+                   cashPosition <= 0
+                     ? "No cash available"
+                     : estimatedBurn <= 0
+                       ? "No burn detected"
+                       : zeroCashDate
+                         ? "At current burn"
+                         : "At current burn"
+                 } />
+      </div>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Clock className="h-4 w-4 text-cyan-600" /> Cash runway — 18mo scenarios
+          </CardTitle>
+          <CardDescription className="text-xs">Bear (-25% rev) · Base (flat) · Bull (+20% rev) · dashed line = zero cash</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={runwayProjection}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+              <XAxis dataKey="month" tick={{ fontSize: 10 }} interval={2} />
+              <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 10 }} width={55} />
+              <Tooltip content={<ChartTip />} />
+              <ReferenceLine y={0} stroke={CHART.burn} strokeDasharray="3 3" />
+              <Area type="monotone" dataKey="Bull" stroke={CHART.grossProfit} fill={CHART.grossProfit} fillOpacity={0.12} />
+              <Area type="monotone" dataKey="Base" stroke={CHART.cash}        fill={CHART.cash}        fillOpacity={0.18} />
+              <Area type="monotone" dataKey="Bear" stroke={CHART.burn}        fill={CHART.burn}        fillOpacity={0.1}  />
+            </AreaChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      {/* ── 2 · GROWTH QUALITY ──────────────────────────────── */}
+      <div className="flex items-baseline gap-2 pt-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">2 · Growth Quality</h3>
+        <span className="text-[11px] text-muted-foreground/70">How fast, and is it durable?</span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <KpiCard icon={TrendingUp} label="ARR" value={fmtCompact(arr)} sub="From trailing 3mo avg" />
+        <KpiCard icon={Zap} label="Net New ARR"
+                 value={fmtCompact(netNewArr)}
+                 tone={netNewArr >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}
+                 sub="MoM change × 12" />
         <KpiCard icon={Activity} label="MoM Growth"
                  value={`${momGrowth >= 0 ? "+" : ""}${momGrowth.toFixed(1)}%`}
                  tone={benchColor(momGrowth, BENCHMARKS.mom)}
                  hint={benchLabel(momGrowth, BENCHMARKS.mom)} />
+        <KpiCard icon={TrendingUp} label="YoY Growth"
+                 value={`${yoyGrowth >= 0 ? "+" : ""}${yoyGrowth.toFixed(0)}%`}
+                 sub="vs same month last year" />
+      </div>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-blue-600" /> Revenue trajectory — trailing 12mo
+          </CardTitle>
+          <CardDescription className="text-xs">
+            3mo avg {fmtCompact(threeMonthAvgRev)} · YoY {yoyGrowth >= 0 ? "+" : ""}{yoyGrowth.toFixed(0)}%
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={monthlyRevenue}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+              <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 10 }} width={55} />
+              <Tooltip content={<ChartTip />} />
+              <Bar dataKey="revenue" fill={CHART.revenue} radius={[3, 3, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      {/* ── 3 · CAPITAL EFFICIENCY ──────────────────────────── */}
+      <div className="flex items-baseline gap-2 pt-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">3 · Capital Efficiency</h3>
+        <span className="text-[11px] text-muted-foreground/70">How much growth per dollar burned?</span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         <KpiCard icon={PieChart} label="Burn Multiple"
                  value={burnMultiple !== null ? burnMultiple.toFixed(2) : "—"}
                  tone={benchColor(burnMultiple, BENCHMARKS.burnMult, true)}
@@ -353,61 +509,47 @@ export default function CFODashboard() {
                  value={`${rule40.toFixed(0)}`}
                  tone={benchColor(rule40, BENCHMARKS.rule40)}
                  hint={benchLabel(rule40, BENCHMARKS.rule40)} />
+        <KpiCard icon={BarChart3} label="Gross Margin"
+                 value={grossMarginPct !== null ? `${grossMarginPct.toFixed(0)}%` : "—"}
+                 tone={benchColor(grossMarginPct, BENCHMARKS.grossMargin)}
+                 hint={grossMarginPct !== null ? benchLabel(grossMarginPct, BENCHMARKS.grossMargin) : "Needs model"} />
         <KpiCard icon={Users} label="LTV : CAC"
                  value={unitEcon.ratio ? `${unitEcon.ratio.toFixed(1)}x` : "—"}
                  tone={benchColor(unitEcon.ratio, BENCHMARKS.ltvCac)}
                  hint={unitEcon.ratio ? benchLabel(unitEcon.ratio, BENCHMARKS.ltvCac) : "Add KPI goals"} />
       </div>
 
-      {/* Runway chart + Revenue trajectory */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+      {marginTrajectory.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2">
-              <Clock className="h-4 w-4 text-cyan-600" /> Cash runway — 18mo scenarios
-            </CardTitle>
-            <CardDescription className="text-xs">Bear (-25% rev), Base (flat), Bull (+20% rev)</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={runwayProjection}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                <XAxis dataKey="month" tick={{ fontSize: 10 }} interval={2} />
-                <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 10 }} width={55} />
-                <Tooltip content={<ChartTip />} />
-                <ReferenceLine y={0} stroke={CHART.burn} strokeDasharray="3 3" />
-                <Area type="monotone" dataKey="Bull" stroke={CHART.grossProfit} fill={CHART.grossProfit} fillOpacity={0.12} />
-                <Area type="monotone" dataKey="Base" stroke={CHART.cash}        fill={CHART.cash}        fillOpacity={0.18} />
-                <Area type="monotone" dataKey="Bear" stroke={CHART.burn}        fill={CHART.burn}        fillOpacity={0.1}  />
-              </AreaChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-blue-600" /> Revenue trajectory — trailing 12mo
+              <BarChart3 className="h-4 w-4 text-violet-600" /> Margin trajectory — financial model
             </CardTitle>
             <CardDescription className="text-xs">
-              3mo avg {fmtCompact(threeMonthAvgRev)} · YoY {yoyGrowth >= 0 ? "+" : ""}{yoyGrowth.toFixed(0)}%
+              Projected gross and EBITDA margin % by year. Series B benchmark: gross ≥70%, EBITDA improving.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={monthlyRevenue}>
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={marginTrajectory}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-                <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 10 }} width={55} />
-                <Tooltip content={<ChartTip />} />
-                <Bar dataKey="revenue" fill={CHART.revenue} radius={[3, 3, 0, 0]} />
-              </BarChart>
+                <XAxis dataKey="year" tick={{ fontSize: 10 }} />
+                <YAxis tickFormatter={(v: number) => `${v.toFixed(0)}%`} tick={{ fontSize: 10 }} width={45} />
+                <Tooltip formatter={(value: number | string) => `${Number(value).toFixed(1)}%`} />
+                <ReferenceLine y={70} stroke={CHART.grossProfit} strokeDasharray="2 3" label={{ value: "70% target", fontSize: 9, fill: CHART.grossProfit, position: "insideTopRight" }} />
+                <Line type="monotone" dataKey="Gross Margin %" stroke={CHART.grossProfit} strokeWidth={2} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="EBITDA Margin %" stroke={CHART.ebitda} strokeWidth={2} dot={{ r: 3 }} />
+              </LineChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
-      </div>
+      )}
 
-      {/* Concentration + AR aging */}
+      {/* ── 4 · RISK RADAR ──────────────────────────────────── */}
+      <div className="flex items-baseline gap-2 pt-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">4 · Risk Radar</h3>
+        <span className="text-[11px] text-muted-foreground/70">Concentration and collections exposure.</span>
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <Card>
           <CardHeader className="pb-2">
@@ -479,46 +621,11 @@ export default function CFODashboard() {
         </Card>
       </div>
 
-      {/* Benchmark scorecard */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Target className="h-4 w-4 text-emerald-600" /> Series B benchmark scorecard
-          </CardTitle>
-          <CardDescription className="text-xs">
-            Top quartile / On track / Below benchmark — sourced from ICONIQ, Bessemer, OpenView SaaS surveys.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-            {[
-              { label: "Runway (mo)",        v: runwayMonths,          band: BENCHMARKS.runway,        target: "≥18",   lower: false, display: `${runwayMonths}` },
-              { label: "Burn multiple",      v: burnMultiple,          band: BENCHMARKS.burnMult,      target: "≤1.0",  lower: true,  display: burnMultiple !== null ? burnMultiple.toFixed(2) : "—" },
-              { label: "Rule of 40",         v: rule40,                band: BENCHMARKS.rule40,        target: "≥40",   lower: false, display: `${rule40.toFixed(0)}` },
-              { label: "Gross margin",       v: grossMarginPct,        band: BENCHMARKS.grossMargin,   target: "≥70%",  lower: false, display: grossMarginPct !== null ? `${grossMarginPct.toFixed(0)}%` : "—" },
-              { label: "MoM growth",         v: momGrowth,             band: BENCHMARKS.mom,           target: "≥15%",  lower: false, display: `${momGrowth.toFixed(1)}%` },
-              { label: "LTV : CAC",          v: unitEcon.ratio ?? null, band: BENCHMARKS.ltvCac,       target: "≥3x",   lower: false, display: unitEcon.ratio ? `${unitEcon.ratio.toFixed(1)}x` : "—" },
-              { label: "Top customer %",     v: concentration.topPct,  band: BENCHMARKS.concentration, target: "≤15%",  lower: true,  display: `${concentration.topPct.toFixed(0)}%` },
-              { label: "CAC payback (mo)",   v: unitEcon.cacPayback ?? null, band: BENCHMARKS.cacPayback, target: "≤12", lower: true, display: unitEcon.cacPayback ? `${unitEcon.cacPayback.toFixed(0)}` : "—" },
-            ].map((b, i) => (
-              <div key={i} className="border rounded-lg p-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">{b.label}</span>
-                  <Badge variant="outline" className="text-[9px] h-4">{b.target}</Badge>
-                </div>
-                <div className={`text-base font-bold mt-0.5 ${benchColor(b.v, b.band, b.lower)}`}>
-                  {b.display}
-                </div>
-                <div className="text-[10px] text-muted-foreground">
-                  {benchLabel(b.v, b.band, b.lower)}
-                </div>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Strategy AI accordion */}
+      {/* ── 5 · ACTIONS ─────────────────────────────────────── */}
+      <div className="flex items-baseline gap-2 pt-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">5 · Actions</h3>
+        <span className="text-[11px] text-muted-foreground/70">Click a topic to generate analysis grounded in your current metrics.</span>
+      </div>
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
