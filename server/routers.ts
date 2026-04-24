@@ -38,6 +38,7 @@ import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
+import { getServiceAccountEmail, isServiceAccountConfigured } from "./_core/googleServiceAccount";
 import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems } from "./_core/quickbooks";
 import { listAllTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { queueFirefliesActionItemsForApproval } from "./firefliesSyncService";
@@ -3590,6 +3591,10 @@ ONLY return the JSON array, no other text.`;
           configured: googleConnected,
           status: googleConnected ? 'connected' : 'not_configured',
           email: googleToken?.googleEmail,
+        },
+        googleDriveServiceAccount: {
+          configured: isServiceAccountConfigured(),
+          email: getServiceAccountEmail(),
         },
         quickbooks: {
           configured: quickbooksConnected,
