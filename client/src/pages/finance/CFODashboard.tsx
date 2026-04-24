@@ -131,6 +131,7 @@ export default function CFODashboard() {
   const { data: employees } = trpc.hr.employees.list.useQuery({ status: "active" });
   const { data: expenseTxns } = trpc.transactions.list.useQuery({ type: "expense" });
   const { data: openDeals } = trpc.crm.deals.list.useQuery({ status: "open" });
+  const { data: allPOs } = trpc.purchaseOrders.list.useQuery();
 
   // ── Cash ────────────────────────────────────────────────────
   const cashPosition = useMemo(() =>
@@ -244,6 +245,16 @@ export default function CFODashboard() {
   const revPerFte = headcount > 0 ? arr / headcount : null;
   const burnPerFte = headcount > 0 ? estimatedBurn / headcount : null;
 
+  // DPO — Days Payable Outstanding
+  const dpo = useMemo(() => {
+    const pos = allPOs ?? [];
+    const unpaid = pos.filter((p: any) =>
+      p.status !== "paid" && p.status !== "cancelled" && p.status !== "closed");
+    const outstandingAP = unpaid.reduce((s: number, p: any) => s + parseFloat(p.totalAmount || "0"), 0);
+    const monthlyCogsProxy = estimatedBurn * 0.5; // rough — assumes ~50% of burn is vendor-paid
+    return monthlyCogsProxy > 0 ? Math.round((outstandingAP / monthlyCogsProxy) * 30) : null;
+  }, [allPOs, estimatedBurn]);
+
   // Pipeline (from open CRM deals)
   const pipeline = useMemo(() => {
     const deals = openDeals ?? [];
@@ -335,6 +346,7 @@ export default function CFODashboard() {
   }, [invoicesList]);
   const totalAR = arAging.current + arAging.d30 + arAging.d60 + arAging.d90;
   const dso = thisMonthRev > 0 ? Math.round((totalAR / thisMonthRev) * 30) : null;
+  const cashGapDays = dso !== null && dpo !== null ? dso - dpo : null;
 
   // ── 18-month cash runway projection (3 scenarios) ──────────
   const runwayProjection = useMemo(() => {
@@ -622,6 +634,28 @@ export default function CFODashboard() {
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">4 · Risk Radar</h3>
         <span className="text-[11px] text-muted-foreground/70">Concentration and collections exposure.</span>
       </div>
+
+      {(dso !== null || dpo !== null) && (
+        <div className="border rounded-lg bg-muted/20 px-3 py-2 flex items-center gap-4 flex-wrap text-xs">
+          <span className="text-[11px] uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+            <Activity className="h-3 w-3" /> Working Capital
+          </span>
+          <span><span className="text-muted-foreground">DSO:</span> <span className="font-semibold">{dso !== null ? `${dso}d` : "—"}</span></span>
+          <span><span className="text-muted-foreground">DPO:</span> <span className="font-semibold">{dpo !== null ? `${dpo}d` : "—"}</span></span>
+          {cashGapDays !== null && (
+            <span>
+              <span className="text-muted-foreground">Cash gap:</span>{" "}
+              <span className={`font-semibold ${cashGapDays > 30 ? "text-red-600 dark:text-red-400" : cashGapDays > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                {cashGapDays > 0 ? "+" : ""}{cashGapDays}d
+              </span>{" "}
+              <span className="text-[10px] text-muted-foreground">
+                {cashGapDays > 0 ? "we finance customers" : "vendors finance us"}
+              </span>
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <Card>
           <CardHeader className="pb-2">
