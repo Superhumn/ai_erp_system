@@ -160,8 +160,7 @@ export default function DataRoomDetail() {
   const deleteDocMutation = trpc.dataRoom.documents.delete.useMutation({
     onSuccess: (_, variables) => {
       toast.success("Document deleted");
-      const vars = variables as { id: number };
-      if (selectedDoc?.id === vars.id) setSelectedDoc(null);
+      if (selectedDoc?.id === variables?.id) setSelectedDoc(null);
       refetchDocuments();
     },
     onError: (error) => {

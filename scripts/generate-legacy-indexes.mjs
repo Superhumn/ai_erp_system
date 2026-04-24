@@ -68,9 +68,10 @@ function extractedRouterKeys() {
         const km = /^  ([a-zA-Z][a-zA-Z0-9_]*)\s*:/.exec(line);
         if (km) byKey.set(km[1], stem);
       }
-      // brace depth (approximate — strip strings/comments)
+      // brace depth (approximate — strip strings/comments/template literals)
       const c = line
         .replace(/\/\/.*$/, '')
+        .replace(/`(?:\\.|[^`\\])*`/g, '``')
         .replace(/"(?:\\.|[^"\\])*"/g, '""')
         .replace(/'(?:\\.|[^'\\])*'/g, "''");
       depth += (c.match(/\{/g)?.length || 0) - (c.match(/\}/g)?.length || 0);

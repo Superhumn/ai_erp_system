@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1066,28 +1066,6 @@ export default function ProcurementHub() {
 
   // Integration status
   const { data: integrationStatus } = trpc.integrations.getStatus.useQuery();
-
-  // Keep selected detail objects in sync when lists refetch.
-  useEffect(() => {
-    if (!selectedPo) return;
-    const fresh = (purchaseOrders || []).find((p: any) => p.id === selectedPo.id);
-    if (fresh) setSelectedPo(fresh);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [purchaseOrders]);
-
-  useEffect(() => {
-    if (!selectedVendor) return;
-    const fresh = (vendors || []).find((v: any) => v.id === selectedVendor.id);
-    if (fresh) setSelectedVendor(fresh);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vendors]);
-
-  useEffect(() => {
-    if (!selectedMaterial) return;
-    const fresh = (rawMaterials || []).find((m: any) => m.id === selectedMaterial.id);
-    if (fresh) setSelectedMaterial(fresh);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawMaterials]);
 
   // Mutations
   const createPo = trpc.purchaseOrders.create.useMutation({

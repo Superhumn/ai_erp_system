@@ -85,7 +85,7 @@ Source: `server/routers.ts` (appRouter L257–L21743, 103 top-level keys).
 | `dataRoom` | L12423–L14665 | 2243 | ✓ `server/routers/dataRoom.ts` |
 | `imapCredentials` | L14666–L14753 | 88 | ✓ `server/routers/email.ts` |
 | `emailCredentials` | L14754–L14962 | 209 | ✓ `server/routers/email.ts` |
-| `nda` | L14963–L16011 | 1049 | ✓ `server/routers/dataRoom.ts` |
+| `nda` | L14963–L16011 | 1049 | ✗ legacy-only |
 | `recurringInvoices` | L16012–L16198 | 187 | ✓ `server/routers/finance.ts` |
 | `supplierPortal` | L16199–L16310 | 112 | ✓ `server/routers/procurement.ts` |
 | `documentImport` | L16311–L16802 | 492 | ✓ `server/routers/procurement.ts` |
@@ -114,7 +114,7 @@ Source: `server/routers.ts` (appRouter L257–L21743, 103 top-level keys).
 | `legalCases` | L21459–L21542 | 84 | ✗ legacy-only |
 | `financialReports` | L21543–L21742 | 200 | ✓ `server/routers/finance.ts` |
 
-## Legacy-only (33)
+## Legacy-only (34)
 
 These exist only in `server/routers.ts` — the extracted `server/routers/` tree does not cover them.
 
@@ -132,6 +132,7 @@ These exist only in `server/routers.ts` — the extracted `server/routers/` tree
 - `productionOrders` — L9389–L9396 (8 lines)
 - `shopify` — L10573–L10977 (405 lines)
 - `salesOrders` — L10978–L11097 (120 lines)
+- `nda` — L14963–L16011 (1049 lines)
 - `vendorNegotiations` — L17913–L18010 (98 lines)
 - `inventoryManagement` — L18413–L18436 (24 lines)
 - `financeAi` — L18437–L18477 (41 lines)
@@ -152,7 +153,7 @@ These exist only in `server/routers.ts` — the extracted `server/routers/` tree
 - `kpiGoals` — L21381–L21458 (78 lines)
 - `legalCases` — L21459–L21542 (84 lines)
 
-## Also in extracted tree (70)
+## Also in extracted tree (69)
 
 Top-level key exists in both. **Route-level parity is not guaranteed** — spot checks have found legacy-only procedures inside several of these (e.g. `crm` has ~7 legacy-only procedures, `invoices` has 2). If you need completeness, diff the specific sub-router.
 
@@ -217,7 +218,6 @@ Top-level key exists in both. **Route-level parity is not guaranteed** — spot 
 - `dataRoom` — legacy L12423–L14665 · extracted in `server/routers/dataRoom.ts`
 - `imapCredentials` — legacy L14666–L14753 · extracted in `server/routers/email.ts`
 - `emailCredentials` — legacy L14754–L14962 · extracted in `server/routers/email.ts`
-- `nda` — legacy L14963–L16011 · extracted in `server/routers/dataRoom.ts`
 - `recurringInvoices` — legacy L16012–L16198 · extracted in `server/routers/finance.ts`
 - `supplierPortal` — legacy L16199–L16310 · extracted in `server/routers/procurement.ts`
 - `documentImport` — legacy L16311–L16802 · extracted in `server/routers/procurement.ts`
