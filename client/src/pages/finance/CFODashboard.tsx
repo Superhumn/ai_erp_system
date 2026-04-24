@@ -393,6 +393,36 @@ export default function CFODashboard() {
     return { title: latest.title, date: sentDate, daysAgo };
   }, [investorUpdatesList]);
 
+  // ── ARR Movement (last 6mo): Starting → New + Expansion − Contraction − Churn → Ending
+  const arrMovement = useMemo(() => {
+    const invs = invoicesList ?? [];
+    if (invs.length === 0) return null;
+    const byCustomer = new Map<string, { t: number; amt: number }[]>();
+    for (const inv of invs) {
+      const name = (inv as any).customer?.name || `Customer ${(inv as any).customerId ?? "—"}`;
+      const t = new Date((inv as any).issueDate || (inv as any).createdAt).getTime();
+      const amt = parseFloat((inv as any).totalAmount || "0");
+      if (!byCustomer.has(name)) byCustomer.set(name, []);
+      byCustomer.get(name)!.push({ t, amt });
+    }
+    const now = Date.now();
+    const ninetyAgo = now - 90 * 86400000;
+    const oneEightyAgo = now - 180 * 86400000;
+    let starting = 0, newArr = 0, expansion = 0, contraction = 0, churn = 0;
+    for (const history of byCustomer.values()) {
+      const current = history.filter((i) => i.t >= ninetyAgo).reduce((s, i) => s + i.amt, 0) * 4;
+      const prior   = history.filter((i) => i.t >= oneEightyAgo && i.t < ninetyAgo).reduce((s, i) => s + i.amt, 0) * 4;
+      starting += prior;
+      if (prior === 0 && current > 0) newArr += current;
+      else if (current === 0 && prior > 0) churn += prior;
+      else if (current > prior) expansion += (current - prior);
+      else if (current < prior) contraction += (prior - current);
+    }
+    const ending = starting + newArr + expansion - contraction - churn;
+    if (starting === 0 && newArr === 0) return null;
+    return { starting, new: newArr, expansion, contraction, churn, ending };
+  }, [invoicesList]);
+
   // Prefer cadence-detected ARR when we have enough signal (≥3 recurring customers)
   const arr = recurring && recurring.active >= 3 ? recurring.detectedARR : naiveArr;
   const arrSource = recurring && recurring.active >= 3 ? "recurring" : "invoices";
@@ -821,6 +851,54 @@ export default function CFODashboard() {
           </ResponsiveContainer>
         </CardContent>
       </Card>
+
+      {arrMovement && (() => {
+        // Build waterfall rows with running base so each bar sits atop the previous
+        let run = 0;
+        const rows: { name: string; base: number; value: number; fill: string }[] = [];
+        rows.push({ name: "Starting", base: 0, value: arrMovement.starting, fill: CHART.muted });
+        run = arrMovement.starting;
+        rows.push({ name: "+ New", base: run, value: arrMovement.new, fill: CHART.grossProfit });
+        run += arrMovement.new;
+        rows.push({ name: "+ Expansion", base: run, value: arrMovement.expansion, fill: "#10b981" });
+        run += arrMovement.expansion;
+        run -= arrMovement.contraction;
+        rows.push({ name: "− Contraction", base: run, value: arrMovement.contraction, fill: CHART.warn });
+        run -= arrMovement.churn;
+        rows.push({ name: "− Churn", base: run, value: arrMovement.churn, fill: CHART.burn });
+        rows.push({ name: "Ending", base: 0, value: arrMovement.ending, fill: CHART.revenue });
+        const delta = arrMovement.ending - arrMovement.starting;
+        const deltaPct = arrMovement.starting > 0 ? (delta / arrMovement.starting) * 100 : 0;
+        return (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Zap className="h-4 w-4 text-blue-600" /> ARR Movement — last 6mo
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Starting {fmtCompact(arrMovement.starting)} → Ending {fmtCompact(arrMovement.ending)}{" "}
+                <span className={delta >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
+                  ({delta >= 0 ? "+" : ""}{fmtCompact(delta)} · {deltaPct >= 0 ? "+" : ""}{deltaPct.toFixed(0)}%)
+                </span>
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={rows}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                  <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 10 }} width={55} />
+                  <Tooltip content={<ChartTip />} />
+                  <Bar dataKey="base" stackId="w" fill="transparent" />
+                  <Bar dataKey="value" stackId="w" radius={[3, 3, 0, 0]}>
+                    {rows.map((r, i) => <Cell key={i} fill={r.fill} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {recurring && (
         <div className="border rounded-lg bg-muted/20 px-3 py-2 flex items-center gap-4 flex-wrap text-xs">
