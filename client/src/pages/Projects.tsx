@@ -1074,7 +1074,7 @@ export default function Projects() {
                 showExport
                 expandable
                 expandedRowId={expandedTaskId}
-                onExpandChange={setExpandedTaskId}
+                onExpandChange={(id) => setExpandedTaskId(id === null ? null : Number(id))}
                 renderExpanded={(task, onClose) => (
                   <TaskDetailPanel
                     task={task}

@@ -312,34 +312,34 @@ export default function EDIDashboard() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b text-left">
-                    <th className="pb-2 text-sm font-medium text-muted-foreground">Type</th>
-                    <th className="pb-2 text-sm font-medium text-muted-foreground">Direction</th>
-                    <th className="pb-2 text-sm font-medium text-muted-foreground">PO #</th>
-                    <th className="pb-2 text-sm font-medium text-muted-foreground">Control #</th>
-                    <th className="pb-2 text-sm font-medium text-muted-foreground">Status</th>
-                    <th className="pb-2 text-sm font-medium text-muted-foreground">Date</th>
+                    <th className="pb-1 text-sm font-medium text-muted-foreground">Type</th>
+                    <th className="pb-1 text-sm font-medium text-muted-foreground">Direction</th>
+                    <th className="pb-1 text-sm font-medium text-muted-foreground">PO #</th>
+                    <th className="pb-1 text-sm font-medium text-muted-foreground">Control #</th>
+                    <th className="pb-1 text-sm font-medium text-muted-foreground">Status</th>
+                    <th className="pb-1 text-sm font-medium text-muted-foreground">Date</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
                   {recentTransactions.map((txn: any) => (
                     <tr key={txn.id} className="hover:bg-muted/50">
-                      <td className="py-3 text-sm">
+                      <td className="py-0.5 text-sm">
                         <span className="font-mono font-medium">{txn.transactionSetCode}</span>
                         <span className="text-muted-foreground ml-2">{txnSetLabels[txn.transactionSetCode] || ""}</span>
                       </td>
-                      <td className="py-3 text-sm">
+                      <td className="py-0.5 text-sm">
                         <Badge variant={txn.direction === "inbound" ? "default" : "secondary"}>
                           {txn.direction}
                         </Badge>
                       </td>
-                      <td className="py-3 text-sm font-mono">{txn.purchaseOrderNumber || "-"}</td>
-                      <td className="py-3 text-sm font-mono text-muted-foreground">{txn.interchangeControlNumber || "-"}</td>
-                      <td className="py-3">
+                      <td className="py-0.5 text-sm font-mono">{txn.purchaseOrderNumber || "-"}</td>
+                      <td className="py-0.5 text-sm font-mono text-muted-foreground">{txn.interchangeControlNumber || "-"}</td>
+                      <td className="py-0.5">
                         <Badge className={statusColors[txn.status] || "bg-gray-500/8 text-gray-600 dark:text-gray-400"} variant="outline">
                           {txn.status}
                         </Badge>
                       </td>
-                      <td className="py-3 text-sm text-muted-foreground">
+                      <td className="py-0.5 text-sm text-muted-foreground">
                         {new Date(txn.createdAt).toLocaleDateString()}
                       </td>
                     </tr>
