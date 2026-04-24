@@ -22,16 +22,21 @@ import {
 // ── Shapes ────────────────────────────────────────────────────────────────
 
 interface ProjectionRow {
+  /** Four-digit year extracted from the period. */
   year: number;
-  revenue: number;
-  cogs: number;
-  opex: number;
-  cashBalance: number;
-  headcount: number;
-  grossProfit: number;
-  grossMargin: number;
-  netIncome: number;
-  netMargin: number;
+  /** Period display label (e.g. "2026", "Q3 2026", "Jan 2026"). Used as X-axis key and React key. */
+  label: string;
+  /** Sortable key from Period — unique across monthly/quarterly/annual periods. Used as React key. */
+  sortKey: number;
+  revenue: number | null;
+  cogs: number | null;
+  opex: number | null;
+  cashBalance: number | null;
+  headcount: number | null;
+  grossProfit: number | null;
+  grossMargin: number | null;
+  netIncome: number | null;
+  netMargin: number | null;
 }
 
 interface CompanyMeta {
@@ -45,6 +50,8 @@ interface CompanyMeta {
 interface ParsedData {
   meta: CompanyMeta;
   rows: ProjectionRow[];
+  /** "Revenue" when the model has a revenue row; "ARR" for ARR-only SaaS models. */
+  topLineLabel: string;
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────
@@ -136,13 +143,22 @@ function downloadTemplate() {
 // ── Parsing ──────────────────────────────────────────────────────────────
 
 /**
- * Bridge the new canonical FinancialModel into the per-year ProjectionRow[]
+ * Bridge the new canonical FinancialModel into the per-period ProjectionRow[]
  * shape that the existing UI renders from. Derived series (gross profit, net
  * income, margins) come from `deriveSeries` when the raw values are missing.
+ *
+ * `topLineLabel` is "Revenue" when the model has a revenue row, otherwise
+ * "ARR" — consumers must use this label instead of hard-coding "Revenue".
  */
 function toParsedData(model: FinancialModel): ParsedData {
   const derived = deriveSeries(model);
-  const top = model.metrics.revenue ?? model.metrics.arr ?? [];
+  const hasRevenue =
+    model.metrics.revenue !== undefined &&
+    model.metrics.revenue.some((v) => v !== null);
+  const topLineLabel = hasRevenue ? "Revenue" : "ARR";
+  const top = hasRevenue
+    ? (model.metrics.revenue ?? [])
+    : (model.metrics.arr ?? []);
 
   const rows: ProjectionRow[] = model.periods.map((p, i) => {
     const revenue = top[i] ?? null;
@@ -184,6 +200,8 @@ function toParsedData(model: FinancialModel): ParsedData {
           : null;
     return {
       year: p.year,
+      label: p.label,
+      sortKey: p.sortKey,
       revenue, cogs, opex, cashBalance, headcount,
       grossProfit, grossMargin, netIncome, netMargin,
     };
@@ -198,6 +216,7 @@ function toParsedData(model: FinancialModel): ParsedData {
       valuation: model.meta.valuation ?? null,
     },
     rows,
+    topLineLabel,
   };
 }
 
@@ -557,29 +576,29 @@ function Dashboard({
   fileName: string | null;
   view: "investor" | "internal";
 }) {
-  const { meta, rows } = data;
+  const { meta, rows, topLineLabel } = data;
   const currency = meta.currency || "USD";
   const money = MoneyTooltip(currency);
 
   const profitSeries = rows.map((r) => ({
-    year: r.year,
-    Revenue: r.revenue,
+    label: r.label,
+    [topLineLabel]: r.revenue,
     "Net Income": r.netIncome,
   }));
 
   const costSeries = rows.map((r) => ({
-    year: r.year,
+    label: r.label,
     COGS: r.cogs,
     OpEx: r.opex,
   }));
 
   const cashSeries = rows.map((r) => ({
-    year: r.year,
+    label: r.label,
     Cash: r.cashBalance,
   }));
 
   const headcountSeries = rows.map((r) => ({
-    year: r.year,
+    label: r.label,
     Headcount: r.headcount,
   }));
 
@@ -592,10 +611,10 @@ function Dashboard({
             <div className="flex items-center gap-3 flex-wrap">
               <h3 className="text-2xl font-semibold tracking-[-0.02em]">{meta.companyName}</h3>
               {meta.stage && <Badge variant="outline">{meta.stage}</Badge>}
-              <Badge variant="secondary">{rows.length}-year plan</Badge>
+              <Badge variant="secondary">{rows.length}-period plan</Badge>
             </div>
             <div className="text-sm text-muted-foreground mt-1">
-              {rows[0].year} – {rows[rows.length - 1].year}
+              {rows[0].label} – {rows[rows.length - 1].label}
               {fileName && <> &middot; {fileName}</>}
             </div>
           </div>
@@ -620,15 +639,15 @@ function Dashboard({
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <KpiCard
           icon={DollarSign}
-          label={`${metrics.last.year} Revenue`}
+          label={`${metrics.last.label} ${topLineLabel}`}
           value={fmtMoney(metrics.last.revenue, currency)}
-          sub={`from ${fmtMoney(metrics.first.revenue, currency)} in ${metrics.first.year}`}
+          sub={`from ${fmtMoney(metrics.first.revenue, currency)} in ${metrics.first.label}`}
         />
         <KpiCard
           icon={TrendingUp}
-          label="Revenue CAGR"
+          label={`${topLineLabel} CAGR`}
           value={fmtPct(metrics.cagr)}
-          sub={`${metrics.years}-year plan`}
+          sub={`${metrics.periods}-period plan`}
           tone={metrics.cagr >= 100 ? "good" : metrics.cagr >= 40 ? "default" : "warn"}
         />
         <KpiCard
@@ -636,13 +655,13 @@ function Dashboard({
           label="Ending Cash"
           value={fmtMoney(metrics.last.cashBalance, currency)}
           sub={`min ${fmtMoney(metrics.minCash, currency)}`}
-          tone={metrics.last.cashBalance >= 0 ? "default" : "bad"}
+          tone={(metrics.last.cashBalance ?? 0) >= 0 ? "default" : "bad"}
         />
         <KpiCard
           icon={Flame}
-          label="Y-End Burn"
+          label="Period-End Burn"
           value={metrics.lastBurn > 0 ? fmtMoney(metrics.lastBurn, currency) : "Profitable"}
-          sub={metrics.lastBurn > 0 ? `${metrics.last.year} net loss` : `${metrics.last.year} net positive`}
+          sub={metrics.lastBurn > 0 ? `${metrics.last.label} net loss` : `${metrics.last.label} net positive`}
           tone={metrics.lastBurn === 0 ? "good" : "warn"}
         />
         <KpiCard
@@ -661,9 +680,9 @@ function Dashboard({
               <Clock className="h-5 w-5 text-amber-600" />
             </div>
             <div className="flex-1 min-w-[240px]">
-              <div className="font-medium text-sm">Runway at year-end burn</div>
+              <div className="font-medium text-sm">Runway at period-end burn</div>
               <div className="text-xs text-muted-foreground">
-                Based on {metrics.last.year} burn of {fmtMoney(metrics.lastBurn, currency)}
+                Based on {metrics.last.label} burn of {fmtMoney(metrics.lastBurn, currency)}
                 &nbsp;and ending cash of {fmtMoney(metrics.last.cashBalance, currency)}
               </div>
             </div>
@@ -678,20 +697,20 @@ function Dashboard({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Revenue &amp; Net Income</CardTitle>
+            <CardTitle className="text-base">{topLineLabel} &amp; Net Income</CardTitle>
             <CardDescription>Top line vs. bottom line</CardDescription>
           </CardHeader>
           <CardContent className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={profitSeries} margin={{ left: 0, right: 10 }}>
                 <CartesianGrid stroke={CHART.grid} strokeDasharray="3 3" />
-                <XAxis dataKey="year" fontSize={11} />
+                <XAxis dataKey="label" fontSize={11} />
                 <YAxis fontSize={11} tickFormatter={(v) => fmtAxis(v, currency)} />
                 <Tooltip content={money} />
                 <Legend />
                 <Line
                   type="monotone"
-                  dataKey="Revenue"
+                  dataKey={topLineLabel}
                   stroke={CHART.revenue}
                   strokeWidth={2}
                   dot={{ r: 3 }}
@@ -717,7 +736,7 @@ function Dashboard({
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={costSeries} margin={{ left: 0, right: 10 }}>
                 <CartesianGrid stroke={CHART.grid} strokeDasharray="3 3" />
-                <XAxis dataKey="year" fontSize={11} />
+                <XAxis dataKey="label" fontSize={11} />
                 <YAxis fontSize={11} tickFormatter={(v) => fmtAxis(v, currency)} />
                 <Tooltip content={money} />
                 <Legend />
@@ -731,7 +750,7 @@ function Dashboard({
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Cash Balance</CardTitle>
-            <CardDescription>Year-end cash position</CardDescription>
+            <CardDescription>Period-end cash position</CardDescription>
           </CardHeader>
           <CardContent className="h-64">
             <ResponsiveContainer width="100%" height="100%">
@@ -743,7 +762,7 @@ function Dashboard({
                   </linearGradient>
                 </defs>
                 <CartesianGrid stroke={CHART.grid} strokeDasharray="3 3" />
-                <XAxis dataKey="year" fontSize={11} />
+                <XAxis dataKey="label" fontSize={11} />
                 <YAxis fontSize={11} tickFormatter={(v) => fmtAxis(v, currency)} />
                 <Tooltip content={money} />
                 <Area
@@ -767,7 +786,7 @@ function Dashboard({
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={headcountSeries} margin={{ left: 0, right: 10 }}>
                 <CartesianGrid stroke={CHART.grid} strokeDasharray="3 3" />
-                <XAxis dataKey="year" fontSize={11} />
+                <XAxis dataKey="label" fontSize={11} />
                 <YAxis fontSize={11} />
                 <Tooltip content={NumberTooltip} />
                 <Line
@@ -783,19 +802,19 @@ function Dashboard({
         </Card>
       </div>
 
-      {/* Yearly table */}
+      {/* Period summary table */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Yearly Summary</CardTitle>
-          <CardDescription>Full breakdown of each year</CardDescription>
+          <CardTitle className="text-base">Period Summary</CardTitle>
+          <CardDescription>Full breakdown by period</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Year</TableHead>
-                  <TableHead className="text-right">Revenue</TableHead>
+                  <TableHead>Period</TableHead>
+                  <TableHead className="text-right">{topLineLabel}</TableHead>
                   <TableHead className="text-right">COGS</TableHead>
                   <TableHead className="text-right">Gross Profit</TableHead>
                   <TableHead className="text-right">GM %</TableHead>
@@ -808,14 +827,14 @@ function Dashboard({
               </TableHeader>
               <TableBody>
                 {rows.map((r) => (
-                  <TableRow key={r.year}>
-                    <TableCell className="font-medium">{r.year}</TableCell>
+                  <TableRow key={r.sortKey}>
+                    <TableCell className="font-medium">{r.label}</TableCell>
                     <TableCell className="text-right">{fmtMoney(r.revenue, currency)}</TableCell>
                     <TableCell className="text-right">{fmtMoney(r.cogs, currency)}</TableCell>
                     <TableCell className="text-right">{fmtMoney(r.grossProfit, currency)}</TableCell>
                     <TableCell className="text-right">{fmtPct(r.grossMargin)}</TableCell>
                     <TableCell className="text-right">{fmtMoney(r.opex, currency)}</TableCell>
-                    <TableCell className={`text-right ${r.netIncome < 0 ? "text-red-600" : "text-emerald-600"}`}>
+                    <TableCell className={`text-right ${(r.netIncome ?? 0) < 0 ? "text-red-600" : "text-emerald-600"}`}>
                       {fmtMoney(r.netIncome, currency)}
                     </TableCell>
                     <TableCell className="text-right">{fmtPct(r.netMargin)}</TableCell>
@@ -1229,16 +1248,23 @@ function useDashboardMetrics(data: ParsedData | null) {
     const rows = data.rows;
     const first = rows[0];
     const last = rows[rows.length - 1];
-    const years = rows.length;
+    const periods = rows.length;
+    const firstRevenue = first.revenue;
+    const lastRevenue = last.revenue;
     const cagr =
-      years > 1 && first.revenue > 0
-        ? (Math.pow(last.revenue / first.revenue, 1 / (years - 1)) - 1) * 100
+      periods > 1 && firstRevenue !== null && firstRevenue > 0 && lastRevenue !== null && lastRevenue > 0
+        ? (Math.pow(lastRevenue / firstRevenue, 1 / (periods - 1)) - 1) * 100
         : 0;
-    const peakHeadcount = Math.max(...rows.map((r) => r.headcount));
-    const minCash = Math.min(...rows.map((r) => r.cashBalance));
-    const bestGrossMargin = Math.max(...rows.map((r) => r.grossMargin));
-    const lastBurn = last.netIncome < 0 ? -last.netIncome : 0;
-    const runwayMonths = lastBurn > 0 ? (last.cashBalance / lastBurn) * 12 : Infinity;
-    return { first, last, years, cagr, peakHeadcount, minCash, bestGrossMargin, lastBurn, runwayMonths };
+    const validHeadcounts = rows.map((r) => r.headcount).filter((v): v is number => v !== null);
+    const peakHeadcount = validHeadcounts.length > 0 ? Math.max(...validHeadcounts) : null;
+    const validCash = rows.map((r) => r.cashBalance).filter((v): v is number => v !== null);
+    const minCash = validCash.length > 0 ? Math.min(...validCash) : null;
+    const validGM = rows.map((r) => r.grossMargin).filter((v): v is number => v !== null);
+    const bestGrossMargin = validGM.length > 0 ? Math.max(...validGM) : null;
+    const lastNetIncome = last.netIncome ?? 0;
+    const lastBurn = lastNetIncome < 0 ? -lastNetIncome : 0;
+    const lastCash = last.cashBalance ?? 0;
+    const runwayMonths = lastBurn > 0 ? (lastCash / lastBurn) * 12 : Infinity;
+    return { first, last, periods, cagr, peakHeadcount, minCash, bestGrossMargin, lastBurn, runwayMonths };
   }, [data]);
 }
