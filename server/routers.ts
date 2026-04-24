@@ -4651,7 +4651,7 @@ ONLY return the JSON array, no other text.`;
                       }
                     } catch {}
 
-                    // Create a placeholder contact for the deal (dedup by name via upsert)
+                    // Create a placeholder contact for the deal (name-only; no unique identifier to match on)
                     const dealName = record.name || record.deal || record.opportunity || `Deal ${imported + 1}`;
                     let contactId: number;
                     try {
@@ -16781,6 +16781,13 @@ Ask if they received the original request and if they can provide a quote.`;
           const { id, created } = await db.findOrCreateCrmContact({
             ...input,
             fullName,
+            // Normalize empty strings to undefined so unique indexes treat
+            // contacts with blank identifiers as having no identifier (NULL),
+            // not as sharing the same empty-string value.
+            email: input.email?.trim() || undefined,
+            phone: input.phone?.trim() || undefined,
+            whatsappNumber: input.whatsappNumber?.trim() || undefined,
+            linkedinUrl: input.linkedinUrl?.trim() || undefined,
             capturedBy: ctx.user.id,
           });
           await createAuditLog(ctx.user.id, created ? 'create' : 'update', 'crm_contact', id, fullName);
