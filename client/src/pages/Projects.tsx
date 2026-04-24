@@ -712,7 +712,8 @@ export default function Projects() {
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [filterProject, setFilterProject] = useState<string>("all");
   const [filterPriority, setFilterPriority] = useState<string>("all");
-  
+  const [expandedTaskId, setExpandedTaskId] = useState<number | string | null>(null);
+
   const [taskForm, setTaskForm] = useState({
     title: "",
     description: "",

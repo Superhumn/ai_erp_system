@@ -86,11 +86,11 @@ export default function Recipes() {
     { enabled: !!shareRecipeId },
   );
   const shareRecipe = trpc.recipes.share.useMutation({
-    onSuccess: (_, variables) => { toast.success("Share updated"); if (shareRecipeId === variables.recipeId) refetchShares(); },
+    onSuccess: (_, variables) => { toast.success("Share updated"); if (shareRecipeId === (variables as { recipeId: number }).recipeId) refetchShares(); },
     onError: (err) => toast.error(err.message),
   });
   const unshareRecipe = trpc.recipes.unshare.useMutation({
-    onSuccess: (_, variables) => { toast.success("Share removed"); if (shareRecipeId === variables.recipeId) refetchShares(); },
+    onSuccess: (_, variables) => { toast.success("Share removed"); if (shareRecipeId === (variables as { recipeId: number }).recipeId) refetchShares(); },
     onError: (err) => toast.error(err.message),
   });
   const shareRecipeName = useMemo(

@@ -1036,28 +1036,6 @@ export default function ProcurementHub() {
   const [selectedVendor, setSelectedVendor] = useState<any | null>(null);
   const [selectedMaterial, setSelectedMaterial] = useState<any | null>(null);
 
-  // Keep selected detail objects in sync when lists refetch.
-  useEffect(() => {
-    if (!selectedPo) return;
-    const fresh = (purchaseOrders || []).find((p: any) => p.id === selectedPo.id);
-    if (fresh) setSelectedPo(fresh);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [purchaseOrders]);
-
-  useEffect(() => {
-    if (!selectedVendor) return;
-    const fresh = (vendors || []).find((v: any) => v.id === selectedVendor.id);
-    if (fresh) setSelectedVendor(fresh);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vendors]);
-
-  useEffect(() => {
-    if (!selectedMaterial) return;
-    const fresh = (rawMaterials || []).find((m: any) => m.id === selectedMaterial.id);
-    if (fresh) setSelectedMaterial(fresh);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawMaterials]);
-  
   // Bulk selection state
   const [selectedPos, setSelectedPos] = useState<Set<number | string>>(new Set());
   const [selectedVendors, setSelectedVendors] = useState<Set<number | string>>(new Set());
@@ -1093,6 +1071,28 @@ export default function ProcurementHub() {
 
   // Integration status
   const { data: integrationStatus } = trpc.integrations.getStatus.useQuery();
+
+  // Keep selected detail objects in sync when lists refetch.
+  useEffect(() => {
+    if (!selectedPo) return;
+    const fresh = (purchaseOrders || []).find((p: any) => p.id === selectedPo.id);
+    if (fresh) setSelectedPo(fresh);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [purchaseOrders]);
+
+  useEffect(() => {
+    if (!selectedVendor) return;
+    const fresh = (vendors || []).find((v: any) => v.id === selectedVendor.id);
+    if (fresh) setSelectedVendor(fresh);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vendors]);
+
+  useEffect(() => {
+    if (!selectedMaterial) return;
+    const fresh = (rawMaterials || []).find((m: any) => m.id === selectedMaterial.id);
+    if (fresh) setSelectedMaterial(fresh);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawMaterials]);
 
   // Mutations
   const createPo = trpc.purchaseOrders.create.useMutation({
