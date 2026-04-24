@@ -157,9 +157,9 @@ export function getMenuGroups(role: string = "user") {
   return groups;
 }
 
-const SIDEBAR_WIDTH_KEY = "sidebar-width";
-const DEFAULT_WIDTH = 260;
-const MIN_WIDTH = 200;
+const SIDEBAR_WIDTH_KEY = "sidebar-width-v2";
+const DEFAULT_WIDTH = 180;
+const MIN_WIDTH = 160;
 const MAX_WIDTH = 400;
 
 const roleColors: Record<string, string> = {
@@ -197,7 +197,7 @@ export default function DashboardLayout({
 
   return (
     <SidebarProvider
-      defaultOpen={false}
+      defaultOpen={true}
       style={
         {
           "--sidebar-width": `${sidebarWidth}px`,
