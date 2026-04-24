@@ -966,7 +966,24 @@ export const settingsRouter = router({
           cogs:    cogs[i]    ?? 0,
           expense: expense[i] ?? 0,
         }));
-        return { connected: true, months };
+
+        // Per-account expense rollup: sum across the whole period, excluding
+        // the "Total ..." summary rows and non-expense sections.
+        const expenseAccounts = rows
+          .filter((r) => {
+            const label = r.label.toLowerCase();
+            if (label.startsWith("total ")) return false;
+            if (label === "net income" || label === "net operating income") return false;
+            if (label === "gross profit") return false;
+            return true;
+          })
+          .map((r) => ({
+            name: r.label,
+            total: r.values.slice(0, -1).reduce((s, v) => s + v, 0), // exclude summary col
+          }))
+          .filter((r) => r.total !== 0);
+
+        return { connected: true, months, expenseAccounts };
       }),
 
     // Get QuickBooks accounts for mapping

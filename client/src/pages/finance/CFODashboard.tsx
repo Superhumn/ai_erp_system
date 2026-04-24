@@ -73,6 +73,7 @@ const BENCHMARKS = {
   concentration: { great: 15, ok: 25, poor: 40 }, // top customer %, lower better
   revPerFte:  { great: 200_000, ok: 150_000, poor: 100_000 },
   forecastAcc:{ great: 90,  ok: 80,  poor: 70 }, // % accuracy, higher is better
+  magic:      { great: 0.75, ok: 0.5, poor: 0.25 }, // Magic Number (quarterly)
 };
 
 function benchColor(v: number | null, band: { great: number; ok: number; poor: number }, lowerBetter = false): string {
@@ -357,6 +358,44 @@ export default function CFODashboard() {
     const coverage = quarterlyRunRate > 0 ? open / quarterlyRunRate : null;
     return { open, weighted, coverage, count: deals.length };
   }, [openDeals, threeMonthAvgRev]);
+
+  // OpEx breakdown by function (R&D / S&M / G&A / Other) from QB expense accounts
+  const opexBreakdown = useMemo(() => {
+    const accounts = (qbPnl as any)?.expenseAccounts as { name: string; total: number }[] | undefined;
+    if (!accounts || accounts.length === 0) return null;
+    const classify = (name: string): "rd" | "sm" | "ga" | "other" => {
+      const n = name.toLowerCase();
+      if (/research|r&d|engineering|product develop|software develop/.test(n)) return "rd";
+      if (/sales|marketing|advertis|commission|trade show|booth|sponsor|seo|ppc/.test(n)) return "sm";
+      if (/general|administr|legal|accounting|insurance|rent|office|utilities|bank fee|hr|recruit|payroll\s*fee/.test(n)) return "ga";
+      return "other";
+    };
+    const buckets = { rd: 0, sm: 0, ga: 0, other: 0 };
+    for (const a of accounts) {
+      if (a.total <= 0) continue;
+      buckets[classify(a.name)] += a.total;
+    }
+    const total = buckets.rd + buckets.sm + buckets.ga + buckets.other;
+    if (total === 0) return null;
+    return {
+      rd: buckets.rd, sm: buckets.sm, ga: buckets.ga, other: buckets.other, total,
+      rdPct: (buckets.rd / total) * 100,
+      smPct: (buckets.sm / total) * 100,
+      gaPct: (buckets.ga / total) * 100,
+      otherPct: (buckets.other / total) * 100,
+    };
+  }, [qbPnl]);
+
+  // Magic Number = Net New ARR / prior-period S&M spend (quarterly norm)
+  const magicNumber = useMemo(() => {
+    if (!opexBreakdown || opexBreakdown.sm === 0) return null;
+    // opexBreakdown.sm is ~12mo S&M; convert to quarterly-equivalent
+    const quarterlySM = opexBreakdown.sm / 4;
+    if (quarterlySM === 0) return null;
+    // Net New ARR already computed; treat as quarterly net new
+    const qtrNetNew = netNewArr; // MoM × 12 ≈ annualized run-rate change; use directly
+    return qtrNetNew / quarterlySM;
+  }, [opexBreakdown, netNewArr]);
 
   // Forecast accuracy — how close past projections tracked actuals
   const forecastAccuracy = useMemo(() => {
@@ -739,7 +778,40 @@ export default function CFODashboard() {
                  hint={forecastAccuracy.accuracy !== null
                    ? `${benchLabel(forecastAccuracy.accuracy, BENCHMARKS.forecastAcc)} · ${forecastAccuracy.samples} samples`
                    : "Enter actuals"} />
+        <KpiCard icon={Zap} label="Magic Number"
+                 value={magicNumber !== null ? magicNumber.toFixed(2) : "—"}
+                 tone={benchColor(magicNumber, BENCHMARKS.magic)}
+                 hint={magicNumber !== null
+                   ? benchLabel(magicNumber, BENCHMARKS.magic)
+                   : "Needs S&M in QB"} />
       </div>
+
+      {opexBreakdown && (
+        <div className="border rounded-lg px-3 py-2 text-xs">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+              <PieChart className="h-3 w-3" /> OpEx Mix (QB)
+            </span>
+            <span className="text-muted-foreground text-[10px]">
+              {fmtCompact(opexBreakdown.total)} trailing 12mo · heuristic classification
+            </span>
+          </div>
+          <div className="flex rounded overflow-hidden h-4 bg-muted">
+            {opexBreakdown.rdPct > 0    && <div className="bg-violet-500"  style={{ width: `${opexBreakdown.rdPct}%` }} />}
+            {opexBreakdown.smPct > 0    && <div className="bg-blue-500"    style={{ width: `${opexBreakdown.smPct}%` }} />}
+            {opexBreakdown.gaPct > 0    && <div className="bg-slate-400"   style={{ width: `${opexBreakdown.gaPct}%` }} />}
+            {opexBreakdown.otherPct > 0 && <div className="bg-muted-foreground/30" style={{ width: `${opexBreakdown.otherPct}%` }} />}
+          </div>
+          <div className="flex items-center gap-4 mt-1.5 text-[11px]">
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-violet-500" />R&D {opexBreakdown.rdPct.toFixed(0)}% · {fmtCompact(opexBreakdown.rd)}</span>
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-blue-500" />S&M {opexBreakdown.smPct.toFixed(0)}% · {fmtCompact(opexBreakdown.sm)}</span>
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-slate-400" />G&A {opexBreakdown.gaPct.toFixed(0)}% · {fmtCompact(opexBreakdown.ga)}</span>
+            {opexBreakdown.otherPct > 0 && (
+              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-muted-foreground/30" />Other {opexBreakdown.otherPct.toFixed(0)}%</span>
+            )}
+          </div>
+        </div>
+      )}
 
       {marginTrajectory.length > 0 && (
         <Card>
