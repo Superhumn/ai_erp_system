@@ -56,10 +56,6 @@ export function getQuickBooksAuthUrl(userId: number): { url?: string; redirectUr
 
   const url = `${QB_OAUTH_URL}?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&state=${state}`;
 
-  // Log the exact URI so operators can compare against the Intuit dashboard
-  // when diagnosing "redirect_uri query parameter value is invalid" errors.
-  console.log(`[QuickBooks] Authorize redirect_uri=${redirectUri}`);
-
   return { url, redirectUri };
 }
 

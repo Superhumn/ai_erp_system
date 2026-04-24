@@ -46,8 +46,12 @@ export default function IntegrationsPage() {
   const { data: workspaceAuthUrl } = trpc.googleWorkspace.getAuthUrl.useQuery();
   const { data: sheetsAuthUrl } = trpc.sheetsImport.getAuthUrl.useQuery();
   
-  // Get QuickBooks OAuth URL
-  const { data: quickbooksAuthUrl } = trpc.quickbooks.getAuthUrl.useQuery();
+  // Get QuickBooks OAuth URL. The tRPC inferred type lands as `unknown` for
+  // this procedure, so narrow it here to keep call sites type-checked.
+  const { data: quickbooksAuthUrlData } = trpc.quickbooks.getAuthUrl.useQuery();
+  const quickbooksAuthUrl = quickbooksAuthUrlData as
+    | { url?: string; redirectUri?: string; error?: string }
+    | undefined;
 
   // Handle OAuth callback
   useEffect(() => {
@@ -923,7 +927,7 @@ export default function IntegrationsPage() {
                         <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_REDIRECT_URI</code> - OAuth callback URL (optional)</li>
                         <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_ENVIRONMENT</code> - sandbox or production (optional, defaults to sandbox)</li>
                       </ul>
-                      {(quickbooksAuthUrl as any)?.redirectUri && (
+                      {quickbooksAuthUrl?.redirectUri && (
                         <div className="mb-4 p-3 bg-amber-500/5 border border-amber-500/20 rounded-md">
                           <p className="text-sm font-medium mb-1">Register this Redirect URI in Intuit</p>
                           <p className="text-xs text-muted-foreground mb-2">
@@ -931,14 +935,23 @@ export default function IntegrationsPage() {
                           </p>
                           <div className="flex items-center gap-2">
                             <code className="flex-1 text-xs bg-muted px-2 py-1.5 rounded break-all">
-                              {(quickbooksAuthUrl as any).redirectUri}
+                              {quickbooksAuthUrl.redirectUri}
                             </code>
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => {
-                                navigator.clipboard.writeText((quickbooksAuthUrl as any).redirectUri);
-                                toast.success("Redirect URI copied");
+                              onClick={async () => {
+                                const uri = quickbooksAuthUrl.redirectUri;
+                                if (!uri || !navigator.clipboard?.writeText) {
+                                  toast.error("Clipboard copy is not supported in this browser");
+                                  return;
+                                }
+                                try {
+                                  await navigator.clipboard.writeText(uri);
+                                  toast.success("Redirect URI copied");
+                                } catch {
+                                  toast.error("Failed to copy Redirect URI");
+                                }
                               }}
                             >
                               Copy
@@ -948,10 +961,10 @@ export default function IntegrationsPage() {
                       )}
                       <Button
                         onClick={() => {
-                          if ((quickbooksAuthUrl as any)?.url) {
-                            window.location.href = (quickbooksAuthUrl as any).url;
+                          if (quickbooksAuthUrl?.url) {
+                            window.location.href = quickbooksAuthUrl.url;
                           } else {
-                            toast.error((quickbooksAuthUrl as any)?.error || "QuickBooks OAuth not configured");
+                            toast.error(quickbooksAuthUrl?.error || "QuickBooks OAuth not configured");
                           }
                         }}
                       >
