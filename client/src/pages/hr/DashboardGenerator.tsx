@@ -145,15 +145,43 @@ function toParsedData(model: FinancialModel): ParsedData {
   const top = model.metrics.revenue ?? model.metrics.arr ?? [];
 
   const rows: ProjectionRow[] = model.periods.map((p, i) => {
-    const revenue = top[i] ?? 0;
-    const cogs = model.metrics.cogs?.[i] ?? 0;
-    const opex = model.metrics.opex?.[i] ?? 0;
-    const cashBalance = model.metrics.cashBalance?.[i] ?? 0;
-    const headcount = model.metrics.headcount?.[i] ?? 0;
-    const grossProfit = derived.grossProfit?.[i] ?? revenue - cogs;
-    const grossMargin = derived.grossMargin?.[i] ?? (revenue > 0 ? (grossProfit / revenue) * 100 : 0);
-    const netIncome = derived.netIncome?.[i] ?? grossProfit - opex;
-    const netMargin = derived.netMargin?.[i] ?? (revenue > 0 ? (netIncome / revenue) * 100 : 0);
+    const revenue = top[i] ?? null;
+    const cogs = model.metrics.cogs?.[i] ?? null;
+    const opex = model.metrics.opex?.[i] ?? null;
+    const cashBalance = model.metrics.cashBalance?.[i] ?? null;
+    const headcount = model.metrics.headcount?.[i] ?? null;
+
+    const derivedGrossProfit = derived.grossProfit?.[i];
+    const grossProfit =
+      derivedGrossProfit !== undefined
+        ? derivedGrossProfit
+        : revenue !== null && cogs !== null
+          ? revenue - cogs
+          : null;
+
+    const derivedGrossMargin = derived.grossMargin?.[i];
+    const grossMargin =
+      derivedGrossMargin !== undefined
+        ? derivedGrossMargin
+        : revenue !== null && revenue > 0 && grossProfit !== null
+          ? (grossProfit / revenue) * 100
+          : null;
+
+    const derivedNetIncome = derived.netIncome?.[i];
+    const netIncome =
+      derivedNetIncome !== undefined
+        ? derivedNetIncome
+        : grossProfit !== null && opex !== null
+          ? grossProfit - opex
+          : null;
+
+    const derivedNetMargin = derived.netMargin?.[i];
+    const netMargin =
+      derivedNetMargin !== undefined
+        ? derivedNetMargin
+        : revenue !== null && revenue > 0 && netIncome !== null
+          ? (netIncome / revenue) * 100
+          : null;
     return {
       year: p.year,
       revenue, cogs, opex, cashBalance, headcount,
