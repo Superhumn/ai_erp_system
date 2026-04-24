@@ -112,14 +112,17 @@ type KpiCardProps = {
 
 function KpiCard({ icon: Icon, label, value, sub, tone, hint }: KpiCardProps) {
   return (
-    <div className="border rounded-lg p-3 bg-card">
-      <div className="flex items-center gap-2 text-[11px] text-muted-foreground mb-1">
-        <Icon className="h-3 w-3" />
-        <span className="uppercase tracking-wide">{label}</span>
+    <div className="border rounded-md px-2 py-1.5 bg-card min-w-0">
+      <div className="flex items-center gap-1 text-[9px] text-muted-foreground uppercase tracking-wide leading-none">
+        <Icon className="h-2.5 w-2.5 shrink-0" />
+        <span className="truncate">{label}</span>
       </div>
-      <p className={`text-xl font-bold leading-tight ${tone ?? ""}`}>{value}</p>
-      {sub && <p className="text-[11px] text-muted-foreground mt-0.5">{sub}</p>}
-      {hint && <p className="text-[10px] text-muted-foreground/70 mt-0.5 italic">{hint}</p>}
+      <p className={`text-sm font-bold leading-tight mt-1 ${tone ?? ""}`}>{value}</p>
+      {(sub || hint) && (
+        <p className="text-[9px] text-muted-foreground truncate leading-none mt-0.5" title={sub ?? hint}>
+          {sub ?? hint}
+        </p>
+      )}
     </div>
   );
 }
@@ -790,7 +793,7 @@ export default function CFODashboard() {
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">1 · Liquidity</h3>
         <span className="text-[11px] text-muted-foreground/70">Can we pay the bills, and for how long?</span>
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
         <KpiCard icon={DollarSign} label="Cash" value={fmtCompact(cashPosition)} sub="Across all accounts" />
         <KpiCard icon={Flame} label="Net Burn"
                  value={`${fmtCompact(estimatedBurn)}/mo`}
@@ -840,11 +843,11 @@ export default function CFODashboard() {
       </Card>
 
       {/* ── 2 · GROWTH QUALITY ──────────────────────────────── */}
-      <div className="flex items-baseline gap-2 pt-2">
+      <div className="flex items-baseline gap-2 pt-1">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">2 · Growth Quality</h3>
         <span className="text-[11px] text-muted-foreground/70">How fast, and is it durable?</span>
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
         <KpiCard icon={TrendingUp} label="ARR"
                  value={fmtCompact(arr)}
                  sub={arrSource === "recurring"
@@ -1046,11 +1049,11 @@ export default function CFODashboard() {
       )}
 
       {/* ── 3 · CAPITAL EFFICIENCY ──────────────────────────── */}
-      <div className="flex items-baseline gap-2 pt-2">
+      <div className="flex items-baseline gap-2 pt-1">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">3 · Capital Efficiency</h3>
         <span className="text-[11px] text-muted-foreground/70">How much growth per dollar burned?</span>
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
         <KpiCard icon={PieChart} label="Burn Multiple"
                  value={burnMultiple !== null ? burnMultiple.toFixed(2) : "—"}
                  tone={benchColor(burnMultiple, BENCHMARKS.burnMult, true)}
@@ -1158,7 +1161,7 @@ export default function CFODashboard() {
       )}
 
       {/* ── 4 · RISK RADAR ──────────────────────────────────── */}
-      <div className="flex items-baseline gap-2 pt-2">
+      <div className="flex items-baseline gap-2 pt-1">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">4 · Risk Radar</h3>
         <span className="text-[11px] text-muted-foreground/70">Concentration and collections exposure.</span>
       </div>
@@ -1283,7 +1286,7 @@ export default function CFODashboard() {
       </div>
 
       {/* ── 5 · ACTIONS ─────────────────────────────────────── */}
-      <div className="flex items-baseline gap-2 pt-2">
+      <div className="flex items-baseline gap-2 pt-1">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">5 · Actions</h3>
         <span className="text-[11px] text-muted-foreground/70">Click a topic to generate analysis grounded in your current metrics.</span>
       </div>
