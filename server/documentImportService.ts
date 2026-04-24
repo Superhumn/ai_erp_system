@@ -1162,7 +1162,6 @@ export async function importCustomsDocument(
             type: "service",
             status: "active"
           });
-          broker = await db.getVendorById(brokerResult.id) || null;
           createdRecords.push({ type: "vendor", id: brokerResult.id, name: doc.brokerName });
         }
       }
