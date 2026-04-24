@@ -85,7 +85,7 @@ Source: `server/routers.ts` (appRouter L258–L21685, 103 top-level keys).
 | `dataRoom` | L12429–L14585 | 2157 | ✓ `server/routers/dataRoom.ts` |
 | `imapCredentials` | L14586–L14673 | 88 | ✓ `server/routers/email.ts` |
 | `emailCredentials` | L14674–L14882 | 209 | ✓ `server/routers/email.ts` |
-| `nda` | L14883–L15931 | 1049 | ✓ `server/routers/dataRoom.ts` |
+| `nda` | L14883–L15931 | 1049 | ✗ legacy-only |
 | `recurringInvoices` | L15932–L16118 | 187 | ✓ `server/routers/finance.ts` |
 | `supplierPortal` | L16119–L16230 | 112 | ✓ `server/routers/procurement.ts` |
 | `documentImport` | L16231–L16726 | 496 | ✓ `server/routers/procurement.ts` |
@@ -132,6 +132,7 @@ These exist only in `server/routers.ts` — the extracted `server/routers/` tree
 - `productionOrders` — L9395–L9402 (8 lines)
 - `shopify` — L10579–L10983 (405 lines)
 - `salesOrders` — L10984–L11103 (120 lines)
+- `nda` — L14883–L15931 (1049 lines)
 - `vendorNegotiations` — L17859–L17956 (98 lines)
 - `inventoryManagement` — L18359–L18382 (24 lines)
 - `financeAi` — L18383–L18423 (41 lines)
@@ -217,7 +218,6 @@ Top-level key exists in both. **Route-level parity is not guaranteed** — spot 
 - `dataRoom` — legacy L12429–L14585 · extracted in `server/routers/dataRoom.ts`
 - `imapCredentials` — legacy L14586–L14673 · extracted in `server/routers/email.ts`
 - `emailCredentials` — legacy L14674–L14882 · extracted in `server/routers/email.ts`
-- `nda` — legacy L14883–L15931 · extracted in `server/routers/dataRoom.ts`
 - `recurringInvoices` — legacy L15932–L16118 · extracted in `server/routers/finance.ts`
 - `supplierPortal` — legacy L16119–L16230 · extracted in `server/routers/procurement.ts`
 - `documentImport` — legacy L16231–L16726 · extracted in `server/routers/procurement.ts`
