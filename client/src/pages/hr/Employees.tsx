@@ -30,7 +30,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { UserCircle, Plus, Search, Loader2, Award, Layers, Upload } from "lucide-react";
+import { UserCircle, Plus, Search, Loader2, Award, Layers, Upload, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { format, addMonths } from "date-fns";
 import { getStatusColor } from "@/lib/statusColors";
@@ -230,6 +240,7 @@ export default function PeopleAndEquity() {
   const [isGrantOpen, setIsGrantOpen] = useState(false);
   const [isShareClassOpen, setIsShareClassOpen] = useState(false);
   const [selectedPerson, setSelectedPerson] = useState<UnifiedRow | null>(null);
+  const [employeeToDelete, setEmployeeToDelete] = useState<{ id: number; name: string } | null>(null);
   const [scForm, setScForm] = useState({ name: "", type: "common", authorizedShares: "", pricePerShare: "", parValue: "0.0001", liquidationPreference: "1", votingRights: true, isParticipating: false });
 
   // ── form state: add person ──
@@ -260,6 +271,15 @@ export default function PeopleAndEquity() {
   // ── mutations ──
   const createEmployee = trpc.employees.create.useMutation({
     onSuccess: () => { utils.employees.list.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteEmployee = trpc.employees.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Employee deleted");
+      setEmployeeToDelete(null);
+      setSelectedPerson(null);
+      utils.employees.list.invalidate();
+    },
     onError: (e) => toast.error(e.message),
   });
   const createStakeholder = trpc.capTable.stakeholders.create.useMutation({
@@ -991,6 +1011,7 @@ export default function PeopleAndEquity() {
                     <TableHead className="min-w-[90px] text-right">Ownership %</TableHead>
                     <TableHead className="min-w-[110px] text-right">Grant Value</TableHead>
                     <TableHead className="min-w-[100px]">Documents</TableHead>
+                    <TableHead className="w-10"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1016,6 +1037,19 @@ export default function PeopleAndEquity() {
                         {r.stakeholderId ? (
                           <DocumentsCell referenceType="stakeholder" referenceId={r.stakeholderId} docTypeSet="hr" />
                         ) : "-"}
+                      </TableCell>
+                      <TableCell className="py-1.5 px-3" onClick={(e) => e.stopPropagation()}>
+                        {r.employeeId ? (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                            onClick={() => setEmployeeToDelete({ id: r.employeeId!, name: r.name })}
+                            aria-label={`Delete ${r.name}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        ) : null}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -1047,6 +1081,32 @@ export default function PeopleAndEquity() {
           })()}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!employeeToDelete} onOpenChange={(open) => !open && setEmployeeToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete employee?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes <span className="font-medium">{employeeToDelete?.name}</span>
+              {" "}from the HR roster. Equity grants and historical payroll records are preserved.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteEmployee.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteEmployee.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (employeeToDelete) deleteEmployee.mutate({ id: employeeToDelete.id });
+              }}
+            >
+              {deleteEmployee.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete employee
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

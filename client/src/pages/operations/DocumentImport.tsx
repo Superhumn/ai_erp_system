@@ -146,6 +146,7 @@ export default function DocumentImport() {
   const [markAsReceived, setMarkAsReceived] = useState(true);
   const [updateInventory, setUpdateInventory] = useState(true);
   const [linkToPO, setLinkToPO] = useState(true);
+  const [createMissingVendor, setCreateMissingVendor] = useState(false);
   const [editingLineItem, setEditingLineItem] = useState<number | null>(null);
   
   // Google Drive state
@@ -314,8 +315,14 @@ export default function DocumentImport() {
         poData: parsedPO,
         markAsReceived,
         updateInventory,
+        createMissingVendor,
       });
-      
+
+      if (!result.success) {
+        toast.error(result.error || "Import failed");
+        return;
+      }
+
       toast.success(`Purchase order ${parsedPO.poNumber} imported successfully!`);
       setParsedPO(null);
       setShowPreview(false);
@@ -333,7 +340,13 @@ export default function DocumentImport() {
       const result = await importFreightMutation.mutateAsync({
         invoiceData: parsedFreight,
         linkToPO,
+        createMissingVendor,
       });
+
+      if (!result.success) {
+        toast.error(result.error || "Import failed");
+        return;
+      }
 
       toast.success(`Freight invoice ${parsedFreight.invoiceNumber} imported successfully!`);
       setParsedFreight(null);
@@ -353,7 +366,13 @@ export default function DocumentImport() {
         invoiceData: parsedVendorInvoice,
         markAsReceived,
         updateInventory,
+        createMissingVendor,
       });
+
+      if (!result.success) {
+        toast.error(result.error || "Import failed");
+        return;
+      }
 
       toast.success(`Vendor invoice ${parsedVendorInvoice.invoiceNumber} imported successfully!`);
       setParsedVendorInvoice(null);
@@ -372,7 +391,13 @@ export default function DocumentImport() {
       const result = await importCustomsMutation.mutateAsync({
         documentData: parsedCustoms,
         linkToPO,
+        createMissingVendor,
       });
+
+      if (!result.success) {
+        toast.error(result.error || "Import failed");
+        return;
+      }
 
       toast.success(`Customs document ${parsedCustoms.documentNumber} imported successfully!`);
       setParsedCustoms(null);
@@ -1084,13 +1109,23 @@ export default function DocumentImport() {
                   </label>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Checkbox 
-                    id="updateInventory" 
-                    checked={updateInventory} 
+                  <Checkbox
+                    id="updateInventory"
+                    checked={updateInventory}
                     onCheckedChange={(checked) => setUpdateInventory(!!checked)}
                   />
                   <label htmlFor="updateInventory" className="text-sm">
                     Update inventory quantities
+                  </label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="createVendorPO"
+                    checked={createMissingVendor}
+                    onCheckedChange={(checked) => setCreateMissingVendor(!!checked)}
+                  />
+                  <label htmlFor="createVendorPO" className="text-sm">
+                    Add vendor "<span className="font-medium">{parsedPO.vendorName}</span>" if not already in the system
                   </label>
                 </div>
               </div>
@@ -1229,13 +1264,23 @@ export default function DocumentImport() {
               <div className="space-y-3 border-t pt-4">
                 <Label>Import Options</Label>
                 <div className="flex items-center gap-2">
-                  <Checkbox 
-                    id="linkToPO" 
-                    checked={linkToPO} 
+                  <Checkbox
+                    id="linkToPO"
+                    checked={linkToPO}
                     onCheckedChange={(checked) => setLinkToPO(!!checked)}
                   />
                   <label htmlFor="linkToPO" className="text-sm">
                     Link to related purchase order (if found)
+                  </label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="createVendorFreight"
+                    checked={createMissingVendor}
+                    onCheckedChange={(checked) => setCreateMissingVendor(!!checked)}
+                  />
+                  <label htmlFor="createVendorFreight" className="text-sm">
+                    Add carrier "<span className="font-medium">{parsedFreight.carrierName}</span>" if not already in the system
                   </label>
                 </div>
               </div>
@@ -1458,6 +1503,16 @@ export default function DocumentImport() {
                   />
                   <label htmlFor="updateInventoryInvoice" className="text-sm">
                     Update inventory quantities
+                  </label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="createVendorInvoice"
+                    checked={createMissingVendor}
+                    onCheckedChange={(checked) => setCreateMissingVendor(!!checked)}
+                  />
+                  <label htmlFor="createVendorInvoice" className="text-sm">
+                    Add vendor "<span className="font-medium">{parsedVendorInvoice.vendorName}</span>" if not already in the system
                   </label>
                 </div>
               </div>
@@ -1684,6 +1739,16 @@ export default function DocumentImport() {
                   />
                   <label htmlFor="linkToPOCustoms" className="text-sm">
                     Link to related purchase order (if found)
+                  </label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="createVendorCustoms"
+                    checked={createMissingVendor}
+                    onCheckedChange={(checked) => setCreateMissingVendor(!!checked)}
+                  />
+                  <label htmlFor="createVendorCustoms" className="text-sm">
+                    Add shipper "<span className="font-medium">{parsedCustoms.shipperName}</span>"{parsedCustoms.brokerName ? <> and broker "<span className="font-medium">{parsedCustoms.brokerName}</span>"</> : null} if not already in the system
                   </label>
                 </div>
               </div>
