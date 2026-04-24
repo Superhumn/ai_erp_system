@@ -923,6 +923,29 @@ export default function IntegrationsPage() {
                         <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_REDIRECT_URI</code> - OAuth callback URL (optional)</li>
                         <li><code className="bg-muted px-2 py-1 rounded">QUICKBOOKS_ENVIRONMENT</code> - sandbox or production (optional, defaults to sandbox)</li>
                       </ul>
+                      {(quickbooksAuthUrl as any)?.redirectUri && (
+                        <div className="mb-4 p-3 bg-amber-500/5 border border-amber-500/20 rounded-md">
+                          <p className="text-sm font-medium mb-1">Register this Redirect URI in Intuit</p>
+                          <p className="text-xs text-muted-foreground mb-2">
+                            In the Intuit Developer portal, open your app → <strong>Keys &amp; OAuth</strong> → <strong>Redirect URIs</strong>, and add this exact string. Intuit rejects the connection if it doesn't match character-for-character.
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <code className="flex-1 text-xs bg-muted px-2 py-1.5 rounded break-all">
+                              {(quickbooksAuthUrl as any).redirectUri}
+                            </code>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                navigator.clipboard.writeText((quickbooksAuthUrl as any).redirectUri);
+                                toast.success("Redirect URI copied");
+                              }}
+                            >
+                              Copy
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                       <Button
                         onClick={() => {
                           if ((quickbooksAuthUrl as any)?.url) {
