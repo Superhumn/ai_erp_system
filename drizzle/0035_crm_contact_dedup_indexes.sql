@@ -18,9 +18,26 @@
 -- Notes:
 --   - MySQL UNIQUE treats multiple NULLs as distinct, so contacts without
 --     an email/phone/linkedin are still allowed.
+--   - Empty strings are values, not NULLs, so normalize legacy `''` values
+--     before creating the UNIQUE indexes.
 --   - The default utf8mb4_*_ci collation on varchar columns is already
 --     case-insensitive, so `jade@x.com` and `Jade@x.com` collide.
 
+UPDATE `crm_contacts`
+SET `email` = NULL
+WHERE `email` = '';
+
+UPDATE `crm_contacts`
+SET `phone` = NULL
+WHERE `phone` = '';
+
+UPDATE `crm_contacts`
+SET `whatsappNumber` = NULL
+WHERE `whatsappNumber` = '';
+
+UPDATE `crm_contacts`
+SET `linkedinUrl` = NULL
+WHERE `linkedinUrl` = '';
 CREATE UNIQUE INDEX `crm_contacts_email_uniq`
   ON `crm_contacts` (`email`);
 
