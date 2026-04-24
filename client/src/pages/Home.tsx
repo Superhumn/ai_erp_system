@@ -251,7 +251,7 @@ export default function Home() {
     <div className="space-y-2 animate-fade-in">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Dashboard</h1>
+        <h1 className="text-sm font-bold tracking-[-0.02em]">Dashboard</h1>
       </div>
 
       {/* Row 1 — Financial Health */}

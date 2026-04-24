@@ -314,17 +314,12 @@ export default function Vendors() {
   const isLoading = vendorsLoading;
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-semibold flex items-center gap-2">
-            <Building2 className="h-8 w-8" />
-            Vendors
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Manage suppliers and service providers.
-          </p>
-        </div>
+    <div className="space-y-2 animate-fade-in">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h1 className="text-sm font-bold tracking-[-0.02em] flex items-center gap-1.5">
+          <Building2 className="h-4 w-4" />
+          Vendors
+        </h1>
         <div className="flex gap-2">
         <Button variant="outline" onClick={() => window.location.href = "/import"}>
           <Upload className="h-4 w-4 mr-1" /> Import

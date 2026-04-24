@@ -323,12 +323,27 @@ export default function CRMHub() {
     );
   }, [enrichedDeals, dealsSearch]);
 
+  const openVal = Number(dealStats?.openValue || 0);
+  const wonVal = Number(dealStats?.wonValue || 0);
+  const totalDeals = (dealStats?.open || 0) + (dealStats?.won || 0) + (dealStats?.lost || 0);
+  const conversionRate = totalDeals > 0 ? Math.round(((dealStats?.won || 0) / totalDeals) * 100) : 0;
+
   return (
     <div className="space-y-2 animate-fade-in">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold tracking-[-0.02em]">CRM Hub</h1>
+      {/* Header — single consolidated row */}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-4 text-xs flex-wrap">
+          <h1 className="text-sm font-bold tracking-[-0.02em]">CRM Hub</h1>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Pipeline</span> <span className="font-bold">${openVal.toLocaleString()}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Won</span> <span className="font-bold text-green-600">${wonVal.toLocaleString()}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Open</span> <span className="font-bold">{dealStats?.open || 0}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Win Rate</span> <span className="font-bold">{conversionRate}%</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Contacts</span> <span className="font-bold">{contactStats?.total || 0}</span></div>
         </div>
         <div className="flex gap-2">
           <Button
@@ -692,27 +707,6 @@ export default function CRMHub() {
           </Dialog>
         </div>
       </div>
-
-      {/* Sales KPIs — compact bar */}
-      {(() => {
-        const openVal = Number(dealStats?.openValue || 0);
-        const wonVal = Number(dealStats?.wonValue || 0);
-        const totalDeals = (dealStats?.open || 0) + (dealStats?.won || 0) + (dealStats?.lost || 0);
-        const conversionRate = totalDeals > 0 ? Math.round(((dealStats?.won || 0) / totalDeals) * 100) : 0;
-        return (
-          <div className="flex items-center gap-4 text-xs border rounded-xl px-3 py-2 bg-card">
-            <div><span className="text-muted-foreground">Pipeline</span> <span className="font-bold">${openVal.toLocaleString()}</span></div>
-            <div className="h-5 w-px bg-border" />
-            <div><span className="text-muted-foreground">Won</span> <span className="font-bold text-green-600">${wonVal.toLocaleString()}</span></div>
-            <div className="h-5 w-px bg-border" />
-            <div><span className="text-muted-foreground">Open</span> <span className="font-bold">{dealStats?.open || 0}</span></div>
-            <div className="h-5 w-px bg-border" />
-            <div><span className="text-muted-foreground">Win Rate</span> <span className="font-bold">{conversionRate}%</span></div>
-            <div className="h-5 w-px bg-border" />
-            <div><span className="text-muted-foreground">Contacts</span> <span className="font-bold">{contactStats?.total || 0}</span></div>
-          </div>
-        );
-      })()}
 
       {/* Deals Table */}
       <Card className="py-3">

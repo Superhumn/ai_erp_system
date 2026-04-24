@@ -17,20 +17,21 @@ export default function InvestorsHub() {
   const [tab, setTab] = useState("captable");
 
   return (
-    <div className="space-y-3 animate-fade-in">
-      <h1 className="text-xl font-bold tracking-[-0.02em]">Investors</h1>
-
+    <div className="space-y-2 animate-fade-in">
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
-          <TabsTrigger value="captable" className="flex items-center gap-1.5">
-            <FileBarChart className="h-3.5 w-3.5" />
-            Cap Table
-          </TabsTrigger>
-          <TabsTrigger value="updates" className="flex items-center gap-1.5">
-            <Megaphone className="h-3.5 w-3.5" />
-            Investor Updates
-          </TabsTrigger>
-        </TabsList>
+        <div className="flex items-center gap-3 flex-wrap">
+          <h1 className="text-sm font-bold tracking-[-0.02em]">Investors</h1>
+          <TabsList>
+            <TabsTrigger value="captable" className="flex items-center gap-1.5">
+              <FileBarChart className="h-3.5 w-3.5" />
+              Cap Table
+            </TabsTrigger>
+            <TabsTrigger value="updates" className="flex items-center gap-1.5">
+              <Megaphone className="h-3.5 w-3.5" />
+              Investor Updates
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
         <TabsContent value="captable">
           <Suspense fallback={fallback}><EquityReports /></Suspense>
