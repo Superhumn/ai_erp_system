@@ -109,21 +109,28 @@ export default function GrantBidSubmitter() {
   }
 
   return (
-    <div className="space-y-6 p-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <ClipboardCheck className="h-6 w-6 text-primary" />
-            Grant & Bid Submitter
+    <div className="space-y-2 p-6">
+      {/* Header — single consolidated row */}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-4 text-xs flex-wrap">
+          <h1 className="text-sm font-bold tracking-[-0.02em] flex items-center gap-1.5">
+            <ClipboardCheck className="h-4 w-4 text-primary" />
+            Grants & Bids
           </h1>
-          <p className="text-muted-foreground mt-1">
-            Discover opportunities, then auto-generate applications powered by AI
-          </p>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Total</span> <span className="font-bold">{stats?.total || 0}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Draft</span> <span className="font-bold text-amber-600">{stats?.draft || 0}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Submitted</span> <span className="font-bold text-indigo-600">{stats?.submitted || 0}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Awarded</span> <span className="font-bold text-green-600">{stats?.awarded || 0}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Requested</span> <span className="font-bold text-emerald-600">{formatCurrency(stats?.totalRequested)}</span></div>
         </div>
         <Dialog open={showCreate} onOpenChange={setShowCreate}>
           <DialogTrigger asChild>
-            <Button><Plus className="h-4 w-4 mr-2" /> New Application</Button>
+            <Button size="sm"><Plus className="h-4 w-4 mr-2" /> New Application</Button>
           </DialogTrigger>
           <CreateApplicationDialog onClose={() => setShowCreate(false)} onCreated={(id) => { setShowCreate(false); setSelectedApp(id); refetchApps(); }} />
         </Dialog>
@@ -146,66 +153,7 @@ export default function GrantBidSubmitter() {
         </TabsContent>
 
         {/* Applications Tab */}
-        <TabsContent value="applications" className="space-y-6">
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-blue-500/10"><FileText className="h-5 w-5 text-blue-600" /></div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Total</p>
-                    <p className="text-2xl font-bold">{stats?.total || 0}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-amber-500/10"><Edit className="h-5 w-5 text-amber-600" /></div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">In Progress</p>
-                    <p className="text-2xl font-bold">{stats?.draft || 0}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-indigo-500/10"><Send className="h-5 w-5 text-indigo-600" /></div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Submitted</p>
-                    <p className="text-2xl font-bold">{stats?.submitted || 0}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-green-500/10"><CheckCircle2 className="h-5 w-5 text-green-600" /></div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Awarded</p>
-                    <p className="text-2xl font-bold">{stats?.awarded || 0}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-emerald-500/10"><DollarSign className="h-5 w-5 text-emerald-600" /></div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Total Requested</p>
-                    <p className="text-lg font-bold">{formatCurrency(stats?.totalRequested)}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
+        <TabsContent value="applications" className="space-y-2">
           {/* Filters */}
           <div className="flex gap-3 items-center">
             <div className="relative flex-1 max-w-sm">

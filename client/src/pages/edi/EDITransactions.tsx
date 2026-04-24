@@ -246,31 +246,31 @@ export default function EDITransactions() {
                 <table className="w-full">
                   <thead>
                     <tr className="border-b text-left">
-                      <th className="pb-2 text-sm font-medium text-muted-foreground">#</th>
-                      <th className="pb-2 text-sm font-medium text-muted-foreground">Buyer Part #</th>
-                      <th className="pb-2 text-sm font-medium text-muted-foreground">Vendor Part #</th>
-                      <th className="pb-2 text-sm font-medium text-muted-foreground">UPC</th>
-                      <th className="pb-2 text-sm font-medium text-muted-foreground">Description</th>
-                      <th className="pb-2 text-sm font-medium text-muted-foreground">Qty</th>
-                      <th className="pb-2 text-sm font-medium text-muted-foreground">UOM</th>
-                      <th className="pb-2 text-sm font-medium text-muted-foreground">Unit Price</th>
-                      <th className="pb-2 text-sm font-medium text-muted-foreground">Total</th>
-                      <th className="pb-2 text-sm font-medium text-muted-foreground">Mapped</th>
+                      <th className="pb-1 text-sm font-medium text-muted-foreground">#</th>
+                      <th className="pb-1 text-sm font-medium text-muted-foreground">Buyer Part #</th>
+                      <th className="pb-1 text-sm font-medium text-muted-foreground">Vendor Part #</th>
+                      <th className="pb-1 text-sm font-medium text-muted-foreground">UPC</th>
+                      <th className="pb-1 text-sm font-medium text-muted-foreground">Description</th>
+                      <th className="pb-1 text-sm font-medium text-muted-foreground">Qty</th>
+                      <th className="pb-1 text-sm font-medium text-muted-foreground">UOM</th>
+                      <th className="pb-1 text-sm font-medium text-muted-foreground">Unit Price</th>
+                      <th className="pb-1 text-sm font-medium text-muted-foreground">Total</th>
+                      <th className="pb-1 text-sm font-medium text-muted-foreground">Mapped</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
                     {selectedTxn.items.map((item: any) => (
                       <tr key={item.id} className="hover:bg-muted/50">
-                        <td className="py-2 text-sm">{item.lineNumber}</td>
-                        <td className="py-2 text-sm font-mono">{item.buyerPartNumber || "-"}</td>
-                        <td className="py-2 text-sm font-mono">{item.vendorPartNumber || "-"}</td>
-                        <td className="py-2 text-sm font-mono">{item.upc || item.upcCode || "-"}</td>
-                        <td className="py-2 text-sm max-w-[200px] truncate">{item.description || "-"}</td>
-                        <td className="py-2 text-sm">{item.quantity}</td>
-                        <td className="py-2 text-sm">{item.unitOfMeasure}</td>
-                        <td className="py-2 text-sm">${item.unitPrice || "0"}</td>
-                        <td className="py-2 text-sm font-medium">${item.totalAmount || "0"}</td>
-                        <td className="py-2 text-sm">
+                        <td className="py-0.5 text-sm">{item.lineNumber}</td>
+                        <td className="py-0.5 text-sm font-mono">{item.buyerPartNumber || "-"}</td>
+                        <td className="py-0.5 text-sm font-mono">{item.vendorPartNumber || "-"}</td>
+                        <td className="py-0.5 text-sm font-mono">{item.upc || item.upcCode || "-"}</td>
+                        <td className="py-0.5 text-sm max-w-[200px] truncate">{item.description || "-"}</td>
+                        <td className="py-0.5 text-sm">{item.quantity}</td>
+                        <td className="py-0.5 text-sm">{item.unitOfMeasure}</td>
+                        <td className="py-0.5 text-sm">${item.unitPrice || "0"}</td>
+                        <td className="py-0.5 text-sm font-medium">${item.totalAmount || "0"}</td>
+                        <td className="py-0.5 text-sm">
                           {item.productId ? (
                             <CheckCircle2 className="h-4 w-4 text-green-600" />
                           ) : (
@@ -418,27 +418,27 @@ export default function EDITransactions() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b text-left">
-                    <th className="pb-3 text-sm font-medium text-muted-foreground">Document</th>
-                    <th className="pb-3 text-sm font-medium text-muted-foreground">Direction</th>
-                    <th className="pb-3 text-sm font-medium text-muted-foreground">PO #</th>
-                    <th className="pb-3 text-sm font-medium text-muted-foreground">Control #</th>
-                    <th className="pb-3 text-sm font-medium text-muted-foreground">Status</th>
-                    <th className="pb-3 text-sm font-medium text-muted-foreground">ACK</th>
-                    <th className="pb-3 text-sm font-medium text-muted-foreground">Date</th>
-                    <th className="pb-3 text-sm font-medium text-muted-foreground"></th>
+                    <th className="pb-1 text-sm font-medium text-muted-foreground">Document</th>
+                    <th className="pb-1 text-sm font-medium text-muted-foreground">Direction</th>
+                    <th className="pb-1 text-sm font-medium text-muted-foreground">PO #</th>
+                    <th className="pb-1 text-sm font-medium text-muted-foreground">Control #</th>
+                    <th className="pb-1 text-sm font-medium text-muted-foreground">Status</th>
+                    <th className="pb-1 text-sm font-medium text-muted-foreground">ACK</th>
+                    <th className="pb-1 text-sm font-medium text-muted-foreground">Date</th>
+                    <th className="pb-1 text-sm font-medium text-muted-foreground"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
                   {transactions.map((txn: any) => (
                     <tr key={txn.id} className="hover:bg-muted/50 cursor-pointer" onClick={() => setSelectedTxnId(txn.id)}>
-                      <td className="py-3">
+                      <td className="py-0.5">
                         <div className="flex items-center gap-2">
                           <FileText className="h-4 w-4 text-muted-foreground" />
                           <span className="font-mono font-medium">{txn.transactionSetCode}</span>
                           <span className="text-sm text-muted-foreground">{txnSetLabels[txn.transactionSetCode] || ""}</span>
                         </div>
                       </td>
-                      <td className="py-3">
+                      <td className="py-0.5">
                         <Badge variant="outline" className="gap-1">
                           {txn.direction === "inbound" ? (
                             <ArrowDownLeft className="h-3 w-3" />
@@ -448,14 +448,14 @@ export default function EDITransactions() {
                           {txn.direction}
                         </Badge>
                       </td>
-                      <td className="py-3 text-sm font-mono">{txn.purchaseOrderNumber || "-"}</td>
-                      <td className="py-3 text-sm font-mono text-muted-foreground">{txn.interchangeControlNumber || "-"}</td>
-                      <td className="py-3">
+                      <td className="py-0.5 text-sm font-mono">{txn.purchaseOrderNumber || "-"}</td>
+                      <td className="py-0.5 text-sm font-mono text-muted-foreground">{txn.interchangeControlNumber || "-"}</td>
+                      <td className="py-0.5">
                         <Badge className={statusColors[txn.status] || "bg-gray-500/8 text-gray-600 dark:text-gray-400"} variant="outline">
                           {txn.status}
                         </Badge>
                       </td>
-                      <td className="py-3 text-sm">
+                      <td className="py-0.5 text-sm">
                         {txn.ackRequired ? (
                           <Badge variant="outline" className={
                             txn.ackStatus === "received" ? "bg-green-50 text-green-700" :
@@ -469,10 +469,10 @@ export default function EDITransactions() {
                           <span className="text-muted-foreground text-xs">-</span>
                         )}
                       </td>
-                      <td className="py-3 text-sm text-muted-foreground">
+                      <td className="py-0.5 text-sm text-muted-foreground">
                         {new Date(txn.createdAt).toLocaleDateString()}
                       </td>
-                      <td className="py-3 text-right">
+                      <td className="py-0.5 text-right">
                         <Button variant="ghost" size="sm">
                           <Eye className="h-4 w-4" />
                         </Button>

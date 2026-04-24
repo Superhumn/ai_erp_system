@@ -18,9 +18,7 @@ export default function InvestorsHub() {
   const [tab, setTab] = useState("captable");
 
   return (
-    <div className="space-y-3 animate-fade-in">
-      <h1 className="text-xl font-bold tracking-[-0.02em]">Investors</h1>
-
+    <div className="space-y-2 animate-fade-in">
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="captable" className="flex items-center gap-1.5">

@@ -4,7 +4,7 @@ import { sendEmail, isEmailConfigured, formatEmailHtml } from "../_core/email";
 import * as db from "../db";
 import { createGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "../_core/googleWorkspace";
 import { getGoogleFullAccessAuthUrl } from "../_core/googleDrive";
-import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems } from "../_core/quickbooks";
+import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss } from "../_core/quickbooks";
 import { testConnection } from "../ediTransportService";
 import { router, publicProcedure, protectedProcedure, adminProcedure, createAuditLog, generateNumber, getValidGoogleToken } from "./middleware";
 
@@ -917,6 +917,102 @@ export const settingsRouter = router({
           synced: synced.synced,
           message: `Successfully synced ${synced.synced} items from QuickBooks`
         };
+      }),
+
+    // Fetch Profit & Loss from QuickBooks and return parsed monthly totals.
+    // Drives actual burn / gross margin / EBITDA on the CFO dashboard.
+    getProfitAndLoss: protectedProcedure
+      .input(z.object({
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+        summarizeBy: z.enum(["Month", "Quarter", "Year"]).optional(),
+      }).optional())
+      .query(async ({ input, ctx }) => {
+        const token = await db.getQuickBooksOAuthToken(ctx.user.id);
+        if (!token || !token.realmId) return { connected: false, months: [] };
+
+        // Refresh the access token if it has expired.
+        let accessToken = token.accessToken;
+        const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+        if (isExpired && token.refreshToken) {
+          const refreshResult = await refreshQuickBooksToken(token.refreshToken);
+          if (!refreshResult.error) {
+            await db.upsertQuickBooksOAuthToken({
+              userId: ctx.user.id,
+              accessToken: refreshResult.access_token!,
+              refreshToken: refreshResult.refresh_token!,
+              expiresAt: new Date(Date.now() + refreshResult.expires_in! * 1000),
+              realmId: token.realmId,
+            });
+            accessToken = refreshResult.access_token!;
+          }
+        }
+
+        const result = await getProfitAndLoss(accessToken, token.realmId, {
+          startDate: input?.startDate,
+          endDate: input?.endDate,
+          summarizeBy: input?.summarizeBy ?? "Month",
+        });
+        if (result.error) return { connected: true, error: result.error, months: [] };
+
+        const report = result.data;
+        const columns: string[] = (report?.Columns?.Column ?? [])
+          .map((c: any) => c?.ColTitle ?? "");
+        // Walk rows recursively to find the Total Expense / Total Income rows.
+        const walkRows = (rows: any[], out: { label: string; values: number[] }[] = []): { label: string; values: number[] }[] => {
+          for (const r of rows ?? []) {
+            if (r?.Summary?.ColData) {
+              out.push({
+                label: r.Summary.ColData[0]?.value ?? r.group ?? "Row",
+                values: (r.Summary.ColData as any[]).slice(1).map((c) => parseFloat(c?.value ?? "0") || 0),
+              });
+            }
+            if (r?.Rows?.Row) walkRows(r.Rows.Row, out);
+          }
+          return out;
+        };
+        const rows = walkRows(report?.Rows?.Row ?? []);
+        // Pick out the rollup rows by name (QB labels them "Total Income"/"Total Expenses"/etc.)
+        const findRow = (needle: string) => rows.find((r) => r.label.toLowerCase().includes(needle.toLowerCase()));
+        const income  = findRow("Total Income")?.values ?? [];
+        const cogs    = findRow("Total Cost of Goods Sold")?.values ?? [];
+        const expense = findRow("Total Expenses")?.values ?? [];
+        const months = columns.slice(1, -1).map((label, i) => ({
+          label,
+          income:  income[i]  ?? 0,
+          cogs:    cogs[i]    ?? 0,
+          expense: expense[i] ?? 0,
+        }));
+
+        // Per-account expense rollup: sum across the whole period, including
+        // only leaf account rows that sit inside "Expenses" or "OtherExpenses"
+        // QB sections (avoids polluting the mix with Income/COGS entries).
+        const EXPENSE_GROUPS = new Set(["Expenses", "OtherExpenses"]);
+        const walkExpenseAccounts = (
+          rows: any[],
+          inExpense: boolean,
+          out: { label: string; values: number[] }[] = [],
+        ): { label: string; values: number[] }[] => {
+          for (const r of rows ?? []) {
+            const nowInExpense = inExpense || EXPENSE_GROUPS.has(r?.group ?? "");
+            // Leaf account row: has ColData but no child Rows (not a section header/summary).
+            if (nowInExpense && r?.ColData && !r?.Rows) {
+              const label: string = r.ColData[0]?.value ?? r.group ?? "Row";
+              const values: number[] = (r.ColData as any[]).slice(1).map((c: any) => parseFloat(c?.value ?? "0") || 0);
+              if (label) out.push({ label, values });
+            }
+            if (r?.Rows?.Row) walkExpenseAccounts(r.Rows.Row, nowInExpense, out);
+          }
+          return out;
+        };
+        const expenseAccounts = walkExpenseAccounts(report?.Rows?.Row ?? [], false)
+          .map((r) => ({
+            name: r.label,
+            total: r.values.slice(0, -1).reduce((s, v) => s + v, 0), // exclude summary col
+          }))
+          .filter((r) => r.total !== 0);
+
+        return { connected: true, months, expenseAccounts };
       }),
 
     // Get QuickBooks accounts for mapping

@@ -34,3 +34,84 @@ Any change to `getMenuGroups()` will fail CI.
 
 `Sales & Finance`, `CRM` (as section), `Communications` (as section), `AI Assistant`,
 `Approval Queue`, `Support`, `Equity Portal`, `Time Tracking`, `Inventory Mgmt`
+
+---
+
+## Stack
+
+- **Frontend:** React 19 + Vite 7 + Tailwind v4 + Radix UI + wouter (routing) + TanStack Query + tRPC 11 client
+- **Backend:** Express 4 + tRPC 11 + Drizzle ORM + MySQL (via `mysql2`)
+- **Tests:** Vitest (unit) + Playwright (e2e)
+- **Language:** TypeScript 5.9, ESM
+- **Package manager:** pnpm
+
+## Commands
+
+| Command              | Purpose                                                       |
+|----------------------|---------------------------------------------------------------|
+| `pnpm dev`           | Dev server (tsx watch on `server/_core/index.ts`)             |
+| `pnpm build`         | Build client (vite) + bundle server (esbuild) to `dist/`      |
+| `pnpm check`         | Typecheck (`tsc --noEmit`)                                    |
+| `pnpm check:strict`  | Typecheck with `tsconfig.strict.json`                         |
+| `pnpm test`          | Vitest unit tests                                             |
+| `pnpm test:e2e`      | Playwright e2e tests                                          |
+| `pnpm db:push`       | Generate + apply Drizzle migrations                           |
+| `pnpm format`        | Prettier write                                                |
+
+## Repo map
+
+```
+client/src/          React app
+  pages/             Top-level routes + feature folders
+                     (ai, autonomous, crm, edi, finance, freight, grants,
+                      hr, legal, marketing, operations, ...)
+  components/        Shared UI (DashboardLayout, AIChatBox, ...)
+  _core/hooks/       Reusable hooks
+server/              Express + tRPC backend
+  _core/             Entry point, tRPC setup, infra (llm, email,
+                     oauth, gmail, googleDrive, quickbooks, shopify, ...)
+  routers/           Per-feature tRPC routers (preferred home for new routes)
+  routers/index.ts   Router aggregation
+  routers.ts         LEGACY (21k lines) — see warning below
+  db/                Preferred home for new DB helpers
+  db.ts              LEGACY (12k lines) — see warning below
+shared/              Types + constants used by both client and server
+drizzle/             SQL migrations + schema.ts (6.4k lines)
+scripts/             One-off imports / cleanups
+e2e/                 Playwright specs
+docs/                Feature + integration docs
+```
+
+## Large-file warnings
+
+Do **not** read these in full. Use one of: the generated index, `rg`/`grep`, or `Read` with `offset`/`limit`.
+
+- `server/routers.ts` — **21,798 lines, 103 top-level routers**. See [`ROUTERS_INDEX.md`](./ROUTERS_INDEX.md) for feature → line range. **This is the live tRPC router** — `server/_core/index.ts` imports `appRouter` from `"../routers"`, which resolves to this file.
+- `server/db.ts` — **12,503 lines, 911 exports, 108 banner sections**. See [`DB_INDEX.md`](./DB_INDEX.md) for section map and per-export coverage. Still the default import target for most of the codebase (~95 importers).
+- `drizzle/schema.ts` — **6,413 lines**. Drizzle table definitions.
+
+**Rule: for any investigation that requires scanning `server/routers.ts` or `server/db.ts` beyond a single feature's line range, delegate to an `Explore` subagent.** Keeps the main context lean and avoids accidentally pulling tens of thousands of lines into the transcript.
+
+Regenerate both indexes with `pnpm index:legacy` after any change to either legacy file or to `server/routers/*.ts` / `server/db/*.ts`. The output is deterministic — no manual edits.
+
+### ⚠️ The extracted trees are partial and unwired
+
+`server/routers/` and `server/db/` look like finished refactors but aren't. Someone extracted ~70% of the routers + db helpers into per-feature files, built `server/routers/index.ts` with `mergeRouters(...)`, and stopped before flipping the import. **Nothing consumes `server/routers/index.ts`** — the live tree is still the monolith. Same shape for `server/db/index.ts`: it re-exports from `./auth`, `./finance`, etc., but most callers still `import * as db from "./db"` (the file).
+
+Implications:
+
+- **Adding a new route to `server/routers/<feature>.ts` alone produces dead code.** Typecheck passes, tRPC never sees it. Default: add new routes to `server/routers.ts` in the relevant section (use the index to find it).
+- **Adding a helper to `server/db/<feature>.ts` only works if the caller imports from `server/db/<feature>` directly.** If the caller uses `import * as db from "./db"`, the helper is invisible. Default: add helpers to `server/db.ts` in the matching banner section.
+- The 33 legacy-only top-level routers and 175 legacy-only db exports (see both indexes) quantify the gap.
+
+If you need to wire up the extracted tree as part of a feature, do it deliberately: change `server/_core/index.ts:10` to import from `"../routers/index"`, verify every legacy-only route has a home in the extracted tree (or accept the loss), and update the 5 test files that import from `"./routers"`.
+
+## Conventions
+
+- **New API routes:** add to `server/routers.ts` in the relevant section (see [`ROUTERS_INDEX.md`](./ROUTERS_INDEX.md)). The `server/routers/<feature>.ts` tree is orphaned — don't use it for new routes until it's wired up.
+- **New DB helpers:** add to `server/db.ts` in the matching banner section (see [`DB_INDEX.md`](./DB_INDEX.md)). Same caveat for `server/db/<feature>.ts`.
+- **New pages:** add under `client/src/pages/<feature>/`, route in `client/src/App.tsx` (wouter).
+- **Cross-boundary types:** live in `shared/types.ts`.
+- **DB changes:** edit `drizzle/schema.ts`, run `pnpm db:push`.
+- **UI:** Tailwind utilities + Radix primitives (shadcn config in `components.json`).
+- **Sidebar:** never modify `DashboardLayout.tsx`'s `getMenuGroups()` — it's the contract enforced by the tests referenced above.

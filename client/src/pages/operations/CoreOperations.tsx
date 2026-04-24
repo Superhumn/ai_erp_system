@@ -481,19 +481,19 @@ function DetailPane({ node }: { node: TreeNode }) {
                   <table className="w-full text-sm">
                     <thead className="bg-muted/50">
                       <tr>
-                        <th className="text-left p-2">SKU</th>
-                        <th className="text-right p-2">Qty</th>
-                        <th className="text-right p-2">Price</th>
-                        <th className="text-right p-2">Total</th>
+                        <th className="text-left px-1.5 py-1">SKU</th>
+                        <th className="text-right px-1.5 py-1">Qty</th>
+                        <th className="text-right px-1.5 py-1">Price</th>
+                        <th className="text-right px-1.5 py-1">Total</th>
                       </tr>
                     </thead>
                     <tbody>
                       {salesOrderDetail.lines.map((line: any) => (
                         <tr key={line.id} className="border-t">
-                          <td className="p-2">{line.sku || "N/A"}</td>
-                          <td className="text-right p-2">{line.quantity}</td>
-                          <td className="text-right p-2">${parseFloat(line.unitPrice || "0").toFixed(2)}</td>
-                          <td className="text-right p-2">${parseFloat(line.totalPrice || "0").toFixed(2)}</td>
+                          <td className="px-1.5 py-0.5">{line.sku || "N/A"}</td>
+                          <td className="text-right px-1.5 py-0.5">{line.quantity}</td>
+                          <td className="text-right px-1.5 py-0.5">${parseFloat(line.unitPrice || "0").toFixed(2)}</td>
+                          <td className="text-right px-1.5 py-0.5">${parseFloat(line.totalPrice || "0").toFixed(2)}</td>
                         </tr>
                       ))}
                     </tbody>

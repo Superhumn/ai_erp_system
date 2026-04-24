@@ -30,7 +30,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { FileArchive, Plus, Search, Loader2, ExternalLink, Upload } from "lucide-react";
+import { FileArchive, Plus, Search, Loader2, ExternalLink, Upload, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -48,6 +58,7 @@ export default function Documents() {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [documentToDelete, setDocumentToDelete] = useState<{ id: number; name: string } | null>(null);
   const [formData, setFormData] = useState({
     name: "",
     type: "legal" as "contract" | "invoice" | "receipt" | "report" | "legal" | "hr" | "other",
@@ -68,6 +79,15 @@ export default function Documents() {
     onError: (error) => {
       toast.error(error.message);
     },
+  });
+
+  const deleteDocument = trpc.documents.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Document deleted");
+      setDocumentToDelete(null);
+      refetch();
+    },
+    onError: (error) => toast.error(error.message),
   });
 
   const filteredDocuments = documents?.filter((doc: any) => {
@@ -275,13 +295,24 @@ export default function Documents() {
                         : "-"}
                     </TableCell>
                     <TableCell>
-                      {doc.fileUrl && (
-                        <Button variant="ghost" size="sm" asChild>
-                          <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer">
-                            <ExternalLink className="h-4 w-4" />
-                          </a>
+                      <div className="flex items-center gap-1">
+                        {doc.fileUrl && (
+                          <Button variant="ghost" size="sm" asChild>
+                            <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer">
+                              <ExternalLink className="h-4 w-4" />
+                            </a>
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={() => setDocumentToDelete({ id: doc.id, name: doc.name })}
+                          aria-label={`Delete ${doc.name}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
                         </Button>
-                      )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -290,6 +321,32 @@ export default function Documents() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog open={!!documentToDelete} onOpenChange={(open) => !open && setDocumentToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete document?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes <span className="font-medium">{documentToDelete?.name}</span>
+              {" "}from the system. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteDocument.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteDocument.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (documentToDelete) deleteDocument.mutate({ id: documentToDelete.id });
+              }}
+            >
+              {deleteDocument.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete document
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

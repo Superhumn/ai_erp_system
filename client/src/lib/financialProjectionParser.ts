@@ -20,9 +20,9 @@ export interface Period {
   label: string;
   /** Four-digit year extracted from the cell. */
   year: number;
-  /** 1–12 if the period is monthly; undefined if annual. */
+  /** Starting month when available (1–12 for monthly periods and quarter labels); undefined for annual periods. */
   month?: number;
-  /** Sortable key: `year * 100 + (month || 0)`. */
+  /** Sortable key: `year * 100 + (month || 0)`, using the starting month when available. */
   sortKey: number;
 }
 
@@ -576,35 +576,90 @@ export function deriveSeries(model: FinancialModel) {
       )
     : undefined;
 
-  // YoY growth on primary top-line series (revenue preferred, else ARR).
+  const getPeriodMonthIndex = (period: Period): number => {
+    if (period.month !== undefined) {
+      return period.year * 12 + (period.month - 1);
+    }
+    if (period.quarter !== undefined) {
+      return period.year * 12 + (period.quarter - 1) * 3;
+    }
+    return period.year * 12;
+  };
+
+  const getElapsedMonths = (start: Period, end: Period): number => {
+    return getPeriodMonthIndex(end) - getPeriodMonthIndex(start);
+  };
+
+  // Annualized growth on primary top-line series (revenue preferred, else ARR),
+  // using actual elapsed time between adjacent periods.
   const yoyGrowth: (number | null)[] | undefined = rev
     ? rev.map((r, i) => {
         if (i === 0 || r === null) return null;
         const prev = rev[i - 1];
-        if (prev === null || prev === 0) return null;
-        return ((r - prev) / Math.abs(prev)) * 100;
+        if (prev === null || prev <= 0 || r <= 0) return null;
+
+        const elapsedMonths = getElapsedMonths(periods[i - 1], periods[i]);
+        if (elapsedMonths <= 0) return null;
+
+        return (Math.pow(r / prev, 12 / elapsedMonths) - 1) * 100;
       })
     : undefined;
 
-  // CAGR on primary top-line, first → last non-null.
+  // CAGR on primary top-line, first non-null → last non-null, annualized using
+  // the actual elapsed time between those periods.
   let cagr: number | null = null;
   if (rev && n >= 2) {
-    const first = rev[0];
-    const last = rev[n - 1];
-    if (first !== null && last !== null && first > 0 && last > 0) {
-      cagr = (Math.pow(last / first, 1 / (n - 1)) - 1) * 100;
+    let firstIndex = -1;
+    let lastIndex = -1;
+
+    for (let i = 0; i < n; i++) {
+      if (rev[i] !== null) {
+        firstIndex = i;
+        break;
+      }
+    }
+
+    for (let i = n - 1; i >= 0; i--) {
+      if (rev[i] !== null) {
+        lastIndex = i;
+        break;
+      }
+    }
+
+    if (firstIndex !== -1 && lastIndex !== -1 && lastIndex > firstIndex) {
+      const first = rev[firstIndex] as number;
+      const last = rev[lastIndex] as number;
+      const elapsedMonths = getElapsedMonths(periods[firstIndex], periods[lastIndex]);
+
+      if (first > 0 && last > 0 && elapsedMonths > 0) {
+        cagr = (Math.pow(last / first, 12 / elapsedMonths) - 1) * 100;
+      }
     }
   }
 
-  // Runway at last-period burn, in months. Only meaningful for annual or monthly.
+  // Runway at last-period burn, in months.
+  // Convert the last period's net income into a monthly burn rate based on
+  // the spacing between consecutive period sort keys:
+  //   monthly => 1, quarterly => 3, annual => 12.
   let runwayMonths: number | null = null;
   const cash = metrics.cashBalance;
   if (cash && netIncome && n > 0) {
     const lastCash = cash[n - 1];
     const lastNi = netIncome[n - 1];
     if (lastCash !== null && lastNi !== null && lastNi < 0) {
-      const isMonthly = periods.some((p) => p.month !== undefined);
-      const burnPerMonth = isMonthly ? -lastNi : -lastNi / 12;
+      const stepSizes = periods
+        .slice(1)
+        .map((period, i) => period.sortKey - periods[i].sortKey)
+        .filter((delta) => delta > 0);
+
+      const inferredMonthsPerPeriod =
+        stepSizes.length > 0 && stepSizes.every((delta) => delta === stepSizes[0])
+          ? stepSizes[0]
+          : periods.every((p) => p.month !== undefined)
+            ? 1
+            : 12;
+
+      const burnPerMonth = -lastNi / inferredMonthsPerPeriod;
       runwayMonths = burnPerMonth > 0 ? lastCash / burnPerMonth : null;
     }
   }
