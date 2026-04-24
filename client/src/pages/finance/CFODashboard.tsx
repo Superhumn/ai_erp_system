@@ -393,6 +393,57 @@ export default function CFODashboard() {
     return { title: latest.title, date: sentDate, daysAgo };
   }, [investorUpdatesList]);
 
+  // ── Cohort retention heatmap — revenue retention by acquisition quarter
+  const cohortHeatmap = useMemo(() => {
+    const invs = invoicesList ?? [];
+    if (invs.length === 0) return null;
+    const qIndex = (d: Date) => d.getFullYear() * 4 + Math.floor(d.getMonth() / 3);
+
+    // Each customer's acquisition quarter = quarter of their first invoice.
+    const firstQByCustomer = new Map<string, number>();
+    for (const inv of invs) {
+      const name = (inv as any).customer?.name || `Customer ${(inv as any).customerId ?? "—"}`;
+      const qi = qIndex(new Date((inv as any).issueDate || (inv as any).createdAt));
+      if (!firstQByCustomer.has(name) || qi < firstQByCustomer.get(name)!) {
+        firstQByCustomer.set(name, qi);
+      }
+    }
+
+    // cohortQuarter → offset → revenue
+    const cohorts = new Map<number, Map<number, number>>();
+    for (const inv of invs) {
+      const name = (inv as any).customer?.name || `Customer ${(inv as any).customerId ?? "—"}`;
+      const qi = qIndex(new Date((inv as any).issueDate || (inv as any).createdAt));
+      const cohort = firstQByCustomer.get(name)!;
+      const offset = qi - cohort;
+      const amt = parseFloat((inv as any).totalAmount || "0");
+      if (!cohorts.has(cohort)) cohorts.set(cohort, new Map());
+      const m = cohorts.get(cohort)!;
+      m.set(offset, (m.get(offset) ?? 0) + amt);
+    }
+
+    const currentQi = qIndex(new Date());
+    const rows = Array.from(cohorts.entries())
+      .filter(([qi]) => qi >= currentQi - 7 && qi <= currentQi) // last 8 quarters max
+      .sort((a, b) => a[0] - b[0])
+      .map(([qi, offsets]) => {
+        const q0Rev = offsets.get(0) ?? 0;
+        const maxOffset = currentQi - qi;
+        const cells: (number | null)[] = [];
+        for (let o = 0; o <= maxOffset; o++) {
+          const rev = offsets.get(o) ?? 0;
+          cells.push(q0Rev > 0 ? (rev / q0Rev) * 100 : null);
+        }
+        const year = Math.floor(qi / 4);
+        const q = (qi % 4) + 1;
+        const n = Array.from(firstQByCustomer.values()).filter((v) => v === qi).length;
+        return { label: `Q${q} ${year}`, n, cells };
+      });
+    if (rows.length === 0) return null;
+    const maxOffset = Math.max(...rows.map((r) => r.cells.length));
+    return { rows, maxOffset };
+  }, [invoicesList]);
+
   // ── ARR Movement (last 6mo): Starting → New + Expansion − Contraction − Churn → Ending
   const arrMovement = useMemo(() => {
     const invs = invoicesList ?? [];
@@ -895,6 +946,64 @@ export default function CFODashboard() {
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        );
+      })()}
+
+      {cohortHeatmap && (() => {
+        const cellClass = (v: number | null) => {
+          if (v === null) return "";
+          if (v >= 100) return "bg-emerald-200 text-emerald-900 dark:bg-emerald-900/80 dark:text-emerald-100";
+          if (v >= 80)  return "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-200";
+          if (v >= 60)  return "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200";
+          if (v >= 40)  return "bg-orange-100 text-orange-900 dark:bg-orange-900/40 dark:text-orange-200";
+          return "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-200";
+        };
+        return (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <PieChart className="h-4 w-4 text-indigo-600" /> Cohort Retention
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Revenue retention by acquisition quarter · Q+N = quarters after first order.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-separate border-spacing-y-0.5">
+                  <thead>
+                    <tr className="text-muted-foreground">
+                      <th className="text-left font-normal pr-3 pb-1">Cohort</th>
+                      {Array.from({ length: cohortHeatmap.maxOffset }).map((_, i) => (
+                        <th key={i} className="text-center font-normal px-1 pb-1">Q+{i}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cohortHeatmap.rows.map((r, ri) => (
+                      <tr key={ri}>
+                        <td className="pr-3 py-0.5 whitespace-nowrap">
+                          {r.label} <span className="text-muted-foreground">(N={r.n})</span>
+                        </td>
+                        {Array.from({ length: cohortHeatmap.maxOffset }).map((_, ci) => {
+                          const v = r.cells[ci] ?? null;
+                          return (
+                            <td key={ci} className="px-1 py-0.5">
+                              {v !== null ? (
+                                <span className={`inline-block w-full min-w-[44px] text-center rounded py-0.5 ${cellClass(v)}`}>
+                                  {v.toFixed(0)}%
+                                </span>
+                              ) : ""}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </CardContent>
           </Card>
         );
