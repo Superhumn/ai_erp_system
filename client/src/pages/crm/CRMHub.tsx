@@ -404,7 +404,7 @@ export default function CRMHub() {
           <div className="h-4 w-px bg-border" />
           <div><span className="text-muted-foreground">Win Rate</span> <span className="font-bold">{conversionRate}%</span></div>
           <div className="h-4 w-px bg-border" />
-          <div><span className="text-muted-foreground">Contacts</span> <span className="font-bold">{contactStats?.total || 0}</span></div>
+          <div><span className="text-muted-foreground">Contacts</span> <span className="font-bold">{contacts?.length || 0}</span></div>
         </div>
         <div className="flex gap-2">
           {(duplicatesSummary.data?.totalDuplicates ?? 0) > 0 && (
