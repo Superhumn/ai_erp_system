@@ -8651,17 +8651,26 @@ export async function findCrmContactMatch(identity: {
  * never clobbers richer existing data.
  */
 export async function findOrCreateCrmContact(data: InsertCrmContact): Promise<{ id: number; created: boolean }> {
+  // Normalize empty strings to undefined so they are stored as NULL and do not
+  // collide under the UNIQUE indexes on email/phone/whatsappNumber/linkedinUrl.
+  const normalized: InsertCrmContact = {
+    ...data,
+    email: data.email?.trim() || undefined,
+    phone: data.phone?.trim() || undefined,
+    whatsappNumber: data.whatsappNumber?.trim() || undefined,
+    linkedinUrl: data.linkedinUrl?.trim() || undefined,
+  };
   const match = await findCrmContactMatch({
-    email: data.email,
-    phone: data.phone,
-    whatsappNumber: data.whatsappNumber,
-    linkedinUrl: data.linkedinUrl,
+    email: normalized.email,
+    phone: normalized.phone,
+    whatsappNumber: normalized.whatsappNumber,
+    linkedinUrl: normalized.linkedinUrl,
   });
   if (match) {
     const db = await getDb();
     const patch: Record<string, any> = {};
-    for (const [k, v] of Object.entries(data)) {
-      if (v == null || v === "") continue;
+    for (const [k, v] of Object.entries(normalized)) {
+      if (v == null) continue;
       if ((match as any)[k] == null || (match as any)[k] === "") patch[k] = v;
     }
     if (db && Object.keys(patch).length > 0) {
@@ -8670,13 +8679,15 @@ export async function findOrCreateCrmContact(data: InsertCrmContact): Promise<{ 
     }
     return { id: match.id as number, created: false };
   }
-  const id = await createCrmContact(data);
+  const id = await createCrmContact(normalized);
   return { id, created: true };
 }
 
 /**
  * Group existing contacts that share a normalized email, phone, whatsapp, or
- * linkedin url. Returns one group per cluster, each with 2+ contacts.
+ * linkedin url. Each contact is added to every identifier group it qualifies
+ * for so that all duplicates are caught regardless of which identifiers overlap.
+ * Returns one group per cluster, each with 2+ contacts.
  */
 export async function findDuplicateCrmContactGroups() {
   const db = await getDb();
@@ -8696,9 +8707,9 @@ export async function findDuplicateCrmContactGroups() {
     const whatsapp = normalizePhone((c as any).whatsappNumber);
     const linkedin = normalizeLinkedin((c as any).linkedinUrl);
     if (email) assign("email:" + email, "email", c);
-    else if (phone) assign("phone:" + phone, "phone", c);
-    else if (whatsapp) assign("whatsapp:" + whatsapp, "whatsapp", c);
-    else if (linkedin) assign("linkedin:" + linkedin, "linkedin", c);
+    if (phone) assign("phone:" + phone, "phone", c);
+    if (whatsapp) assign("whatsapp:" + whatsapp, "whatsapp", c);
+    if (linkedin) assign("linkedin:" + linkedin, "linkedin", c);
   }
   return Array.from(groups.values()).filter((g) => g.contacts.length >= 2);
 }
@@ -8707,6 +8718,8 @@ export async function findDuplicateCrmContactGroups() {
  * Merge duplicate contacts into a single primary. Reparents FKs on
  * crm_interactions, crm_deals, crm_contact_tags, contact_captures,
  * whatsapp_messages and crm_campaign_recipients, then deletes the duplicates.
+ * All operations run inside a single transaction so that a mid-merge failure
+ * cannot leave partially reparented data.
  */
 export async function mergeCrmContacts(primaryId: number, duplicateIds: number[]) {
   const db = await getDb();
@@ -8714,14 +8727,16 @@ export async function mergeCrmContacts(primaryId: number, duplicateIds: number[]
   const ids = duplicateIds.filter((id) => id !== primaryId);
   if (ids.length === 0) return { merged: 0 };
 
-  await db.update(crmInteractions).set({ contactId: primaryId }).where(inArray(crmInteractions.contactId, ids));
-  await db.update(crmDeals).set({ contactId: primaryId }).where(inArray(crmDeals.contactId, ids));
-  await db.update(contactCaptures).set({ contactId: primaryId }).where(inArray(contactCaptures.contactId, ids));
-  await db.update(whatsappMessages).set({ contactId: primaryId }).where(inArray(whatsappMessages.contactId, ids));
-  await db.update(crmContactTags).set({ contactId: primaryId }).where(inArray(crmContactTags.contactId, ids));
-  await db.update(crmCampaignRecipients).set({ contactId: primaryId }).where(inArray(crmCampaignRecipients.contactId, ids));
+  await db.transaction(async (tx) => {
+    await tx.update(crmInteractions).set({ contactId: primaryId }).where(inArray(crmInteractions.contactId, ids));
+    await tx.update(crmDeals).set({ contactId: primaryId }).where(inArray(crmDeals.contactId, ids));
+    await tx.update(contactCaptures).set({ contactId: primaryId }).where(inArray(contactCaptures.contactId, ids));
+    await tx.update(whatsappMessages).set({ contactId: primaryId }).where(inArray(whatsappMessages.contactId, ids));
+    await tx.update(crmContactTags).set({ contactId: primaryId }).where(inArray(crmContactTags.contactId, ids));
+    await tx.update(crmCampaignRecipients).set({ contactId: primaryId }).where(inArray(crmCampaignRecipients.contactId, ids));
+    await tx.delete(crmContacts).where(inArray(crmContacts.id, ids));
+  });
 
-  await db.delete(crmContacts).where(inArray(crmContacts.id, ids));
   return { merged: ids.length };
 }
 

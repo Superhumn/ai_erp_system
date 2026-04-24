@@ -199,23 +199,6 @@ export default function CRMHub() {
     onError: (error) => toast.error(error.message),
   });
 
-  const duplicatesSummary = (trpc.crm as any).contacts.findDuplicates.useQuery(undefined, {
-    refetchOnMount: true,
-  });
-
-  const autoMergeDuplicates = (trpc.crm as any).contacts.autoMergeDuplicates.useMutation({
-    onSuccess: (result: any) => {
-      if (result.merged > 0) {
-        toast.success(`Merged ${result.merged} duplicate contact${result.merged === 1 ? "" : "s"} across ${result.groupsMerged} group${result.groupsMerged === 1 ? "" : "s"}`);
-      } else {
-        toast.info("No duplicate contacts found");
-      }
-      refetchContacts();
-      duplicatesSummary.refetch();
-    },
-    onError: (error: any) => toast.error(error.message),
-  });
-
   const syncFromSheets = trpc.sheetsImport.syncGoogleDrive.useMutation({
     onSuccess: (data) => {
       const crmResults = data.results.filter((r: any) => r.type === 'crm_contacts' || r.type === 'crm_deals' || r.type === 'fundraising');
@@ -407,27 +390,6 @@ export default function CRMHub() {
           <div><span className="text-muted-foreground">Contacts</span> <span className="font-bold">{contacts?.length || 0}</span></div>
         </div>
         <div className="flex gap-2">
-          {(duplicatesSummary.data?.totalDuplicates ?? 0) > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                const n = duplicatesSummary.data?.totalDuplicates ?? 0;
-                if (confirm(`Merge ${n} duplicate contact${n === 1 ? "" : "s"}? The oldest record in each group is kept and all deals, interactions, and messages are reassigned to it.`)) {
-                  autoMergeDuplicates.mutate();
-                }
-              }}
-              disabled={autoMergeDuplicates.isPending}
-              title="Contacts sharing email, phone, WhatsApp, or LinkedIn URL will be merged into the oldest record."
-            >
-              {autoMergeDuplicates.isPending ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Users className="h-4 w-4 mr-2" />
-              )}
-              Merge {duplicatesSummary.data?.totalDuplicates} Duplicate{duplicatesSummary.data?.totalDuplicates === 1 ? "" : "s"}
-            </Button>
-          )}
           <Button
             variant="outline"
             size="sm"

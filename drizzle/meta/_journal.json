@@ -253,6 +253,12 @@
       "when": 1777651200000,
       "tag": "0035_drive_docs_metadata_only",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "5",
+      "when": 1777039200000,
+      "tag": "0035_crm_contact_dedup_indexes"
     }
   ]
 }
