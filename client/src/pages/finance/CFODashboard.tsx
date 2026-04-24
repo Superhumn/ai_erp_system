@@ -129,6 +129,7 @@ export default function CFODashboard() {
   const { data: modelData } = trpc.financialModel.list.useQuery({});
   const { data: kpiGoals } = trpc.kpiGoals.list.useQuery({ year: new Date().getFullYear() });
   const { data: employees } = trpc.hr.employees.list.useQuery({ status: "active" });
+  const { data: expenseTxns } = trpc.transactions.list.useQuery({ type: "expense" });
 
   // ── Cash ────────────────────────────────────────────────────
   const cashPosition = useMemo(() =>
@@ -184,7 +185,30 @@ export default function CFODashboard() {
   const netNewArr = (thisMonthRev - lastMonthRev) * 12;
 
   // ── Burn / Runway ───────────────────────────────────────────
-  const estimatedBurn = useMemo(() => Math.max(threeMonthAvgRev * 0.7, 10000), [threeMonthAvgRev]);
+  // Prefer actual expenses (trailing 3mo avg) when available; fall back to proxy.
+  const { actualBurn, burnSource } = useMemo(() => {
+    const txns = expenseTxns ?? [];
+    if (txns.length === 0) return { actualBurn: 0, burnSource: "none" as const };
+    const now = new Date();
+    const buckets: Record<string, number> = {};
+    for (let i = 0; i < 3; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      buckets[`${d.getFullYear()}-${d.getMonth()}`] = 0;
+    }
+    for (const t of txns) {
+      const d = new Date((t as any).date || (t as any).createdAt);
+      const k = `${d.getFullYear()}-${d.getMonth()}`;
+      if (k in buckets) buckets[k] += Math.abs(parseFloat((t as any).totalAmount || "0"));
+    }
+    const sum = Object.values(buckets).reduce((a, b) => a + b, 0);
+    const monthsWithData = Object.values(buckets).filter((v) => v > 0).length;
+    if (monthsWithData === 0) return { actualBurn: 0, burnSource: "none" as const };
+    return { actualBurn: sum / monthsWithData, burnSource: "ledger" as const };
+  }, [expenseTxns]);
+
+  const estimatedBurn = useMemo(() =>
+    actualBurn > 0 ? actualBurn : Math.max(threeMonthAvgRev * 0.7, 10000),
+    [actualBurn, threeMonthAvgRev]);
   const runwayMonths = estimatedBurn > 0 ? Math.round((cashPosition / estimatedBurn) * 10) / 10 : 0;
   const zeroCashDate = useMemo(() => {
     if (!Number.isFinite(runwayMonths) || runwayMonths <= 0) return null;
@@ -417,7 +441,9 @@ export default function CFODashboard() {
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         <KpiCard icon={DollarSign} label="Cash" value={fmtCompact(cashPosition)} sub="Across all accounts" />
-        <KpiCard icon={Flame} label="Net Burn" value={`${fmtCompact(estimatedBurn)}/mo`} sub="Trailing 3mo est." />
+        <KpiCard icon={Flame} label="Net Burn"
+                 value={`${fmtCompact(estimatedBurn)}/mo`}
+                 sub={burnSource === "ledger" ? "From expense ledger · 3mo avg" : "Proxy estimate — no ledger data"} />
         <KpiCard icon={Clock} label="Runway"
                  value={`${runwayMonths} mo`}
                  tone={benchColor(runwayMonths, BENCHMARKS.runway)}
