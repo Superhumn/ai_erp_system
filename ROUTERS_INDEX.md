@@ -114,7 +114,7 @@ Source: `server/routers.ts` (appRouter L258–L21685, 103 top-level keys).
 | `legalCases` | L21401–L21484 | 84 | ✗ legacy-only |
 | `financialReports` | L21485–L21684 | 200 | ✓ `server/routers/finance.ts` |
 
-## Legacy-only (33)
+## Legacy-only (34)
 
 These exist only in `server/routers.ts` — the extracted `server/routers/` tree does not cover them.
 
@@ -152,7 +152,7 @@ These exist only in `server/routers.ts` — the extracted `server/routers/` tree
 - `kpiGoals` — L21323–L21400 (78 lines)
 - `legalCases` — L21401–L21484 (84 lines)
 
-## Also in extracted tree (70)
+## Also in extracted tree (69)
 
 Top-level key exists in both. **Route-level parity is not guaranteed** — spot checks have found legacy-only procedures inside several of these (e.g. `crm` has ~7 legacy-only procedures, `invoices` has 2). If you need completeness, diff the specific sub-router.
 

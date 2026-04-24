@@ -75,6 +75,7 @@ function extractedRouterKeys() {
       // breaks more than it fixes.
       const c = line
         .replace(/\/\/.*$/, '')
+        .replace(/`(?:\\.|[^`\\])*`/g, '``')
         .replace(/"(?:\\.|[^"\\])*"/g, '""')
         .replace(/'(?:\\.|[^'\\])*'/g, "''");
       depth += (c.match(/\{/g)?.length || 0) - (c.match(/\}/g)?.length || 0);
