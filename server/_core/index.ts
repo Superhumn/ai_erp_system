@@ -411,6 +411,29 @@ async function cleanupPlaceholders() {
   }
 }
 
+// Idempotent: once the app's findOrCreateCrmContact helper is in place,
+// no new duplicates appear, so this becomes a one-SELECT no-op after the
+// first post-deploy run.
+async function autoMergeCrmContacts() {
+  try {
+    const db = await import("../db");
+    const groups = await db.findDuplicateCrmContactGroups();
+    if (groups.length === 0) return;
+    let merged = 0;
+    for (const g of groups) {
+      const sorted = [...g.contacts].sort((a: any, b: any) => a.id - b.id);
+      const primary = sorted[0];
+      const dupeIds = sorted.slice(1).map((c: any) => c.id);
+      if (dupeIds.length === 0) continue;
+      const result = await db.mergeCrmContacts(primary.id, dupeIds);
+      merged += result.merged;
+    }
+    if (merged > 0) console.log(`[Cleanup] Auto-merged ${merged} duplicate CRM contacts across ${groups.length} groups`);
+  } catch (e) {
+    console.warn("[Cleanup] CRM auto-merge skipped:", e instanceof Error ? e.message : e);
+  }
+}
+
 async function startServer() {
   await initErrorTracking();
 
@@ -419,8 +442,11 @@ async function startServer() {
   await runMigrationsAtStartup();
   await verifyDatabaseReadiness();
 
-  // Ensure critical tables exist + cleanup placeholders
-  ensureTables().then(() => cleanupPlaceholders()).catch(console.warn);
+  // Ensure critical tables exist + cleanup placeholders + auto-merge dupes
+  ensureTables()
+    .then(() => cleanupPlaceholders())
+    .then(() => autoMergeCrmContacts())
+    .catch(console.warn);
 
   const emailConfigValidation = validateEmailConfig();
   if (!emailConfigValidation.valid) {
