@@ -411,31 +411,31 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                         <table className="w-full text-sm">
                           <thead className="bg-muted">
                             <tr>
-                              <th className="text-left p-2">Rank</th>
-                              <th className="text-left p-2">Vendor</th>
-                              <th className="text-right p-2">Unit Price</th>
-                              <th className="text-right p-2">Total</th>
-                              <th className="text-center p-2">Lead Time</th>
-                              <th className="text-center p-2">Valid Until</th>
-                              <th className="text-center p-2">Actions</th>
+                              <th className="text-left px-1.5 py-1">Rank</th>
+                              <th className="text-left px-1.5 py-1">Vendor</th>
+                              <th className="text-right px-1.5 py-1">Unit Price</th>
+                              <th className="text-right px-1.5 py-1">Total</th>
+                              <th className="text-center px-1.5 py-1">Lead Time</th>
+                              <th className="text-center px-1.5 py-1">Valid Until</th>
+                              <th className="text-center px-1.5 py-1">Actions</th>
                             </tr>
                           </thead>
                           <tbody>
                             {selectedRfqQuotes.map((quote: any, idx: number) => (
                               <tr key={quote.id} className={`border-t ${idx === 0 ? 'bg-green-50' : ''}`}>
-                                <td className="p-2">
+                                <td className="px-1.5 py-0.5">
                                   {idx === 0 ? (
                                     <Badge className="bg-green-500">Best</Badge>
                                   ) : (
                                     <span className="text-muted-foreground">#{quote.overallRank || idx + 1}</span>
                                   )}
                                 </td>
-                                <td className="p-2 font-medium">{quote.vendor?.name}</td>
-                                <td className="p-2 text-right font-mono">{formatCurrency(quote.unitPrice)}</td>
-                                <td className="p-2 text-right font-mono font-semibold">{formatCurrency(quote.totalPrice)}</td>
-                                <td className="p-2 text-center">{quote.leadTimeDays ? `${quote.leadTimeDays} days` : '-'}</td>
-                                <td className="p-2 text-center">{formatDate(quote.validUntil)}</td>
-                                <td className="p-2 text-center">
+                                <td className="px-1.5 py-0.5 font-medium">{quote.vendor?.name}</td>
+                                <td className="px-1.5 py-0.5 text-right font-mono">{formatCurrency(quote.unitPrice)}</td>
+                                <td className="px-1.5 py-0.5 text-right font-mono font-semibold">{formatCurrency(quote.totalPrice)}</td>
+                                <td className="px-1.5 py-0.5 text-center">{quote.leadTimeDays ? `${quote.leadTimeDays} days` : '-'}</td>
+                                <td className="px-1.5 py-0.5 text-center">{formatDate(quote.validUntil)}</td>
+                                <td className="px-1.5 py-0.5 text-center">
                                   {quote.status === 'received' && (
                                     <div className="flex items-center justify-center gap-1">
                                       <Button
@@ -496,13 +496,13 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                 <table className="w-full text-sm">
                   <thead className="bg-muted">
                     <tr>
-                      <th className="text-left p-2">Quote #</th>
-                      <th className="text-left p-2">RFQ</th>
-                      <th className="text-left p-2">Vendor</th>
-                      <th className="text-right p-2">Unit Price</th>
-                      <th className="text-right p-2">Total</th>
-                      <th className="text-center p-2">Status</th>
-                      <th className="text-center p-2">Received</th>
+                      <th className="text-left px-1.5 py-1">Quote #</th>
+                      <th className="text-left px-1.5 py-1">RFQ</th>
+                      <th className="text-left px-1.5 py-1">Vendor</th>
+                      <th className="text-right px-1.5 py-1">Unit Price</th>
+                      <th className="text-right px-1.5 py-1">Total</th>
+                      <th className="text-center px-1.5 py-1">Status</th>
+                      <th className="text-center px-1.5 py-1">Received</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -511,15 +511,15 @@ function VendorQuotesTab({ vendors, rawMaterials }: { vendors: any[]; rawMateria
                       const vendor = vendors.find((v: any) => v.id === quote.vendorId);
                       return (
                         <tr key={quote.id} className="border-t hover:bg-muted/50">
-                          <td className="p-2 font-mono">{quote.quoteNumber || `Q-${quote.id}`}</td>
-                          <td className="p-2">{rfq?.rfqNumber || '-'}</td>
-                          <td className="p-2 font-medium">{vendor?.name || '-'}</td>
-                          <td className="p-2 text-right font-mono">{formatCurrency(quote.unitPrice)}</td>
-                          <td className="p-2 text-right font-mono font-semibold">{formatCurrency(quote.totalPrice)}</td>
-                          <td className="p-2 text-center">
+                          <td className="px-1.5 py-0.5 font-mono">{quote.quoteNumber || `Q-${quote.id}`}</td>
+                          <td className="px-1.5 py-0.5">{rfq?.rfqNumber || '-'}</td>
+                          <td className="px-1.5 py-0.5 font-medium">{vendor?.name || '-'}</td>
+                          <td className="px-1.5 py-0.5 text-right font-mono">{formatCurrency(quote.unitPrice)}</td>
+                          <td className="px-1.5 py-0.5 text-right font-mono font-semibold">{formatCurrency(quote.totalPrice)}</td>
+                          <td className="px-1.5 py-0.5 text-center">
                             <Badge variant="outline">{quote.status}</Badge>
                           </td>
-                          <td className="p-2 text-center text-muted-foreground">{formatDate(quote.createdAt)}</td>
+                          <td className="px-1.5 py-0.5 text-center text-muted-foreground">{formatDate(quote.createdAt)}</td>
                         </tr>
                       );
                     })}
@@ -876,21 +876,21 @@ function PoDetailPanel({ po, onClose, onSendToSupplier, onStatusChange }: {
             <table className="w-full text-sm">
               <thead className="bg-muted/50">
                 <tr>
-                  <th className="text-left p-2 font-medium">Material</th>
-                  <th className="text-right p-2 font-medium">Qty</th>
-                  <th className="text-right p-2 font-medium">Unit Price</th>
-                  <th className="text-right p-2 font-medium">Total</th>
-                  <th className="text-right p-2 font-medium">Received</th>
+                  <th className="text-left px-1.5 py-1 font-medium">Material</th>
+                  <th className="text-right px-1.5 py-1 font-medium">Qty</th>
+                  <th className="text-right px-1.5 py-1 font-medium">Unit Price</th>
+                  <th className="text-right px-1.5 py-1 font-medium">Total</th>
+                  <th className="text-right px-1.5 py-1 font-medium">Received</th>
                 </tr>
               </thead>
               <tbody>
                 {poItems.map((item: any) => (
                   <tr key={item.id} className="border-t">
-                    <td className="p-2">{item.rawMaterial?.name || item.description || "-"}</td>
-                    <td className="p-2 text-right">{item.quantity} {item.rawMaterial?.unitOfMeasure || ""}</td>
-                    <td className="p-2 text-right font-mono">{formatCurrency(item.unitPrice)}</td>
-                    <td className="p-2 text-right font-mono">{formatCurrency(item.totalPrice)}</td>
-                    <td className="p-2 text-right">
+                    <td className="px-1.5 py-0.5">{item.rawMaterial?.name || item.description || "-"}</td>
+                    <td className="px-1.5 py-0.5 text-right">{item.quantity} {item.rawMaterial?.unitOfMeasure || ""}</td>
+                    <td className="px-1.5 py-0.5 text-right font-mono">{formatCurrency(item.unitPrice)}</td>
+                    <td className="px-1.5 py-0.5 text-right font-mono">{formatCurrency(item.totalPrice)}</td>
+                    <td className="px-1.5 py-0.5 text-right">
                       {item.receivedQuantity || 0} / {item.quantity}
                     </td>
                   </tr>
@@ -1063,11 +1063,6 @@ export default function ProcurementHub() {
     reorderPoint: "100",
     leadTimeDays: "14",
   });
-
-  // Queries
-  const { data: purchaseOrders, isLoading: posLoading, refetch: refetchPos } = trpc.purchaseOrders.list.useQuery();
-  const { data: vendors, isLoading: vendorsLoading, refetch: refetchVendors } = trpc.vendors.list.useQuery();
-  const { data: rawMaterials, isLoading: materialsLoading, refetch: refetchMaterials } = trpc.rawMaterials.list.useQuery();
 
   // Integration status
   const { data: integrationStatus } = trpc.integrations.getStatus.useQuery();

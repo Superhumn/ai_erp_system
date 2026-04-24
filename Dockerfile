@@ -22,6 +22,7 @@ COPY patches ./patches
 RUN pnpm install --prod --frozen-lockfile
 
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/drizzle ./drizzle
 
 EXPOSE 3000
 CMD ["node", "dist/_core/index.js"]

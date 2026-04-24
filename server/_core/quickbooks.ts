@@ -25,28 +25,38 @@ setInterval(() => {
 }, 5 * 60 * 1000); // Run every 5 minutes
 
 /**
+ * Resolve the redirect URI the server will send to Intuit.
+ * The exact same string must be registered in the Intuit app's
+ * "Keys & OAuth → Redirect URIs" list or Intuit rejects the request.
+ */
+export function getQuickBooksRedirectUri(): string {
+  return ENV.quickbooksRedirectUri || `${ENV.appUrl}/api/oauth/quickbooks/callback`;
+}
+
+/**
  * Get QuickBooks OAuth authorization URL
  */
-export function getQuickBooksAuthUrl(userId: number): { url?: string; error?: string } {
+export function getQuickBooksAuthUrl(userId: number): { url?: string; redirectUri?: string; error?: string } {
   const clientId = ENV.quickbooksClientId;
-  const redirectUri = ENV.quickbooksRedirectUri || `${ENV.appUrl}/api/oauth/quickbooks/callback`;
-  
+  const redirectUri = getQuickBooksRedirectUri();
+
   if (!clientId) {
     return {
+      redirectUri,
       error: "QuickBooks integration is not configured. Add QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET in Settings → Secrets."
     };
   }
-  
+
   // Generate state parameter for CSRF protection
   const state = crypto.randomBytes(32).toString("hex");
   oauthStates.set(state, { userId, timestamp: Date.now() });
-  
+
   // QuickBooks OAuth scopes
   const scope = encodeURIComponent("com.intuit.quickbooks.accounting");
-  
+
   const url = `${QB_OAUTH_URL}?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&state=${state}`;
-  
-  return { url };
+
+  return { url, redirectUri };
 }
 
 /**
@@ -86,12 +96,14 @@ export async function exchangeCodeForToken(code: string): Promise<{
 }> {
   const clientId = ENV.quickbooksClientId;
   const clientSecret = ENV.quickbooksClientSecret;
-  const redirectUri = ENV.quickbooksRedirectUri || `${ENV.appUrl}/api/oauth/quickbooks/callback`;
-  
+  const redirectUri = getQuickBooksRedirectUri();
+
   if (!clientId || !clientSecret) {
     return { error: "QuickBooks credentials not configured" };
   }
-  
+
+  console.log(`[QuickBooks] Token exchange redirect_uri=${redirectUri}`);
+
   const tokenUrl = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
   
   // Create Basic Auth header
@@ -237,6 +249,30 @@ export async function getChartOfAccounts(accessToken: string, realmId: string) {
     accessToken,
     realmId,
     "query?query=SELECT * FROM Account WHERE Active = true"
+  );
+}
+
+/**
+ * Get Profit & Loss report from QuickBooks.
+ * Drives actual burn, gross margin, and EBITDA on the CFO dashboard.
+ *
+ * Returns QB's report JSON; caller walks Rows/ColData to extract totals.
+ */
+export async function getProfitAndLoss(
+  accessToken: string,
+  realmId: string,
+  options?: { startDate?: string; endDate?: string; summarizeBy?: "Month" | "Quarter" | "Year" }
+) {
+  const params = new URLSearchParams();
+  if (options?.startDate) params.set("start_date", options.startDate);
+  if (options?.endDate)   params.set("end_date", options.endDate);
+  if (options?.summarizeBy) params.set("summarize_column_by", options.summarizeBy);
+  params.set("accounting_method", "Accrual");
+  const qs = params.toString();
+  return makeQuickBooksRequest(
+    accessToken,
+    realmId,
+    `reports/ProfitAndLoss${qs ? `?${qs}` : ""}`
   );
 }
 

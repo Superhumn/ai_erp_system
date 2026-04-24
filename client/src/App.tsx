@@ -1,7 +1,7 @@
 import { lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { Route, Switch } from "wouter";
+import { Route, Switch, Redirect } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { AIAgentProvider } from "./contexts/AIAgentContext";
@@ -165,12 +165,12 @@ const CodeEditor = lazy(() => import("./pages/Code"));
 const ApprovalQueue = lazy(() => import("./pages/ai/ApprovalQueue"));
 
 // AI Analytics Pages
-import FinanceAI from "./pages/finance/FinanceAI";
-import HRAIInsights from "./pages/hr/HRAIInsights";
-import ManufacturingAI from "./pages/operations/ManufacturingAI";
-import LegalAI from "./pages/legal/LegalAI";
-import ProjectsAI from "./pages/projects/ProjectsAI";
-import SupplierScoring from "./pages/operations/SupplierScoring";
+const FinanceAI = lazy(() => import("./pages/finance/FinanceAI"));
+const HRAIInsights = lazy(() => import("./pages/hr/HRAIInsights"));
+const ManufacturingAI = lazy(() => import("./pages/operations/ManufacturingAI"));
+const LegalAI = lazy(() => import("./pages/legal/LegalAI"));
+const ProjectsAI = lazy(() => import("./pages/projects/ProjectsAI"));
+const SupplierScoring = lazy(() => import("./pages/operations/SupplierScoring"));
 
 // Autonomous Supply Chain
 const AutonomousDashboard = lazy(() => import("./pages/autonomous/Dashboard"));
@@ -232,10 +232,10 @@ function Router() {
           <Route path="/crm/investors" component={CRMInvestors} />
           <Route path="/crm/campaigns" component={FundraisingCampaigns} />
 
-          {/* CRM — deduplicated: /crm now points to CRMHub only */}
+          {/* CRM — /crm/hub is canonical (sidebar-locked); /crm is a legacy alias */}
           <Route path="/crm/hub" component={CRMHub} />
           <Route path="/crm/dashboard" component={CRMDashboard} />
-          <Route path="/crm" component={CRMHub} />
+          <Route path="/crm"><Redirect to="/crm/hub" /></Route>
 
           {/* Operations */}
           <Route path="/operations" component={OperationsHub} />

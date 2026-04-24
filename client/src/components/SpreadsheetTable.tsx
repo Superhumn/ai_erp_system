@@ -439,7 +439,7 @@ export function SpreadsheetTable<T extends { id: number | string }>({
     );
   };
 
-  const cellPadding = compact ? "px-2 py-1" : "px-3 py-2";
+  const cellPadding = compact ? "px-1.5 py-0.5" : "px-2 py-1";
   const fontSize = compact ? "text-xs" : "text-sm";
 
   // Calculate total columns for expanded row

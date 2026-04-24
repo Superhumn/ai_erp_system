@@ -157,9 +157,9 @@ export function getMenuGroups(role: string = "user") {
   return groups;
 }
 
-const SIDEBAR_WIDTH_KEY = "sidebar-width";
-const DEFAULT_WIDTH = 260;
-const MIN_WIDTH = 200;
+const SIDEBAR_WIDTH_KEY = "sidebar-width-v2";
+const DEFAULT_WIDTH = 180;
+const MIN_WIDTH = 160;
 const MAX_WIDTH = 400;
 
 const roleColors: Record<string, string> = {
@@ -197,7 +197,7 @@ export default function DashboardLayout({
 
   return (
     <SidebarProvider
-      defaultOpen={false}
+      defaultOpen={true}
       style={
         {
           "--sidebar-width": `${sidebarWidth}px`,
@@ -466,7 +466,7 @@ function DashboardLayoutContent({
             <NotificationCenter />
           </div>
         </header>
-        <main className="flex-1 overflow-auto p-3">{children}</main>
+        <main className="density-compact flex-1 overflow-auto p-3 pb-3 md:p-4 md:pb-4 lg:p-5 lg:pb-5">{children}</main>
       </SidebarInset>
 
       {/* Floating AI removed - using toolbar only */}
