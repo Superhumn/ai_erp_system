@@ -347,42 +347,23 @@ export default function LogisticsHub() {
     : Package;
 
   return (
-    <div className="p-6 space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-semibold flex items-center gap-2">
-            <Truck className="h-8 w-8" />
-            Logistics Hub
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Shipments with customs status — click any row to open details
-          </p>
-        </div>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <Card className="p-4">
-          <div className="text-xl font-semibold tracking-[-0.02em]">{stats.totalShipments}</div>
-          <div className="text-xs text-muted-foreground">Total Shipments</div>
-        </Card>
-        <Card className="p-4">
-          <div className="text-xl font-semibold tracking-[-0.02em] text-amber-600">{stats.pending}</div>
-          <div className="text-xs text-muted-foreground">Pending</div>
-        </Card>
-        <Card className="p-4">
-          <div className="text-xl font-semibold tracking-[-0.02em] text-blue-600">{stats.inTransit}</div>
-          <div className="text-xs text-muted-foreground">In Transit</div>
-        </Card>
-        <Card className="p-4">
-          <div className="text-xl font-semibold tracking-[-0.02em] text-orange-600">{stats.inCustoms}</div>
-          <div className="text-xs text-muted-foreground">In Customs</div>
-        </Card>
-        <Card className="p-4">
-          <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{stats.delivered}</div>
-          <div className="text-xs text-muted-foreground">Delivered</div>
-        </Card>
+    <div className="p-6 space-y-2 animate-fade-in">
+      {/* Header — single consolidated row */}
+      <div className="flex items-center gap-4 text-xs flex-wrap">
+        <h1 className="text-sm font-bold tracking-[-0.02em] flex items-center gap-1.5">
+          <Truck className="h-4 w-4" />
+          Logistics
+        </h1>
+        <div className="h-4 w-px bg-border" />
+        <div><span className="text-muted-foreground">Total</span> <span className="font-bold">{stats.totalShipments}</span></div>
+        <div className="h-4 w-px bg-border" />
+        <div><span className="text-muted-foreground">Pending</span> <span className="font-bold text-amber-600">{stats.pending}</span></div>
+        <div className="h-4 w-px bg-border" />
+        <div><span className="text-muted-foreground">In Transit</span> <span className="font-bold text-blue-600">{stats.inTransit}</span></div>
+        <div className="h-4 w-px bg-border" />
+        <div><span className="text-muted-foreground">Customs</span> <span className="font-bold text-orange-600">{stats.inCustoms}</span></div>
+        <div className="h-4 w-px bg-border" />
+        <div><span className="text-muted-foreground">Delivered</span> <span className="font-bold text-green-600">{stats.delivered}</span></div>
       </div>
 
       {/* Shipments table — row click opens side-sheet */}

@@ -159,6 +159,7 @@ describe("employeePortal", () => {
         status: "pending",
       } as any);
       vi.spyOn(db, "getEmployeeById").mockResolvedValue({ id: 7, managerId: 10 } as any);
+      vi.spyOn(db, "getEmployeeByUserId").mockResolvedValue({ id: 10 } as any);
       const decideWithAdj = vi.spyOn(db, "decideLeaveRequestWithPtoAdjustment").mockResolvedValue({ success: true });
       vi.spyOn(db, "createAuditLog").mockResolvedValue({ id: 1 });
 
@@ -185,6 +186,7 @@ describe("employeePortal", () => {
         status: "pending",
       } as any);
       vi.spyOn(db, "getEmployeeById").mockResolvedValue({ id: 7, managerId: 10 } as any);
+      vi.spyOn(db, "getEmployeeByUserId").mockResolvedValue({ id: 42 } as any);
 
       await expect(
         caller.employeePortal.decideLeaveRequest({ id: 101, decision: "approved" }),

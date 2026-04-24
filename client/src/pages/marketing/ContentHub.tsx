@@ -89,21 +89,17 @@ export default function ContentHub() {
   };
 
   return (
-    <div className="space-y-3 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold tracking-[-0.02em] flex items-center gap-2">
-            <PenTool className="h-6 w-6" /> Marketing & Content
-          </h1>
-          <p className="text-muted-foreground text-sm">AI content creation, SEO, social media</p>
-        </div>
-      </div>
-
+    <div className="space-y-2 animate-fade-in">
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
-          <TabsTrigger value="create">Create Content</TabsTrigger>
-          <TabsTrigger value="saved">Saved ({savedContent.length})</TabsTrigger>
-        </TabsList>
+        <div className="flex items-center gap-3 flex-wrap">
+          <h1 className="text-sm font-bold tracking-[-0.02em] flex items-center gap-1.5">
+            <PenTool className="h-4 w-4" /> Marketing & Content
+          </h1>
+          <TabsList>
+            <TabsTrigger value="create">Create Content</TabsTrigger>
+            <TabsTrigger value="saved">Saved ({savedContent.length})</TabsTrigger>
+          </TabsList>
+        </div>
 
         <TabsContent value="create" className="space-y-3">
           <Card>
