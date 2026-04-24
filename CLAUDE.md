@@ -84,11 +84,15 @@ docs/                Feature + integration docs
 
 ## Large-file warnings
 
-Do **not** read these in full. Use `grep` / `rg` or `Read` with `offset`/`limit`.
+Do **not** read these in full. Use one of: the generated index, `rg`/`grep`, or `Read` with `offset`/`limit`.
 
-- `server/routers.ts` — **21,798 lines**. New routes go in `server/routers/<feature>.ts`, not here.
-- `server/db.ts` — **12,503 lines**. New DB helpers go in `server/db/`.
+- `server/routers.ts` — **21,798 lines, 103 top-level routers**. See [`ROUTERS_INDEX.md`](./ROUTERS_INDEX.md) for feature → line range. New routes should go in `server/routers/<feature>.ts`.
+- `server/db.ts` — **12,503 lines, 911 exports, 108 banner sections**. See [`DB_INDEX.md`](./DB_INDEX.md) for section map and per-export coverage. New helpers should go in `server/db/<feature>.ts`.
 - `drizzle/schema.ts` — **6,413 lines**. Drizzle table definitions.
+
+**Rule: for any investigation that requires scanning `server/routers.ts` or `server/db.ts` beyond a single feature's line range, delegate to an `Explore` subagent.** Keeps the main context lean and avoids accidentally pulling tens of thousands of lines into the transcript.
+
+Regenerate both indexes with `pnpm index:legacy` after any change to either legacy file or to `server/routers/*.ts` / `server/db/*.ts`. The output is deterministic — no manual edits.
 
 ## Conventions
 
