@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FileBarChart, Megaphone } from "lucide-react";
+import { FileBarChart, Megaphone, Sparkles } from "lucide-react";
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 
 const EquityReports = lazy(() => import("./EquityReports"));
 const InvestorUpdates = lazy(() => import("../InvestorUpdates"));
+const DashboardGenerator = lazy(() => import("./DashboardGenerator"));
 
 const fallback = (
   <div className="flex items-center justify-center py-12">
@@ -19,25 +20,29 @@ export default function InvestorsHub() {
   return (
     <div className="space-y-2 animate-fade-in">
       <Tabs value={tab} onValueChange={setTab}>
-        <div className="flex items-center gap-3 flex-wrap">
-          <h1 className="text-sm font-bold tracking-[-0.02em]">Investors</h1>
-          <TabsList>
-            <TabsTrigger value="captable" className="flex items-center gap-1.5">
-              <FileBarChart className="h-3.5 w-3.5" />
-              Cap Table
-            </TabsTrigger>
-            <TabsTrigger value="updates" className="flex items-center gap-1.5">
-              <Megaphone className="h-3.5 w-3.5" />
-              Investor Updates
-            </TabsTrigger>
-          </TabsList>
-        </div>
+        <TabsList>
+          <TabsTrigger value="captable" className="flex items-center gap-1.5">
+            <FileBarChart className="h-3.5 w-3.5" />
+            Cap Table
+          </TabsTrigger>
+          <TabsTrigger value="updates" className="flex items-center gap-1.5">
+            <Megaphone className="h-3.5 w-3.5" />
+            Investor Updates
+          </TabsTrigger>
+          <TabsTrigger value="generator" className="flex items-center gap-1.5">
+            <Sparkles className="h-3.5 w-3.5" />
+            Dashboard Generator
+          </TabsTrigger>
+        </TabsList>
 
         <TabsContent value="captable">
           <Suspense fallback={fallback}><EquityReports /></Suspense>
         </TabsContent>
         <TabsContent value="updates">
           <Suspense fallback={fallback}><InvestorUpdates /></Suspense>
+        </TabsContent>
+        <TabsContent value="generator">
+          <Suspense fallback={fallback}><DashboardGenerator /></Suspense>
         </TabsContent>
       </Tabs>
     </div>
