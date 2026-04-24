@@ -243,6 +243,13 @@
     {
       "idx": 34,
       "version": "5",
+      "when": 1776500000000,
+      "tag": "0034_task_source_external_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "5",
       "when": 1777651200000,
       "tag": "0035_drive_docs_metadata_only",
       "breakpoints": true
