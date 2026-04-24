@@ -59,6 +59,22 @@ jobs:
       - name: Run tests
         run: pnpm run test
 
+  index-check:
+    name: Legacy Index Freshness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Regenerate indexes
+        run: node scripts/generate-legacy-indexes.mjs
+
+      - name: Verify no drift
+        run: git diff --exit-code ROUTERS_INDEX.md DB_INDEX.md
+
   build:
     name: Build
     runs-on: ubuntu-latest
