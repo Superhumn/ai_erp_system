@@ -948,13 +948,11 @@ export default function SOPs() {
   };
 
   return (
-    <div className="space-y-3 animate-fade-in">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-semibold">SOPs</h1>
-          <p className="text-muted-foreground text-sm">{sops.length} procedures — select to expand</p>
-        </div>
+    <div className="space-y-2 animate-fade-in">
+      {/* Header — single consolidated row */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <h1 className="text-sm font-bold tracking-[-0.02em]">SOPs</h1>
+        <span className="text-xs text-muted-foreground">{sops.length} procedures</span>
       </div>
 
       {/* Search & Filter Bar */}

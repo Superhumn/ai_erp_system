@@ -611,21 +611,21 @@ export default function RetailerOnboarding() {
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-muted">
                       <tr className="border-b">
-                        <th className="text-left p-2 font-medium">Buyer Part #</th>
-                        <th className="text-left p-2 font-medium">Your SKU</th>
-                        <th className="text-left p-2 font-medium">UPC</th>
-                        <th className="text-left p-2 font-medium">Product ID</th>
-                        <th className="text-left p-2 font-medium">Description</th>
+                        <th className="text-left px-1.5 py-1 font-medium">Buyer Part #</th>
+                        <th className="text-left px-1.5 py-1 font-medium">Your SKU</th>
+                        <th className="text-left px-1.5 py-1 font-medium">UPC</th>
+                        <th className="text-left px-1.5 py-1 font-medium">Product ID</th>
+                        <th className="text-left px-1.5 py-1 font-medium">Description</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
                       {crosswalkRows.slice(0, 50).map((row, i) => (
                         <tr key={i} className="hover:bg-muted/50">
-                          <td className="p-2 font-mono">{row.buyerPartNumber || "-"}</td>
-                          <td className="p-2 font-mono">{row.vendorPartNumber || "-"}</td>
-                          <td className="p-2 font-mono">{row.upc || "-"}</td>
-                          <td className="p-2">{row.productId || "-"}</td>
-                          <td className="p-2 text-muted-foreground">{row.description || "-"}</td>
+                          <td className="px-1.5 py-0.5 font-mono">{row.buyerPartNumber || "-"}</td>
+                          <td className="px-1.5 py-0.5 font-mono">{row.vendorPartNumber || "-"}</td>
+                          <td className="px-1.5 py-0.5 font-mono">{row.upc || "-"}</td>
+                          <td className="px-1.5 py-0.5">{row.productId || "-"}</td>
+                          <td className="px-1.5 py-0.5 text-muted-foreground">{row.description || "-"}</td>
                         </tr>
                       ))}
                     </tbody>

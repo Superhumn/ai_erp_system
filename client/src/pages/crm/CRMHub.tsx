@@ -367,12 +367,27 @@ export default function CRMHub() {
     );
   }, [enrichedDeals, dealsSearch]);
 
+  const openVal = Number(dealStats?.openValue || 0);
+  const wonVal = Number(dealStats?.wonValue || 0);
+  const totalDeals = (dealStats?.open || 0) + (dealStats?.won || 0) + (dealStats?.lost || 0);
+  const conversionRate = totalDeals > 0 ? Math.round(((dealStats?.won || 0) / totalDeals) * 100) : 0;
+
   return (
     <div className="space-y-2 animate-fade-in">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold tracking-[-0.02em]">CRM Hub</h1>
+      {/* Header — single consolidated row */}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-4 text-xs flex-wrap">
+          <h1 className="text-sm font-bold tracking-[-0.02em]">CRM Hub</h1>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Pipeline</span> <span className="font-bold">${openVal.toLocaleString()}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Won</span> <span className="font-bold text-green-600">${wonVal.toLocaleString()}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Open</span> <span className="font-bold">{dealStats?.open || 0}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Win Rate</span> <span className="font-bold">{conversionRate}%</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Contacts</span> <span className="font-bold">{contacts?.length || 0}</span></div>
         </div>
         <div className="flex gap-2">
           <Button
@@ -847,25 +862,25 @@ export default function CRMHub() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <Table className="[&_td]:py-1 [&_th]:py-1.5">
+              <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="min-w-[160px]">Deal Name</TableHead>
-                    <TableHead className="min-w-[120px]">Contact</TableHead>
-                    <TableHead className="min-w-[120px]">Company</TableHead>
-                    <TableHead className="min-w-[100px] text-right">Value</TableHead>
-                    <TableHead className="min-w-[100px]">Stage</TableHead>
-                    <TableHead className="min-w-[100px]">Source</TableHead>
-                    <TableHead className="min-w-[100px]">Last Contact</TableHead>
-                    <TableHead className="min-w-[140px]">Next Step</TableHead>
-                    <TableHead className="w-[40px]"></TableHead>
+                    <TableHead className="min-w-[130px]">Deal Name</TableHead>
+                    <TableHead className="min-w-[80px]">Contact</TableHead>
+                    <TableHead className="min-w-[80px]">Company</TableHead>
+                    <TableHead className="min-w-[60px] text-right">Value</TableHead>
+                    <TableHead className="min-w-[80px]">Stage</TableHead>
+                    <TableHead className="min-w-[70px]">Source</TableHead>
+                    <TableHead className="min-w-[85px]">Last Contact</TableHead>
+                    <TableHead className="min-w-[110px]">Next Step</TableHead>
+                    <TableHead className="w-[32px]"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredDeals.map((deal: any) => (
                     <React.Fragment key={deal.id}>
-                    <TableRow className="hover:bg-muted/50 cursor-pointer text-xs h-9" onClick={() => setExpandedDealId(expandedDealId === deal.id ? null : deal.id)}>
-                      <TableCell className="font-medium py-1.5">
+                    <TableRow className="hover:bg-muted/50 cursor-pointer text-xs h-7" onClick={() => setExpandedDealId(expandedDealId === deal.id ? null : deal.id)}>
+                      <TableCell className="font-medium">
                         <div className="flex items-center gap-1">
                           {expandedDealId === deal.id ? <ChevronUp className="h-3 w-3 text-muted-foreground" /> : <ChevronDown className="h-3 w-3 text-muted-foreground" />}
                           <span onClick={(e) => e.stopPropagation()}>
@@ -889,16 +904,16 @@ export default function CRMHub() {
                           ))}
                         </select>
                       </TableCell>
-                      <TableCell className="text-sm capitalize">{deal._source}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
+                      <TableCell className="capitalize">{deal._source}</TableCell>
+                      <TableCell className="text-muted-foreground">
                         {deal._lastContact ? format(new Date(deal._lastContact), "MMM d, yyyy") : "-"}
                       </TableCell>
-                      <TableCell className="text-sm max-w-[140px] truncate">{deal._nextStep}</TableCell>
-                      <TableCell>
+                      <TableCell className="max-w-[110px] truncate">{deal._nextStep}</TableCell>
+                      <TableCell className="px-0">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="sm" onClick={(e) => e.stopPropagation()}>
-                              <MoreHorizontal className="h-4 w-4" />
+                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => e.stopPropagation()}>
+                              <MoreHorizontal className="h-3.5 w-3.5" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
