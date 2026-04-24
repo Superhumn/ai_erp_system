@@ -131,6 +131,11 @@ export default function CFODashboard() {
   const { data: kpiGoals } = trpc.kpiGoals.list.useQuery({ year: new Date().getFullYear() });
   const { data: employees } = trpc.hr.employees.list.useQuery({ status: "active" });
   const { data: expenseTxns } = trpc.transactions.list.useQuery({ type: "expense" });
+  const { data: qbPnl } = trpc.settings.quickbooks.getProfitAndLoss.useQuery({
+    startDate: new Date(new Date().getFullYear(), new Date().getMonth() - 11, 1).toISOString().slice(0, 10),
+    endDate: new Date().toISOString().slice(0, 10),
+    summarizeBy: "Month",
+  });
   const { data: openDeals } = trpc.crm.deals.list.useQuery({ status: "open" });
   const { data: allPOs } = trpc.purchaseOrders.list.useQuery();
   const { data: investorUpdatesList } = trpc.investorUpdates.list.useQuery();
@@ -189,26 +194,39 @@ export default function CFODashboard() {
   const netNewArr = (thisMonthRev - lastMonthRev) * 12;
 
   // ── Burn / Runway ───────────────────────────────────────────
-  // Prefer actual expenses (trailing 3mo avg) when available; fall back to proxy.
+  // Priority: QuickBooks P&L (actual) → in-system expense ledger → proxy.
   const { actualBurn, burnSource } = useMemo(() => {
+    // 1 — QuickBooks P&L, last 3 months
+    if (qbPnl?.connected && qbPnl.months?.length) {
+      const last3 = qbPnl.months.slice(-3);
+      const monthly = last3.map((m) => (m.expense ?? 0) + (m.cogs ?? 0));
+      const monthsWithData = monthly.filter((v) => v > 0).length;
+      if (monthsWithData > 0) {
+        const avg = monthly.reduce((a, b) => a + b, 0) / monthsWithData;
+        return { actualBurn: avg, burnSource: "quickbooks" as const };
+      }
+    }
+    // 2 — In-system expense ledger
     const txns = expenseTxns ?? [];
-    if (txns.length === 0) return { actualBurn: 0, burnSource: "none" as const };
-    const now = new Date();
-    const buckets: Record<string, number> = {};
-    for (let i = 0; i < 3; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      buckets[`${d.getFullYear()}-${d.getMonth()}`] = 0;
+    if (txns.length > 0) {
+      const now = new Date();
+      const buckets: Record<string, number> = {};
+      for (let i = 0; i < 3; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        buckets[`${d.getFullYear()}-${d.getMonth()}`] = 0;
+      }
+      for (const t of txns) {
+        const d = new Date((t as any).date || (t as any).createdAt);
+        const k = `${d.getFullYear()}-${d.getMonth()}`;
+        if (k in buckets) buckets[k] += Math.abs(parseFloat((t as any).totalAmount || "0"));
+      }
+      const sum = Object.values(buckets).reduce((a, b) => a + b, 0);
+      const monthsWithData = Object.values(buckets).filter((v) => v > 0).length;
+      if (monthsWithData > 0) return { actualBurn: sum / monthsWithData, burnSource: "ledger" as const };
     }
-    for (const t of txns) {
-      const d = new Date((t as any).date || (t as any).createdAt);
-      const k = `${d.getFullYear()}-${d.getMonth()}`;
-      if (k in buckets) buckets[k] += Math.abs(parseFloat((t as any).totalAmount || "0"));
-    }
-    const sum = Object.values(buckets).reduce((a, b) => a + b, 0);
-    const monthsWithData = Object.values(buckets).filter((v) => v > 0).length;
-    if (monthsWithData === 0) return { actualBurn: 0, burnSource: "none" as const };
-    return { actualBurn: sum / monthsWithData, burnSource: "ledger" as const };
-  }, [expenseTxns]);
+    // 3 — No data
+    return { actualBurn: 0, burnSource: "none" as const };
+  }, [qbPnl, expenseTxns]);
 
   const estimatedBurn = useMemo(() =>
     actualBurn > 0 ? actualBurn : Math.max(threeMonthAvgRev * 0.7, 10000),
@@ -224,8 +242,22 @@ export default function CFODashboard() {
   // ── Burn Multiple ───────────────────────────────────────────
   const burnMultiple = netNewArr > 0 ? estimatedBurn / (netNewArr / 12) : null;
 
-  // ── Model-driven metrics ────────────────────────────────────
-  const { grossMarginPct, ebitdaMarginPct } = useMemo(() => {
+  // ── Margin metrics ──────────────────────────────────────────
+  // Prefer QuickBooks actuals (trailing 3mo) → financialModel projections.
+  const { grossMarginPct, ebitdaMarginPct, marginSource } = useMemo(() => {
+    if (qbPnl?.connected && qbPnl.months?.length) {
+      const last3 = qbPnl.months.slice(-3);
+      const rev = last3.reduce((s, m) => s + (m.income ?? 0), 0);
+      const cogs = last3.reduce((s, m) => s + (m.cogs ?? 0), 0);
+      const exp = last3.reduce((s, m) => s + (m.expense ?? 0), 0);
+      if (rev > 0) {
+        return {
+          grossMarginPct: ((rev - cogs) / rev) * 100,
+          ebitdaMarginPct: ((rev - cogs - exp) / rev) * 100,
+          marginSource: "quickbooks" as const,
+        };
+      }
+    }
     const rows = modelData ?? [];
     const y1 = rows.filter((r: any) => r.year === 1 || r.year === new Date().getFullYear());
     const find = (name: string) => y1
@@ -237,8 +269,9 @@ export default function CFODashboard() {
     return {
       grossMarginPct: rev > 0 ? (gp / rev) * 100 : null,
       ebitdaMarginPct: rev > 0 ? (eb / rev) * 100 : null,
+      marginSource: rev > 0 ? "model" as const : "none" as const,
     };
-  }, [modelData]);
+  }, [qbPnl, modelData]);
 
   const rule40 = (yoyGrowth || 0) + (ebitdaMarginPct ?? 0);
 
@@ -500,7 +533,11 @@ export default function CFODashboard() {
         <KpiCard icon={DollarSign} label="Cash" value={fmtCompact(cashPosition)} sub="Across all accounts" />
         <KpiCard icon={Flame} label="Net Burn"
                  value={`${fmtCompact(estimatedBurn)}/mo`}
-                 sub={burnSource === "ledger" ? "From expense ledger · 3mo avg" : "Proxy estimate — no ledger data"} />
+                 sub={burnSource === "quickbooks"
+                   ? "From QuickBooks P&L · 3mo avg"
+                   : burnSource === "ledger"
+                   ? "From expense ledger · 3mo avg"
+                   : "Proxy estimate — no ledger data"} />
         <KpiCard icon={Clock} label="Runway"
                  value={`${runwayMonths} mo`}
                  tone={benchColor(runwayMonths, BENCHMARKS.runway)}
@@ -619,7 +656,9 @@ export default function CFODashboard() {
         <KpiCard icon={BarChart3} label="Gross Margin"
                  value={grossMarginPct !== null ? `${grossMarginPct.toFixed(0)}%` : "—"}
                  tone={benchColor(grossMarginPct, BENCHMARKS.grossMargin)}
-                 hint={grossMarginPct !== null ? benchLabel(grossMarginPct, BENCHMARKS.grossMargin) : "Needs model"} />
+                 hint={grossMarginPct !== null
+                   ? `${benchLabel(grossMarginPct, BENCHMARKS.grossMargin)}${marginSource === "quickbooks" ? " · QB actual" : marginSource === "model" ? " · plan" : ""}`
+                   : "Needs model"} />
         <KpiCard icon={Users} label="LTV : CAC"
                  value={unitEcon.ratio ? `${unitEcon.ratio.toFixed(1)}x` : "—"}
                  tone={benchColor(unitEcon.ratio, BENCHMARKS.ltvCac)}
