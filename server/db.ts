@@ -11855,8 +11855,8 @@ export async function createFundraisingCampaign(data: InsertFundraisingCampaign)
   const now = new Date();
   const result = await db.insert(fundraisingCampaigns).values({
     ...data,
-    createdAt: now,
-    updatedAt: now,
+    createdAt: data.createdAt ?? now,
+    updatedAt: data.updatedAt ?? now,
   });
   return { id: result[0].insertId };
 }
