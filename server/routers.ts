@@ -4629,7 +4629,7 @@ ONLY return the JSON array, no other text.`;
                     const name = record.name || record.contact || record['contact name'] || record['full name'] || record.company || `Contact ${imported + 1}`;
                     const firstName = name.split(' ')[0] || name;
                     const lastName = name.split(' ').slice(1).join(' ') || '';
-                    await db.createCrmContact({
+                    const { created } = await db.findOrCreateCrmContact({
                       firstName,
                       lastName,
                       fullName: name,
@@ -4641,7 +4641,7 @@ ONLY return the JSON array, no other text.`;
                       notes: record.notes || record.comments || undefined,
                       status: (record.status === 'active' || record.status === 'inactive') ? record.status as any : 'active',
                     });
-                    imported++;
+                    if (created) imported++;
                     break;
                   }
                   case 'crm_deals': {

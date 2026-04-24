@@ -36,8 +36,9 @@ import {
   Linkedin, Building2, DollarSign, TrendingUp, UserPlus,
   Smartphone, QrCode, CreditCard, Filter, MoreHorizontal,
   Calendar, Clock, MessageCircle, Target, Handshake, HardDrive,
-  Sparkles, ChevronDown, ChevronUp, ArrowRight, Upload
+  Sparkles, ChevronDown, ChevronUp, ArrowRight, Upload, Heart, Truck
 } from "lucide-react";
+import { Link } from "wouter";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -51,7 +52,28 @@ type ContactType = "lead" | "prospect" | "customer" | "partner" | "investor" | "
 type ContactSource = "iphone_bump" | "whatsapp" | "linkedin_scan" | "business_card" | "website" | "referral" | "event" | "cold_outreach" | "import" | "manual";
 type PipelineStage = "new" | "contacted" | "qualified" | "proposal" | "negotiation" | "won" | "lost";
 
+type Category = "sales" | "partners" | "vendors" | "investors" | "donors" | "other";
+
+const CATEGORY_TYPES: Record<Category, ContactType[]> = {
+  sales: ["lead", "prospect", "customer"],
+  partners: ["partner"],
+  vendors: ["vendor"],
+  investors: [],
+  donors: ["donor"],
+  other: ["other"],
+};
+
+const CATEGORY_DEFAULT_TYPE: Record<Category, ContactType> = {
+  sales: "lead",
+  partners: "partner",
+  vendors: "vendor",
+  investors: "other",
+  donors: "donor",
+  other: "other",
+};
+
 export default function CRMHub() {
+  const [category, setCategory] = useState<Category>("sales");
   const [search, setSearch] = useState("");
   const [dealsSearch, setDealsSearch] = useState("");
   const [isDealDialogOpen, setIsDealDialogOpen] = useState(false);
@@ -96,7 +118,6 @@ export default function CRMHub() {
     search: search || undefined,
   });
 
-  const { data: contactStats } = trpc.crm.contacts.getStats.useQuery();
   const { data: dealStats } = trpc.crm.deals.getStats.useQuery();
   const { data: deals, isLoading: dealsLoading, refetch: refetchDeals } = trpc.crm.deals.list.useQuery({ status: "open" });
   const { data: pipelines } = trpc.crm.pipelines.list.useQuery();
@@ -176,6 +197,23 @@ export default function CRMHub() {
       refetchContacts();
     },
     onError: (error) => toast.error(error.message),
+  });
+
+  const duplicatesSummary = (trpc.crm as any).contacts.findDuplicates.useQuery(undefined, {
+    refetchOnMount: true,
+  });
+
+  const autoMergeDuplicates = (trpc.crm as any).contacts.autoMergeDuplicates.useMutation({
+    onSuccess: (result: any) => {
+      if (result.merged > 0) {
+        toast.success(`Merged ${result.merged} duplicate contact${result.merged === 1 ? "" : "s"} across ${result.groupsMerged} group${result.groupsMerged === 1 ? "" : "s"}`);
+      } else {
+        toast.info("No duplicate contacts found");
+      }
+      refetchContacts();
+      duplicatesSummary.refetch();
+    },
+    onError: (error: any) => toast.error(error.message),
   });
 
   const syncFromSheets = trpc.sheetsImport.syncGoogleDrive.useMutation({
@@ -291,6 +329,29 @@ export default function CRMHub() {
     return map;
   }, [contacts]);
 
+  // Filter contacts by the currently-selected relationship category.
+  // Investors are tracked in the separate `investors` table (/crm/investors)
+  // and are intentionally hidden here to prevent duplicate tracking.
+  const categoryContacts = useMemo(() => {
+    const list = (contacts as any[]) || [];
+    const allowed = CATEGORY_TYPES[category];
+    if (category === "investors") return [];
+    return list.filter((c: any) => {
+      const t = (c.contactType || "other") as ContactType;
+      if (t === "investor") return false;
+      return allowed.includes(t);
+    });
+  }, [contacts, category]);
+
+  // Sales-eligible contacts for the Deal contact selector (investors excluded).
+  const salesContacts = useMemo(() => {
+    const list = (contacts as any[]) || [];
+    return list.filter((c: any) => {
+      const t = (c.contactType || "other") as ContactType;
+      return ["lead", "prospect", "customer"].includes(t);
+    });
+  }, [contacts]);
+
   // Enrich deals with contact data
   const enrichedDeals = useMemo(() => {
     return (deals || []).map((deal: any) => {
@@ -346,6 +407,27 @@ export default function CRMHub() {
           <div><span className="text-muted-foreground">Contacts</span> <span className="font-bold">{contactStats?.total || 0}</span></div>
         </div>
         <div className="flex gap-2">
+          {(duplicatesSummary.data?.totalDuplicates ?? 0) > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const n = duplicatesSummary.data?.totalDuplicates ?? 0;
+                if (confirm(`Merge ${n} duplicate contact${n === 1 ? "" : "s"}? The oldest record in each group is kept and all deals, interactions, and messages are reassigned to it.`)) {
+                  autoMergeDuplicates.mutate();
+                }
+              }}
+              disabled={autoMergeDuplicates.isPending}
+              title="Contacts sharing email, phone, WhatsApp, or LinkedIn URL will be merged into the oldest record."
+            >
+              {autoMergeDuplicates.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Users className="h-4 w-4 mr-2" />
+              )}
+              Merge {duplicatesSummary.data?.totalDuplicates} Duplicate{duplicatesSummary.data?.totalDuplicates === 1 ? "" : "s"}
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -559,7 +641,12 @@ export default function CRMHub() {
           <Button variant="outline" size="sm" onClick={() => window.location.href = "/import"}>
             <Upload className="h-4 w-4 mr-1" /> Import
           </Button>
-          <Dialog open={isContactDialogOpen} onOpenChange={setIsContactDialogOpen}>
+          <Dialog open={isContactDialogOpen} onOpenChange={(open) => {
+            if (open) {
+              setContactForm((f) => ({ ...f, contactType: CATEGORY_DEFAULT_TYPE[category] }));
+            }
+            setIsContactDialogOpen(open);
+          }}>
             <DialogTrigger asChild>
               <Button>
                 <Plus className="h-4 w-4 mr-2" />
@@ -658,12 +745,14 @@ export default function CRMHub() {
                           <SelectItem value="prospect">Prospect</SelectItem>
                           <SelectItem value="customer">Customer</SelectItem>
                           <SelectItem value="partner">Partner</SelectItem>
-                          <SelectItem value="investor">Investor</SelectItem>
                           <SelectItem value="donor">Donor</SelectItem>
                           <SelectItem value="vendor">Vendor</SelectItem>
                           <SelectItem value="other">Other</SelectItem>
                         </SelectContent>
                       </Select>
+                      <p className="text-[11px] text-muted-foreground">
+                        Investors are tracked on the <Link href="/crm/investors" className="underline">Investors</Link> page.
+                      </p>
                     </div>
                     <div className="space-y-2">
                       <Label>Source</Label>
@@ -708,7 +797,76 @@ export default function CRMHub() {
         </div>
       </div>
 
-      {/* Deals Table */}
+      {/* Relationship-type tabs: not every contact is a sales deal */}
+      <div className="flex items-center gap-1 border-b">
+        {([
+          { key: "sales", label: "Sales", icon: TrendingUp },
+          { key: "partners", label: "Partners", icon: Handshake },
+          { key: "vendors", label: "Vendors", icon: Truck },
+          { key: "investors", label: "Investors", icon: DollarSign },
+          { key: "donors", label: "Donors", icon: Heart },
+          { key: "other", label: "Other", icon: Users },
+        ] as const).map(({ key, label, icon: Icon }) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => { setCategory(key); setSelectedIds(new Set()); }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border-b-2 -mb-px transition-colors ${
+              category === key
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Icon className="h-3.5 w-3.5" />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Sales KPIs — compact bar (sales tab only) */}
+      {category === "sales" && (() => {
+        const openVal = Number(dealStats?.openValue || 0);
+        const wonVal = Number(dealStats?.wonValue || 0);
+        const totalDeals = (dealStats?.open || 0) + (dealStats?.won || 0) + (dealStats?.lost || 0);
+        const conversionRate = totalDeals > 0 ? Math.round(((dealStats?.won || 0) / totalDeals) * 100) : 0;
+        return (
+          <div className="flex items-center gap-4 text-xs border rounded-xl px-3 py-2 bg-card">
+            <div><span className="text-muted-foreground">Pipeline</span> <span className="font-bold">${openVal.toLocaleString()}</span></div>
+            <div className="h-5 w-px bg-border" />
+            <div><span className="text-muted-foreground">Won</span> <span className="font-bold text-green-600">${wonVal.toLocaleString()}</span></div>
+            <div className="h-5 w-px bg-border" />
+            <div><span className="text-muted-foreground">Open</span> <span className="font-bold">{dealStats?.open || 0}</span></div>
+            <div className="h-5 w-px bg-border" />
+            <div><span className="text-muted-foreground">Win Rate</span> <span className="font-bold">{conversionRate}%</span></div>
+            <div className="h-5 w-px bg-border" />
+            <div><span className="text-muted-foreground">Sales Contacts</span> <span className="font-bold">{salesContacts.length}</span></div>
+          </div>
+        );
+      })()}
+
+      {/* Investors redirect — investors live in a separate table (/crm/investors) */}
+      {category === "investors" && (
+        <Card className="py-3">
+          <CardContent className="py-8 text-center space-y-3">
+            <DollarSign className="h-12 w-12 mx-auto text-muted-foreground" />
+            <div>
+              <h3 className="font-semibold">Investors are tracked separately</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                Investor relationships use a dedicated pipeline (lead → committed → invested) and live on the Investors page.
+              </p>
+            </div>
+            <Link href="/crm/investors">
+              <Button>
+                Open Investor Pipeline
+                <ArrowRight className="h-4 w-4 ml-2" />
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Deals Table — sales tab only */}
+      {category === "sales" && (
       <Card className="py-3">
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
@@ -858,13 +1016,20 @@ export default function CRMHub() {
           )}
         </CardContent>
       </Card>
+      )}
 
-      {/* Contacts Table */}
+      {/* Contacts Table — hidden on investors tab (investors have their own page) */}
+      {category !== "investors" && (
       <Card className="py-3">
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <CardTitle className="text-sm flex items-center gap-2">
-              Contacts <span className="text-muted-foreground font-normal">({contacts?.length || 0})</span>
+              {category === "sales" ? "Sales Contacts"
+                : category === "partners" ? "Partners"
+                : category === "vendors" ? "Vendors"
+                : category === "donors" ? "Donors"
+                : "Other Contacts"}
+              <span className="text-muted-foreground font-normal">({categoryContacts.length})</span>
             </CardTitle>
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -882,10 +1047,10 @@ export default function CRMHub() {
             <div className="flex justify-center py-8">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
-          ) : !contacts || contacts.length === 0 ? (
+          ) : categoryContacts.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>No contacts yet. Add your first contact to get started.</p>
+              <p>No {category === "sales" ? "sales contacts" : category} yet. Add your first contact to get started.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -918,10 +1083,10 @@ export default function CRMHub() {
                       <input
                         type="checkbox"
                         className="rounded"
-                        checked={contacts && contacts.length > 0 && selectedIds.size === contacts.length}
+                        checked={categoryContacts.length > 0 && selectedIds.size === categoryContacts.length}
                         onChange={(e) => {
                           if (e.target.checked) {
-                            setSelectedIds(new Set((contacts as any[]).map((c: any) => c.id)));
+                            setSelectedIds(new Set(categoryContacts.map((c: any) => c.id)));
                           } else {
                             setSelectedIds(new Set());
                           }
@@ -939,7 +1104,7 @@ export default function CRMHub() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(contacts as any[]).map((contact: any) => (
+                  {categoryContacts.map((contact: any) => (
                     <TableRow
                       key={contact.id}
                       className={`hover:bg-muted/50 cursor-pointer ${selectedIds.has(contact.id) ? "bg-primary/5" : ""}`}
@@ -1024,8 +1189,7 @@ export default function CRMHub() {
           )}
         </CardContent>
       </Card>
-
-      {/* (Deals table moved above contacts) */}
+      )}
 
       {/* New Deal Dialog */}
       <Dialog open={isDealDialogOpen} onOpenChange={setIsDealDialogOpen}>
@@ -1051,7 +1215,7 @@ export default function CRMHub() {
                 <SelectTrigger><SelectValue placeholder="Select contact" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="new">+ Create new contact</SelectItem>
-                  {(contacts as any[] || []).map((c: any) => (
+                  {salesContacts.map((c: any) => (
                     <SelectItem key={c.id} value={c.id.toString()}>{c.fullName || c.firstName || c.email}</SelectItem>
                   ))}
                 </SelectContent>
@@ -1239,7 +1403,7 @@ export default function CRMHub() {
                               <SelectItem value="prospect">Prospect</SelectItem>
                               <SelectItem value="customer">Customer</SelectItem>
                               <SelectItem value="partner">Partner</SelectItem>
-                              <SelectItem value="investor">Investor</SelectItem>
+                              <SelectItem value="donor">Donor</SelectItem>
                               <SelectItem value="vendor">Vendor</SelectItem>
                               <SelectItem value="other">Other</SelectItem>
                             </SelectContent>
