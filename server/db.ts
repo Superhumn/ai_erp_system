@@ -8670,7 +8670,7 @@ export async function findOrCreateCrmContact(data: InsertCrmContact): Promise<{ 
     const db = await getDb();
     const patch: Record<string, any> = {};
     for (const [k, v] of Object.entries(normalized)) {
-      if (v == null || v === "") continue;
+      if (v == null) continue;
       if ((match as any)[k] == null || (match as any)[k] === "") patch[k] = v;
     }
     if (db && Object.keys(patch).length > 0) {
