@@ -2973,7 +2973,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                 <div className="text-left">
                   <div className="font-medium">General Fundraising</div>
                   <div className="text-sm text-muted-foreground">
-                    Optimized for seed and Series A fundraising
+                    20 items covering pitch materials, financials, team, and legal — optimized for seed and Series A
                   </div>
                 </div>
               </Button>
@@ -2986,7 +2986,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                 <div className="text-left">
                   <div className="font-medium">M&A Due Diligence</div>
                   <div className="text-sm text-muted-foreground">
-                    Comprehensive for acquisitions
+                    40+ items including standard DD plus HR, real estate, IT systems, and environmental compliance
                   </div>
                 </div>
               </Button>

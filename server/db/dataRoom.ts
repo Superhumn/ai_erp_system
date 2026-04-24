@@ -87,6 +87,108 @@ const SERIES_B_DD_CATEGORIES: Record<string, DDCategory> = {
   },
 };
 
+const FUNDRAISING_DD_CATEGORIES: Record<string, DDCategory> = {
+  pitch: {
+    name: "Pitch Materials",
+    items: [
+      { name: "Pitch Deck", keywords: ["pitch deck", "investor deck", "presentation"] },
+      { name: "Executive Summary", keywords: ["executive summary", "one pager", "overview"] },
+      { name: "Company Overview", keywords: ["company overview", "about us"] },
+    ],
+  },
+  financial: {
+    name: "Financial Documents",
+    items: [
+      { name: "Financial Model / Projections", keywords: ["financial model", "projection", "forecast"] },
+      { name: "Income Statement (P&L)", keywords: ["income statement", "profit loss", "P&L"] },
+      { name: "Cash Flow Statement", keywords: ["cash flow", "burn rate", "runway"] },
+      { name: "Bank Statements", keywords: ["bank statement"] },
+      { name: "Cap Table", keywords: ["cap table", "capitalization", "equity", "share structure"] },
+    ],
+  },
+  corporate: {
+    name: "Corporate Documents",
+    items: [
+      { name: "Certificate of Incorporation", keywords: ["incorporation", "certificate", "articles"] },
+      { name: "Bylaws / Operating Agreement", keywords: ["bylaws", "operating agreement"] },
+      { name: "Shareholder Agreement", keywords: ["shareholder", "stockholder"] },
+      { name: "Board Approval Minutes", keywords: ["board minutes", "board resolutions"] },
+    ],
+  },
+  product: {
+    name: "Product & Market",
+    items: [
+      { name: "Product Demo or Screenshots", keywords: ["demo", "screenshot", "product video"] },
+      { name: "Market Size Analysis", keywords: ["market size", "TAM", "SAM", "SOM"] },
+      { name: "Competitive Analysis", keywords: ["competitive", "competitor", "differentiation"] },
+      { name: "Customer Testimonials / References", keywords: ["testimonial", "reference", "customer quote"] },
+    ],
+  },
+  team: {
+    name: "Team",
+    items: [
+      { name: "Org Chart", keywords: ["org chart", "organization", "team structure"] },
+      { name: "Founder Bios / Resumes", keywords: ["bio", "resume", "founder background", "linkedin"] },
+      { name: "Advisory Board List", keywords: ["advisory board", "advisor", "advisors"] },
+    ],
+  },
+  legal: {
+    name: "Legal & IP",
+    items: [
+      { name: "IP Portfolio / Patents", keywords: ["intellectual property", "patent", "trademark", "IP"] },
+      { name: "Key Contracts", keywords: ["contract", "agreement", "material"] },
+      { name: "Regulatory Licenses", keywords: ["license", "permit", "regulatory"] },
+    ],
+  },
+};
+
+const MA_DD_CATEGORIES: Record<string, DDCategory> = {
+  ...STANDARD_DD_CATEGORIES,
+  business: {
+    name: "Business Overview",
+    items: [
+      { name: "Company Information Memo", keywords: ["information memo", "CIM", "company overview"] },
+      { name: "Customer List / Concentration Analysis", keywords: ["customer list", "customer concentration", "top customers"] },
+      { name: "Revenue by Customer / Product", keywords: ["revenue breakdown", "revenue by customer", "product revenue"] },
+      { name: "Backlog / Pipeline", keywords: ["backlog", "pipeline", "order book"] },
+    ],
+  },
+  hr: {
+    name: "Human Resources",
+    items: [
+      { name: "Employee List with Compensation", keywords: ["employee list", "compensation", "salary"] },
+      { name: "Key Employee Agreements", keywords: ["employment agreement", "key employee", "retention"] },
+      { name: "Non-Compete / NDA Agreements", keywords: ["non-compete", "NDA", "non-disclosure", "confidentiality"] },
+      { name: "Employee Benefits & Pension Plans", keywords: ["benefits", "pension", "401k", "ERISA"] },
+      { name: "HR Policies Manual", keywords: ["HR policy", "employee handbook", "code of conduct"] },
+    ],
+  },
+  real_estate: {
+    name: "Real Estate & Assets",
+    items: [
+      { name: "Lease Agreements", keywords: ["lease", "real estate", "property", "landlord"] },
+      { name: "Fixed Asset Register", keywords: ["fixed asset", "asset register", "PPE"] },
+      { name: "Equipment Schedules", keywords: ["equipment", "machinery", "asset schedule"] },
+    ],
+  },
+  it: {
+    name: "IT & Systems",
+    items: [
+      { name: "IT Systems Inventory", keywords: ["IT systems", "software", "systems inventory"] },
+      { name: "Cybersecurity Policies", keywords: ["cybersecurity", "information security", "security policy"] },
+      { name: "Data Privacy Compliance", keywords: ["GDPR", "CCPA", "data privacy", "privacy policy"] },
+    ],
+  },
+  environmental: {
+    name: "Environmental & Regulatory",
+    items: [
+      { name: "Environmental Compliance Reports", keywords: ["environmental", "EPA", "compliance report"] },
+      { name: "Regulatory Filings", keywords: ["regulatory filing", "government filing", "compliance"] },
+      { name: "Permits & Licenses", keywords: ["permit", "license", "certification"] },
+    ],
+  },
+};
+
 // Data Rooms
 export async function createDataRoom(data: InsertDataRoom) {
   const db = await getDb();
@@ -1573,8 +1675,9 @@ export async function autoMatchChecklistDocuments(checklistId: number) {
         matchedDocuments: scored.map(s => ({ id: s.doc.id, name: s.doc.name, score: s.score })),
         status: 'complete',
       });
-    } else if (item.status === 'complete') {
-      // Document was previously matched but no longer scores — reset to missing
+    } else if (item.status === 'complete' && item.linkedDocumentIds) {
+      // Was auto-matched but no longer has scoring documents — reset to missing.
+      // Manually-ticked items (linkedDocumentIds is null) are left unchanged.
       await updateChecklistItem(item.id, {
         status: 'missing',
         linkedDocumentIds: null,
@@ -1667,9 +1770,11 @@ export async function createStandardChecklist(
   customName?: string
 ) {
   // Select the appropriate category template
-  const categories = checklistType === 'series_b'
-    ? SERIES_B_DD_CATEGORIES
-    : STANDARD_DD_CATEGORIES;
+  const categories =
+    checklistType === 'series_b' ? SERIES_B_DD_CATEGORIES :
+    checklistType === 'fundraising' ? FUNDRAISING_DD_CATEGORIES :
+    checklistType === 'ma' ? MA_DD_CATEGORIES :
+    STANDARD_DD_CATEGORIES;
 
   // Generate name based on template type
   const templateNames: Record<string, string> = {
