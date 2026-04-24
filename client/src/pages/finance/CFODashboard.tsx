@@ -19,9 +19,11 @@ function fmtCompact(value: number | string | null | undefined): string {
   if (value === null || value === undefined) return "—";
   const num = typeof value === "string" ? parseFloat(value) : value;
   if (!Number.isFinite(num)) return "—";
-  if (Math.abs(num) >= 1_000_000) return `$${(num / 1_000_000).toFixed(1)}M`;
-  if (Math.abs(num) >= 1_000) return `$${(num / 1_000).toFixed(0)}K`;
-  return `$${num.toFixed(0)}`;
+  const sign = num < 0 ? "-" : "";
+  const abs = Math.abs(num);
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(0)}K`;
+  return `${sign}$${abs.toFixed(0)}`;
 }
 
 function fmtAxis(value: number): string {
@@ -1169,7 +1171,7 @@ export default function CFODashboard() {
                 <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                 <XAxis dataKey="year" tick={{ fontSize: 10 }} />
                 <YAxis tickFormatter={(v: number) => `${v.toFixed(0)}%`} tick={{ fontSize: 10 }} width={45} />
-                <Tooltip content={<ChartTip />} />
+                <Tooltip formatter={(value: number | string) => `${Number(value).toFixed(1)}%`} />
                 <ReferenceLine y={70} stroke={CHART.grossProfit} strokeDasharray="2 3" label={{ value: "70% target", fontSize: 9, fill: CHART.grossProfit, position: "insideTopRight" }} />
                 <Line type="monotone" dataKey="Gross Margin %" stroke={CHART.grossProfit} strokeWidth={2} dot={{ r: 3 }} />
                 <Line type="monotone" dataKey="EBITDA Margin %" stroke={CHART.ebitda} strokeWidth={2} dot={{ r: 3 }} />

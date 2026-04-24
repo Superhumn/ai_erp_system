@@ -5,6 +5,46 @@
 
 import { ENV } from "./env";
 import { createSignedOAuthState } from "./crypto";
+import {
+  getServiceAccountAccessToken,
+  getServiceAccountEmail,
+  isServiceAccountConfigured,
+} from "./googleServiceAccount";
+
+/**
+ * Fetch a Drive API URL with Bearer auth, and if the user's token is
+ * forbidden, retry with the service-account token when configured. This lets
+ * private folders that are shared with the service account be read even when
+ * the logged-in user has no direct access.
+ */
+export async function driveFetch(url: string, userAccessToken: string): Promise<Response> {
+  const primary = await fetch(url, {
+    headers: { Authorization: `Bearer ${userAccessToken}` },
+  });
+  if (primary.status !== 403 && primary.status !== 401) return primary;
+  if (!isServiceAccountConfigured()) return primary;
+
+  const saToken = await getServiceAccountAccessToken();
+  if (!saToken) return primary;
+
+  const retry = await fetch(url, {
+    headers: { Authorization: `Bearer ${saToken}` },
+  });
+  // Only prefer the retry when it actually succeeded; otherwise surface the
+  // original error so callers can see the user-scoped failure reason.
+  return retry.ok ? retry : primary;
+}
+
+/**
+ * Build a "share this folder with…" hint for 403/404 errors.
+ */
+function permissionHint(): string {
+  const saEmail = getServiceAccountEmail();
+  if (saEmail) {
+    return ` Share the file or parent folder with ${saEmail} (Viewer is enough) so the server can read it without making it public.`;
+  }
+  return " Share the file or parent folder with the connected Google account, or configure GOOGLE_SERVICE_ACCOUNT_JSON and share the folder with the service account's email.";
+}
 
 // Google Drive API types
 export interface DriveFile {
@@ -107,17 +147,14 @@ export async function listDriveFolders(
     }
     
     const url = `${GOOGLE_DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,webViewLink,parents)&orderBy=name&supportsAllDrives=true&includeItemsFromAllDrives=true`;
-    
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
-    
+
+    const response = await driveFetch(url, accessToken);
+
     if (!response.ok) {
       const error = await response.text();
       console.error("[GoogleDrive] Failed to list folders:", error);
-      return { folders: [], error: `Failed to list folders: ${response.status}` };
+      const hint = response.status === 403 || response.status === 404 ? permissionHint() : "";
+      return { folders: [], error: `Failed to list folders: ${response.status}.${hint}` };
     }
     
     const data = await response.json();
@@ -139,17 +176,14 @@ export async function listDriveFiles(
     const query = `'${folderId}' in parents and trashed=false and mimeType!='${FOLDER_MIME_TYPE}'`;
     
     const url = `${GOOGLE_DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,webViewLink,thumbnailLink,iconLink,createdTime,modifiedTime,parents)&orderBy=name&supportsAllDrives=true&includeItemsFromAllDrives=true`;
-    
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
-    
+
+    const response = await driveFetch(url, accessToken);
+
     if (!response.ok) {
       const error = await response.text();
       console.error("[GoogleDrive] Failed to list files:", error);
-      return { files: [], error: `Failed to list files: ${response.status}` };
+      const hint = response.status === 403 || response.status === 404 ? permissionHint() : "";
+      return { files: [], error: `Failed to list files: ${response.status}.${hint}` };
     }
     
     const data = await response.json();
@@ -173,44 +207,29 @@ export async function syncDriveFolder(
   
   async function syncRecursive(currentFolderId: string, depth: number) {
     if (depth > maxDepth) return;
-    
-    // Get subfolders
+
     const { folders, error: folderError } = await listDriveFolders(accessToken, currentFolderId);
     if (folderError) {
       console.error(`[GoogleDrive] Error syncing folder ${currentFolderId}:`, folderError);
       return;
     }
-    
-    // Skip folders named "Private" or starting with "_"
-    const filteredFolders = folders.filter(f =>
-      !f.name.toLowerCase().includes('private') &&
-      !f.name.startsWith('_') &&
-      !f.name.toLowerCase().includes('confidential')
-    );
-    allFolders.push(...filteredFolders);
 
-    // Get files in current folder
+    allFolders.push(...folders);
+
     const { files, error: fileError } = await listDriveFiles(accessToken, currentFolderId);
     if (fileError) {
       console.error(`[GoogleDrive] Error getting files in ${currentFolderId}:`, fileError);
     } else {
       allFiles.push(...files);
     }
-    
-    // Recursively sync subfolders (only non-private ones)
-    for (const folder of filteredFolders) {
+
+    for (const folder of folders) {
       await syncRecursive(folder.id, depth + 1);
     }
   }
   
   try {
-    // Start with the root folder's files
-    const { files: rootFiles, error: rootFileError } = await listDriveFiles(accessToken, folderId);
-    if (!rootFileError) {
-      allFiles.push(...rootFiles);
-    }
-    
-    // Sync subfolders
+    // Sync root folder and all subfolders recursively
     await syncRecursive(folderId, 1);
     
     return {
@@ -237,17 +256,14 @@ export async function getFileMetadata(
   fileId: string
 ): Promise<{ file: DriveFile | null; error?: string }> {
   try {
-    const url = `${GOOGLE_DRIVE_API}/files/${fileId}?fields=id,name,mimeType,size,webViewLink,thumbnailLink,iconLink,createdTime,modifiedTime,parents`;
-    
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
-    
+    const url = `${GOOGLE_DRIVE_API}/files/${fileId}?fields=id,name,mimeType,size,webViewLink,thumbnailLink,iconLink,createdTime,modifiedTime,parents&supportsAllDrives=true`;
+
+    const response = await driveFetch(url, accessToken);
+
     if (!response.ok) {
       const error = await response.text();
-      return { file: null, error: `Failed to get file: ${response.status}` };
+      const hint = response.status === 403 || response.status === 404 ? permissionHint() : "";
+      return { file: null, error: `Failed to get file: ${response.status}. ${error}${hint}` };
     }
     
     const file = await response.json();
@@ -255,6 +271,26 @@ export async function getFileMetadata(
   } catch (error: any) {
     return { file: null, error: error.message };
   }
+}
+
+/**
+ * Resolve the Drive URL to fetch a file's bytes from, plus the effective
+ * output MIME type after any Google Workspace → PDF/PNG export conversion.
+ * Used by the streaming proxy endpoint so the browser gets a viewable file
+ * without the server having to buffer it.
+ */
+export function resolveDriveStreamUrl(fileId: string, mimeType: string): { url: string; outMime: string } {
+  const exportType = GOOGLE_DOCS_EXPORT_TYPES[mimeType];
+  if (exportType) {
+    return {
+      url: `${GOOGLE_DRIVE_API}/files/${fileId}/export?mimeType=${encodeURIComponent(exportType.mimeType)}`,
+      outMime: exportType.mimeType,
+    };
+  }
+  return {
+    url: `${GOOGLE_DRIVE_API}/files/${fileId}?alt=media&supportsAllDrives=true`,
+    outMime: mimeType,
+  };
 }
 
 /**
@@ -293,18 +329,15 @@ export async function downloadFile(
     if (exportType) {
       url = `${GOOGLE_DRIVE_API}/files/${fileId}/export?mimeType=${encodeURIComponent(exportType.mimeType)}`;
     } else {
-      url = `${GOOGLE_DRIVE_API}/files/${fileId}?alt=media`;
+      url = `${GOOGLE_DRIVE_API}/files/${fileId}?alt=media&supportsAllDrives=true`;
     }
-    
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
-    
+
+    const response = await driveFetch(url, accessToken);
+
     if (!response.ok) {
-      const error = await response.text();
-      return { content: null, error: `Failed to download: ${response.status}` };
+      const body = await response.text();
+      const hint = response.status === 403 || response.status === 404 ? permissionHint() : "";
+      return { content: null, error: `Failed to download: ${response.status}. ${body}${hint}` };
     }
     
     const arrayBuffer = await response.arrayBuffer();
@@ -345,12 +378,12 @@ export async function downloadDriveFile(
       url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`;
     }
 
-    const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    const response = await driveFetch(url, accessToken);
 
     if (!response.ok) {
-      return { error: `Download failed: ${response.status}` };
+      const body = await response.text();
+      const hint = response.status === 403 || response.status === 404 ? permissionHint() : "";
+      return { error: `Download failed: ${response.status}. ${body}${hint}` };
     }
 
     const arrayBuffer = await response.arrayBuffer();
@@ -369,17 +402,16 @@ export async function getFolderInfo(
 ): Promise<{ folder: DriveFolder | null; error?: string }> {
   try {
     const url = `${GOOGLE_DRIVE_API}/files/${folderId}?fields=id,name,mimeType,webViewLink,parents&supportsAllDrives=true&includeItemsFromAllDrives=true`;
-    
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
-    
+
+    const response = await driveFetch(url, accessToken);
+
     if (!response.ok) {
       const error = await response.text();
       console.error("[GoogleDrive] getFolderInfo failed:", response.status, error);
-      return { folder: null, error: `Failed to get folder (${response.status}): ${error}. Make sure the folder is shared with your Google account and you've connected Google with full Drive access.` };
+      const hint = response.status === 403 || response.status === 404
+        ? permissionHint()
+        : "";
+      return { folder: null, error: `Failed to get folder (${response.status}): ${error}.${hint}` };
     }
     
     const folder = await response.json();

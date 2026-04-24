@@ -24,7 +24,17 @@ import {
 } from "@/components/ui/select";
 import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
 import { DetailSheet } from "@/components/DetailSheet";
-import { Users, Plus, Loader2, RefreshCw, ShoppingBag, Upload, ExternalLink, Mail, Phone, MapPin } from "lucide-react";
+import { Users, Plus, Loader2, RefreshCw, ShoppingBag, Upload, ExternalLink, Mail, Phone, MapPin, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { Link } from "wouter";
 import { format } from "date-fns";
@@ -93,6 +103,7 @@ function CustomerSummaryBody({ customer }: { customer: any }) {
 
 export default function Customers() {
   const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);
+  const [customerToDelete, setCustomerToDelete] = useState<{ id: number; name: string } | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isSyncOpen, setIsSyncOpen] = useState(false);
   const [syncCredentials, setSyncCredentials] = useState({
@@ -129,6 +140,16 @@ export default function Customers() {
     onError: (error) => {
       toast.error(error.message);
     },
+  });
+
+  const deleteCustomer = trpc.customers.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Customer deleted");
+      setCustomerToDelete(null);
+      setSelectedCustomer(null);
+      utils.customers.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
   });
 
   const syncShopify = trpc.customers.syncFromShopify.useMutation({
@@ -490,17 +511,54 @@ export default function Customers() {
         }
         actions={
           selectedCustomer && (
-            <Button asChild size="sm" variant="outline">
-              <Link href={`/sales/customers/${selectedCustomer.id}`}>
-                Open full page
-                <ExternalLink className="h-3.5 w-3.5 ml-1.5" />
-              </Link>
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button asChild size="sm" variant="outline">
+                <Link href={`/sales/customers/${selectedCustomer.id}`}>
+                  Open full page
+                  <ExternalLink className="h-3.5 w-3.5 ml-1.5" />
+                </Link>
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-destructive hover:text-destructive"
+                onClick={() => setCustomerToDelete({ id: selectedCustomer.id, name: selectedCustomer.name })}
+              >
+                <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                Delete
+              </Button>
+            </div>
           )
         }
       >
         {selectedCustomer && <CustomerSummaryBody customer={selectedCustomer} />}
       </DetailSheet>
+
+      <AlertDialog open={!!customerToDelete} onOpenChange={(open) => !open && setCustomerToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete customer?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes <span className="font-medium">{customerToDelete?.name}</span>.
+              Existing orders and invoices for this customer are preserved.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteCustomer.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteCustomer.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (customerToDelete) deleteCustomer.mutate({ id: customerToDelete.id });
+              }}
+            >
+              {deleteCustomer.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete customer
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

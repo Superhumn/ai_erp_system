@@ -157,9 +157,9 @@ export function getMenuGroups(role: string = "user") {
   return groups;
 }
 
-const SIDEBAR_WIDTH_KEY = "sidebar-width";
-const DEFAULT_WIDTH = 260;
-const MIN_WIDTH = 200;
+const SIDEBAR_WIDTH_KEY = "sidebar-width-v2";
+const DEFAULT_WIDTH = 180;
+const MIN_WIDTH = 160;
 const MAX_WIDTH = 400;
 
 const roleColors: Record<string, string> = {
@@ -197,7 +197,7 @@ export default function DashboardLayout({
 
   return (
     <SidebarProvider
-      defaultOpen={false}
+      defaultOpen={true}
       style={
         {
           "--sidebar-width": `${sidebarWidth}px`,
@@ -336,7 +336,7 @@ function DashboardLayoutContent({
           disableTransition={isResizing}
         >
           {/* Lightfield-style header: logo + wordmark */}
-          <SidebarHeader className="h-14 justify-center border-b border-sidebar-border">
+          <SidebarHeader className="h-10 justify-center border-b border-sidebar-border">
             <div className="flex items-center gap-2.5 px-3 transition-all w-full">
               <button
                 onClick={toggleSidebar}
@@ -456,7 +456,7 @@ function DashboardLayoutContent({
 
       <SidebarInset className="flex flex-col bg-background">
         {/* Top bar: AI search + agent status + notifications */}
-        <header className="flex h-12 items-center justify-between gap-3 border-b border-border bg-background px-4 sticky top-0 z-40">
+        <header className="flex h-10 items-center justify-between gap-3 border-b border-border bg-background px-4 sticky top-0 z-40">
           <div className="flex items-center gap-2 shrink-0">
             {isMobile && <SidebarTrigger className="h-8 w-8 rounded-md" />}
           </div>

@@ -30,17 +30,28 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Package, Plus, Search, Loader2 } from "lucide-react";
+import { Package, Plus, Search, Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "wouter";
 import { formatCurrency } from "@/lib/format";
 import { getStatusColor } from "@/lib/statusColors";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export default function Products() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [classificationFilter, setClassificationFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [productToDelete, setProductToDelete] = useState<{ id: number; name: string } | null>(null);
   const [formData, setFormData] = useState({
     sku: "",
     name: "",
@@ -86,6 +97,15 @@ export default function Products() {
     onError: (error) => {
       toast.error(error.message);
     },
+  });
+
+  const deleteProduct = trpc.products.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Product deleted");
+      setProductToDelete(null);
+      utils.products.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
   });
 
   const filteredProducts = useMemo(() => products?.filter((product) => {
@@ -334,6 +354,7 @@ export default function Products() {
                   <TableHead>Classification</TableHead>
                   <TableHead className="text-right">Unit Price</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead className="w-12"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -358,6 +379,20 @@ export default function Products() {
                     <TableCell>
                       <Badge className={getStatusColor(product.status)}>{product.status}</Badge>
                     </TableCell>
+                    <TableCell>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setProductToDelete({ id: product.id, name: product.name });
+                        }}
+                        aria-label={`Delete ${product.name}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -365,6 +400,32 @@ export default function Products() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog open={!!productToDelete} onOpenChange={(open) => !open && setProductToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete product?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes <span className="font-medium">{productToDelete?.name}</span>.
+              Existing orders and history for this product are preserved.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteProduct.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteProduct.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (productToDelete) deleteProduct.mutate({ id: productToDelete.id });
+              }}
+            >
+              {deleteProduct.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete product
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

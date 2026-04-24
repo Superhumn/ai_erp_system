@@ -25,28 +25,38 @@ setInterval(() => {
 }, 5 * 60 * 1000); // Run every 5 minutes
 
 /**
+ * Resolve the redirect URI the server will send to Intuit.
+ * The exact same string must be registered in the Intuit app's
+ * "Keys & OAuth → Redirect URIs" list or Intuit rejects the request.
+ */
+export function getQuickBooksRedirectUri(): string {
+  return ENV.quickbooksRedirectUri || `${ENV.appUrl}/api/oauth/quickbooks/callback`;
+}
+
+/**
  * Get QuickBooks OAuth authorization URL
  */
-export function getQuickBooksAuthUrl(userId: number): { url?: string; error?: string } {
+export function getQuickBooksAuthUrl(userId: number): { url?: string; redirectUri?: string; error?: string } {
   const clientId = ENV.quickbooksClientId;
-  const redirectUri = ENV.quickbooksRedirectUri || `${ENV.appUrl}/api/oauth/quickbooks/callback`;
-  
+  const redirectUri = getQuickBooksRedirectUri();
+
   if (!clientId) {
     return {
+      redirectUri,
       error: "QuickBooks integration is not configured. Add QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET in Settings → Secrets."
     };
   }
-  
+
   // Generate state parameter for CSRF protection
   const state = crypto.randomBytes(32).toString("hex");
   oauthStates.set(state, { userId, timestamp: Date.now() });
-  
+
   // QuickBooks OAuth scopes
   const scope = encodeURIComponent("com.intuit.quickbooks.accounting");
-  
+
   const url = `${QB_OAUTH_URL}?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&state=${state}`;
-  
-  return { url };
+
+  return { url, redirectUri };
 }
 
 /**
@@ -86,12 +96,14 @@ export async function exchangeCodeForToken(code: string): Promise<{
 }> {
   const clientId = ENV.quickbooksClientId;
   const clientSecret = ENV.quickbooksClientSecret;
-  const redirectUri = ENV.quickbooksRedirectUri || `${ENV.appUrl}/api/oauth/quickbooks/callback`;
-  
+  const redirectUri = getQuickBooksRedirectUri();
+
   if (!clientId || !clientSecret) {
     return { error: "QuickBooks credentials not configured" };
   }
-  
+
+  console.log(`[QuickBooks] Token exchange redirect_uri=${redirectUri}`);
+
   const tokenUrl = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
   
   // Create Basic Auth header

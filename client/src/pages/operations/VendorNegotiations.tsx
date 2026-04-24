@@ -266,24 +266,24 @@ export default function VendorNegotiations() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b bg-muted/50">
-                        <th className="text-left p-3 font-medium">Number</th>
-                        <th className="text-left p-3 font-medium">Title</th>
-                        <th className="text-left p-3 font-medium">Vendor</th>
-                        <th className="text-left p-3 font-medium">Type</th>
-                        <th className="text-left p-3 font-medium">Status</th>
-                        <th className="text-right p-3 font-medium">Current Price</th>
-                        <th className="text-right p-3 font-medium">Target Price</th>
-                        <th className="text-right p-3 font-medium">Est. Savings</th>
-                        <th className="text-center p-3 font-medium">AI Score</th>
-                        <th className="text-center p-3 font-medium">Rounds</th>
-                        <th className="text-left p-3 font-medium">Actions</th>
+                        <th className="text-left px-1.5 py-1 font-medium">Number</th>
+                        <th className="text-left px-1.5 py-1 font-medium">Title</th>
+                        <th className="text-left px-1.5 py-1 font-medium">Vendor</th>
+                        <th className="text-left px-1.5 py-1 font-medium">Type</th>
+                        <th className="text-left px-1.5 py-1 font-medium">Status</th>
+                        <th className="text-right px-1.5 py-1 font-medium">Current Price</th>
+                        <th className="text-right px-1.5 py-1 font-medium">Target Price</th>
+                        <th className="text-right px-1.5 py-1 font-medium">Est. Savings</th>
+                        <th className="text-center px-1.5 py-1 font-medium">AI Score</th>
+                        <th className="text-center px-1.5 py-1 font-medium">Rounds</th>
+                        <th className="text-left px-1.5 py-1 font-medium">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {negotiations?.map((neg: any) => (
                         <tr key={neg.id} className="border-b hover:bg-muted/25">
-                          <td className="p-3 font-mono text-xs">{neg.negotiationNumber}</td>
-                          <td className="p-3">
+                          <td className="px-1.5 py-0.5 font-mono text-xs">{neg.negotiationNumber}</td>
+                          <td className="px-1.5 py-0.5">
                             <button
                               onClick={() => openDetail(neg.id)}
                               className="text-left hover:underline font-medium"
@@ -291,41 +291,41 @@ export default function VendorNegotiations() {
                               {neg.title}
                             </button>
                           </td>
-                          <td className="p-3">{getVendorName(neg.vendorId)}</td>
-                          <td className="p-3">
+                          <td className="px-1.5 py-0.5">{getVendorName(neg.vendorId)}</td>
+                          <td className="px-1.5 py-0.5">
                             <Badge variant="outline">{typeLabels[neg.type] || neg.type}</Badge>
                           </td>
-                          <td className="p-3">
+                          <td className="px-1.5 py-0.5">
                             <Badge variant={(statusColors[neg.status] || "secondary") as any}>
                               {neg.status.replace(/_/g, " ")}
                             </Badge>
                           </td>
-                          <td className="p-3 text-right">
+                          <td className="px-1.5 py-0.5 text-right">
                             {neg.currentUnitPrice ? `$${parseFloat(neg.currentUnitPrice).toFixed(2)}` : "-"}
                           </td>
-                          <td className="p-3 text-right">
+                          <td className="px-1.5 py-0.5 text-right">
                             {neg.targetUnitPrice ? (
                               <span className="text-green-600">
                                 ${parseFloat(neg.targetUnitPrice).toFixed(2)}
                               </span>
                             ) : "-"}
                           </td>
-                          <td className="p-3 text-right">
+                          <td className="px-1.5 py-0.5 text-right">
                             {neg.estimatedSavings ? (
                               <span className="text-green-600 font-medium">
                                 ${parseFloat(neg.estimatedSavings).toFixed(0)}
                               </span>
                             ) : "-"}
                           </td>
-                          <td className="p-3 text-center">
+                          <td className="px-1.5 py-0.5 text-center">
                             {neg.aiConfidenceScore ? (
                               <Badge variant={parseFloat(neg.aiConfidenceScore) >= 70 ? "default" : "outline"}>
                                 {parseFloat(neg.aiConfidenceScore).toFixed(0)}%
                               </Badge>
                             ) : "-"}
                           </td>
-                          <td className="p-3 text-center">{neg.negotiationRounds || 0}</td>
-                          <td className="p-3">
+                          <td className="px-1.5 py-0.5 text-center">{neg.negotiationRounds || 0}</td>
+                          <td className="px-1.5 py-0.5">
                             <div className="flex gap-1">
                               <Button
                                 size="sm"
