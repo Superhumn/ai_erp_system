@@ -67,6 +67,8 @@ const BENCHMARKS = {
   ltvCac:     { great: 3,   ok: 2,   poor: 1  },
   cacPayback: { great: 12,  ok: 18,  poor: 24 }, // months, lower better
   nrr:        { great: 120, ok: 105, poor: 90 },
+  grr:        { great: 95,  ok: 85,  poor: 75 },
+  logoRet:    { great: 95,  ok: 85,  poor: 75 },
   mom:        { great: 15,  ok: 8,   poor: 3  },
   concentration: { great: 15, ok: 25, poor: 40 }, // top customer %, lower better
   revPerFte:  { great: 200_000, ok: 150_000, poor: 100_000 },
@@ -192,6 +194,46 @@ export default function CFODashboard() {
 
   const arr = threeMonthAvgRev * 12;
   const netNewArr = (thisMonthRev - lastMonthRev) * 12;
+
+  // ── Cohort-derived retention (NRR / GRR / Logo) ─────────────
+  // Groups invoices by customer, compares this-month revenue vs same-customer
+  // revenue 12 months ago. Best-effort from in-system invoice data — a real
+  // subscriptions table would be more accurate.
+  const retention = useMemo(() => {
+    const invs = invoicesList ?? [];
+    if (invs.length === 0) return null;
+    const byCustomer = new Map<string, Map<string, number>>();
+    for (const inv of invs) {
+      const name = (inv as any).customer?.name || `Customer ${(inv as any).customerId ?? "—"}`;
+      const d = new Date((inv as any).issueDate || (inv as any).createdAt);
+      const k = `${d.getFullYear()}-${d.getMonth()}`;
+      const amt = parseFloat((inv as any).totalAmount || "0");
+      if (!byCustomer.has(name)) byCustomer.set(name, new Map());
+      const m = byCustomer.get(name)!;
+      m.set(k, (m.get(k) ?? 0) + amt);
+    }
+    const now = new Date();
+    const yearAgoKey = `${now.getFullYear() - 1}-${now.getMonth()}`;
+    const thisKey = `${now.getFullYear()}-${now.getMonth()}`;
+    let cohortSize = 0, revYearAgo = 0, revNow = 0, revCapped = 0, logosRetained = 0;
+    for (const monthly of byCustomer.values()) {
+      const prior = monthly.get(yearAgoKey) ?? 0;
+      if (prior <= 0) continue;
+      cohortSize++;
+      revYearAgo += prior;
+      const cur = monthly.get(thisKey) ?? 0;
+      revNow += cur;
+      revCapped += Math.min(cur, prior);
+      if (cur > 0) logosRetained++;
+    }
+    if (cohortSize === 0 || revYearAgo === 0) return null;
+    return {
+      nrr: (revNow / revYearAgo) * 100,
+      grr: (revCapped / revYearAgo) * 100,
+      logoRetention: (logosRetained / cohortSize) * 100,
+      cohortSize,
+    };
+  }, [invoicesList]);
 
   // ── Burn / Runway ───────────────────────────────────────────
   // Priority: QuickBooks P&L (actual) → in-system expense ledger → proxy.
@@ -596,6 +638,24 @@ export default function CFODashboard() {
         <KpiCard icon={TrendingUp} label="YoY Growth"
                  value={`${yoyGrowth >= 0 ? "+" : ""}${yoyGrowth.toFixed(0)}%`}
                  sub="vs same month last year" />
+        <KpiCard icon={Activity} label="NRR"
+                 value={retention ? `${retention.nrr.toFixed(0)}%` : "—"}
+                 tone={benchColor(retention?.nrr ?? null, BENCHMARKS.nrr)}
+                 hint={retention
+                   ? `${benchLabel(retention.nrr, BENCHMARKS.nrr)} · ${retention.cohortSize} in cohort`
+                   : "No 12mo cohort data"} />
+        <KpiCard icon={Activity} label="GRR"
+                 value={retention ? `${retention.grr.toFixed(0)}%` : "—"}
+                 tone={benchColor(retention?.grr ?? null, BENCHMARKS.grr)}
+                 hint={retention
+                   ? benchLabel(retention.grr, BENCHMARKS.grr)
+                   : "No 12mo cohort data"} />
+        <KpiCard icon={Users} label="Logo Retention"
+                 value={retention ? `${retention.logoRetention.toFixed(0)}%` : "—"}
+                 tone={benchColor(retention?.logoRetention ?? null, BENCHMARKS.logoRet)}
+                 hint={retention
+                   ? benchLabel(retention.logoRetention, BENCHMARKS.logoRet)
+                   : "No 12mo cohort data"} />
       </div>
 
       <Card>
