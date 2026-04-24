@@ -11987,7 +11987,12 @@ export async function getFundraisingCampaigns(companyId?: number) {
 export async function createFundraisingCampaign(data: InsertFundraisingCampaign) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(fundraisingCampaigns).values(data);
+  const now = new Date();
+  const result = await db.insert(fundraisingCampaigns).values({
+    ...data,
+    createdAt: data.createdAt ?? now,
+    updatedAt: data.updatedAt ?? now,
+  });
   return { id: result[0].insertId };
 }
 
