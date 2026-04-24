@@ -31,15 +31,24 @@ describe("computeInvestorPortalFinancials", () => {
     vi.mocked(db.getTransactions).mockResolvedValue([] as any);
   });
 
-  it("returns twelve monthly buckets in chronological order", async () => {
+  it("returns thirteen monthly buckets in chronological order (12 for trend, +1 for YoY)", async () => {
     const snapshot = await computeInvestorPortalFinancials();
-    expect(snapshot.months).toHaveLength(12);
+    expect(snapshot.months).toHaveLength(13);
     const keys = snapshot.months.map((m) => m.monthKey);
     expect(keys).toEqual([...keys].sort((a, b) => {
       const [ay, am] = a.split("-").map(Number);
       const [by, bm] = b.split("-").map(Number);
       return ay === by ? am - bm : ay - by;
     }));
+  });
+
+  it("computes YoY growth from the oldest bucket (same month prior year)", async () => {
+    vi.mocked(db.getInvoices).mockResolvedValue([
+      { issueDate: monthsAgo(0), totalAmount: "20000" },  // this month
+      { issueDate: monthsAgo(12), totalAmount: "10000" }, // same month last year
+    ] as any);
+    const snapshot = await computeInvestorPortalFinancials();
+    expect(snapshot.yoyGrowthPct).toBeCloseTo(100, 5);
   });
 
   it("computes ARR as 3mo-avg revenue × 12", async () => {
@@ -153,9 +162,14 @@ describe("computeInvestorPortalFinancials", () => {
       "marginSource",
       "momGrowthPct",
       "months",
-      "planVsActual",
       "runwayMonths",
       "yoyGrowthPct",
     ]);
+  });
+
+  it("scopes invoices and transactions to companyId when provided", async () => {
+    await computeInvestorPortalFinancials({ companyId: 42 });
+    expect(db.getInvoices).toHaveBeenCalledWith({ companyId: 42 });
+    expect(db.getTransactions).toHaveBeenCalledWith({ type: "expense", companyId: 42 });
   });
 });

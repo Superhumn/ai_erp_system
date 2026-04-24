@@ -2,10 +2,9 @@
 //
 // Distinct from `dataRoomLiveFinancials.ts` which is intentionally narrow
 // for prospective investors. Existing shareholders have a real claim on
-// the company, so they get a deeper view: 12-month revenue + burn,
-// growth rates, ARR, burn multiple, margins (if QuickBooks P&L is wired),
-// outstanding AR, and — when a financial model exists — plan-vs-actual
-// for the current month.
+// the company, so they get a deeper view: 13 months of revenue + burn
+// buckets (so YoY is actually computable), growth rates, ARR, burn
+// multiple, margins (if QuickBooks P&L is wired), and outstanding AR.
 //
 // Still a snapshot, not a raw data feed: no per-customer, per-invoice,
 // or per-transaction detail is returned. The shape is what you'd show on
@@ -24,7 +23,10 @@ export interface InvestorPortalFinancials {
   currency: string;
   asOf: string;
   cash: number;
-  months: MonthlyBucket[]; // oldest → newest, length 12
+  // 13 buckets (oldest → newest). We need 12 for the trailing-12-month
+  // trend plus one extra at the start so the same-month-prior-year bucket
+  // exists and yoyGrowthPct can actually be computed.
+  months: MonthlyBucket[];
   // Derived headline metrics
   arr: number; // annualized run-rate (3mo-avg revenue × 12)
   momGrowthPct: number | null;
@@ -38,14 +40,6 @@ export interface InvestorPortalFinancials {
   grossMarginPct: number | null;
   ebitdaMarginPct: number | null;
   marginSource: "quickbooks" | "none";
-  // Plan vs actual — present only when a financial model exposes a current-month forecast.
-  planVsActual: {
-    month: string;
-    revenuePlan: number;
-    revenueActual: number;
-    burnPlan: number;
-    burnActual: number;
-  } | null;
 }
 
 function monthKey(d: Date): string {
@@ -94,58 +88,46 @@ async function getMargins(): Promise<{
   return { grossMarginPct: null, ebitdaMarginPct: null, marginSource: "none" };
 }
 
-// Looks for a current-month forecast in the financial model. The
-// financialModel shape varies by project, so we duck-type the lookup and
-// return null on any mismatch rather than throwing.
-async function getPlanForCurrentMonth(now: Date): Promise<{
-  revenuePlan: number;
-  burnPlan: number;
-} | null> {
-  try {
-    const models = await (db as unknown as { getFinancialModels?: () => Promise<unknown[]> })
-      .getFinancialModels?.();
-    if (!models || !Array.isArray(models) || models.length === 0) return null;
-    // Use the most recent model. Expect a `months` array with {monthKey, revenue, expense}.
-    const latest = models[0] as { months?: Array<{ monthKey?: string; revenue?: number; expense?: number }> };
-    const months = latest?.months;
-    if (!Array.isArray(months)) return null;
-    const key = monthKey(now);
-    const row = months.find((m) => m.monthKey === key);
-    if (!row) return null;
-    return {
-      revenuePlan: row.revenue ?? 0,
-      burnPlan: row.expense ?? 0,
-    };
-  } catch {
-    return null;
-  }
-}
-
-export async function computeInvestorPortalFinancials(): Promise<InvestorPortalFinancials> {
+export async function computeInvestorPortalFinancials(options?: {
+  companyId?: number;
+}): Promise<InvestorPortalFinancials> {
   const now = new Date();
+  const companyId = options?.companyId;
 
-  // 12-month buckets, oldest first.
+  // 13 monthly buckets, oldest first. The 13th (oldest) bucket is the
+  // same-month one year ago, used only for YoY. Downstream consumers
+  // still treat `last 12` as the headline trend.
+  const BUCKETS = 13;
   const buckets: MonthlyBucket[] = [];
-  for (let i = 11; i >= 0; i--) {
+  for (let i = BUCKETS - 1; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     buckets.push({ monthKey: monthKey(d), label: shortLabel(d), revenue: 0, burn: 0 });
   }
   const byKey = new Map(buckets.map((b) => [b.monthKey, b]));
 
-  const [invoices, expenseTxns, cash, margins, plan] = await Promise.all([
-    db.getInvoices(),
-    db.getTransactions({ type: "expense" }),
+  // Scope to the investor's company — prevents cross-company aggregation
+  // in multi-tenant setups and keeps the aggregate small on single-tenant
+  // installs too.
+  const [invoices, expenseTxns, cash, margins] = await Promise.all([
+    db.getInvoices(companyId ? { companyId } : undefined),
+    db.getTransactions({ type: "expense", ...(companyId ? { companyId } : {}) }),
     getCashBalance(),
     getMargins(),
-    getPlanForCurrentMonth(now),
   ]);
+
+  // The oldest bucket defines the earliest date we care about — drop
+  // anything older in memory since the DB helper doesn't support a
+  // date-range filter today. When this becomes a hot path, the right
+  // next step is a date-scoped db helper (see Plan section in PR).
+  const earliest = new Date(now.getFullYear(), now.getMonth() - (BUCKETS - 1), 1).getTime();
 
   for (const inv of invoices) {
     const raw = (inv as { issueDate?: Date | string; createdAt?: Date | string })
       .issueDate ?? (inv as { createdAt?: Date | string }).createdAt;
     if (!raw) continue;
-    const k = monthKey(new Date(raw));
-    const bucket = byKey.get(k);
+    const d = new Date(raw);
+    if (d.getTime() < earliest) continue;
+    const bucket = byKey.get(monthKey(d));
     if (bucket) {
       bucket.revenue += parseAmount((inv as { totalAmount?: unknown }).totalAmount);
     }
@@ -154,8 +136,9 @@ export async function computeInvestorPortalFinancials(): Promise<InvestorPortalF
     const raw = (t as { date?: Date | string; createdAt?: Date | string })
       .date ?? (t as { createdAt?: Date | string }).createdAt;
     if (!raw) continue;
-    const k = monthKey(new Date(raw));
-    const bucket = byKey.get(k);
+    const d = new Date(raw);
+    if (d.getTime() < earliest) continue;
+    const bucket = byKey.get(monthKey(d));
     if (bucket) {
       bucket.burn += Math.abs(parseAmount((t as { totalAmount?: unknown }).totalAmount));
     }
@@ -163,7 +146,8 @@ export async function computeInvestorPortalFinancials(): Promise<InvestorPortalF
 
   const last = buckets[buckets.length - 1];
   const prev = buckets[buckets.length - 2];
-  const prevYear = buckets[buckets.length - 13]; // undefined with only 12 buckets
+  // With 13 buckets, index 0 is the same month one year before `last`.
+  const prevYear = buckets[0];
   const last3 = buckets.slice(-3);
   const monthsWithBurn = last3.filter((b) => b.burn > 0).length;
   const avgMonthlyBurn = monthsWithBurn > 0
@@ -206,16 +190,6 @@ export async function computeInvestorPortalFinancials(): Promise<InvestorPortalF
     arTotal += Math.max(0, total - paid);
   }
 
-  const planVsActual = plan
-    ? {
-        month: last.label,
-        revenuePlan: plan.revenuePlan,
-        revenueActual: last.revenue,
-        burnPlan: plan.burnPlan,
-        burnActual: last.burn,
-      }
-    : null;
-
   return {
     currency: "USD",
     asOf: now.toISOString(),
@@ -232,6 +206,5 @@ export async function computeInvestorPortalFinancials(): Promise<InvestorPortalF
     grossMarginPct: margins.grossMarginPct,
     ebitdaMarginPct: margins.ebitdaMarginPct,
     marginSource: margins.marginSource,
-    planVsActual,
   };
 }

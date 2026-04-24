@@ -13703,26 +13703,41 @@ Ask if they received the original request and if they can provide a quote.`;
             });
           }
 
-          // If the room requires an NDA, the visitor must have signed it.
-          // Password/email checks are the gate for `accessByLink` itself and
-          // have already fired by the time the page loads.
-          if (room.requiresNda) {
+          // Re-enforce every gate that applied at `accessByLink` time.
+          // This endpoint is separately reachable with only a link code, so
+          // any gate the room relies on (password, required visitor info,
+          // NDA) has to be checked here too — otherwise a caller who knows
+          // the link could skip the password/info prompt and fetch
+          // financials directly. The gates we implement via "visitor must
+          // exist" because `accessByLink` only issues a visitor row once
+          // its own checks pass.
+          const requiresVisitor =
+            !!link.password ||
+            !!link.requireEmail ||
+            !!link.requireName ||
+            !!link.requireCompany ||
+            !!room.requiresEmail ||
+            !!room.requiresNda;
+
+          if (requiresVisitor) {
             if (!input.visitorId) {
-              throw new TRPCError({ code: 'FORBIDDEN', message: 'NDA signature required' });
+              throw new TRPCError({
+                code: 'FORBIDDEN',
+                message: 'Please access the data room through the normal flow before viewing live financials.',
+              });
             }
             const visitor = await db.getDataRoomVisitorById(input.visitorId);
             if (!visitor || visitor.dataRoomId !== room.id) {
-              throw new TRPCError({ code: 'FORBIDDEN', message: 'NDA signature required' });
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'Invalid visitor for this data room' });
             }
             if (visitor.accessStatus === 'blocked' || visitor.accessStatus === 'revoked') {
               throw new TRPCError({ code: 'FORBIDDEN', message: 'Your access has been revoked' });
             }
-            if (!visitor.ndaAcceptedAt) {
+            if (room.requiresNda && !visitor.ndaAcceptedAt) {
               throw new TRPCError({ code: 'FORBIDDEN', message: 'NDA signature required' });
             }
           } else if (input.visitorId) {
-            // Even without an NDA requirement, enforce blocked/revoked status
-            // on known visitors so access revocation applies to this page too.
+            // Even without gates, still honor blocked/revoked on known visitors.
             const visitor = await db.getDataRoomVisitorById(input.visitorId);
             if (visitor && (visitor.accessStatus === 'blocked' || visitor.accessStatus === 'revoked')) {
               throw new TRPCError({ code: 'FORBIDDEN', message: 'Your access has been revoked' });
@@ -13730,6 +13745,8 @@ Ask if they received the original request and if they can provide a quote.`;
           }
 
           const { computeLiveFinancials } = await import('./dataRoomLiveFinancials');
+          // dataRooms has no companyId column today (single-tenant); the helper
+          // still accepts one for when multi-tenancy lands per-room.
           const snapshot = await computeLiveFinancials({
             includeAr: !!room.liveFinancialsIncludeAr,
           });
@@ -21302,14 +21319,18 @@ Return JSON array only. No markdown.`;
       // Gate on stakeholder linkage too — admins hitting this for support
       // are fine, but an investor-role user without a cap-table link is a
       // broken onboarding state and should surface the same message as `me`.
-      if (ctx.user.role === "investor") {
-        const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
-        if (!stakeholder) {
-          throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
-        }
+      // Also picks up the stakeholder's companyId so the snapshot is
+      // scoped rather than aggregated across all companies in the DB.
+      const stakeholder = ctx.user.role === "investor"
+        ? await db.getStakeholderByUserId(ctx.user.id)
+        : undefined;
+      if (ctx.user.role === "investor" && !stakeholder) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
       }
       const { computeInvestorPortalFinancials } = await import("./investorPortalFinancials");
-      return computeInvestorPortalFinancials();
+      return computeInvestorPortalFinancials({
+        companyId: stakeholder?.companyId ?? undefined,
+      });
     }),
 
     // Investor updates the admin has published. We only show `status='sent'`
@@ -21368,17 +21389,29 @@ Return JSON array only. No markdown.`;
           linkedStakeholderId: stakeholder.id,
         });
 
+        const inviteUrl = `${ENV.publicAppUrl}/login?invite=${token}`;
+        // Names come from admin-editable fields, so they can contain '<' / '&'
+        // that would either break the email HTML or smuggle markup into the
+        // investor's inbox. Escape before interpolation.
+        const escapeHtml = (s: string) => s
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+        const safeStakeholder = escapeHtml(stakeholder.name || "");
+        const safeInviter = escapeHtml(ctx.user.name || "The team");
+
+        let emailResult: { success: boolean; error?: unknown } = { success: false };
         try {
-          const appUrl = process.env.APP_URL || process.env.PUBLIC_APP_URL || "https://aierpsystem-production.up.railway.app";
-          const inviteUrl = `${appUrl}/login?invite=${token}`;
-          await sendEmail({
+          emailResult = await sendEmail({
             to: stakeholder.email,
             subject: "You have access to your investor portal",
             html: `
               <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
                 <h2>Welcome to your investor portal</h2>
-                <p>Hi ${stakeholder.name || ""},</p>
-                <p>${ctx.user.name || "The team"} has invited you to log in to your investor portal, where you can review your equity position and the company's current financials whenever you'd like.</p>
+                <p>Hi ${safeStakeholder},</p>
+                <p>${safeInviter} has invited you to log in to your investor portal, where you can review your equity position and the company's current financials whenever you'd like.</p>
                 <a href="${inviteUrl}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin: 16px 0;">
                   Activate your portal
                 </a>
@@ -21387,10 +21420,19 @@ Return JSON array only. No markdown.`;
             `,
           });
         } catch (e) {
-          console.warn("[Investor Portal] Failed to send invite email:", e);
+          console.warn("[Investor Portal] sendEmail threw:", e);
+          emailResult = { success: false, error: e };
         }
 
-        return { success: true };
+        // `sendEmail` returns `{ success: false, error }` when SendGrid or its
+        // env is missing — it does NOT throw. Surface that to the admin so
+        // they know to reconfigure or resend. The invite row still exists
+        // and remains valid, so the admin can hit "Invite" again after
+        // fixing the email setup.
+        if (!emailResult.success) {
+          console.warn("[Investor Portal] invite created but email not sent:", emailResult.error);
+        }
+        return { success: true, emailSent: emailResult.success };
       }),
   }),
 

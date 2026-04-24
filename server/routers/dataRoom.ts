@@ -1039,26 +1039,41 @@ export const dataRoomRouter = router({
             });
           }
 
-          // If the room requires an NDA, the visitor must have signed it.
-          // We do not re-check password/email here — those are the gate for
-          // `accessByLink` and already consumed by the time the page loads.
-          if (room.requiresNda) {
+          // Re-enforce every gate that applied at `accessByLink` time.
+          // This endpoint is separately reachable with only a link code, so
+          // any gate the room relies on (password, required visitor info,
+          // NDA) has to be checked here too — otherwise a caller who knows
+          // the link could skip the password/info prompt and fetch
+          // financials directly. We implement this via "visitor must
+          // exist" because `accessByLink` only issues a visitor row once
+          // its own checks pass.
+          const requiresVisitor =
+            !!link.password ||
+            !!link.requireEmail ||
+            !!link.requireName ||
+            !!link.requireCompany ||
+            !!room.requiresEmail ||
+            !!room.requiresNda;
+
+          if (requiresVisitor) {
             if (!input.visitorId) {
-              throw new TRPCError({ code: 'FORBIDDEN', message: 'NDA signature required' });
+              throw new TRPCError({
+                code: 'FORBIDDEN',
+                message: 'Please access the data room through the normal flow before viewing live financials.',
+              });
             }
             const visitor = await db.getDataRoomVisitorById(input.visitorId);
             if (!visitor || visitor.dataRoomId !== room.id) {
-              throw new TRPCError({ code: 'FORBIDDEN', message: 'NDA signature required' });
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'Invalid visitor for this data room' });
             }
             if (visitor.accessStatus === 'blocked' || visitor.accessStatus === 'revoked') {
               throw new TRPCError({ code: 'FORBIDDEN', message: 'Your access has been revoked' });
             }
-            if (!visitor.ndaAcceptedAt) {
+            if (room.requiresNda && !visitor.ndaAcceptedAt) {
               throw new TRPCError({ code: 'FORBIDDEN', message: 'NDA signature required' });
             }
           } else if (input.visitorId) {
-            // Even without an NDA requirement, enforce blocked/revoked status
-            // on known visitors so access revocation applies to this page too.
+            // Even without gates, still honor blocked/revoked on known visitors.
             const visitor = await db.getDataRoomVisitorById(input.visitorId);
             if (visitor && (visitor.accessStatus === 'blocked' || visitor.accessStatus === 'revoked')) {
               throw new TRPCError({ code: 'FORBIDDEN', message: 'Your access has been revoked' });
@@ -1066,6 +1081,8 @@ export const dataRoomRouter = router({
           }
 
           const { computeLiveFinancials } = await import('../dataRoomLiveFinancials');
+          // dataRooms has no companyId column today (single-tenant); the helper
+          // still accepts one for when multi-tenancy lands per-room.
           const snapshot = await computeLiveFinancials({
             includeAr: !!room.liveFinancialsIncludeAr,
           });

@@ -63,6 +63,7 @@ async function getCashBalance(): Promise<number> {
 
 export async function computeLiveFinancials(opts: {
   includeAr: boolean;
+  companyId?: number;
 }): Promise<LiveFinancialsSnapshot> {
   const now = new Date();
   const buckets: Array<{ monthKey: string; label: string; date: Date }> = [];
@@ -70,9 +71,18 @@ export async function computeLiveFinancials(opts: {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     buckets.push({ monthKey: monthKey(d), label: monthLabel(d), date: d });
   }
+  // The earliest date we care about — drop anything older in memory,
+  // since `db.getInvoices`/`getTransactions` don't yet support a
+  // date-range filter. A date-scoped helper is the right follow-up when
+  // this page turns into a hot path.
+  const earliest = buckets[0].date.getTime();
+
+  // Scope to the room's company so a multi-tenant install doesn't
+  // aggregate revenue/expenses across every customer in the DB.
+  const companyId = opts.companyId;
 
   // Revenue from invoices, bucketed by issueDate (fallback createdAt).
-  const invoices = await db.getInvoices();
+  const invoices = await db.getInvoices(companyId ? { companyId } : undefined);
   const revenueByMonth: Record<string, number> = Object.fromEntries(
     buckets.map((b) => [b.monthKey, 0]),
   );
@@ -81,6 +91,7 @@ export async function computeLiveFinancials(opts: {
       .issueDate ?? (inv as { createdAt?: Date | string }).createdAt;
     if (!raw) continue;
     const d = new Date(raw);
+    if (d.getTime() < earliest) continue;
     const k = monthKey(d);
     if (k in revenueByMonth) {
       revenueByMonth[k] += parseAmount(
@@ -97,7 +108,7 @@ export async function computeLiveFinancials(opts: {
   // Burn from the in-system expense ledger. We do not wire QuickBooks here —
   // the point of the live page is to stay simple and reflect the ERP's
   // authoritative view rather than depending on a third-party sync.
-  const expenseTxns = await db.getTransactions({ type: "expense" });
+  const expenseTxns = await db.getTransactions({ type: "expense", ...(companyId ? { companyId } : {}) });
   const burnByMonth: Record<string, number> = Object.fromEntries(
     buckets.map((b) => [b.monthKey, 0]),
   );
@@ -106,6 +117,7 @@ export async function computeLiveFinancials(opts: {
       .date ?? (t as { createdAt?: Date | string }).createdAt;
     if (!raw) continue;
     const d = new Date(raw);
+    if (d.getTime() < earliest) continue;
     const k = monthKey(d);
     if (k in burnByMonth) {
       burnByMonth[k] += Math.abs(

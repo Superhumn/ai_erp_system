@@ -75,8 +75,18 @@ export default function InvestorPortal() {
 
   if (!me) return null;
 
-  const classOf = (g: { shareClass?: { name?: string; type?: string } | null }) =>
-    g.shareClass ? `${g.shareClass.name}` : "—";
+  type Grant = {
+    id: number;
+    grantType: string;
+    grantDate: string | Date | null;
+    shares: string | number | null;
+    pricePerShare: string | number | null;
+    shareClassId: number;
+    shareClass: { name?: string; type?: string } | null;
+  };
+  const classOf = (g: Pick<Grant, "shareClass">) =>
+    g.shareClass ? `${g.shareClass.name ?? ""}` : "—";
+  const grants = me.grants as unknown as Grant[];
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -106,11 +116,11 @@ export default function InvestorPortal() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
             <KpiTile label="Your shares" value={formatShares(me.sharesOutstanding)} />
             <KpiTile label="Ownership" value={`${me.ownershipPct.toFixed(2)}%`} />
-            <KpiTile label="Grants" value={`${me.grants.length}`} />
+            <KpiTile label="Grants" value={`${grants.length}`} />
           </div>
-          {me.grants.length > 0 ? (
+          {grants.length > 0 ? (
             <div className="space-y-2">
-              {me.grants.map((g: any) => (
+              {grants.map((g) => (
                 <div key={g.id} className="flex items-center justify-between rounded-lg border p-3">
                   <div className="min-w-0">
                     <p className="text-sm font-medium truncate">{classOf(g)}</p>
@@ -121,7 +131,7 @@ export default function InvestorPortal() {
                   <div className="text-right">
                     <p className="text-sm font-medium">{formatShares(g.shares)} shares</p>
                     <p className="text-xs text-muted-foreground">
-                      @ {formatCurrency(parseFloat(g.pricePerShare ?? "0"))}
+                      @ {formatCurrency(parseFloat(String(g.pricePerShare ?? "0")))}
                     </p>
                   </div>
                 </div>
@@ -185,30 +195,6 @@ export default function InvestorPortal() {
                   tone="negative"
                 />
               </div>
-
-              {fin.planVsActual && (
-                <div className="rounded-lg border p-4">
-                  <p className="text-xs uppercase tracking-wider text-muted-foreground mb-3">
-                    Plan vs. actual — {fin.planVsActual.month}
-                  </p>
-                  <div className="grid grid-cols-2 gap-4">
-                    <PlanRow
-                      label="Revenue"
-                      plan={fin.planVsActual.revenuePlan}
-                      actual={fin.planVsActual.revenueActual}
-                      currency={fin.currency}
-                      higherIsBetter
-                    />
-                    <PlanRow
-                      label="Burn"
-                      plan={fin.planVsActual.burnPlan}
-                      actual={fin.planVsActual.burnActual}
-                      currency={fin.currency}
-                      higherIsBetter={false}
-                    />
-                  </div>
-                </div>
-              )}
             </>
           ) : null}
         </CardContent>
@@ -322,34 +308,3 @@ function TrendPanel({
   );
 }
 
-function PlanRow({
-  label,
-  plan,
-  actual,
-  currency,
-  higherIsBetter,
-}: {
-  label: string;
-  plan: number;
-  actual: number;
-  currency: string;
-  higherIsBetter: boolean;
-}) {
-  const delta = actual - plan;
-  const isGood = higherIsBetter ? delta >= 0 : delta <= 0;
-  const deltaPct = plan > 0 ? (delta / plan) * 100 : null;
-  return (
-    <div>
-      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">{label}</p>
-      <div className="flex items-baseline gap-2">
-        <p className="text-base font-semibold">{formatCurrency(actual, currency)}</p>
-        <p className="text-xs text-muted-foreground">vs {formatCurrency(plan, currency)} plan</p>
-      </div>
-      {deltaPct !== null && (
-        <p className={`text-xs mt-0.5 ${isGood ? "text-emerald-600" : "text-red-600"}`}>
-          {formatPct(deltaPct, 0)}
-        </p>
-      )}
-    </div>
-  );
-}

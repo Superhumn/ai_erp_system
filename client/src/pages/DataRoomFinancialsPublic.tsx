@@ -74,6 +74,12 @@ export default function DataRoomFinancialsPublic() {
   );
 
   const needsNda = !!content?.room.requiresNda && !ndaAccepted;
+  // The NDA signature has to be tied to a visitor row so the server can
+  // verify `visitor.ndaAcceptedAt` on subsequent `getFinancials` calls.
+  // `accessByLink` only creates a visitor when an email is provided, so
+  // for NDA-required rooms that don't otherwise collect email (e.g. the
+  // link is fully anonymous) we force an email prompt before signing.
+  const needsEmailForNda = needsNda && visitorId === null;
 
   const {
     data: financialsData,
@@ -81,7 +87,7 @@ export default function DataRoomFinancialsPublic() {
     error: financialsError,
   } = trpc.dataRoom.public.getFinancials.useQuery(
     { linkCode, visitorId: visitorId || undefined },
-    { enabled: accessGranted && !needsNda, retry: false },
+    { enabled: accessGranted && !needsNda && !needsEmailForNda, retry: false },
   );
 
   // Initial access attempt
@@ -225,6 +231,54 @@ export default function DataRoomFinancialsPublic() {
               <span className="text-sm">Verifying access...</span>
             </div>
           )}
+        </div>
+      </div>
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // RENDER: Email capture before NDA (when the link didn't already collect it)
+  // ---------------------------------------------------------------------------
+  if (needsEmailForNda) {
+    return (
+      <div
+        className="min-h-screen flex items-center justify-center p-4"
+        style={{ background: "linear-gradient(145deg, #0a0c14 0%, #111827 50%, #0f172a 100%)" }}
+      >
+        <div className="w-full max-w-md rounded-2xl border border-white/[0.06] bg-white/[0.03] p-6">
+          <h2 className="text-lg font-semibold text-white mb-2">One more step</h2>
+          <p className="text-sm text-gray-400 mb-4">
+            Please share the email the NDA should be signed under. We attach
+            it to your visit so you only have to sign once.
+          </p>
+          <input
+            type="email"
+            autoFocus
+            value={visitorInfo.email}
+            onChange={(e) => setVisitorInfo({ ...visitorInfo, email: e.target.value })}
+            placeholder="you@company.com"
+            className="w-full px-3 py-2 rounded-lg bg-white/[0.04] border border-white/[0.08] text-white text-sm mb-3"
+          />
+          <button
+            type="button"
+            disabled={!visitorInfo.email.includes("@") || accessMutation.isPending}
+            onClick={() => {
+              // Re-run accessByLink with the collected email so the server
+              // issues us a visitor row that NDA signing can attach to.
+              accessMutation.mutate({
+                linkCode,
+                password: password || undefined,
+                visitorInfo: {
+                  email: visitorInfo.email,
+                  name: visitorInfo.name || undefined,
+                  company: visitorInfo.company || undefined,
+                },
+              });
+            }}
+            className="w-full py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 text-white text-sm font-medium"
+          >
+            Continue to NDA
+          </button>
         </div>
       </div>
     );

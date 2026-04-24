@@ -766,7 +766,9 @@ export default function DataRoomPublic() {
                   Live Data
                 </p>
                 <a
-                  href={`/dr/${linkCode}/financials`}
+                  // Preserve whichever route prefix the visitor arrived under
+                  // (/dr vs /share) so navigation stays on the same variant.
+                  href={`${typeof window !== "undefined" && window.location.pathname.startsWith("/share/") ? "/share" : "/dr"}/${linkCode}/financials`}
                   className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm text-gray-300 hover:text-white hover:bg-white/[0.04] transition-colors"
                 >
                   <LineChart className="h-4 w-4 flex-shrink-0" style={{ color: brandColor || "#818cf8" }} />
