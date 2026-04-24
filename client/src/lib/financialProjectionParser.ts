@@ -166,6 +166,8 @@ export function toNumber(v: unknown): number | null {
     isPct = true;
     cleaned = cleaned.slice(0, -1);
   }
+  // Reject values with unsupported suffixes (K, M, B)
+  if (/[a-zA-Z]/.test(cleaned)) return null;
   const n = parseFloat(cleaned);
   if (!Number.isFinite(n)) return null;
   const signed = isNeg ? -n : n;
@@ -580,8 +582,6 @@ export function deriveSeries(model: FinancialModel) {
     if (period.month !== undefined) {
       return period.year * 12 + (period.month - 1);
     }
-    if (period.quarter !== undefined) {
-      return period.year * 12 + (period.quarter - 1) * 3;
     }
     return period.year * 12;
   };
@@ -654,7 +654,7 @@ export function deriveSeries(model: FinancialModel) {
 
       const inferredMonthsPerPeriod =
         stepSizes.length > 0 && stepSizes.every((delta) => delta === stepSizes[0])
-          ? stepSizes[0]
+    ? (stepSizes[0] <= 12 ? stepSizes[0] : Math.round(stepSizes[0] / 100 * 12))
           : periods.every((p) => p.month !== undefined)
             ? 1
             : 12;
