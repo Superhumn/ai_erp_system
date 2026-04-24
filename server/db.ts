@@ -12114,6 +12114,19 @@ export async function getEquityGrantsByStakeholder(stakeholderId: number) {
   return db.select().from(equityGrants).where(eq(equityGrants.stakeholderId, stakeholderId)).orderBy(desc(equityGrants.grantDate));
 }
 
+// Investor Portal: resolve the logged-in user to their cap-table row.
+// Returns undefined when the user isn't linked (e.g. an admin invites a
+// stakeholder via teamInvites but they haven't accepted yet, or a user
+// is an employee rather than an investor).
+export async function getStakeholderByUserId(userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(stakeholders)
+    .where(eq(stakeholders.userId, userId))
+    .limit(1);
+  return result[0];
+}
+
 export async function createEquityGrant(data: InsertEquityGrant) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

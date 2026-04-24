@@ -21231,6 +21231,169 @@ Return JSON array only. No markdown.`;
     }),
   }),
 
+  // ============================================
+  // INVESTOR PORTAL (logged-in existing-investor view)
+  // ============================================
+  //
+  // Three procedures are gated to users with role='investor' (or admin/exec
+  // for support/testing). A fourth, `inviteToPortal`, is admin-only and
+  // drives the invite flow that turns a cap-table stakeholder into a user.
+  investorPortal: router({
+    // The logged-in investor's own cap-table position. Returns their
+    // stakeholder row, every grant, and the total-shares figure used to
+    // derive ownership % — but never data about other stakeholders.
+    me: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+      }
+      const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+      if (!stakeholder) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "No cap-table record is linked to your account. Ask the admin to link your stakeholder row.",
+        });
+      }
+      const grants = await db.getEquityGrantsByStakeholder(stakeholder.id);
+      const allGrants = await db.getEquityGrants(stakeholder.companyId ?? undefined);
+      const shareClasses = await db.getShareClasses(stakeholder.companyId ?? undefined);
+
+      const totalShares = allGrants.reduce(
+        (s: number, g: { shares?: string | number | null }) =>
+          s + parseFloat(String(g.shares ?? "0")),
+        0,
+      );
+      const mySharesOutstanding = grants.reduce(
+        (s, g: { shares?: string | number | null }) =>
+          s + parseFloat(String(g.shares ?? "0")),
+        0,
+      );
+      const ownershipPct = totalShares > 0 ? (mySharesOutstanding / totalShares) * 100 : 0;
+
+      // Decorate each grant with its share-class name so the UI doesn't
+      // have to make another call to resolve `shareClassId`.
+      const classById = new Map(shareClasses.map((c: { id: number }) => [c.id, c]));
+      const decoratedGrants = grants.map((g: { shareClassId: number } & Record<string, unknown>) => ({
+        ...g,
+        shareClass: classById.get(g.shareClassId) ?? null,
+      }));
+
+      return {
+        stakeholder: {
+          id: stakeholder.id,
+          name: stakeholder.name,
+          email: stakeholder.email,
+          type: stakeholder.type,
+          title: stakeholder.title,
+          relationship: stakeholder.relationship,
+          accreditedInvestor: stakeholder.accreditedInvestor,
+        },
+        grants: decoratedGrants,
+        ownershipPct,
+        sharesOutstanding: mySharesOutstanding,
+        totalSharesOutstanding: totalShares,
+      };
+    }),
+
+    // Wider financials snapshot than the prospect-facing /dr/:code page.
+    financials: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+      }
+      // Gate on stakeholder linkage too — admins hitting this for support
+      // are fine, but an investor-role user without a cap-table link is a
+      // broken onboarding state and should surface the same message as `me`.
+      if (ctx.user.role === "investor") {
+        const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+        if (!stakeholder) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+        }
+      }
+      const { computeInvestorPortalFinancials } = await import("./investorPortalFinancials");
+      return computeInvestorPortalFinancials();
+    }),
+
+    // Investor updates the admin has published. We only show `status='sent'`
+    // so drafts and in-review pieces don't leak.
+    updates: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+      }
+      const updates = await db.getInvestorUpdates({ status: "sent" });
+      return updates.map((u: Record<string, unknown>) => ({
+        id: u.id,
+        title: u.title,
+        period: u.period,
+        type: u.type,
+        content: u.content,
+        highlights: u.highlights,
+        sentAt: u.sentAt,
+      }));
+    }),
+
+    // Admin-only: provision an investor user by inviting a stakeholder to
+    // the portal. Creates a `team_invites` row with role=investor and a
+    // link back to the stakeholder; when the invite is accepted,
+    // localAuth attaches the new user to that cap-table row.
+    inviteToPortal: adminProcedure
+      .input(z.object({ stakeholderId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const stakeholder = await db.getStakeholderById(input.stakeholderId);
+        if (!stakeholder) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Stakeholder not found" });
+        }
+        if (!stakeholder.email) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Stakeholder has no email on file — add one before inviting.",
+          });
+        }
+        if (stakeholder.userId) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Stakeholder is already linked to a user account.",
+          });
+        }
+
+        const crypto = await import("crypto");
+        const token = crypto.randomBytes(32).toString("hex");
+        const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+
+        await db.createTeamInvite({
+          email: stakeholder.email.toLowerCase(),
+          name: stakeholder.name,
+          role: "investor",
+          invitedBy: ctx.user.id,
+          token,
+          expiresAt,
+          linkedStakeholderId: stakeholder.id,
+        });
+
+        try {
+          const appUrl = process.env.APP_URL || process.env.PUBLIC_APP_URL || "https://aierpsystem-production.up.railway.app";
+          const inviteUrl = `${appUrl}/login?invite=${token}`;
+          await sendEmail({
+            to: stakeholder.email,
+            subject: "You have access to your investor portal",
+            html: `
+              <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2>Welcome to your investor portal</h2>
+                <p>Hi ${stakeholder.name || ""},</p>
+                <p>${ctx.user.name || "The team"} has invited you to log in to your investor portal, where you can review your equity position and the company's current financials whenever you'd like.</p>
+                <a href="${inviteUrl}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin: 16px 0;">
+                  Activate your portal
+                </a>
+                <p style="color: #888; font-size: 12px;">This invitation expires in 14 days. If the button doesn't work, copy this link: ${inviteUrl}</p>
+              </div>
+            `,
+          });
+        } catch (e) {
+          console.warn("[Investor Portal] Failed to send invite email:", e);
+        }
+
+        return { success: true };
+      }),
+  }),
+
   // Investor Updates
   investorUpdates: router({
     list: protectedProcedure

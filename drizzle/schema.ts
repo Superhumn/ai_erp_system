@@ -11,7 +11,7 @@ export const users = mysqlTable("users", {
   name: text("name"),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor"]).default("user").notNull(),
+  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor", "investor"]).default("user").notNull(),
   departmentId: int("departmentId"),
   avatarUrl: text("avatarUrl"),
   phone: varchar("phone", { length: 32 }),
@@ -48,7 +48,7 @@ export type InsertLocalAuthCredential = typeof localAuthCredentials.$inferInsert
 export const teamInvitations = mysqlTable("teamInvitations", {
   id: int("id").autoincrement().primaryKey(),
   email: varchar("email", { length: 320 }).notNull(),
-  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor"]).default("user").notNull(),
+  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor", "investor"]).default("user").notNull(),
   inviteCode: varchar("inviteCode", { length: 64 }).notNull().unique(),
   invitedBy: int("invitedBy").notNull().references(() => users.id),
   linkedVendorId: int("linkedVendorId").references(() => vendors.id),
@@ -5740,9 +5740,13 @@ export const teamInvites = mysqlTable("team_invites", {
   companyId: int("companyId"),
   email: varchar("email", { length: 320 }).notNull(),
   name: varchar("name", { length: 256 }),
-  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor"]).default("user").notNull(),
+  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor", "investor"]).default("user").notNull(),
   invitedBy: int("invitedBy").notNull(),
   token: varchar("token", { length: 128 }).notNull().unique(),
+  // When an admin invites an existing stakeholder (typically an investor)
+  // to the portal, we remember which cap-table row to attach the new user
+  // to once they accept. Nullable for ordinary team invites.
+  linkedStakeholderId: int("linkedStakeholderId"),
   status: mysqlEnum("status", ["pending", "accepted", "expired", "cancelled"]).default("pending"),
   expiresAt: timestamp("expiresAt").notNull(),
   acceptedAt: timestamp("acceptedAt"),

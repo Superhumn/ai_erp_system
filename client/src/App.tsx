@@ -100,6 +100,7 @@ const Payroll = lazy(() => import("./pages/hr/Payroll"));
 const EquityPortal = lazy(() => import("./pages/hr/EquityPortal"));
 const EquityReports = lazy(() => import("./pages/hr/EquityReports"));
 const InvestorsHub = lazy(() => import("./pages/hr/InvestorsHub"));
+const InvestorPortal = lazy(() => import("./pages/InvestorPortal"));
 const TimeTracking = lazy(() => import("./pages/hr/TimeTracking"));
 
 // Marketing
@@ -303,6 +304,7 @@ function Router() {
           <Route path="/hr/equity-portal" component={EquityPortal} />
           <Route path="/hr/equity-reports" component={EquityReports} />
           <Route path="/hr/investors" component={InvestorsHub} />
+          <Route path="/investor-portal" component={InvestorPortal} />
           <Route path="/hr/time-tracking" component={TimeTracking} />
 
           {/* Legal */}
