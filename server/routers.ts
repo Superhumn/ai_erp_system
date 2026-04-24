@@ -38,6 +38,7 @@ import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
+import { getServiceAccountEmail, isServiceAccountConfigured } from "./_core/googleServiceAccount";
 import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems } from "./_core/quickbooks";
 import { listAllTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { queueFirefliesActionItemsForApproval } from "./firefliesSyncService";
@@ -3590,6 +3591,10 @@ ONLY return the JSON array, no other text.`;
           configured: googleConnected,
           status: googleConnected ? 'connected' : 'not_configured',
           email: googleToken?.googleEmail,
+        },
+        googleDriveServiceAccount: {
+          configured: isServiceAccountConfigured(),
+          email: getServiceAccountEmail(),
         },
         quickbooks: {
           configured: quickbooksConnected,
@@ -16268,9 +16273,10 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
         markAsReceived: z.boolean().default(false),
         updateInventory: z.boolean().default(true),
+        createMissingVendor: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importPurchaseOrder(input.poData as any, ctx.user.id, input.markAsReceived);
+        return importPurchaseOrder(input.poData as any, ctx.user.id, input.markAsReceived, input.createMissingVendor);
       }),
 
     // Import a freight invoice
@@ -16297,9 +16303,10 @@ Ask if they received the original request and if they can provide a quote.`;
           notes: z.string().optional(),
         }),
         linkToPO: z.boolean().default(true),
+        createMissingVendor: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importFreightInvoice(input.invoiceData as any, ctx.user.id);
+        return importFreightInvoice(input.invoiceData as any, ctx.user.id, input.createMissingVendor);
       }),
 
     // Import a vendor invoice
@@ -16330,9 +16337,10 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
         markAsReceived: z.boolean().default(false),
         updateInventory: z.boolean().default(true),
+        createMissingVendor: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importVendorInvoice(input.invoiceData as any, ctx.user.id, input.markAsReceived);
+        return importVendorInvoice(input.invoiceData as any, ctx.user.id, input.markAsReceived, input.createMissingVendor);
       }),
 
     // Import a customs document
@@ -16374,9 +16382,10 @@ Ask if they received the original request and if they can provide a quote.`;
           notes: z.string().optional(),
         }),
         linkToPO: z.boolean().default(true),
+        createMissingVendor: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
-        return importCustomsDocument(input.documentData as any, ctx.user.id);
+        return importCustomsDocument(input.documentData as any, ctx.user.id, input.createMissingVendor);
       }),
 
     // Get import history

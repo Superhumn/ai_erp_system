@@ -756,10 +756,43 @@ export default function IntegrationsPage() {
                       {status?.googleWorkspace?.configured ? 'Google Workspace Connected' : 'Google Workspace Not Connected'}
                     </h4>
                     <p className="text-sm text-muted-foreground">
-                      {status?.googleWorkspace?.configured 
+                      {status?.googleWorkspace?.configured
                         ? `Connected as ${status.googleWorkspace.email}`
                         : 'Connect your Google account to create and manage Workspace files'}
                     </p>
+                  </div>
+                </div>
+
+                <div className="p-4 border rounded-lg">
+                  <div className="flex items-start gap-3">
+                    <div className={`mt-0.5 p-2 rounded-full ${status?.googleDriveServiceAccount?.configured ? 'bg-green-500/10' : 'bg-muted'}`}>
+                      {status?.googleDriveServiceAccount?.configured ? (
+                        <CheckCircle2 className="w-4 h-4 text-green-500" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 text-muted-foreground" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-medium text-sm">Drive Service Account (optional fallback)</h4>
+                      {status?.googleDriveServiceAccount?.configured ? (
+                        <>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            Configured. Share private folders with the address below so the server can read them
+                            without making the folder public, even if the connected Google account above loses access.
+                          </p>
+                          <code className="mt-2 inline-block text-xs px-2 py-1 rounded bg-muted break-all">
+                            {status.googleDriveServiceAccount.email}
+                          </code>
+                        </>
+                      ) : (
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Not configured. Set either <code className="text-xs">GOOGLE_SERVICE_ACCOUNT_JSON</code> or both{" "}
+                          <code className="text-xs">GOOGLE_SERVICE_ACCOUNT_EMAIL</code> and{" "}
+                          <code className="text-xs">GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY</code> in the server environment
+                          to let the app read private Drive folders without relying on a user OAuth grant.
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
 
