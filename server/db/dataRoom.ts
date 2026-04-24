@@ -1573,8 +1573,19 @@ export async function autoMatchChecklistDocuments(checklistId: number) {
         matchedDocuments: scored.map(s => ({ id: s.doc.id, name: s.doc.name, score: s.score })),
         status: 'complete',
       });
+    } else if (item.status === 'complete') {
+      // Document was previously matched but no longer scores — reset to missing
+      await updateChecklistItem(item.id, {
+        status: 'missing',
+        linkedDocumentIds: null,
+        linkedDocumentCount: 0,
+      });
     }
   }
+
+  await recalculateChecklistProgress(checklistId);
+
+  return { matched: matchedCount, items: matchedItems };
 }
 
 // ============================================
