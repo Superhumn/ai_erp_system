@@ -68,7 +68,11 @@ function extractedRouterKeys() {
         const km = /^  ([a-zA-Z][a-zA-Z0-9_]*)\s*:/.exec(line);
         if (km) byKey.set(km[1], stem);
       }
-      // brace depth (approximate — strip strings/comments)
+      // brace depth (approximate — strip strings/comments). Template literals
+      // are intentionally NOT stripped: their `${…}` interpolations contain
+      // balanced `{` / `}` pairs that the naive counter handles correctly,
+      // and regex-stripping nested template literals (e.g. `${x ? `a` : `b`}`)
+      // breaks more than it fixes.
       const c = line
         .replace(/\/\/.*$/, '')
         .replace(/"(?:\\.|[^"\\])*"/g, '""')
