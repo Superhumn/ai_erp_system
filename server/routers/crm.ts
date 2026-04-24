@@ -21,7 +21,9 @@ export const crmRouter = router({
           limit: z.number().optional(),
           offset: z.number().optional(),
         }).optional())
-        .query(({ input }) => db.getCrmContacts(input)),
+        .query(({ input, ctx }) =>
+          db.getCrmContacts({ ...input, excludeEmail: ctx.user.email || undefined }),
+        ),
 
       get: protectedProcedure
         .input(z.object({ id: z.number() }))
@@ -58,13 +60,23 @@ export const crmRouter = router({
         }))
         .mutation(async ({ input, ctx }) => {
           const fullName = input.fullName || `${input.firstName} ${input.lastName || ""}`.trim();
-          const id = await db.createCrmContact({
+
+          // Skip self: don't let the logged-in user create a contact for themselves.
+          const ownEmail = ctx.user.email?.trim().toLowerCase();
+          if (ownEmail && input.email && input.email.trim().toLowerCase() === ownEmail) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "This is your own email. Update your user profile instead of creating a CRM contact.",
+            });
+          }
+
+          const { id, created } = await db.findOrCreateCrmContact({
             ...input,
             fullName,
             capturedBy: ctx.user.id,
           });
-          await createAuditLog(ctx.user.id, 'create', 'crm_contact', id, fullName);
-          return { id };
+          await createAuditLog(ctx.user.id, created ? 'create' : 'update', 'crm_contact', id, fullName);
+          return { id, merged: !created };
         }),
 
       update: protectedProcedure
@@ -116,6 +128,40 @@ export const crmRouter = router({
         }),
 
       getStats: protectedProcedure.query(() => db.getCrmContactStats()),
+
+      findDuplicates: protectedProcedure.query(async () => {
+        const groups = await db.findDuplicateCrmContactGroups();
+        return { groups, totalDuplicates: groups.reduce((n, g) => n + g.contacts.length - 1, 0) };
+      }),
+
+      merge: protectedProcedure
+        .input(z.object({ primaryId: z.number(), duplicateIds: z.array(z.number()).min(1) }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.mergeCrmContacts(input.primaryId, input.duplicateIds);
+          await createAuditLog(ctx.user.id, 'update', 'crm_contact', input.primaryId, `merged ${result.merged} duplicates`);
+          return result;
+        }),
+
+      // Auto-merge every duplicate group, keeping the oldest contact (lowest id)
+      // as the primary. Useful for a one-click cleanup of a bloated CRM.
+      autoMergeDuplicates: protectedProcedure.mutation(async ({ ctx }) => {
+        const groups = await db.findDuplicateCrmContactGroups();
+        let merged = 0;
+        let groupsMerged = 0;
+        for (const g of groups) {
+          const sorted = [...g.contacts].sort((a: any, b: any) => a.id - b.id);
+          const primary = sorted[0];
+          const dupeIds = sorted.slice(1).map((c: any) => c.id);
+          if (dupeIds.length === 0) continue;
+          const result = await db.mergeCrmContacts(primary.id, dupeIds);
+          merged += result.merged;
+          groupsMerged++;
+        }
+        if (merged > 0) {
+          await createAuditLog(ctx.user.id, 'update', 'crm_contact', 0, `auto-merged ${merged} duplicates across ${groupsMerged} groups`);
+        }
+        return { merged, groupsMerged };
+      }),
 
       getTimeline: protectedProcedure
         .input(z.object({ contactId: z.number(), limit: z.number().optional() }))
@@ -609,9 +655,11 @@ export const crmRouter = router({
           notes: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          // Check for existing contact
-          const contacts = await db.getCrmContacts({ search: input.whatsappNumber, limit: 1 });
-          const existing = contacts[0];
+          // Check for existing contact by whatsapp/phone (normalized).
+          const existing = await db.findCrmContactMatch({
+            whatsappNumber: input.whatsappNumber,
+            phone: input.whatsappNumber,
+          });
 
           if (existing) {
             // Update WhatsApp number if needed
