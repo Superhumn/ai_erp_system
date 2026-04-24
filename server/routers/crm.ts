@@ -669,12 +669,12 @@ export const crmRouter = router({
             return { contactId: existing.id, isNew: false };
           }
 
-          // Create new contact
+          // Create new contact (use findOrCreate for race-safety)
           const firstName = input.name?.split(" ")[0] || "WhatsApp";
           const lastName = input.name?.split(" ").slice(1).join(" ") || "Contact";
           const fullName = input.name || `WhatsApp ${input.whatsappNumber}`;
 
-          const contactId = await db.createCrmContact({
+          const { id: contactId } = await db.findOrCreateCrmContact({
             firstName,
             lastName,
             fullName,
@@ -732,25 +732,13 @@ export const crmRouter = router({
             notes: input.notes,
           });
 
-          // If we have parsed data, create the contact
+          // If we have parsed data, upsert the contact (matches on email/phone/linkedin)
           if (input.parsedData) {
             const firstName = input.parsedData.firstName || input.parsedData.fullName?.split(" ")[0] || "Business";
             const lastName = input.parsedData.lastName || input.parsedData.fullName?.split(" ").slice(1).join(" ") || "Card";
             const fullName = input.parsedData.fullName || `${firstName} ${lastName}`.trim();
 
-            // Check for existing
-            let existing = null;
-            if (input.parsedData.email) {
-              existing = await db.getCrmContactByEmail(input.parsedData.email);
-            }
-
-            if (existing) {
-              await db.updateCrmContact(existing.id, input.parsedData);
-              await db.updateContactCapture(captureId, { contactId: existing.id, status: "merged" });
-              return { captureId, contactId: existing.id, isNew: false };
-            }
-
-            const contactId = await db.createCrmContact({
+            const { id: contactId, created } = await db.findOrCreateCrmContact({
               ...input.parsedData,
               firstName,
               lastName,
@@ -759,8 +747,11 @@ export const crmRouter = router({
               capturedBy: ctx.user.id,
             });
 
-            await db.updateContactCapture(captureId, { contactId, status: "contact_created" });
-            return { captureId, contactId, isNew: true };
+            await db.updateContactCapture(captureId, {
+              contactId,
+              status: created ? "contact_created" : "merged",
+            });
+            return { captureId, contactId, isNew: created };
           }
 
           return { captureId, contactId: null, isNew: false };
@@ -789,23 +780,7 @@ export const crmRouter = router({
 
           const fullName = input.contactData.fullName || `${input.contactData.firstName} ${input.contactData.lastName || ""}`.trim();
 
-          // Check for existing
-          let existing = null;
-          if (input.contactData.email) {
-            existing = await db.getCrmContactByEmail(input.contactData.email);
-          }
-
-          if (existing) {
-            await db.updateCrmContact(existing.id, input.contactData);
-            await db.updateContactCapture(input.captureId, {
-              contactId: existing.id,
-              status: "merged",
-              parsedData: JSON.stringify(input.contactData),
-            });
-            return { contactId: existing.id, isNew: false };
-          }
-
-          const contactId = await db.createCrmContact({
+          const { id: contactId, created } = await db.findOrCreateCrmContact({
             ...input.contactData,
             fullName,
             source: capture.captureMethod === "iphone_bump" ? "iphone_bump" :
@@ -817,11 +792,11 @@ export const crmRouter = router({
 
           await db.updateContactCapture(input.captureId, {
             contactId,
-            status: "contact_created",
+            status: created ? "contact_created" : "merged",
             parsedData: JSON.stringify(input.contactData),
           });
 
-          return { contactId, isNew: true };
+          return { contactId, isNew: created };
         }),
     }),
 

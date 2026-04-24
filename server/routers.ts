@@ -4651,17 +4651,18 @@ ONLY return the JSON array, no other text.`;
                       }
                     } catch {}
 
-                    // Create a placeholder contact for the deal
+                    // Create a placeholder contact for the deal (dedup by name via upsert)
                     const dealName = record.name || record.deal || record.opportunity || `Deal ${imported + 1}`;
                     let contactId: number;
                     try {
-                      contactId = await db.createCrmContact({
+                      const { id } = await db.findOrCreateCrmContact({
                         firstName: dealName,
                         lastName: '',
                         fullName: dealName,
                         source: 'import',
                         contactType: 'lead',
                       });
+                      contactId = id;
                     } catch {
                       contactId = 1;
                     }
@@ -16728,7 +16729,9 @@ Ask if they received the original request and if they can provide a quote.`;
           limit: z.number().optional(),
           offset: z.number().optional(),
         }).optional())
-        .query(({ input }) => db.getCrmContacts(input)),
+        .query(({ input, ctx }) =>
+          db.getCrmContacts({ ...input, excludeEmail: ctx.user.email || undefined }),
+        ),
 
       get: protectedProcedure
         .input(z.object({ id: z.number() }))
@@ -16765,13 +16768,23 @@ Ask if they received the original request and if they can provide a quote.`;
         }))
         .mutation(async ({ input, ctx }) => {
           const fullName = input.fullName || `${input.firstName} ${input.lastName || ""}`.trim();
-          const id = await db.createCrmContact({
+
+          // Skip self: don't let the logged-in user create a contact for themselves.
+          const ownEmail = ctx.user.email?.trim().toLowerCase();
+          if (ownEmail && input.email && input.email.trim().toLowerCase() === ownEmail) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "This is your own email. Update your user profile instead of creating a CRM contact.",
+            });
+          }
+
+          const { id, created } = await db.findOrCreateCrmContact({
             ...input,
             fullName,
             capturedBy: ctx.user.id,
           });
-          await createAuditLog(ctx.user.id, 'create', 'crm_contact', id, fullName);
-          return { id };
+          await createAuditLog(ctx.user.id, created ? 'create' : 'update', 'crm_contact', id, fullName);
+          return { id, merged: !created };
         }),
 
       update: protectedProcedure
@@ -16851,6 +16864,40 @@ Ask if they received the original request and if they can provide a quote.`;
         }),
 
       getStats: protectedProcedure.query(() => db.getCrmContactStats()),
+
+      findDuplicates: protectedProcedure.query(async () => {
+        const groups = await db.findDuplicateCrmContactGroups();
+        return { groups, totalDuplicates: groups.reduce((n, g) => n + g.contacts.length - 1, 0) };
+      }),
+
+      merge: protectedProcedure
+        .input(z.object({ primaryId: z.number(), duplicateIds: z.array(z.number()).min(1) }))
+        .mutation(async ({ input, ctx }) => {
+          const result = await db.mergeCrmContacts(input.primaryId, input.duplicateIds);
+          await createAuditLog(ctx.user.id, 'update', 'crm_contact', input.primaryId, `merged ${result.merged} duplicates`);
+          return result;
+        }),
+
+      // One-click cleanup: auto-merge every duplicate group, keeping the
+      // oldest contact (lowest id) as the primary.
+      autoMergeDuplicates: protectedProcedure.mutation(async ({ ctx }) => {
+        const groups = await db.findDuplicateCrmContactGroups();
+        let merged = 0;
+        let groupsMerged = 0;
+        for (const g of groups) {
+          const sorted = [...g.contacts].sort((a: any, b: any) => a.id - b.id);
+          const primary = sorted[0];
+          const dupeIds = sorted.slice(1).map((c: any) => c.id);
+          if (dupeIds.length === 0) continue;
+          const result = await db.mergeCrmContacts(primary.id, dupeIds);
+          merged += result.merged;
+          groupsMerged++;
+        }
+        if (merged > 0) {
+          await createAuditLog(ctx.user.id, 'update', 'crm_contact', 0, `auto-merged ${merged} duplicates across ${groupsMerged} groups`);
+        }
+        return { merged, groupsMerged };
+      }),
 
       getTimeline: protectedProcedure
         .input(z.object({ contactId: z.number(), limit: z.number().optional() }))
@@ -17387,24 +17434,25 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           notes: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          // Check for existing contact
-          const contacts = await db.getCrmContacts({ search: input.whatsappNumber, limit: 1 });
-          const existing = contacts[0];
+          // Check for existing contact by normalized phone/whatsapp.
+          const existing = await db.findCrmContactMatch({
+            whatsappNumber: input.whatsappNumber,
+            phone: input.whatsappNumber,
+          });
 
           if (existing) {
-            // Update WhatsApp number if needed
             if (!existing.whatsappNumber) {
               await db.updateCrmContact(existing.id, { whatsappNumber: input.whatsappNumber });
             }
             return { contactId: existing.id, isNew: false };
           }
 
-          // Create new contact
+          // Create new contact (findOrCreate for race-safety)
           const firstName = input.name?.split(" ")[0] || "WhatsApp";
           const lastName = input.name?.split(" ").slice(1).join(" ") || "Contact";
           const fullName = input.name || `WhatsApp ${input.whatsappNumber}`;
 
-          const contactId = await db.createCrmContact({
+          const { id: contactId } = await db.findOrCreateCrmContact({
             firstName,
             lastName,
             fullName,
@@ -17462,25 +17510,13 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             notes: input.notes,
           });
 
-          // If we have parsed data, create the contact
+          // If we have parsed data, upsert the contact (matches on email/phone/linkedin)
           if (input.parsedData) {
             const firstName = input.parsedData.firstName || input.parsedData.fullName?.split(" ")[0] || "Business";
             const lastName = input.parsedData.lastName || input.parsedData.fullName?.split(" ").slice(1).join(" ") || "Card";
             const fullName = input.parsedData.fullName || `${firstName} ${lastName}`.trim();
 
-            // Check for existing
-            let existing = null;
-            if (input.parsedData.email) {
-              existing = await db.getCrmContactByEmail(input.parsedData.email);
-            }
-
-            if (existing) {
-              await db.updateCrmContact(existing.id, input.parsedData);
-              await db.updateContactCapture(captureId, { contactId: existing.id, status: "merged" });
-              return { captureId, contactId: existing.id, isNew: false };
-            }
-
-            const contactId = await db.createCrmContact({
+            const { id: contactId, created } = await db.findOrCreateCrmContact({
               ...input.parsedData,
               firstName,
               lastName,
@@ -17489,8 +17525,11 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
               capturedBy: ctx.user.id,
             });
 
-            await db.updateContactCapture(captureId, { contactId, status: "contact_created" });
-            return { captureId, contactId, isNew: true };
+            await db.updateContactCapture(captureId, {
+              contactId,
+              status: created ? "contact_created" : "merged",
+            });
+            return { captureId, contactId, isNew: created };
           }
 
           return { captureId, contactId: null, isNew: false };
@@ -17519,23 +17558,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
 
           const fullName = input.contactData.fullName || `${input.contactData.firstName} ${input.contactData.lastName || ""}`.trim();
 
-          // Check for existing
-          let existing = null;
-          if (input.contactData.email) {
-            existing = await db.getCrmContactByEmail(input.contactData.email);
-          }
-
-          if (existing) {
-            await db.updateCrmContact(existing.id, input.contactData);
-            await db.updateContactCapture(input.captureId, {
-              contactId: existing.id,
-              status: "merged",
-              parsedData: JSON.stringify(input.contactData),
-            });
-            return { contactId: existing.id, isNew: false };
-          }
-
-          const contactId = await db.createCrmContact({
+          const { id: contactId, created } = await db.findOrCreateCrmContact({
             ...input.contactData,
             fullName,
             source: capture.captureMethod === "iphone_bump" ? "iphone_bump" :
@@ -17547,11 +17570,11 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
 
           await db.updateContactCapture(input.captureId, {
             contactId,
-            status: "contact_created",
+            status: created ? "contact_created" : "merged",
             parsedData: JSON.stringify(input.contactData),
           });
 
-          return { contactId, isNew: true };
+          return { contactId, isNew: created };
         }),
     }),
 
@@ -18500,18 +18523,14 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             for (const participant of participants) {
               if (participant.email) {
                 try {
-                  let contact = await db.getCrmContactByEmail(participant.email);
-                  if (!contact) {
-                    // Create new CRM contact from meeting participant
-                    const contactId = await db.createCrmContact({
-                      firstName: (participant.name || participant.email.split("@")[0]).split(" ")[0] || "",
-                      fullName: participant.name || participant.email.split("@")[0],
-                      email: participant.email,
-                      source: "fireflies" as any,
-                    });
-                    contact = await db.getCrmContactById(contactId);
-                    contactsCreated++;
-                  }
+                  const { id: contactFoundId, created } = await db.findOrCreateCrmContact({
+                    firstName: (participant.name || participant.email.split("@")[0]).split(" ")[0] || "",
+                    fullName: participant.name || participant.email.split("@")[0],
+                    email: participant.email,
+                    source: "fireflies" as any,
+                  });
+                  if (created) contactsCreated++;
+                  const contact = await db.getCrmContactById(contactFoundId);
 
                   if (contact) {
                     // Create CRM deal from meeting
@@ -18588,14 +18607,14 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           for (const p of parsedParticipants) {
             if (p.email) {
               try {
-                await db.createCrmContact({
+                const { created } = await db.findOrCreateCrmContact({
                   firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
                   fullName: p.name || p.email.split('@')[0],
                   email: p.email,
                   source: 'manual' as const,
                 } as any);
-                contactsCreated++;
-              } catch { /* duplicate, skip */ }
+                if (created) contactsCreated++;
+              } catch { /* skip on error */ }
             }
           }
         }
@@ -18680,14 +18699,14 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           for (const p of parsedParticipants) {
             if (p.email) {
               try {
-                await db.createCrmContact({
+                const { created } = await db.findOrCreateCrmContact({
                   firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
                   fullName: p.name || p.email.split('@')[0],
                   email: p.email,
                   source: 'manual' as const,
                 } as any);
-                contactsCreated++;
-              } catch { /* duplicate */ }
+                if (created) contactsCreated++;
+              } catch { /* skip on error */ }
             }
           }
         }
