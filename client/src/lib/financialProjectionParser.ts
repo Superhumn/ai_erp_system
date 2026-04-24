@@ -20,9 +20,9 @@ export interface Period {
   label: string;
   /** Four-digit year extracted from the cell. */
   year: number;
-  /** 1–12 if the period is monthly; undefined if annual. */
+  /** Starting month when available (1–12 for monthly periods and quarter labels); undefined for annual periods. */
   month?: number;
-  /** Sortable key: `year * 100 + (month || 0)`. */
+  /** Sortable key: `year * 100 + (month || 0)`, using the starting month when available. */
   sortKey: number;
 }
 
