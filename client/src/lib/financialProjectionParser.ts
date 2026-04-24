@@ -166,6 +166,10 @@ export function toNumber(v: unknown): number | null {
     isPct = true;
     cleaned = cleaned.slice(0, -1);
   }
+  // Reject anything that isn't a clean signed decimal — this catches
+  // suffixes like "K"/"M"/"bn" (which we deliberately do not parse,
+  // because guessing scale is too easy to get wrong) and stray letters.
+  if (!/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(cleaned)) return null;
   const n = parseFloat(cleaned);
   if (!Number.isFinite(n)) return null;
   const signed = isNeg ? -n : n;
@@ -580,9 +584,6 @@ export function deriveSeries(model: FinancialModel) {
     if (period.month !== undefined) {
       return period.year * 12 + (period.month - 1);
     }
-    if (period.quarter !== undefined) {
-      return period.year * 12 + (period.quarter - 1) * 3;
-    }
     return period.year * 12;
   };
 
@@ -647,9 +648,12 @@ export function deriveSeries(model: FinancialModel) {
     const lastCash = cash[n - 1];
     const lastNi = netIncome[n - 1];
     if (lastCash !== null && lastNi !== null && lastNi < 0) {
+      // Step size in MONTHS between consecutive periods. `sortKey` is
+      // `year * 100 + month`, so its deltas aren't comparable in months;
+      // we compute month indexes directly via `getPeriodMonthIndex`.
       const stepSizes = periods
         .slice(1)
-        .map((period, i) => period.sortKey - periods[i].sortKey)
+        .map((period, i) => getPeriodMonthIndex(period) - getPeriodMonthIndex(periods[i]))
         .filter((delta) => delta > 0);
 
       const inferredMonthsPerPeriod =
