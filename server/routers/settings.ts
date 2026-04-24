@@ -931,7 +931,24 @@ export const settingsRouter = router({
         const token = await db.getQuickBooksOAuthToken(ctx.user.id);
         if (!token || !token.realmId) return { connected: false, months: [] };
 
-        const result = await getProfitAndLoss(token.accessToken, token.realmId, {
+        // Refresh the access token if it has expired.
+        let accessToken = token.accessToken;
+        const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+        if (isExpired && token.refreshToken) {
+          const refreshResult = await refreshQuickBooksToken(token.refreshToken);
+          if (!refreshResult.error) {
+            await db.upsertQuickBooksOAuthToken({
+              userId: ctx.user.id,
+              accessToken: refreshResult.access_token!,
+              refreshToken: refreshResult.refresh_token!,
+              expiresAt: new Date(Date.now() + refreshResult.expires_in! * 1000),
+              realmId: token.realmId,
+            });
+            accessToken = refreshResult.access_token!;
+          }
+        }
+
+        const result = await getProfitAndLoss(accessToken, token.realmId, {
           startDate: input?.startDate,
           endDate: input?.endDate,
           summarizeBy: input?.summarizeBy ?? "Month",
@@ -967,16 +984,28 @@ export const settingsRouter = router({
           expense: expense[i] ?? 0,
         }));
 
-        // Per-account expense rollup: sum across the whole period, excluding
-        // the "Total ..." summary rows and non-expense sections.
-        const expenseAccounts = rows
-          .filter((r) => {
-            const label = r.label.toLowerCase();
-            if (label.startsWith("total ")) return false;
-            if (label === "net income" || label === "net operating income") return false;
-            if (label === "gross profit") return false;
-            return true;
-          })
+        // Per-account expense rollup: sum across the whole period, including
+        // only leaf account rows that sit inside "Expenses" or "OtherExpenses"
+        // QB sections (avoids polluting the mix with Income/COGS entries).
+        const EXPENSE_GROUPS = new Set(["Expenses", "OtherExpenses"]);
+        const walkExpenseAccounts = (
+          rows: any[],
+          inExpense: boolean,
+          out: { label: string; values: number[] }[] = [],
+        ): { label: string; values: number[] }[] => {
+          for (const r of rows ?? []) {
+            const nowInExpense = inExpense || EXPENSE_GROUPS.has(r?.group ?? "");
+            // Leaf account row: has ColData but no child Rows (not a section header/summary).
+            if (nowInExpense && r?.ColData && !r?.Rows) {
+              const label: string = r.ColData[0]?.value ?? r.group ?? "Row";
+              const values: number[] = (r.ColData as any[]).slice(1).map((c: any) => parseFloat(c?.value ?? "0") || 0);
+              if (label) out.push({ label, values });
+            }
+            if (r?.Rows?.Row) walkExpenseAccounts(r.Rows.Row, nowInExpense, out);
+          }
+          return out;
+        };
+        const expenseAccounts = walkExpenseAccounts(report?.Rows?.Row ?? [], false)
           .map((r) => ({
             name: r.label,
             total: r.values.slice(0, -1).reduce((s, v) => s + v, 0), // exclude summary col

@@ -537,30 +537,6 @@ export default function CFODashboard() {
     return Math.floor((Date.now() - closeDate.getTime()) / 86400000);
   }, [modelData]);
 
-  // Real CAC and CAC payback from QB S&M spend and new-customer count
-  const cacReal = useMemo(() => {
-    if (!opexBreakdown || opexBreakdown.sm === 0 || !invoicesList?.length) return null;
-    // Count new customers in the trailing 3 months (first-ever invoice in that window)
-    const now = new Date();
-    const cutoff = new Date(now.getFullYear(), now.getMonth() - 3, 1).getTime();
-    const firstInvoiceByCustomer = new Map<string, number>();
-    for (const inv of invoicesList) {
-      const name = (inv as any).customer?.name || `Customer ${(inv as any).customerId ?? "—"}`;
-      const t = new Date((inv as any).issueDate || (inv as any).createdAt).getTime();
-      if (!firstInvoiceByCustomer.has(name) || t < firstInvoiceByCustomer.get(name)!) {
-        firstInvoiceByCustomer.set(name, t);
-      }
-    }
-    const newCustomers = Array.from(firstInvoiceByCustomer.values()).filter((t) => t >= cutoff).length;
-    if (newCustomers === 0) return null;
-    const quarterlySM = opexBreakdown.sm / 4;
-    const cac = quarterlySM / newCustomers;
-    const arpu = threeMonthAvgRev / Math.max(1, firstInvoiceByCustomer.size);
-    const gm = (grossMarginPct ?? 70) / 100;
-    const paybackMonths = arpu > 0 && gm > 0 ? cac / (arpu * gm) : null;
-    return { cac, newCustomers, paybackMonths };
-  }, [opexBreakdown, invoicesList, threeMonthAvgRev, grossMarginPct]);
-
   // OpEx breakdown by function (R&D / S&M / G&A / Other) from QB expense accounts
   const opexBreakdown = useMemo(() => {
     const accounts = (qbPnl as any)?.expenseAccounts as { name: string; total: number }[] | undefined;
@@ -587,6 +563,30 @@ export default function CFODashboard() {
       otherPct: (buckets.other / total) * 100,
     };
   }, [qbPnl]);
+
+  // Real CAC and CAC payback from QB S&M spend and new-customer count
+  const cacReal = useMemo(() => {
+    if (!opexBreakdown || opexBreakdown.sm === 0 || !invoicesList?.length) return null;
+    // Count new customers in the trailing 3 months (first-ever invoice in that window)
+    const now = new Date();
+    const cutoff = new Date(now.getFullYear(), now.getMonth() - 3, 1).getTime();
+    const firstInvoiceByCustomer = new Map<string, number>();
+    for (const inv of invoicesList) {
+      const name = (inv as any).customer?.name || `Customer ${(inv as any).customerId ?? "—"}`;
+      const t = new Date((inv as any).issueDate || (inv as any).createdAt).getTime();
+      if (!firstInvoiceByCustomer.has(name) || t < firstInvoiceByCustomer.get(name)!) {
+        firstInvoiceByCustomer.set(name, t);
+      }
+    }
+    const newCustomers = Array.from(firstInvoiceByCustomer.values()).filter((t) => t >= cutoff).length;
+    if (newCustomers === 0) return null;
+    const quarterlySM = opexBreakdown.sm / 4;
+    const cac = quarterlySM / newCustomers;
+    const arpu = threeMonthAvgRev / Math.max(1, firstInvoiceByCustomer.size);
+    const gm = (grossMarginPct ?? 70) / 100;
+    const paybackMonths = arpu > 0 && gm > 0 ? cac / (arpu * gm) : null;
+    return { cac, newCustomers, paybackMonths };
+  }, [opexBreakdown, invoicesList, threeMonthAvgRev, grossMarginPct]);
 
   // Magic Number = Net New ARR / prior-period S&M spend (quarterly norm)
   const magicNumber = useMemo(() => {
