@@ -154,6 +154,7 @@ const InvestorUpdates = lazy(() => import("./pages/InvestorUpdates"));
 const DataRooms = lazy(() => import("./pages/DataRooms"));
 const DataRoomDetail = lazy(() => import("./pages/DataRoomDetail"));
 const DataRoomPublic = lazy(() => import("./pages/DataRoomPublic"));
+const DataRoomFinancialsPublic = lazy(() => import("./pages/DataRoomFinancialsPublic"));
 
 // Component Showcase
 const ComponentShowcase = lazy(() => import("./pages/ComponentShowcase"));
@@ -375,6 +376,8 @@ function App() {
                 <Route path="/login" component={Login} />
                 <Route path="/reset-password" component={ResetPassword} />
                 {/* Public Data Room Access (outside dashboard) */}
+                <Route path="/share/:code/financials" component={DataRoomFinancialsPublic} />
+                <Route path="/dr/:code/financials" component={DataRoomFinancialsPublic} />
                 <Route path="/share/:code" component={DataRoomPublic} />
                 <Route path="/dr/:code" component={DataRoomPublic} />
                 {/* Supplier Portal (public) */}

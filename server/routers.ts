@@ -12507,6 +12507,8 @@ Ask if they received the original request and if they can provide a quote.`;
         brandingLogo: z.string().nullable().optional(),
         brandingColor: z.string().nullable().optional(),
         brandingCompanyName: z.string().nullable().optional(),
+        showLiveFinancials: z.boolean().optional(),
+        liveFinancialsIncludeAr: z.boolean().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const room = await db.getDataRoomById(input.id);
@@ -13588,6 +13590,7 @@ Ask if they received the original request and if they can provide a quote.`;
               brandingLogo: room.brandingLogo,
               brandingColor: room.brandingColor,
               brandingCompanyName: room.brandingCompanyName,
+              showLiveFinancials: room.showLiveFinancials,
             },
             folders: folders.filter(f => !f.googleDriveFolderId || true),
             documents: documents.filter(d => !d.isHidden),
@@ -13664,6 +13667,86 @@ Ask if they received the original request and if they can provide a quote.`;
           }
 
           return { id };
+        }),
+
+      // Live current-financials feed for the data room's public page.
+      // This is the investor-facing counterpart to the frozen projections
+      // snapshot: metrics are recomputed at request time, gated by a valid
+      // link + any NDA requirement that applied to `accessByLink`.
+      //
+      // Intentionally narrow: cash, last-3-mo revenue, last-3-mo burn,
+      // avg burn, runway, and optionally an AR total when the room owner
+      // has explicitly opted in. No customer-level detail, no AR aging,
+      // no risk radar.
+      getFinancials: publicProcedure
+        .input(z.object({
+          linkCode: z.string(),
+          visitorId: z.number().optional(),
+        }))
+        .query(async ({ input }) => {
+          const link = await db.getDataRoomLinkByCode(input.linkCode);
+          if (!link || !link.isActive) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Invalid link' });
+          }
+          if (link.expiresAt && new Date(link.expiresAt) < new Date()) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Link has expired' });
+          }
+
+          const room = await db.getDataRoomById(link.dataRoomId);
+          if (!room) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          }
+          if (!room.showLiveFinancials) {
+            throw new TRPCError({
+              code: 'FORBIDDEN',
+              message: 'Live financials are not enabled for this data room',
+            });
+          }
+
+          // If the room requires an NDA, the visitor must have signed it.
+          // Password/email checks are the gate for `accessByLink` itself and
+          // have already fired by the time the page loads.
+          if (room.requiresNda) {
+            if (!input.visitorId) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'NDA signature required' });
+            }
+            const visitor = await db.getDataRoomVisitorById(input.visitorId);
+            if (!visitor || visitor.dataRoomId !== room.id) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'NDA signature required' });
+            }
+            if (visitor.accessStatus === 'blocked' || visitor.accessStatus === 'revoked') {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'Your access has been revoked' });
+            }
+            if (!visitor.ndaAcceptedAt) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'NDA signature required' });
+            }
+          } else if (input.visitorId) {
+            // Even without an NDA requirement, enforce blocked/revoked status
+            // on known visitors so access revocation applies to this page too.
+            const visitor = await db.getDataRoomVisitorById(input.visitorId);
+            if (visitor && (visitor.accessStatus === 'blocked' || visitor.accessStatus === 'revoked')) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'Your access has been revoked' });
+            }
+          }
+
+          const { computeLiveFinancials } = await import('./dataRoomLiveFinancials');
+          const snapshot = await computeLiveFinancials({
+            includeAr: !!room.liveFinancialsIncludeAr,
+          });
+
+          return {
+            room: {
+              name: room.name,
+              brandingCompanyName: room.brandingCompanyName,
+              brandingLogo: room.brandingLogo,
+              brandingColor: room.brandingColor,
+              brandColor: room.brandColor,
+              logoUrl: room.logoUrl,
+              watermarkEnabled: room.watermarkEnabled,
+              watermarkText: room.watermarkText,
+            },
+            financials: snapshot,
+          };
         }),
     }),
 

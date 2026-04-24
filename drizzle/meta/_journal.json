@@ -259,6 +259,13 @@
       "version": "5",
       "when": 1777039200000,
       "tag": "0035_crm_contact_dedup_indexes"
+    },
+    {
+      "idx": 37,
+      "version": "5",
+      "when": 1777651300000,
+      "tag": "0036_data_room_live_financials",
+      "breakpoints": true
     }
   ]
 }

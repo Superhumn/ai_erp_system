@@ -2858,7 +2858,14 @@ export const dataRooms = mysqlTable("data_rooms", {
   // Google Drive sync
   googleDriveFolderId: varchar("googleDriveFolderId", { length: 255 }),
   lastSyncedAt: timestamp("lastSyncedAt"),
-  
+
+  // Live current-financials page (investor-facing, JSON-driven, distinct from
+  // the frozen projections snapshot). When enabled, the data room exposes
+  // `/dr/:code/financials` with a trimmed set of metrics (cash, last-3-mo
+  // revenue/burn, runway, AR total).
+  showLiveFinancials: boolean("showLiveFinancials").default(false).notNull(),
+  liveFinancialsIncludeAr: boolean("liveFinancialsIncludeAr").default(false).notNull(),
+
   status: mysqlEnum("status", ["active", "archived", "draft"]).default("active").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

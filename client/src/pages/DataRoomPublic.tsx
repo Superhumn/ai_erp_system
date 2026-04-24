@@ -11,6 +11,7 @@ import {
   FolderOpen, FileText, File, Download, Eye, Lock,
   ChevronRight, ChevronDown, Folder, ArrowLeft, Shield,
   X, ChevronLeft, Image, FileSpreadsheet, Presentation, Loader2,
+  LineChart,
 } from "lucide-react";
 import { useParams } from "wouter";
 
@@ -757,8 +758,23 @@ export default function DataRoomPublic() {
       {/* Main layout */}
       <div className="flex-1 flex flex-col lg:flex-row max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 gap-6">
         {/* Sidebar - folder tree */}
-        {folders.length > 0 && (
-          <aside className="w-full lg:w-64 flex-shrink-0 dr-fade-in">
+        {(folders.length > 0 || content?.room.showLiveFinancials) && (
+          <aside className="w-full lg:w-64 flex-shrink-0 dr-fade-in space-y-3">
+            {content?.room.showLiveFinancials && (
+              <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-gray-500 px-2 mb-2">
+                  Live Data
+                </p>
+                <a
+                  href={`/dr/${linkCode}/financials`}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm text-gray-300 hover:text-white hover:bg-white/[0.04] transition-colors"
+                >
+                  <LineChart className="h-4 w-4 flex-shrink-0" style={{ color: brandColor || "#818cf8" }} />
+                  <span className="truncate">Live Financials</span>
+                </a>
+              </div>
+            )}
+            {folders.length > 0 && (
             <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3">
               <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-gray-500 px-2 mb-2">
                 Folders
@@ -810,6 +826,7 @@ export default function DataRoomPublic() {
                 })}
               </nav>
             </div>
+            )}
           </aside>
         )}
 
@@ -1170,8 +1187,10 @@ export default function DataRoomPublic() {
 
 // ---------------------------------------------------------------------------
 // NDA Signing Gate Component (preserved from original)
+// Exported so sibling public pages (e.g. /dr/:code/financials) can gate on
+// the same NDA flow without duplicating signature-capture UI.
 // ---------------------------------------------------------------------------
-function NdaSigningGate({
+export function NdaSigningGate({
   dataRoomId,
   visitorId,
   visitorEmail,
