@@ -70,6 +70,7 @@ const BENCHMARKS = {
   mom:        { great: 15,  ok: 8,   poor: 3  },
   concentration: { great: 15, ok: 25, poor: 40 }, // top customer %, lower better
   revPerFte:  { great: 200_000, ok: 150_000, poor: 100_000 },
+  forecastAcc:{ great: 90,  ok: 80,  poor: 70 }, // % accuracy, higher is better
 };
 
 function benchColor(v: number | null, band: { great: number; ok: number; poor: number }, lowerBetter = false): string {
@@ -265,6 +266,22 @@ export default function CFODashboard() {
     const coverage = quarterlyRunRate > 0 ? open / quarterlyRunRate : null;
     return { open, weighted, coverage, count: deals.length };
   }, [openDeals, threeMonthAvgRev]);
+
+  // Forecast accuracy — how close past projections tracked actuals
+  const forecastAccuracy = useMemo(() => {
+    const rows = modelData ?? [];
+    const withBoth = rows.filter((r: any) =>
+      r.projectedValue && r.actualValue &&
+      parseFloat(r.projectedValue) !== 0);
+    if (withBoth.length === 0) return { accuracy: null, samples: 0 };
+    const variances = withBoth.map((r: any) => {
+      const p = parseFloat(r.projectedValue);
+      const a = parseFloat(r.actualValue);
+      return Math.abs(a - p) / Math.abs(p);
+    });
+    const meanVariance = variances.reduce((s, v) => s + v, 0) / variances.length;
+    return { accuracy: Math.max(0, (1 - meanVariance) * 100), samples: withBoth.length };
+  }, [modelData]);
 
   // Margin trajectory from financial model (multi-year projection)
   const marginTrajectory = useMemo(() => {
@@ -601,6 +618,12 @@ export default function CFODashboard() {
         <KpiCard icon={Flame} label="Burn / FTE"
                  value={burnPerFte ? `${fmtCompact(burnPerFte)}/mo` : "—"}
                  sub="Monthly cost per head" />
+        <KpiCard icon={Target} label="Forecast Accuracy"
+                 value={forecastAccuracy.accuracy !== null ? `${forecastAccuracy.accuracy.toFixed(0)}%` : "—"}
+                 tone={benchColor(forecastAccuracy.accuracy, BENCHMARKS.forecastAcc)}
+                 hint={forecastAccuracy.accuracy !== null
+                   ? `${benchLabel(forecastAccuracy.accuracy, BENCHMARKS.forecastAcc)} · ${forecastAccuracy.samples} samples`
+                   : "Enter actuals"} />
       </div>
 
       {marginTrajectory.length > 0 && (
