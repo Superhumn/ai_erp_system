@@ -8,11 +8,12 @@
 -- PRE-FLIGHT (IMPORTANT):
 -- Existing deployments must merge their duplicate contacts before this
 -- migration runs. Otherwise `CREATE UNIQUE INDEX` fails with ER_DUP_ENTRY.
---   - From the app: CRM Hub -> "Merge N Duplicates" button.
---   - From tRPC:    crm.contacts.autoMergeDuplicates (keeps the oldest row
---                   in each group; reparents deals, interactions, tags,
---                   captures, WhatsApp messages and campaign recipients
---                   onto the kept row; deletes the rest).
+--   - Supported cleanup path: run the admin-only
+--     `crm.contacts.autoMergeDuplicates` route/tool before deploying this
+--     migration.
+--   - The dedupe keeps the oldest row in each duplicate group; reparents
+--     deals, interactions, tags, captures, WhatsApp messages and campaign
+--     recipients onto the kept row; deletes the rest.
 --
 -- Notes:
 --   - MySQL UNIQUE treats multiple NULLs as distinct, so contacts without
