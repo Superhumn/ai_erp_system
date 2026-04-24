@@ -253,6 +253,30 @@ export async function getChartOfAccounts(accessToken: string, realmId: string) {
 }
 
 /**
+ * Get Profit & Loss report from QuickBooks.
+ * Drives actual burn, gross margin, and EBITDA on the CFO dashboard.
+ *
+ * Returns QB's report JSON; caller walks Rows/ColData to extract totals.
+ */
+export async function getProfitAndLoss(
+  accessToken: string,
+  realmId: string,
+  options?: { startDate?: string; endDate?: string; summarizeBy?: "Month" | "Quarter" | "Year" }
+) {
+  const params = new URLSearchParams();
+  if (options?.startDate) params.set("start_date", options.startDate);
+  if (options?.endDate)   params.set("end_date", options.endDate);
+  if (options?.summarizeBy) params.set("summarize_column_by", options.summarizeBy);
+  params.set("accounting_method", "Accrual");
+  const qs = params.toString();
+  return makeQuickBooksRequest(
+    accessToken,
+    realmId,
+    `reports/ProfitAndLoss${qs ? `?${qs}` : ""}`
+  );
+}
+
+/**
  * Get QuickBooks Items (Products/Services)
  * Returns inventory items with cost information
  */
