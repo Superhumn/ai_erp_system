@@ -596,15 +596,29 @@ export function deriveSeries(model: FinancialModel) {
     }
   }
 
-  // Runway at last-period burn, in months. Only meaningful for annual or monthly.
+  // Runway at last-period burn, in months.
+  // Convert the last period's net income into a monthly burn rate based on
+  // the spacing between consecutive period sort keys:
+  //   monthly => 1, quarterly => 3, annual => 12.
   let runwayMonths: number | null = null;
   const cash = metrics.cashBalance;
   if (cash && netIncome && n > 0) {
     const lastCash = cash[n - 1];
     const lastNi = netIncome[n - 1];
     if (lastCash !== null && lastNi !== null && lastNi < 0) {
-      const isMonthly = periods.some((p) => p.month !== undefined);
-      const burnPerMonth = isMonthly ? -lastNi : -lastNi / 12;
+      const stepSizes = periods
+        .slice(1)
+        .map((period, i) => period.sortKey - periods[i].sortKey)
+        .filter((delta) => delta > 0);
+
+      const inferredMonthsPerPeriod =
+        stepSizes.length > 0 && stepSizes.every((delta) => delta === stepSizes[0])
+          ? stepSizes[0]
+          : periods.every((p) => p.month !== undefined)
+            ? 1
+            : 12;
+
+      const burnPerMonth = -lastNi / inferredMonthsPerPeriod;
       runwayMonths = burnPerMonth > 0 ? lastCash / burnPerMonth : null;
     }
   }
