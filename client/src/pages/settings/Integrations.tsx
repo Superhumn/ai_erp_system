@@ -786,7 +786,9 @@ export default function IntegrationsPage() {
                         </>
                       ) : (
                         <p className="text-sm text-muted-foreground mt-1">
-                          Not configured. Set <code className="text-xs">GOOGLE_SERVICE_ACCOUNT_JSON</code> in the server environment
+                          Not configured. Set either <code className="text-xs">GOOGLE_SERVICE_ACCOUNT_JSON</code> or both{" "}
+                          <code className="text-xs">GOOGLE_SERVICE_ACCOUNT_EMAIL</code> and{" "}
+                          <code className="text-xs">GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY</code> in the server environment
                           to let the app read private Drive folders without relying on a user OAuth grant.
                         </p>
                       )}
