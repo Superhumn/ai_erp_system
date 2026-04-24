@@ -524,18 +524,13 @@ export default function PeopleAndEquity() {
 
   // ══════════════════════════════════════════════════════════════════
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header */}
+    <div className="space-y-2 animate-fade-in">
+      {/* Header — single consolidated row */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-lg font-semibold flex items-center gap-2">
-            <UserCircle className="h-8 w-8" />
-            People
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Team members, investors, advisors, and equity holdings
-          </p>
-        </div>
+        <h1 className="text-sm font-bold tracking-[-0.02em] flex items-center gap-1.5">
+          <UserCircle className="h-4 w-4" />
+          People
+        </h1>
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => window.location.href = "/hr/me"}>
             <UserCircle className="h-4 w-4 mr-1" /> My Portal

@@ -22,19 +22,14 @@ export default function LegalHub() {
   const [tab, setTab] = useState(defaultTab);
 
   return (
-    <div className="space-y-4 animate-fade-in">
-      <div>
-        <h1 className="text-lg font-semibold flex items-center gap-2">
-          <Scale className="h-8 w-8" />
-          Legal
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          Contracts, cases, and legal documents
-        </p>
-      </div>
-
+    <div className="space-y-2 animate-fade-in">
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
+        <div className="flex items-center gap-3 flex-wrap">
+          <h1 className="text-sm font-bold tracking-[-0.02em] flex items-center gap-1.5">
+            <Scale className="h-4 w-4" />
+            Legal
+          </h1>
+          <TabsList>
           <TabsTrigger value="contracts" className="flex items-center gap-1.5">
             <FileText className="h-4 w-4" />
             Contracts
@@ -48,6 +43,7 @@ export default function LegalHub() {
             Documents
           </TabsTrigger>
         </TabsList>
+        </div>
 
         <TabsContent value="contracts">
           <Suspense fallback={fallback}><Contracts /></Suspense>

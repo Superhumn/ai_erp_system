@@ -24,29 +24,25 @@ export default function OperationsHub() {
   const [activeTab, setActiveTab] = useState("inventory");
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-lg font-semibold">Operations Hub</h1>
-        <p className="text-sm text-muted-foreground">
-          Procurement, Manufacturing, and Inventory Management
-        </p>
-      </div>
-
+    <div className="space-y-2">
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="inventory" className="gap-2">
-            <Warehouse className="h-4 w-4" />
-            Inventory
-          </TabsTrigger>
-          <TabsTrigger value="manufacturing" className="gap-2">
-            <Factory className="h-4 w-4" />
-            Manufacturing
-          </TabsTrigger>
-          <TabsTrigger value="procurement" className="gap-2">
-            <Building2 className="h-4 w-4" />
-            Procurement
-          </TabsTrigger>
-        </TabsList>
+        <div className="flex items-center gap-3 flex-wrap">
+          <h1 className="text-sm font-bold tracking-[-0.02em]">Operations</h1>
+          <TabsList>
+            <TabsTrigger value="inventory" className="gap-2">
+              <Warehouse className="h-4 w-4" />
+              Inventory
+            </TabsTrigger>
+            <TabsTrigger value="manufacturing" className="gap-2">
+              <Factory className="h-4 w-4" />
+              Manufacturing
+            </TabsTrigger>
+            <TabsTrigger value="procurement" className="gap-2">
+              <Building2 className="h-4 w-4" />
+              Procurement
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
         <TabsContent value="inventory">
           <Suspense fallback={<PageLoader />}>
