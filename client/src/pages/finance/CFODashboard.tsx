@@ -378,7 +378,26 @@ export default function CFODashboard() {
 
   // Headcount & revenue per FTE
   const headcount = (employees ?? []).length;
-  const revPerFte = headcount > 0 ? arr / headcount : null;
+  const revPerFte = useMemo(() => {
+    if (headcount <= 0) return null;
+
+    if (qbPnl?.connected && qbPnl.months?.length) {
+      const last3 = qbPnl.months.slice(-3);
+      const rev = last3.reduce((s, m) => s + (m.income ?? 0), 0);
+      if (rev > 0) {
+        const annualizedRevenue = (rev / last3.length) * 12;
+        return annualizedRevenue / headcount;
+      }
+    }
+
+    const rows = modelData ?? [];
+    const y1 = rows.filter((r: any) => r.year === 1 || r.year === new Date().getFullYear());
+    const projectedRevenue = y1
+      .filter((r: any) => (r.metricName || "").toLowerCase() === "revenue")
+      .reduce((s: number, r: any) => s + parseFloat(r.projectedValue ?? "0"), 0);
+
+    return projectedRevenue > 0 ? projectedRevenue / headcount : null;
+  }, [headcount, qbPnl, modelData]);
   const burnPerFte = headcount > 0 ? estimatedBurn / headcount : null;
 
   // Last investor update
