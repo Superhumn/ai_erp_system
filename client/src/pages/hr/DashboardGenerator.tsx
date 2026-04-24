@@ -173,14 +173,16 @@ function toParsedData(model: FinancialModel): ParsedData {
   };
 }
 
-async function parseWorkbook(file: File): Promise<ParsedData> {
+async function parseWorkbook(
+  file: File,
+): Promise<{ data: ParsedData; model: FinancialModel }> {
   const { model } = await parseFinancialProjection(file);
   if (model.periods.length === 0) {
     throw new Error(
       "Couldn't find any projection rows. Make sure the sheet has time-period headers (years, FY, or dates) and labeled metric rows.",
     );
   }
-  return toParsedData(model);
+  return { data: toParsedData(model), model };
 }
 
 // ── Chart tooltip ─────────────────────────────────────────────────────────
@@ -253,14 +255,43 @@ function KpiCard({
   );
 }
 
+// ── View toggle button ───────────────────────────────────────────────────
+
+function ViewToggleButton({
+  active, onClick, icon: Icon, label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+}) {
+  return (
+    <button
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+        active
+          ? "bg-primary text-primary-foreground shadow-sm"
+          : "text-muted-foreground hover:bg-muted"
+      }`}
+    >
+      <Icon className="h-3.5 w-3.5" />
+      {label}
+    </button>
+  );
+}
+
 // ── Main page ────────────────────────────────────────────────────────────
 
 export default function DashboardGenerator() {
   const [data, setData] = useState<ParsedData | null>(null);
+  const [model, setModel] = useState<FinancialModel | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
+  const [view, setView] = useState<"investor" | "internal">("investor");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = useCallback(async (file: File) => {
@@ -272,14 +303,16 @@ export default function DashboardGenerator() {
     setIsParsing(true);
     setParseError(null);
     try {
-      const parsed = await parseWorkbook(file);
+      const { data: parsed, model: parsedModel } = await parseWorkbook(file);
       setData(parsed);
+      setModel(parsedModel);
       setFileName(file.name);
       toast.success(`Dashboard generated from "${file.name}"`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to parse workbook";
       setParseError(msg);
       setData(null);
+      setModel(null);
       toast.error(msg);
     } finally {
       setIsParsing(false);
@@ -307,6 +340,7 @@ export default function DashboardGenerator() {
 
   const reset = useCallback(() => {
     setData(null);
+    setModel(null);
     setFileName(null);
     setParseError(null);
   }, []);
@@ -333,6 +367,26 @@ export default function DashboardGenerator() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {data && (
+            <div
+              className="inline-flex rounded-lg border bg-background p-0.5"
+              role="tablist"
+              aria-label="Dashboard view"
+            >
+              <ViewToggleButton
+                active={view === "investor"}
+                onClick={() => setView("investor")}
+                icon={Sparkles}
+                label="Investor"
+              />
+              <ViewToggleButton
+                active={view === "internal"}
+                onClick={() => setView("internal")}
+                icon={FileSpreadsheet}
+                label="Internal"
+              />
+            </div>
+          )}
           <Button variant="outline" onClick={downloadTemplate}>
             <Download className="h-4 w-4 mr-2" />
             Download Template
@@ -429,8 +483,14 @@ export default function DashboardGenerator() {
         </Card>
       )}
 
-      {data && metrics && (
-        <Dashboard data={data} metrics={metrics} fileName={fileName} />
+      {data && model && metrics && (
+        <Dashboard
+          data={data}
+          model={model}
+          metrics={metrics}
+          fileName={fileName}
+          view={view}
+        />
       )}
     </div>
   );
@@ -461,11 +521,13 @@ function StepCard({
 // ── Dashboard view ───────────────────────────────────────────────────────
 
 function Dashboard({
-  data, metrics, fileName,
+  data, model, metrics, fileName, view,
 }: {
   data: ParsedData;
+  model: FinancialModel;
   metrics: NonNullable<ReturnType<typeof useDashboardMetrics>>;
   fileName: string | null;
+  view: "investor" | "internal";
 }) {
   const { meta, rows } = data;
   const currency = meta.currency || "USD";
@@ -738,6 +800,396 @@ function Dashboard({
           </div>
         </CardContent>
       </Card>
+
+      {view === "internal" && <InternalPanels model={model} />}
+    </div>
+  );
+}
+
+// ── Internal-only panels ─────────────────────────────────────────────────
+
+// Human-readable labels for canonical metric keys.
+const METRIC_LABELS: Record<string, string> = {
+  revenue: "Revenue",
+  arr: "ARR",
+  cogs: "COGS",
+  grossProfit: "Gross Profit",
+  opex: "Operating Expenses",
+  sm: "Sales & Marketing",
+  rd: "Research & Development",
+  ga: "General & Administrative",
+  ebitda: "EBITDA",
+  netIncome: "Net Income",
+  cashBalance: "Cash Balance",
+  headcount: "Headcount",
+  magicNumber: "Magic Number",
+  cacPayback: "CAC Payback",
+  ltvCac: "LTV : CAC",
+  customers: "Customers",
+  newLogos: "New Logos",
+  churnedLogos: "Churned Logos",
+  nrr: "NRR",
+  grr: "GRR",
+  acv: "ACV",
+  arpu: "ARPU",
+  cac: "CAC",
+  ltv: "LTV",
+};
+
+function DetectionDiagnostics({ model }: { model: FinancialModel }) {
+  const [expanded, setExpanded] = useState(false);
+  const detected = Object.keys(model.metrics).length;
+  const extras = model.extras.length;
+  const first = model.periods[0];
+  const last = model.periods[model.periods.length - 1];
+  const layoutLabel = model.meta.layout === "columns"
+    ? "periods as columns"
+    : "periods as rows";
+
+  const mappedKeys = Object.keys(model.metrics).filter(
+    (k) => model.metrics[k as keyof typeof model.metrics]?.some((v) => v !== null),
+  );
+
+  return (
+    <Card className="border-dashed">
+      <button
+        type="button"
+        className="w-full text-left p-4 flex items-center gap-3 hover:bg-muted/30 transition-colors"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <FileSpreadsheet className="h-4 w-4 text-muted-foreground shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium">
+            Detected: {detected} metric{detected === 1 ? "" : "s"}
+            {" · "}
+            {model.periods.length} period{model.periods.length === 1 ? "" : "s"}
+            {first && last && ` (${first.label}–${last.label})`}
+          </div>
+          <div className="text-xs text-muted-foreground truncate">
+            Sheet &quot;{model.meta.sourceSheet}&quot; &middot; {layoutLabel}
+            {extras > 0 && ` · ${extras} unmapped row${extras === 1 ? "" : "s"}`}
+          </div>
+        </div>
+        <span className="text-xs text-muted-foreground shrink-0">
+          {expanded ? "Hide" : "Show"} details
+        </span>
+      </button>
+
+      {expanded && (
+        <div className="px-4 pb-4 space-y-4 border-t pt-4">
+          {mappedKeys.length > 0 && (
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                Mapped metrics
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {mappedKeys.map((k) => (
+                  <Badge key={k} variant="secondary" className="text-xs">
+                    {METRIC_LABELS[k] ?? k}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {model.extras.length > 0 && (
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                Unmapped rows ({model.extras.length})
+              </div>
+              <div className="overflow-x-auto rounded border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-xs">Row label</TableHead>
+                      {model.periods.map((p) => (
+                        <TableHead key={p.sortKey} className="text-right text-xs">
+                          {p.label}
+                        </TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {model.extras.slice(0, 12).map((ex, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="text-xs font-medium">{ex.label}</TableCell>
+                        {ex.values.map((v, j) => (
+                          <TableCell key={j} className="text-right text-xs">
+                            {v === null ? "—" : fmtNumber(v)}
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              {model.extras.length > 12 && (
+                <div className="text-xs text-muted-foreground mt-2">
+                  Showing first 12 of {model.extras.length} unmapped rows.
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="text-xs text-muted-foreground">
+            Something missing? Make sure row labels use canonical names
+            (Revenue, COGS, Operating Expenses, Cash Balance, Headcount, ARR,
+            NRR, GRR, Magic Number, CAC Payback, LTV:CAC) — the parser matches
+            those plus common synonyms. &quot;Total X&quot; rows take precedence
+            over subcategory rows.
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function InternalPanels({ model }: { model: FinancialModel }) {
+  const derived = useMemo(() => deriveSeries(model), [model]);
+  const periods = model.periods;
+
+  // Margin trajectory: gross margin % and net margin % over time.
+  const marginSeries = periods.map((p, i) => ({
+    year: p.label,
+    "Gross Margin %": derived.grossMargin?.[i] ?? null,
+    "Net Margin %": derived.netMargin?.[i] ?? null,
+  }));
+  const hasMargin = derived.grossMargin?.some((v) => v !== null)
+    || derived.netMargin?.some((v) => v !== null);
+
+  // YoY growth on the primary top-line series (revenue or ARR).
+  const growthSeries = periods.map((p, i) => ({
+    year: p.label,
+    "YoY Growth %": derived.yoyGrowth?.[i] ?? null,
+  }));
+  const hasGrowth = derived.yoyGrowth?.some((v) => v !== null);
+
+  // Customers / logos line.
+  const customers = model.metrics.customers;
+  const hasCustomers = customers && customers.some((v) => v !== null);
+  const customerSeries = periods.map((p, i) => ({
+    year: p.label,
+    Customers: customers?.[i] ?? null,
+  }));
+
+  // Retention + efficiency KPIs (last non-null value each).
+  const lastOf = (arr?: (number | null)[]) => {
+    if (!arr) return null;
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (arr[i] !== null) return arr[i] as number;
+    }
+    return null;
+  };
+  const nrr = lastOf(model.metrics.nrr);
+  const grr = lastOf(model.metrics.grr);
+  const magic = lastOf(model.metrics.magicNumber);
+  const cacPay = lastOf(model.metrics.cacPayback);
+  const ltvCac = lastOf(model.metrics.ltvCac);
+  const ruleOf40 = derived.ruleOf40Last;
+
+  const retentionCards = [
+    nrr !== null && (
+      <KpiCard
+        key="nrr"
+        icon={TrendingUp}
+        label="Net Revenue Retention"
+        value={fmtPct(nrr)}
+        sub="Series B bar: 120%+"
+        tone={nrr >= 120 ? "good" : nrr >= 105 ? "default" : "warn"}
+      />
+    ),
+    grr !== null && (
+      <KpiCard
+        key="grr"
+        icon={ShieldCheck}
+        label="Gross Revenue Retention"
+        value={fmtPct(grr)}
+        sub="Series B bar: 90%+"
+        tone={grr >= 90 ? "good" : grr >= 80 ? "default" : "warn"}
+      />
+    ),
+  ].filter(Boolean);
+
+  const efficiencyCards = [
+    ruleOf40 !== null && (
+      <KpiCard
+        key="r40"
+        icon={TrendingUp}
+        label="Rule of 40"
+        value={fmtPct(ruleOf40)}
+        sub="Growth % + margin %"
+        tone={ruleOf40 >= 40 ? "good" : ruleOf40 >= 20 ? "default" : "warn"}
+      />
+    ),
+    magic !== null && (
+      <KpiCard
+        key="magic"
+        icon={Sparkles}
+        label="Magic Number"
+        value={magic.toFixed(2)}
+        sub="Net new ARR ÷ S&M"
+        tone={magic >= 1 ? "good" : magic >= 0.75 ? "default" : "warn"}
+      />
+    ),
+    cacPay !== null && (
+      <KpiCard
+        key="cacp"
+        icon={Clock}
+        label="CAC Payback"
+        value={`${cacPay.toFixed(0)} mo`}
+        sub="Lower is better"
+        tone={cacPay <= 12 ? "good" : cacPay <= 18 ? "default" : "warn"}
+      />
+    ),
+    ltvCac !== null && (
+      <KpiCard
+        key="ltv"
+        icon={DollarSign}
+        label="LTV : CAC"
+        value={`${ltvCac.toFixed(1)}x`}
+        sub="Series B bar: 3x+"
+        tone={ltvCac >= 3 ? "good" : ltvCac >= 2 ? "default" : "warn"}
+      />
+    ),
+  ].filter(Boolean);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-2 pt-2">
+        <div className="h-6 w-0.5 bg-primary rounded-full" />
+        <h3 className="text-sm font-semibold tracking-wide uppercase text-muted-foreground">
+          Internal view &middot; additional detail
+        </h3>
+      </div>
+
+      <DetectionDiagnostics model={model} />
+
+      {(hasMargin || hasGrowth) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {hasMargin && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Margin Trajectory</CardTitle>
+                <CardDescription>Gross margin vs net margin</CardDescription>
+              </CardHeader>
+              <CardContent className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={marginSeries} margin={{ left: 0, right: 10 }}>
+                    <CartesianGrid stroke={CHART.grid} strokeDasharray="3 3" />
+                    <XAxis dataKey="year" fontSize={11} />
+                    <YAxis fontSize={11} tickFormatter={(v) => `${v}%`} />
+                    <Tooltip
+                      formatter={(v) => (typeof v === "number" ? `${v.toFixed(1)}%` : v)}
+                    />
+                    <Legend />
+                    <Line
+                      type="monotone"
+                      dataKey="Gross Margin %"
+                      stroke={CHART.netIncome}
+                      strokeWidth={2}
+                      dot={{ r: 3 }}
+                      connectNulls
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="Net Margin %"
+                      stroke={CHART.opex}
+                      strokeWidth={2}
+                      dot={{ r: 3 }}
+                      connectNulls
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          )}
+
+          {hasGrowth && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Year-over-Year Growth</CardTitle>
+                <CardDescription>
+                  {model.metrics.revenue ? "Revenue" : "ARR"} growth rate
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={growthSeries} margin={{ left: 0, right: 10 }}>
+                    <CartesianGrid stroke={CHART.grid} strokeDasharray="3 3" />
+                    <XAxis dataKey="year" fontSize={11} />
+                    <YAxis fontSize={11} tickFormatter={(v) => `${v}%`} />
+                    <Tooltip
+                      formatter={(v) => (typeof v === "number" ? `${v.toFixed(1)}%` : v)}
+                    />
+                    <Bar dataKey="YoY Growth %" fill={CHART.revenue} radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {hasCustomers && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Customer Growth</CardTitle>
+            <CardDescription>Customer count over the plan</CardDescription>
+          </CardHeader>
+          <CardContent className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={customerSeries} margin={{ left: 0, right: 10 }}>
+                <CartesianGrid stroke={CHART.grid} strokeDasharray="3 3" />
+                <XAxis dataKey="year" fontSize={11} />
+                <YAxis fontSize={11} />
+                <Tooltip content={NumberTooltip} />
+                <Line
+                  type="monotone"
+                  dataKey="Customers"
+                  stroke={CHART.headcount}
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                  connectNulls
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
+
+      {(retentionCards.length > 0 || efficiencyCards.length > 0) && (
+        <div className="space-y-3">
+          {retentionCards.length > 0 && (
+            <>
+              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Retention
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">{retentionCards}</div>
+            </>
+          )}
+          {efficiencyCards.length > 0 && (
+            <>
+              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Efficiency
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">{efficiencyCards}</div>
+            </>
+          )}
+        </div>
+      )}
+
+      {retentionCards.length === 0
+        && efficiencyCards.length === 0
+        && !hasMargin
+        && !hasGrowth
+        && !hasCustomers && (
+          <Card className="border-dashed">
+            <CardContent className="p-6 text-center text-sm text-muted-foreground">
+              No additional internal metrics detected. Add rows like NRR, GRR,
+              Magic Number, CAC Payback, or LTV:CAC to your model to see them here.
+            </CardContent>
+          </Card>
+        )}
     </div>
   );
 }
