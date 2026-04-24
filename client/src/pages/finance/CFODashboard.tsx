@@ -69,6 +69,7 @@ const BENCHMARKS = {
   nrr:        { great: 120, ok: 105, poor: 90 },
   mom:        { great: 15,  ok: 8,   poor: 3  },
   concentration: { great: 15, ok: 25, poor: 40 }, // top customer %, lower better
+  revPerFte:  { great: 200_000, ok: 150_000, poor: 100_000 },
 };
 
 function benchColor(v: number | null, band: { great: number; ok: number; poor: number }, lowerBetter = false): string {
@@ -127,6 +128,7 @@ export default function CFODashboard() {
   const { data: invoicesList } = trpc.invoices.list.useQuery();
   const { data: modelData } = trpc.financialModel.list.useQuery({});
   const { data: kpiGoals } = trpc.kpiGoals.list.useQuery({ year: new Date().getFullYear() });
+  const { data: employees } = trpc.hr.employees.list.useQuery({ status: "active" });
 
   // ── Cash ────────────────────────────────────────────────────
   const cashPosition = useMemo(() =>
@@ -211,6 +213,11 @@ export default function CFODashboard() {
   }, [modelData]);
 
   const rule40 = (yoyGrowth || 0) + (ebitdaMarginPct ?? 0);
+
+  // Headcount & revenue per FTE
+  const headcount = (employees ?? []).length;
+  const revPerFte = headcount > 0 ? arr / headcount : null;
+  const burnPerFte = headcount > 0 ? estimatedBurn / headcount : null;
 
   // Margin trajectory from financial model (multi-year projection)
   const marginTrajectory = useMemo(() => {
@@ -515,6 +522,16 @@ export default function CFODashboard() {
                  value={unitEcon.ratio ? `${unitEcon.ratio.toFixed(1)}x` : "—"}
                  tone={benchColor(unitEcon.ratio, BENCHMARKS.ltvCac)}
                  hint={unitEcon.ratio ? benchLabel(unitEcon.ratio, BENCHMARKS.ltvCac) : "Add KPI goals"} />
+        <KpiCard icon={Users} label="Headcount"
+                 value={headcount > 0 ? String(headcount) : "—"}
+                 sub="Active employees" />
+        <KpiCard icon={TrendingUp} label="Revenue / FTE"
+                 value={revPerFte ? fmtCompact(revPerFte) : "—"}
+                 tone={benchColor(revPerFte, BENCHMARKS.revPerFte)}
+                 hint={revPerFte ? benchLabel(revPerFte, BENCHMARKS.revPerFte) : "Add headcount"} />
+        <KpiCard icon={Flame} label="Burn / FTE"
+                 value={burnPerFte ? `${fmtCompact(burnPerFte)}/mo` : "—"}
+                 sub="Monthly cost per head" />
       </div>
 
       {marginTrajectory.length > 0 && (
