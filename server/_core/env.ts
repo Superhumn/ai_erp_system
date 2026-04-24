@@ -48,6 +48,14 @@ export const ENV = {
     googleRedirectUri: process.env.GOOGLE_REDIRECT_URI ?? "",
     appUrl: process.env.APP_URL ?? "http://localhost:3000",
 
+    // Google Service Account (for reading private Drive folders shared with the
+    // service account directly, bypassing per-user OAuth). Either provide the
+    // whole JSON key via GOOGLE_SERVICE_ACCOUNT_JSON, or the email + private key
+    // pair. Private key literal newlines may be escaped as "\n".
+    googleServiceAccountJson: process.env.GOOGLE_SERVICE_ACCOUNT_JSON ?? "",
+    googleServiceAccountEmail: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ?? "",
+    googleServiceAccountPrivateKey: process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY ?? "",
+
     // QuickBooks OAuth configuration
     quickbooksClientId: process.env.QUICKBOOKS_CLIENT_ID ?? "",
     quickbooksClientSecret: process.env.QUICKBOOKS_CLIENT_SECRET ?? "",
@@ -76,6 +84,12 @@ export const ENV = {
 
     // Airtable integration
     airtablePersonalAccessToken: process.env.AIRTABLE_PERSONAL_ACCESS_TOKEN ?? "",
+
+    // CRM deduplication: set to "true" on the first deploy that includes
+    // migration 0035 so the app merges existing duplicates *before* the
+    // UNIQUE indexes are created. After migration 0035 is applied, unset
+    // or set to "false" to avoid the full-table scan on every boot.
+    crmDedupOnStartup: process.env.CRM_DEDUP_ON_STARTUP === "true",
 };
 
 /**

@@ -125,16 +125,20 @@ export async function getValidGoogleToken(userId: number): Promise<{ accessToken
   }
   
   // Check if token needs refresh
-  if (token.expiresAt && new Date(token.expiresAt) < new Date() && token.refreshToken) {
+  if (token.expiresAt && new Date(token.expiresAt) < new Date()) {
+    if (!token.refreshToken) {
+      return { accessToken: '', error: 'Google token has expired. Please reconnect your Google account.' };
+    }
     const refreshed = await refreshGoogleToken(token.refreshToken);
     
     if (refreshed.accessToken && refreshed.expiresAt) {
-      // Update database with new token
+      // Update database with new token (preserve existing googleEmail via COALESCE)
       await db.upsertGoogleOAuthToken({
         userId,
         accessToken: refreshed.accessToken,
         refreshToken: token.refreshToken,
         expiresAt: refreshed.expiresAt,
+        googleEmail: token.googleEmail,
       });
       return { accessToken: refreshed.accessToken };
     }

@@ -368,23 +368,23 @@ export default function TradingPartners() {
                   <table className="w-full">
                     <thead>
                       <tr className="border-b text-left">
-                        <th className="pb-2 text-sm font-medium text-muted-foreground">Buyer Part #</th>
-                        <th className="pb-2 text-sm font-medium text-muted-foreground">Vendor Part #</th>
-                        <th className="pb-2 text-sm font-medium text-muted-foreground">UPC</th>
-                        <th className="pb-2 text-sm font-medium text-muted-foreground">Internal Product ID</th>
-                        <th className="pb-2 text-sm font-medium text-muted-foreground">UOM</th>
-                        <th className="pb-2 text-sm font-medium text-muted-foreground">Pack Size</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">Buyer Part #</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">Vendor Part #</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">UPC</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">Internal Product ID</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">UOM</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">Pack Size</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
                       {partnerCrosswalks.map((cw: any) => (
                         <tr key={cw.id} className="hover:bg-muted/50">
-                          <td className="py-2 text-sm font-mono">{cw.buyerPartNumber || "-"}</td>
-                          <td className="py-2 text-sm font-mono">{cw.vendorPartNumber || "-"}</td>
-                          <td className="py-2 text-sm font-mono">{cw.upc || "-"}</td>
-                          <td className="py-2 text-sm">{cw.productId}</td>
-                          <td className="py-2 text-sm">{cw.unitOfMeasure}</td>
-                          <td className="py-2 text-sm">{cw.packSize || "-"}</td>
+                          <td className="py-0.5 text-sm font-mono">{cw.buyerPartNumber || "-"}</td>
+                          <td className="py-0.5 text-sm font-mono">{cw.vendorPartNumber || "-"}</td>
+                          <td className="py-0.5 text-sm font-mono">{cw.upc || "-"}</td>
+                          <td className="py-0.5 text-sm">{cw.productId}</td>
+                          <td className="py-0.5 text-sm">{cw.unitOfMeasure}</td>
+                          <td className="py-0.5 text-sm">{cw.packSize || "-"}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -410,27 +410,27 @@ export default function TradingPartners() {
                   <table className="w-full">
                     <thead>
                       <tr className="border-b text-left">
-                        <th className="pb-2 text-sm font-medium text-muted-foreground">Code</th>
-                        <th className="pb-2 text-sm font-medium text-muted-foreground">Name</th>
-                        <th className="pb-2 text-sm font-medium text-muted-foreground">Type</th>
-                        <th className="pb-2 text-sm font-medium text-muted-foreground">City</th>
-                        <th className="pb-2 text-sm font-medium text-muted-foreground">State</th>
-                        <th className="pb-2 text-sm font-medium text-muted-foreground">GLN</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">Code</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">Name</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">Type</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">City</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">State</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">GLN</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
                       {partnerLocations.map((loc: any) => (
                         <tr key={loc.id} className="hover:bg-muted/50">
-                          <td className="py-2 text-sm font-mono font-medium">{loc.locationCode}</td>
-                          <td className="py-2 text-sm">{loc.name}</td>
-                          <td className="py-2 text-sm">
+                          <td className="py-0.5 text-sm font-mono font-medium">{loc.locationCode}</td>
+                          <td className="py-0.5 text-sm">{loc.name}</td>
+                          <td className="py-0.5 text-sm">
                             <Badge variant="outline" className="text-xs">
                               {loc.locationType?.replace("_", " ")}
                             </Badge>
                           </td>
-                          <td className="py-2 text-sm">{loc.city || "-"}</td>
-                          <td className="py-2 text-sm">{loc.state || "-"}</td>
-                          <td className="py-2 text-sm font-mono">{loc.gln || "-"}</td>
+                          <td className="py-0.5 text-sm">{loc.city || "-"}</td>
+                          <td className="py-0.5 text-sm">{loc.state || "-"}</td>
+                          <td className="py-0.5 text-sm font-mono">{loc.gln || "-"}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -456,27 +456,27 @@ export default function TradingPartners() {
                   <table className="w-full">
                     <thead>
                       <tr className="border-b text-left">
-                        <th className="pb-2 text-sm font-medium text-muted-foreground">Period</th>
-                        <th className="pb-2 text-sm font-medium text-muted-foreground">Transactions</th>
-                        <th className="pb-2 text-sm font-medium text-muted-foreground">On-Time Ship %</th>
-                        <th className="pb-2 text-sm font-medium text-muted-foreground">Fill Rate %</th>
-                        <th className="pb-2 text-sm font-medium text-muted-foreground">ASN Accuracy %</th>
-                        <th className="pb-2 text-sm font-medium text-muted-foreground">Chargebacks</th>
-                        <th className="pb-2 text-sm font-medium text-muted-foreground">Score</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">Period</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">Transactions</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">On-Time Ship %</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">Fill Rate %</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">ASN Accuracy %</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">Chargebacks</th>
+                        <th className="pb-1 text-sm font-medium text-muted-foreground">Score</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
                       {partnerScorecards.map((sc: any) => (
                         <tr key={sc.id} className="hover:bg-muted/50">
-                          <td className="py-2 text-sm">
+                          <td className="py-0.5 text-sm">
                             {new Date(sc.periodStart).toLocaleDateString()} - {new Date(sc.periodEnd).toLocaleDateString()}
                           </td>
-                          <td className="py-2 text-sm">{sc.totalTransactions}</td>
-                          <td className="py-2 text-sm">{sc.onTimeShipPercentage || "-"}%</td>
-                          <td className="py-2 text-sm">{sc.fillRatePercentage || "-"}%</td>
-                          <td className="py-2 text-sm">{sc.asnAccuracyPercentage || "-"}%</td>
-                          <td className="py-2 text-sm">{sc.chargebackCount || 0} (${sc.chargebackAmount || "0"})</td>
-                          <td className="py-2 text-sm font-bold">{sc.overallScore || "-"}</td>
+                          <td className="py-0.5 text-sm">{sc.totalTransactions}</td>
+                          <td className="py-0.5 text-sm">{sc.onTimeShipPercentage || "-"}%</td>
+                          <td className="py-0.5 text-sm">{sc.fillRatePercentage || "-"}%</td>
+                          <td className="py-0.5 text-sm">{sc.asnAccuracyPercentage || "-"}%</td>
+                          <td className="py-0.5 text-sm">{sc.chargebackCount || 0} (${sc.chargebackAmount || "0"})</td>
+                          <td className="py-0.5 text-sm font-bold">{sc.overallScore || "-"}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -641,28 +641,28 @@ export default function TradingPartners() {
             <table className="w-full">
               <thead>
                 <tr className="border-b text-left">
-                  <th className="pb-3 text-sm font-medium text-muted-foreground">Partner</th>
-                  <th className="pb-3 text-sm font-medium text-muted-foreground">Type</th>
-                  <th className="pb-3 text-sm font-medium text-muted-foreground">ISA ID</th>
-                  <th className="pb-3 text-sm font-medium text-muted-foreground">Connection</th>
-                  <th className="pb-3 text-sm font-medium text-muted-foreground">Status</th>
-                  <th className="pb-3 text-sm font-medium text-muted-foreground">Last Transaction</th>
-                  <th className="pb-3 text-sm font-medium text-muted-foreground"></th>
+                  <th className="pb-1 text-sm font-medium text-muted-foreground">Partner</th>
+                  <th className="pb-1 text-sm font-medium text-muted-foreground">Type</th>
+                  <th className="pb-1 text-sm font-medium text-muted-foreground">ISA ID</th>
+                  <th className="pb-1 text-sm font-medium text-muted-foreground">Connection</th>
+                  <th className="pb-1 text-sm font-medium text-muted-foreground">Status</th>
+                  <th className="pb-1 text-sm font-medium text-muted-foreground">Last Transaction</th>
+                  <th className="pb-1 text-sm font-medium text-muted-foreground"></th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {partners.map((partner: any) => (
                   <tr key={partner.id} className="hover:bg-muted/50 cursor-pointer" onClick={() => setSelectedPartnerId(partner.id)}>
-                    <td className="py-3">
+                    <td className="py-0.5">
                       <div className="flex items-center gap-2">
                         <Building2 className="h-4 w-4 text-muted-foreground" />
                         <span className="font-medium">{partner.name}</span>
                       </div>
                     </td>
-                    <td className="py-3 text-sm capitalize">{partner.partnerType}</td>
-                    <td className="py-3 text-sm font-mono">{partner.isaId}</td>
-                    <td className="py-3 text-sm uppercase">{partner.connectionType}</td>
-                    <td className="py-3">
+                    <td className="py-0.5 text-sm capitalize">{partner.partnerType}</td>
+                    <td className="py-0.5 text-sm font-mono">{partner.isaId}</td>
+                    <td className="py-0.5 text-sm uppercase">{partner.connectionType}</td>
+                    <td className="py-0.5">
                       <Badge
                         variant="outline"
                         className={
@@ -675,10 +675,10 @@ export default function TradingPartners() {
                         {partner.status}
                       </Badge>
                     </td>
-                    <td className="py-3 text-sm text-muted-foreground">
+                    <td className="py-0.5 text-sm text-muted-foreground">
                       {partner.lastTransactionAt ? new Date(partner.lastTransactionAt).toLocaleDateString() : "Never"}
                     </td>
-                    <td className="py-3 text-right">
+                    <td className="py-0.5 text-right">
                       <Button variant="ghost" size="sm">View</Button>
                     </td>
                   </tr>

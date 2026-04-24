@@ -160,8 +160,7 @@ export default function DataRoomDetail() {
   const deleteDocMutation = trpc.dataRoom.documents.delete.useMutation({
     onSuccess: (_, variables) => {
       toast.success("Document deleted");
-      const vars = variables as { id: number };
-      if (selectedDoc?.id === vars.id) setSelectedDoc(null);
+      if (variables && selectedDoc?.id === variables.id) setSelectedDoc(null);
       refetchDocuments();
     },
     onError: (error) => {
@@ -801,23 +800,22 @@ export default function DataRoomDetail() {
                         const isImg = ["png","jpg","jpeg","gif","webp","svg"].includes(ft);
                         const isOffice = ["doc","docx","xls","xlsx","ppt","pptx"].includes(ft);
 
-                        if (selectedDoc.storageType === "google_drive") {
-                          const drivePreviewUrl = selectedDoc.googleDriveFileId
-                            ? getGooglePreviewUrl(selectedDoc.googleDriveFileId)
-                            : selectedDoc.googleDriveWebViewLink ?? null;
-                          if (drivePreviewUrl) {
-                            return (
-                              <iframe
-                                key={selectedDoc.id}
-                                src={drivePreviewUrl}
-                                className="w-full h-full border-0"
-                             sandbox="allow-same-origin allow-scripts allow-popups"
-                                referrerPolicy="no-referrer"
-                                allow="autoplay"
-                                title={selectedDoc.name}
-                              />
-                            );
-                          }
+                        // Google Drive files: stream through our own proxy
+                        // endpoint. The server uses the connected Google
+                        // account's OAuth token to fetch the bytes on demand,
+                        // so the folder can stay private and the browser
+                        // never sees Google's third-party iframe block.
+                        if (selectedDoc.storageType === "google_drive" && selectedDoc.id != null) {
+                          return (
+                            <iframe
+                              key={selectedDoc.id}
+                              src={`/api/drive/proxy/${selectedDoc.id}`}
+                              className="w-full h-full border-0"
+                              referrerPolicy="no-referrer"
+                              allow="autoplay"
+                              title={selectedDoc.name}
+                            />
+                          );
                         }
 
                         if (!selectedDoc.storageUrl) {

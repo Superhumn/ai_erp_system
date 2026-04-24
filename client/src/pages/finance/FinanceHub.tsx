@@ -19,19 +19,14 @@ export default function FinanceHub() {
   const [tab, setTab] = useState("ledger");
 
   return (
-    <div className="space-y-4 animate-fade-in">
-      <div>
-        <h1 className="text-lg font-semibold flex items-center gap-2">
-          <DollarSign className="h-8 w-8" />
-          Finance
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          Accounts, transactions, reports, CFO strategy, and R&D tax credits
-        </p>
-      </div>
-
+    <div className="space-y-2 animate-fade-in">
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
+        <div className="flex items-center gap-3 flex-wrap">
+          <h1 className="text-sm font-bold tracking-[-0.02em] flex items-center gap-1.5">
+            <DollarSign className="h-4 w-4" />
+            Finance
+          </h1>
+          <TabsList>
           <TabsTrigger value="ledger" className="flex items-center gap-1.5">
             <DollarSign className="h-4 w-4" />
             Accounts & Transactions
@@ -49,6 +44,7 @@ export default function FinanceHub() {
             R&D Tax Credit
           </TabsTrigger>
         </TabsList>
+        </div>
 
         <TabsContent value="ledger">
           <Suspense fallback={fallback}><AccountsAndTransactions /></Suspense>

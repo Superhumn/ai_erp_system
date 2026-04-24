@@ -164,12 +164,9 @@ export default function FundraisingCampaigns() {
   // No round yet — show create prompt
   if (!round) {
     return (
-      <div className="space-y-6 animate-fade-in">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-semibold">Fundraising</h1>
-            <p className="text-muted-foreground">Set up your current fundraising round</p>
-          </div>
+      <div className="space-y-2 animate-fade-in">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <h1 className="text-sm font-bold tracking-[-0.02em]">Fundraising</h1>
           {createDialog}
         </div>
         <Card>
@@ -193,18 +190,18 @@ export default function FundraisingCampaigns() {
   const valuation = parseFloat(round.valuation || "0");
 
   return (
-    <div className="space-y-4 animate-fade-in">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-semibold">Fundraising</h1>
-          <p className="text-muted-foreground text-sm">{round.name}</p>
-        </div>
-        <div className="flex items-center gap-2">
+    <div className="space-y-2 animate-fade-in">
+      {/* Header — single consolidated row */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3 text-xs flex-wrap">
+          <h1 className="text-sm font-bold tracking-[-0.02em]">Fundraising</h1>
+          <span className="text-muted-foreground">{round.name}</span>
           <Badge className={statusColors[round.status] || statusColors.planning}>
             {round.status}
           </Badge>
           <Badge variant="outline" className="capitalize">{(round.roundType || "seed").replace(/_/g, " ")}</Badge>
+        </div>
+        <div className="flex items-center gap-2">
           {createDialog}
         </div>
       </div>

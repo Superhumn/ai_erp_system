@@ -712,7 +712,6 @@ export default function Projects() {
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [filterProject, setFilterProject] = useState<string>("all");
   const [filterPriority, setFilterPriority] = useState<string>("all");
-  const [expandedTaskId, setExpandedTaskId] = useState<number | string | null>(null);
 
   const [taskForm, setTaskForm] = useState({
     title: "",
@@ -782,6 +781,7 @@ export default function Projects() {
     onError: (err: any) => toast.error(err.message),
   });
 
+  const [expandedTaskId, setExpandedTaskId] = useState<number | string | null>(null);
   const [assignAiTask, setAssignAiTask] = useState<any>(null);
   const [assignAiForm, setAssignAiForm] = useState({
     agentTaskType: "send_email",
@@ -890,18 +890,13 @@ export default function Projects() {
   };
 
   return (
-    <div className="p-6 space-y-6 animate-fade-in">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-semibold flex items-center gap-2">
-              <FolderKanban className="h-4 w-4" />
-              Projects & Tasks
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              Manage tasks with Kanban or Spreadsheet view
-            </p>
-          </div>
+    <div className="p-6 space-y-2 animate-fade-in">
+        {/* Header — single consolidated row */}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <h1 className="text-sm font-bold tracking-[-0.02em] flex items-center gap-1.5">
+            <FolderKanban className="h-4 w-4" />
+            Projects & Tasks
+          </h1>
           <div className="flex items-center gap-2">
             {/* View toggle */}
             <div className="flex items-center border rounded-lg p-1">
@@ -1079,7 +1074,7 @@ export default function Projects() {
                 showExport
                 expandable
                 expandedRowId={expandedTaskId}
-                onExpandChange={setExpandedTaskId}
+                onExpandChange={(id) => setExpandedTaskId(id === null ? null : Number(id))}
                 renderExpanded={(task, onClose) => (
                   <TaskDetailPanel
                     task={task}

@@ -760,7 +760,7 @@ export default function Projects() {
                         <div className="mt-0.5 hidden items-center gap-2 sm:flex">
                           <Progress value={projectProgress} className="h-1 w-24" />
                           <span className="text-[11px] text-muted-foreground">
-                            {projectProgress}% Â· {tasks.length} task{tasks.length !== 1 ? "s" : ""}
+                            {projectProgress}% · {tasks.length} task{tasks.length !== 1 ? "s" : ""}
                           </span>
                         </div>
                       </div>
