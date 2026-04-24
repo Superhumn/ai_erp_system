@@ -21402,7 +21402,7 @@ Return JSON array only. No markdown.`;
         const safeStakeholder = escapeHtml(stakeholder.name || "");
         const safeInviter = escapeHtml(ctx.user.name || "The team");
 
-        let emailResult: { success: boolean; error?: unknown } = { success: false };
+        let emailResult: { success: boolean; error?: unknown };
         try {
           emailResult = await sendEmail({
             to: stakeholder.email,
