@@ -576,23 +576,64 @@ export function deriveSeries(model: FinancialModel) {
       )
     : undefined;
 
-  // YoY growth on primary top-line series (revenue preferred, else ARR).
+  const getPeriodMonthIndex = (period: Period): number => {
+    if (period.month !== undefined) {
+      return period.year * 12 + (period.month - 1);
+    }
+    if (period.quarter !== undefined) {
+      return period.year * 12 + (period.quarter - 1) * 3;
+    }
+    return period.year * 12;
+  };
+
+  const getElapsedMonths = (start: Period, end: Period): number => {
+    return getPeriodMonthIndex(end) - getPeriodMonthIndex(start);
+  };
+
+  // Annualized growth on primary top-line series (revenue preferred, else ARR),
+  // using actual elapsed time between adjacent periods.
   const yoyGrowth: (number | null)[] | undefined = rev
     ? rev.map((r, i) => {
         if (i === 0 || r === null) return null;
         const prev = rev[i - 1];
-        if (prev === null || prev === 0) return null;
-        return ((r - prev) / Math.abs(prev)) * 100;
+        if (prev === null || prev <= 0 || r <= 0) return null;
+
+        const elapsedMonths = getElapsedMonths(periods[i - 1], periods[i]);
+        if (elapsedMonths <= 0) return null;
+
+        return (Math.pow(r / prev, 12 / elapsedMonths) - 1) * 100;
       })
     : undefined;
 
-  // CAGR on primary top-line, first → last non-null.
+  // CAGR on primary top-line, first non-null → last non-null, annualized using
+  // the actual elapsed time between those periods.
   let cagr: number | null = null;
   if (rev && n >= 2) {
-    const first = rev[0];
-    const last = rev[n - 1];
-    if (first !== null && last !== null && first > 0 && last > 0) {
-      cagr = (Math.pow(last / first, 1 / (n - 1)) - 1) * 100;
+    let firstIndex = -1;
+    let lastIndex = -1;
+
+    for (let i = 0; i < n; i++) {
+      if (rev[i] !== null) {
+        firstIndex = i;
+        break;
+      }
+    }
+
+    for (let i = n - 1; i >= 0; i--) {
+      if (rev[i] !== null) {
+        lastIndex = i;
+        break;
+      }
+    }
+
+    if (firstIndex !== -1 && lastIndex !== -1 && lastIndex > firstIndex) {
+      const first = rev[firstIndex] as number;
+      const last = rev[lastIndex] as number;
+      const elapsedMonths = getElapsedMonths(periods[firstIndex], periods[lastIndex]);
+
+      if (first > 0 && last > 0 && elapsedMonths > 0) {
+        cagr = (Math.pow(last / first, 12 / elapsedMonths) - 1) * 100;
+      }
     }
   }
 
