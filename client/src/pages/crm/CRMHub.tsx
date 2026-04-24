@@ -748,25 +748,25 @@ export default function CRMHub() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <Table className="[&_td]:py-1 [&_th]:py-1.5">
+              <Table className="[&_td]:py-0.5 [&_td]:px-1.5 [&_th]:py-1 [&_th]:px-1.5">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="min-w-[160px]">Deal Name</TableHead>
-                    <TableHead className="min-w-[120px]">Contact</TableHead>
-                    <TableHead className="min-w-[120px]">Company</TableHead>
-                    <TableHead className="min-w-[100px] text-right">Value</TableHead>
-                    <TableHead className="min-w-[100px]">Stage</TableHead>
-                    <TableHead className="min-w-[100px]">Source</TableHead>
-                    <TableHead className="min-w-[100px]">Last Contact</TableHead>
-                    <TableHead className="min-w-[140px]">Next Step</TableHead>
-                    <TableHead className="w-[40px]"></TableHead>
+                    <TableHead className="min-w-[130px]">Deal Name</TableHead>
+                    <TableHead className="min-w-[80px]">Contact</TableHead>
+                    <TableHead className="min-w-[80px]">Company</TableHead>
+                    <TableHead className="min-w-[60px] text-right">Value</TableHead>
+                    <TableHead className="min-w-[80px]">Stage</TableHead>
+                    <TableHead className="min-w-[70px]">Source</TableHead>
+                    <TableHead className="min-w-[85px]">Last Contact</TableHead>
+                    <TableHead className="min-w-[110px]">Next Step</TableHead>
+                    <TableHead className="w-[32px]"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredDeals.map((deal: any) => (
                     <React.Fragment key={deal.id}>
-                    <TableRow className="hover:bg-muted/50 cursor-pointer text-xs h-9" onClick={() => setExpandedDealId(expandedDealId === deal.id ? null : deal.id)}>
-                      <TableCell className="font-medium py-1.5">
+                    <TableRow className="hover:bg-muted/50 cursor-pointer text-xs h-7" onClick={() => setExpandedDealId(expandedDealId === deal.id ? null : deal.id)}>
+                      <TableCell className="font-medium">
                         <div className="flex items-center gap-1">
                           {expandedDealId === deal.id ? <ChevronUp className="h-3 w-3 text-muted-foreground" /> : <ChevronDown className="h-3 w-3 text-muted-foreground" />}
                           <span onClick={(e) => e.stopPropagation()}>
@@ -790,16 +790,16 @@ export default function CRMHub() {
                           ))}
                         </select>
                       </TableCell>
-                      <TableCell className="text-sm capitalize">{deal._source}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
+                      <TableCell className="capitalize">{deal._source}</TableCell>
+                      <TableCell className="text-muted-foreground">
                         {deal._lastContact ? format(new Date(deal._lastContact), "MMM d, yyyy") : "-"}
                       </TableCell>
-                      <TableCell className="text-sm max-w-[140px] truncate">{deal._nextStep}</TableCell>
-                      <TableCell>
+                      <TableCell className="max-w-[110px] truncate">{deal._nextStep}</TableCell>
+                      <TableCell className="px-0">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="sm" onClick={(e) => e.stopPropagation()}>
-                              <MoreHorizontal className="h-4 w-4" />
+                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => e.stopPropagation()}>
+                              <MoreHorizontal className="h-3.5 w-3.5" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
