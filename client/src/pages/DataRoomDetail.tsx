@@ -19,7 +19,8 @@ import {
   ChevronRight, ArrowLeft, MoreVertical, Mail, Send, Cloud,
   HardDrive, RefreshCw, Shield, Activity,
   AlertCircle, CheckCircle2, XCircle, ClipboardList,
-  CheckSquare, Square, AlertTriangle, ChevronDown, Wand2
+  CheckSquare, Square, AlertTriangle, ChevronDown, Wand2,
+  StickyNote, Sparkles
 } from "lucide-react";
 import { useLocation, useParams } from "wouter";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -28,6 +29,82 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 function getGooglePreviewUrl(fileId: string) {
   return `https://drive.google.com/file/d/${fileId}/preview`;
 }
+
+// Render a plain-text / lightly-marked-up note body as a styled HTML document.
+// Supports blank-line paragraphs and lines starting with "## " as headings.
+function renderNoteHtml(title: string, body: string): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  const blocks = body
+    .replace(/\r\n/g, "\n")
+    .split(/\n{2,}/)
+    .map((raw) => raw.trim())
+    .filter(Boolean)
+    .map((block) => {
+      if (block.startsWith("## ")) {
+        return `<h2>${esc(block.slice(3).trim())}</h2>`;
+      }
+      if (block.startsWith("# ")) {
+        return `<h2>${esc(block.slice(2).trim())}</h2>`;
+      }
+      return `<p>${esc(block).replace(/\n/g, "<br/>")}</p>`;
+    })
+    .join("\n");
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>${esc(title)}</title>
+<style>
+  :root { color-scheme: light; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Arial, sans-serif; background: #fafafa; color: #111; margin: 0; }
+  main { max-width: 760px; margin: 0 auto; padding: 56px 32px 80px; line-height: 1.65; }
+  h1 { font-size: 30px; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 10px; }
+  h2 { font-size: 20px; letter-spacing: -0.01em; margin: 36px 0 10px; }
+  p  { font-size: 16px; margin: 0 0 18px; color: #222; }
+  .meta { color: #666; font-size: 13px; margin-bottom: 32px; }
+</style>
+</head>
+<body>
+<main>
+<h1>${esc(title)}</h1>
+<div class="meta">Note</div>
+${blocks}
+</main>
+</body>
+</html>`;
+}
+
+// UTF-8 safe base64 encoder (btoa alone can't handle non-ASCII).
+function utf8ToBase64(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+const VC_CORNER_TEMPLATE = {
+  title:
+    "The Investor Dashboard Most Founders Spend Weeks Building. Yours in 3 Steps",
+  body: `Fill an Excel template. Get an investor-grade dashboard. Instantly.
+
+Most founders walk into investor meetings with a spreadsheet and a prayer.
+
+The numbers are there. The story is there. But nothing looks like it belongs to a company worth backing. The financial model is buried in Excel, the cap table is on a separate tab, and the runway chart looks like it was made in 2014.
+
+Investors form impressions fast. The presentation layer matters more than most founders want to admit.
+
+So we built something to fix this.
+
+## The VC Corner Dashboard Generator
+
+Turn your 5-year financial projections into a polished, investor-grade dashboard in seconds.
+
+Fill an Excel template. Drag and drop the file. Your dashboard appears instantly. Your data never leaves your device.`,
+};
 
 // Helper: open or download a file URL, handling data: URLs properly
 function openFileUrl(url: string, filename?: string) {
@@ -67,6 +144,8 @@ export default function DataRoomDetail() {
   const [deleteAllOpen, setDeleteAllOpen] = useState(false);
   const [isDeletingAll, setIsDeletingAll] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  const [noteDialogOpen, setNoteDialogOpen] = useState(false);
+  const [newNote, setNewNote] = useState({ title: "", body: "" });
   const [newLink, setNewLink] = useState({
     name: "",
     password: "",
@@ -314,6 +393,39 @@ export default function DataRoomDetail() {
     const t = setTimeout(() => setDocVisible(true), 40);
     return () => clearTimeout(t);
   }, [selectedDoc?.id]);
+
+  const handleCreateNote = () => {
+    const title = newNote.title.trim();
+    const body = newNote.body.trim();
+    if (!title || !body) {
+      toast.error("Title and content are required");
+      return;
+    }
+    const html = renderNoteHtml(title, body);
+    const base64 = utf8ToBase64(html);
+    const sizeBytes = new TextEncoder().encode(html).length;
+    const safeName =
+      (title.replace(/[^\w\s.-]/g, "").replace(/\s+/g, " ").trim().slice(0, 80) ||
+        "Note") + ".html";
+
+    uploadMutation.mutate(
+      {
+        dataRoomId: roomId,
+        folderId: currentFolderId,
+        name: safeName,
+        fileType: "html",
+        mimeType: "text/html",
+        fileSize: sizeBytes,
+        base64Content: base64,
+      },
+      {
+        onSuccess: () => {
+          setNoteDialogOpen(false);
+          setNewNote({ title: "", body: "" });
+        },
+      },
+    );
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -611,6 +723,81 @@ export default function DataRoomDetail() {
                       className="hidden"
                       onChange={handleFileUpload}
                     />
+                    {/* New Note */}
+                    <Dialog open={noteDialogOpen} onOpenChange={setNoteDialogOpen}>
+                      <DialogTrigger asChild>
+                        <button
+                          className="p-1.5 rounded-md hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+                          title="New note"
+                        >
+                          <StickyNote className="h-3.5 w-3.5" />
+                        </button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-xl">
+                        <DialogHeader>
+                          <DialogTitle>New Note</DialogTitle>
+                          <DialogDescription>
+                            Add a text document to this data room. Use a blank line for paragraphs, and <code>## </code> at the start of a line for a heading.
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4 py-2">
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <Label htmlFor="note-title">Title</Label>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-xs"
+                                onClick={() =>
+                                  setNewNote({
+                                    title: VC_CORNER_TEMPLATE.title,
+                                    body: VC_CORNER_TEMPLATE.body,
+                                  })
+                                }
+                              >
+                                <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+                                Use VC Corner Dashboard template
+                              </Button>
+                            </div>
+                            <Input
+                              id="note-title"
+                              placeholder="e.g. Investor Update — April 2026"
+                              value={newNote.title}
+                              onChange={(e) =>
+                                setNewNote({ ...newNote, title: e.target.value })
+                              }
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="note-body">Content</Label>
+                            <Textarea
+                              id="note-body"
+                              rows={14}
+                              placeholder="Write your note here..."
+                              value={newNote.body}
+                              onChange={(e) =>
+                                setNewNote({ ...newNote, body: e.target.value })
+                              }
+                            />
+                          </div>
+                        </div>
+                        <DialogFooter>
+                          <Button
+                            variant="outline"
+                            onClick={() => setNoteDialogOpen(false)}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            onClick={handleCreateNote}
+                            disabled={uploadMutation.isPending}
+                          >
+                            {uploadMutation.isPending ? "Saving..." : "Save Note"}
+                          </Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
                     {/* Delete All */}
                     {(!!folders?.length || !!documents?.length) && (
                       <button
