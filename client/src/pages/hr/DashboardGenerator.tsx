@@ -13,6 +13,11 @@ import {
   Download, Upload, Sparkles, DollarSign, TrendingUp, Users,
   Flame, Clock, RefreshCw, ShieldCheck, FileSpreadsheet, AlertTriangle,
 } from "lucide-react";
+import {
+  parseFinancialProjection,
+  deriveSeries,
+  type FinancialModel,
+} from "@/lib/financialProjectionParser";
 
 // ── Shapes ────────────────────────────────────────────────────────────────
 
@@ -128,179 +133,54 @@ function downloadTemplate() {
   XLSX.writeFile(wb, "vc-corner-dashboard-template.xlsx");
 }
 
-// ── Parsing ───────────────────────────────────────────────────────────────
+// ── Parsing ──────────────────────────────────────────────────────────────
 
-const SYNONYMS: Record<keyof Omit<ProjectionRow, "grossProfit" | "grossMargin" | "netIncome" | "netMargin">, string[]> = {
-  year: ["year", "period", "fy", "fiscal year"],
-  revenue: ["revenue", "sales", "total revenue", "top line"],
-  cogs: ["cogs", "cost of goods sold", "cost of revenue", "cost of sales"],
-  opex: ["opex", "operating expenses", "operating expense", "operating cost", "operating costs", "total opex"],
-  cashBalance: ["cash balance", "cash", "ending cash", "cash on hand", "cash position", "ending cash balance"],
-  headcount: ["headcount", "employees", "team size", "fte", "ftes"],
-};
+/**
+ * Bridge the new canonical FinancialModel into the per-year ProjectionRow[]
+ * shape that the existing UI renders from. Derived series (gross profit, net
+ * income, margins) come from `deriveSeries` when the raw values are missing.
+ */
+function toParsedData(model: FinancialModel): ParsedData {
+  const derived = deriveSeries(model);
+  const top = model.metrics.revenue ?? model.metrics.arr ?? [];
 
-function norm(s: unknown): string {
-  return String(s ?? "").toLowerCase().trim().replace(/\s+/g, " ");
-}
-
-function toNumber(v: unknown): number {
-  if (typeof v === "number") return v;
-  if (typeof v === "string") {
-    const cleaned = v.replace(/[,$\s]/g, "").replace(/[()]/g, (m) => (m === "(" ? "-" : ""));
-    const n = parseFloat(cleaned);
-    return Number.isFinite(n) ? n : NaN;
-  }
-  return NaN;
-}
-
-function findColumn(headers: string[], syn: string[]): number {
-  const nh = headers.map(norm);
-  for (const s of syn) {
-    const i = nh.indexOf(s);
-    if (i >= 0) return i;
-  }
-  // loose match
-  for (let i = 0; i < nh.length; i++) {
-    for (const s of syn) {
-      if (nh[i].includes(s) || s.includes(nh[i])) return i;
-    }
-  }
-  return -1;
-}
-
-function pickSheet(wb: XLSX.WorkBook, candidates: string[]): string | null {
-  const names = wb.SheetNames;
-  const lower = names.map((n) => n.toLowerCase());
-  for (const c of candidates) {
-    const i = lower.indexOf(c);
-    if (i >= 0) return names[i];
-  }
-  for (const c of candidates) {
-    for (let i = 0; i < lower.length; i++) {
-      if (lower[i].includes(c)) return names[i];
-    }
-  }
-  return null;
-}
-
-function parseMetaSheet(wb: XLSX.WorkBook): CompanyMeta {
-  const sheetName = pickSheet(wb, ["summary", "company", "meta", "info"]);
-  const defaultMeta: CompanyMeta = {
-    companyName: "Your Company",
-    currency: "USD",
-    raiseAmount: null,
-    valuation: null,
-    stage: "",
-  };
-  if (!sheetName) return defaultMeta;
-
-  const rows = XLSX.utils.sheet_to_json<(string | number)[]>(wb.Sheets[sheetName], { header: 1 });
-  const map: Record<string, string | number> = {};
-  for (const r of rows) {
-    if (!Array.isArray(r) || r.length < 2) continue;
-    const k = norm(r[0]);
-    if (!k || k === "field") continue;
-    map[k] = r[1] as string | number;
-  }
-
-  const pick = (...keys: string[]): string | number | undefined => {
-    for (const k of keys) {
-      const v = map[k];
-      if (v !== undefined && v !== null && v !== "") return v;
-    }
-    return undefined;
-  };
-
-  const name = pick("company name", "company", "name");
-  const currency = pick("currency", "currency code");
-  const stage = pick("stage", "round", "funding stage");
-  const raise = pick("raise amount", "raise", "round size", "target raise");
-  const val = pick("valuation", "pre-money valuation", "post-money valuation");
-
-  return {
-    companyName: name ? String(name) : defaultMeta.companyName,
-    currency: currency ? String(currency).toUpperCase() : defaultMeta.currency,
-    stage: stage ? String(stage) : defaultMeta.stage,
-    raiseAmount: raise !== undefined ? toNumber(raise) : null,
-    valuation: val !== undefined ? toNumber(val) : null,
-  };
-}
-
-function parseProjections(wb: XLSX.WorkBook): ProjectionRow[] {
-  const sheetName =
-    pickSheet(wb, ["projections", "financials", "forecast", "model", "plan"]) ??
-    wb.SheetNames.find((n) => n.toLowerCase() !== "summary") ??
-    wb.SheetNames[0];
-  if (!sheetName) return [];
-
-  const rows = XLSX.utils.sheet_to_json<(string | number | null | undefined)[]>(
-    wb.Sheets[sheetName],
-    { header: 1, blankrows: false },
-  );
-  if (rows.length < 2) return [];
-
-  // Find header row (the one with "year" / "revenue" etc).
-  let headerIdx = 0;
-  for (let i = 0; i < Math.min(rows.length, 10); i++) {
-    const normed = (rows[i] ?? []).map(norm).join(" | ");
-    if (normed.includes("year") && normed.includes("revenue")) {
-      headerIdx = i;
-      break;
-    }
-  }
-  const headers = (rows[headerIdx] ?? []).map((h) => String(h ?? ""));
-
-  const idx = {
-    year: findColumn(headers, SYNONYMS.year),
-    revenue: findColumn(headers, SYNONYMS.revenue),
-    cogs: findColumn(headers, SYNONYMS.cogs),
-    opex: findColumn(headers, SYNONYMS.opex),
-    cashBalance: findColumn(headers, SYNONYMS.cashBalance),
-    headcount: findColumn(headers, SYNONYMS.headcount),
-  };
-
-  if (idx.year < 0 || idx.revenue < 0) {
-    throw new Error(
-      "Projections sheet needs at least 'Year' and 'Revenue' columns. Download the template for a working example.",
-    );
-  }
-
-  const out: ProjectionRow[] = [];
-  for (let i = headerIdx + 1; i < rows.length; i++) {
-    const r = rows[i] ?? [];
-    const year = toNumber(r[idx.year]);
-    if (!Number.isFinite(year)) continue;
-    const revenue = toNumber(r[idx.revenue]) || 0;
-    const cogs = idx.cogs >= 0 ? toNumber(r[idx.cogs]) || 0 : 0;
-    const opex = idx.opex >= 0 ? toNumber(r[idx.opex]) || 0 : 0;
-    const cashBalance = idx.cashBalance >= 0 ? toNumber(r[idx.cashBalance]) || 0 : 0;
-    const headcount = idx.headcount >= 0 ? toNumber(r[idx.headcount]) || 0 : 0;
-    const grossProfit = revenue - cogs;
-    const grossMargin = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
-    const netIncome = grossProfit - opex;
-    const netMargin = revenue > 0 ? (netIncome / revenue) * 100 : 0;
-    out.push({
-      year: Math.round(year),
+  const rows: ProjectionRow[] = model.periods.map((p, i) => {
+    const revenue = top[i] ?? 0;
+    const cogs = model.metrics.cogs?.[i] ?? 0;
+    const opex = model.metrics.opex?.[i] ?? 0;
+    const cashBalance = model.metrics.cashBalance?.[i] ?? 0;
+    const headcount = model.metrics.headcount?.[i] ?? 0;
+    const grossProfit = derived.grossProfit?.[i] ?? revenue - cogs;
+    const grossMargin = derived.grossMargin?.[i] ?? (revenue > 0 ? (grossProfit / revenue) * 100 : 0);
+    const netIncome = derived.netIncome?.[i] ?? grossProfit - opex;
+    const netMargin = derived.netMargin?.[i] ?? (revenue > 0 ? (netIncome / revenue) * 100 : 0);
+    return {
+      year: p.year,
       revenue, cogs, opex, cashBalance, headcount,
       grossProfit, grossMargin, netIncome, netMargin,
-    });
-  }
+    };
+  });
 
-  out.sort((a, b) => a.year - b.year);
-  return out;
+  return {
+    meta: {
+      companyName: model.meta.companyName ?? "Your Company",
+      currency: model.meta.currency ?? "USD",
+      stage: model.meta.stage ?? "",
+      raiseAmount: model.meta.raiseAmount ?? null,
+      valuation: model.meta.valuation ?? null,
+    },
+    rows,
+  };
 }
 
 async function parseWorkbook(file: File): Promise<ParsedData> {
-  const buffer = await file.arrayBuffer();
-  const wb = XLSX.read(buffer, { type: "array" });
-  const meta = parseMetaSheet(wb);
-  const rows = parseProjections(wb);
-  if (rows.length === 0) {
+  const { model } = await parseFinancialProjection(file);
+  if (model.periods.length === 0) {
     throw new Error(
-      "Couldn't find any projection rows. Make sure the Projections sheet has a 'Year' and 'Revenue' column.",
+      "Couldn't find any projection rows. Make sure the sheet has time-period headers (years, FY, or dates) and labeled metric rows.",
     );
   }
-  return { meta, rows };
+  return toParsedData(model);
 }
 
 // ── Chart tooltip ─────────────────────────────────────────────────────────
