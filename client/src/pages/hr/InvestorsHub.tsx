@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FileBarChart, Megaphone } from "lucide-react";
+import { FileBarChart, Megaphone, Sparkles } from "lucide-react";
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 
 const EquityReports = lazy(() => import("./EquityReports"));
 const InvestorUpdates = lazy(() => import("../InvestorUpdates"));
+const DashboardGenerator = lazy(() => import("./DashboardGenerator"));
 
 const fallback = (
   <div className="flex items-center justify-center py-12">
@@ -30,6 +31,10 @@ export default function InvestorsHub() {
             <Megaphone className="h-3.5 w-3.5" />
             Investor Updates
           </TabsTrigger>
+          <TabsTrigger value="generator" className="flex items-center gap-1.5">
+            <Sparkles className="h-3.5 w-3.5" />
+            Dashboard Generator
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="captable">
@@ -37,6 +42,9 @@ export default function InvestorsHub() {
         </TabsContent>
         <TabsContent value="updates">
           <Suspense fallback={fallback}><InvestorUpdates /></Suspense>
+        </TabsContent>
+        <TabsContent value="generator">
+          <Suspense fallback={fallback}><DashboardGenerator /></Suspense>
         </TabsContent>
       </Tabs>
     </div>
