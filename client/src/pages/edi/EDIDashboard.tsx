@@ -82,107 +82,38 @@ export default function EDIDashboard() {
   }
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold tracking-[-0.02em]">EDI Hub</h1>
-          <p className="text-muted-foreground">Electronic Data Interchange for retail customer connections</p>
+    <div className="p-6 space-y-2">
+      {/* Header — single consolidated row */}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-4 text-xs flex-wrap">
+          <h1 className="text-sm font-bold tracking-[-0.02em]">EDI</h1>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Partners</span> <span className="font-bold">{stats?.totalPartners || 0}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Active</span> <span className="font-bold text-green-600">{stats?.activePartners || 0}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Transactions</span> <span className="font-bold">{stats?.totalTransactions || 0}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">This Week</span> <span className="font-bold">{stats?.recentTransactions || 0}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Pending</span> <span className="font-bold">{(stats as any)?.pendingAcks || 0}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Errors</span> <span className="font-bold text-red-600">{(stats as any)?.errorTransactions || 0}</span></div>
         </div>
         <div className="flex gap-2">
           <Link href="/edi/partners">
-            <Button variant="outline">
+            <Button variant="outline" size="sm">
               <Building2 className="h-4 w-4 mr-2" />
               Trading Partners
             </Button>
           </Link>
           <Link href="/edi/connect">
-            <Button>
+            <Button size="sm">
               <Plus className="h-4 w-4 mr-2" />
               Connect a Retailer
             </Button>
           </Link>
         </div>
-      </div>
-
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Building2 className="h-4 w-4" />
-              Partners
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.totalPartners || 0}</div>
-            <p className="text-xs text-muted-foreground">{stats?.activePartners || 0} active</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <ArrowLeftRight className="h-4 w-4" />
-              Total Transactions
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.totalTransactions || 0}</div>
-            <p className="text-xs text-muted-foreground">All time</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              This Week
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{stats?.recentTransactions || 0}</div>
-            <p className="text-xs text-muted-foreground">Last 7 days</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Clock className="h-4 w-4" />
-              Pending ACKs
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em]">{(stats as any)?.pendingAcks || 0}</div>
-            <p className="text-xs text-muted-foreground">Awaiting response</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4" />
-              Errors
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em] text-red-600">{(stats as any)?.errorTransactions || 0}</div>
-            <p className="text-xs text-muted-foreground">Needs attention</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4" />
-              Active Partners
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{stats?.activePartners || 0}</div>
-            <p className="text-xs text-muted-foreground">Connected</p>
-          </CardContent>
-        </Card>
       </div>
 
       {/* Quick Actions & Document Flow */}

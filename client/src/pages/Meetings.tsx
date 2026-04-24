@@ -242,7 +242,7 @@ export default function Meetings() {
     <div className="space-y-2">
       {/* ── Compact toolbar: stats + search + actions ── */}
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-lg font-semibold tracking-tight mr-1">Meetings</h1>
+        <h1 className="text-sm font-bold tracking-[-0.02em] mr-1">Meetings</h1>
         <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
           <span className="rounded bg-muted px-1.5 py-0.5 font-medium tabular-nums">{stats?.total ?? meetings.length}</span>
           <span className="rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 px-1.5 py-0.5 font-medium tabular-nums">{stats?.pending ?? 0} pending</span>

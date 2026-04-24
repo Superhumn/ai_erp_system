@@ -890,18 +890,13 @@ export default function Projects() {
   };
 
   return (
-    <div className="p-6 space-y-6 animate-fade-in">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-semibold flex items-center gap-2">
-              <FolderKanban className="h-4 w-4" />
-              Projects & Tasks
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              Manage tasks with Kanban or Spreadsheet view
-            </p>
-          </div>
+    <div className="p-6 space-y-2 animate-fade-in">
+        {/* Header — single consolidated row */}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <h1 className="text-sm font-bold tracking-[-0.02em] flex items-center gap-1.5">
+            <FolderKanban className="h-4 w-4" />
+            Projects & Tasks
+          </h1>
           <div className="flex items-center gap-2">
             {/* View toggle */}
             <div className="flex items-center border rounded-lg p-1">

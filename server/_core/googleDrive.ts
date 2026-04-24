@@ -207,32 +207,23 @@ export async function syncDriveFolder(
   
   async function syncRecursive(currentFolderId: string, depth: number) {
     if (depth > maxDepth) return;
-    
-    // Get subfolders
+
     const { folders, error: folderError } = await listDriveFolders(accessToken, currentFolderId);
     if (folderError) {
       console.error(`[GoogleDrive] Error syncing folder ${currentFolderId}:`, folderError);
       return;
     }
-    
-    // Skip folders named "Private" or starting with "_"
-    const filteredFolders = folders.filter(f =>
-      !f.name.toLowerCase().includes('private') &&
-      !f.name.startsWith('_') &&
-      !f.name.toLowerCase().includes('confidential')
-    );
-    allFolders.push(...filteredFolders);
 
-    // Get files in current folder
+    allFolders.push(...folders);
+
     const { files, error: fileError } = await listDriveFiles(accessToken, currentFolderId);
     if (fileError) {
       console.error(`[GoogleDrive] Error getting files in ${currentFolderId}:`, fileError);
     } else {
       allFiles.push(...files);
     }
-    
-    // Recursively sync subfolders (only non-private ones)
-    for (const folder of filteredFolders) {
+
+    for (const folder of folders) {
       await syncRecursive(folder.id, depth + 1);
     }
   }

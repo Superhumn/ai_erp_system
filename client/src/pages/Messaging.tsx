@@ -216,15 +216,10 @@ export default function Messaging() {
   // ----- Render -----
 
   return (
-    <div className="animate-fade-in space-y-6">
-      {/* Page Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-semibold">Messaging</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Unified conversations across WhatsApp, Email, and Google Chat
-          </p>
-        </div>
+    <div className="animate-fade-in space-y-2">
+      {/* Header — single consolidated row */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h1 className="text-sm font-bold tracking-[-0.02em]">Messaging</h1>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="gap-1.5">
             <Wifi className="h-3 w-3 text-green-500" />
