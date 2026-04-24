@@ -551,7 +551,7 @@ export default function SalesHub() {
                   {columns.map((col) => (
                     <th
                       key={col.key}
-                      className={`px-2 py-2 font-medium text-xs whitespace-nowrap select-none ${
+                      className={`px-1.5 py-1 font-medium text-xs whitespace-nowrap select-none ${
                         col.align === "right" ? "text-right" : "text-left"
                       } ${col.sortable ? "cursor-pointer hover:bg-muted/80" : ""}`}
                       onClick={() => col.sortable && toggleSort(col.key)}
@@ -585,7 +585,7 @@ export default function SalesHub() {
                       {columns.map((col) => (
                         <td
                           key={col.key}
-                          className={`px-2 py-1.5 whitespace-nowrap ${
+                          className={`px-1.5 py-0.5 whitespace-nowrap ${
                             col.align === "right" ? "text-right tabular-nums" : "text-left"
                           }`}
                         >
