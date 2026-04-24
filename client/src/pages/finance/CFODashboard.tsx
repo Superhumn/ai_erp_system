@@ -194,8 +194,62 @@ export default function CFODashboard() {
   }, [invoicesList]);
   const yoyGrowth = yoyBaseRev > 0 ? ((thisMonthRev - yoyBaseRev) / yoyBaseRev) * 100 : 0;
 
-  const arr = threeMonthAvgRev * 12;
+  const naiveArr = threeMonthAvgRev * 12;
   const netNewArr = (thisMonthRev - lastMonthRev) * 12;
+
+  // ── Recurring-order cadence detection (B2B MRR) ─────────────
+  // For each customer with ≥2 invoices, infer mean days-between-orders.
+  // Active = last order within 1.5× cadence; At-Risk = 1.5-3×; Churned = >3×.
+  // Detected MRR = Σ (customer avg invoice / cadence-in-months) across active.
+  const recurring = useMemo(() => {
+    const invs = invoicesList ?? [];
+    if (invs.length === 0) return null;
+    const byCustomer = new Map<string, { name: string; times: number[]; amounts: number[] }>();
+    for (const inv of invs) {
+      const name = (inv as any).customer?.name || `Customer ${(inv as any).customerId ?? "—"}`;
+      const t = new Date((inv as any).issueDate || (inv as any).createdAt).getTime();
+      const amt = parseFloat((inv as any).totalAmount || "0");
+      if (!byCustomer.has(name)) byCustomer.set(name, { name, times: [], amounts: [] });
+      const c = byCustomer.get(name)!;
+      c.times.push(t);
+      c.amounts.push(amt);
+    }
+    const now = Date.now();
+    const profiles = Array.from(byCustomer.values())
+      .map((c) => {
+        c.times.sort((a, b) => a - b);
+        const n = c.times.length;
+        if (n < 2) return null;
+        const intervals = c.times.slice(1).map((t, i) => (t - c.times[i]) / 86400000);
+        const cadenceDays = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+        const avgAmount = c.amounts.reduce((a, b) => a + b, 0) / c.amounts.length;
+        const lastOrder = c.times[n - 1];
+        const daysSinceLast = (now - lastOrder) / 86400000;
+        let status: "active" | "at_risk" | "churned" = "active";
+        if (daysSinceLast > cadenceDays * 3) status = "churned";
+        else if (daysSinceLast > cadenceDays * 1.5) status = "at_risk";
+        return { name: c.name, cadenceDays, avgAmount, lastOrder, daysSinceLast, status };
+      })
+      .filter((p): p is NonNullable<typeof p> => p !== null);
+
+    if (profiles.length === 0) return null;
+    const active  = profiles.filter((p) => p.status === "active");
+    const atRisk  = profiles.filter((p) => p.status === "at_risk").sort((a, b) => b.avgAmount - a.avgAmount);
+    const churned = profiles.filter((p) => p.status === "churned");
+    const detectedMRR = active.reduce((s, p) =>
+      s + (p.avgAmount / (p.cadenceDays / 30.44)), 0);
+    const atRiskARR = atRisk.reduce((s, p) => s + (p.avgAmount / (p.cadenceDays / 30.44)) * 12, 0);
+    return {
+      total: profiles.length,
+      active: active.length,
+      atRisk: atRisk.length,
+      churned: churned.length,
+      detectedMRR,
+      detectedARR: detectedMRR * 12,
+      atRiskARR,
+      atRiskCustomers: atRisk.slice(0, 5),
+    };
+  }, [invoicesList]);
 
   // ── Cohort-derived retention (NRR / GRR / Logo) ─────────────
   // Groups invoices by customer, compares this-month revenue vs same-customer
@@ -338,6 +392,10 @@ export default function CFODashboard() {
     const daysAgo = Math.floor((Date.now() - sentDate.getTime()) / 86400000);
     return { title: latest.title, date: sentDate, daysAgo };
   }, [investorUpdatesList]);
+
+  // Prefer cadence-detected ARR when we have enough signal (≥3 recurring customers)
+  const arr = recurring && recurring.active >= 3 ? recurring.detectedARR : naiveArr;
+  const arrSource = recurring && recurring.active >= 3 ? "recurring" : "invoices";
 
   // DPO — Days Payable Outstanding
   const dpo = useMemo(() => {
@@ -706,7 +764,11 @@ export default function CFODashboard() {
         <span className="text-[11px] text-muted-foreground/70">How fast, and is it durable?</span>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-        <KpiCard icon={TrendingUp} label="ARR" value={fmtCompact(arr)} sub="From trailing 3mo avg" />
+        <KpiCard icon={TrendingUp} label="ARR"
+                 value={fmtCompact(arr)}
+                 sub={arrSource === "recurring"
+                   ? `${recurring?.active ?? 0} recurring cust · cadence-weighted`
+                   : "Trailing 3mo × 12 (no recurring detected)"} />
         <KpiCard icon={Zap} label="Net New ARR"
                  value={fmtCompact(netNewArr)}
                  tone={netNewArr >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}
@@ -759,6 +821,23 @@ export default function CFODashboard() {
           </ResponsiveContainer>
         </CardContent>
       </Card>
+
+      {recurring && (
+        <div className="border rounded-lg bg-muted/20 px-3 py-2 flex items-center gap-4 flex-wrap text-xs">
+          <span className="text-[11px] uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+            <Activity className="h-3 w-3" /> Recurring Orders
+          </span>
+          <span><span className="text-muted-foreground">MRR:</span> <span className="font-semibold">{fmtCompact(recurring.detectedMRR)}</span></span>
+          <span className="text-emerald-600 dark:text-emerald-400">● {recurring.active} active</span>
+          {recurring.atRisk > 0 && (
+            <span className="text-amber-600 dark:text-amber-400">● {recurring.atRisk} at-risk ({fmtCompact(recurring.atRiskARR)} ARR)</span>
+          )}
+          {recurring.churned > 0 && (
+            <span className="text-red-600 dark:text-red-400">● {recurring.churned} churned</span>
+          )}
+          <span className="text-[10px] text-muted-foreground">status inferred from cadence (1.5× / 3× thresholds)</span>
+        </div>
+      )}
 
       {pipeline.count > 0 && (
         <div className="border rounded-lg bg-muted/20 px-3 py-2 flex items-center gap-4 flex-wrap text-xs">
@@ -916,6 +995,33 @@ export default function CFODashboard() {
             </span>
           )}
         </div>
+      )}
+
+      {recurring && recurring.atRiskCustomers.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-600" /> At-risk recurring customers
+            </CardTitle>
+            <CardDescription className="text-xs">
+              Customers overdue for their next order (past 1.5× their typical cadence) — totals {fmtCompact(recurring.atRiskARR)} annualized.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-1.5">
+              {recurring.atRiskCustomers.map((c, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs">
+                  <span className="text-[11px] w-5 text-muted-foreground">{i + 1}.</span>
+                  <span className="flex-1 truncate">{c.name}</span>
+                  <span className="text-muted-foreground text-[11px]">
+                    cadence {Math.round(c.cadenceDays)}d · last order {Math.round(c.daysSinceLast)}d ago
+                  </span>
+                  <span className="font-medium w-20 text-right">{fmtCompact(c.avgAmount)}/order</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
