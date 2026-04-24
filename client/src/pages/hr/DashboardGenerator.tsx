@@ -7,17 +7,27 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
 import {
   Download, Upload, Sparkles, DollarSign, TrendingUp, Users,
-  Flame, Clock, RefreshCw, ShieldCheck, FileSpreadsheet, AlertTriangle,
+  Flame, Clock, RefreshCw, ShieldCheck, FileSpreadsheet, AlertTriangle, Send,
 } from "lucide-react";
 import {
   parseFinancialProjection,
   deriveSeries,
   type FinancialModel,
 } from "@/lib/financialProjectionParser";
+import { renderInvestorDashboardHtml } from "@/lib/investorDashboardHtml";
+import { trpc } from "@/lib/trpc";
 
 // ── Shapes ────────────────────────────────────────────────────────────────
 
@@ -255,6 +265,173 @@ function KpiCard({
   );
 }
 
+// ── Publish to data room dialog ─────────────────────────────────────────
+
+function utf8ToBase64(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+function defaultSnapshotName(model: FinancialModel): string {
+  const name = model.meta.companyName?.trim() || "Company";
+  const date = new Date().toISOString().slice(0, 10);
+  return `${name} Investor Dashboard ${date}`;
+}
+
+function PublishDialog({
+  open, onOpenChange, model,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  model: FinancialModel;
+}) {
+  const [selectedRoomId, setSelectedRoomId] = useState<string>("");
+  const [selectedFolderId, setSelectedFolderId] = useState<string>("__root__");
+  const [docName, setDocName] = useState<string>(defaultSnapshotName(model));
+
+  const { data: rooms, isLoading: roomsLoading } = trpc.dataRoom.list.useQuery();
+  const roomIdNum = selectedRoomId ? parseInt(selectedRoomId, 10) : null;
+  const { data: folders } = trpc.dataRoom.folders.list.useQuery(
+    { dataRoomId: roomIdNum!, parentId: null },
+    { enabled: roomIdNum !== null },
+  );
+
+  const uploadMutation = trpc.dataRoom.documents.upload.useMutation({
+    onSuccess: () => {
+      toast.success("Published to data room");
+      onOpenChange(false);
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const handleSubmit = () => {
+    if (!roomIdNum) {
+      toast.error("Pick a data room first");
+      return;
+    }
+    const trimmed = docName.trim() || defaultSnapshotName(model);
+    const safeBase = trimmed.replace(/[\\/:*?"<>|]/g, "").slice(0, 100) || "Investor Dashboard";
+    const fileName = safeBase.toLowerCase().endsWith(".html")
+      ? safeBase
+      : `${safeBase}.html`;
+
+    const html = renderInvestorDashboardHtml(model);
+    const base64 = utf8ToBase64(html);
+    const sizeBytes = new TextEncoder().encode(html).length;
+
+    uploadMutation.mutate({
+      dataRoomId: roomIdNum,
+      folderId:
+        selectedFolderId && selectedFolderId !== "__root__"
+          ? parseInt(selectedFolderId, 10)
+          : null,
+      name: fileName,
+      fileType: "html",
+      mimeType: "text/html",
+      fileSize: sizeBytes,
+      base64Content: base64,
+    });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Publish Investor Dashboard</DialogTitle>
+          <DialogDescription>
+            Saves a self-contained HTML snapshot of the current Investor view
+            as a document in the data room. Investors can view it directly in
+            the data room viewer.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <div className="space-y-2">
+            <Label>Data room</Label>
+            {roomsLoading ? (
+              <div className="text-sm text-muted-foreground">Loading…</div>
+            ) : !rooms?.length ? (
+              <div className="text-sm text-muted-foreground">
+                No data rooms yet. Create one from the Data Room section first.
+              </div>
+            ) : (
+              <Select value={selectedRoomId} onValueChange={setSelectedRoomId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Pick a data room" />
+                </SelectTrigger>
+                <SelectContent>
+                  {rooms.map((r) => (
+                    <SelectItem key={r.id} value={String(r.id)}>
+                      {r.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+
+          {roomIdNum !== null && (
+            <div className="space-y-2">
+              <Label>Folder (optional)</Label>
+              <Select
+                value={selectedFolderId}
+                onValueChange={setSelectedFolderId}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Root" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__root__">Root</SelectItem>
+                  {folders?.map((f) => (
+                    <SelectItem key={f.id} value={String(f.id)}>
+                      {f.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <Label htmlFor="doc-name">Document name</Label>
+            <Input
+              id="doc-name"
+              value={docName}
+              onChange={(e) => setDocName(e.target.value)}
+              placeholder="Investor Dashboard"
+            />
+            <p className="text-xs text-muted-foreground">
+              .html is appended automatically if you leave it off.
+            </p>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSubmit}
+            disabled={!roomIdNum || uploadMutation.isPending}
+          >
+            {uploadMutation.isPending ? (
+              <>
+                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                Publishing…
+              </>
+            ) : (
+              <>
+                <Send className="h-4 w-4 mr-2" />
+                Publish
+              </>
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── View toggle button ───────────────────────────────────────────────────
 
 function ViewToggleButton({
@@ -292,6 +469,7 @@ export default function DashboardGenerator() {
   const [isDragging, setIsDragging] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
   const [view, setView] = useState<"investor" | "internal">("investor");
+  const [publishOpen, setPublishOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = useCallback(async (file: File) => {
@@ -387,6 +565,12 @@ export default function DashboardGenerator() {
               />
             </div>
           )}
+          {data && view === "investor" && (
+            <Button onClick={() => setPublishOpen(true)}>
+              <Send className="h-4 w-4 mr-2" />
+              Publish to Data Room
+            </Button>
+          )}
           <Button variant="outline" onClick={downloadTemplate}>
             <Download className="h-4 w-4 mr-2" />
             Download Template
@@ -399,6 +583,14 @@ export default function DashboardGenerator() {
           )}
         </div>
       </div>
+
+      {model && (
+        <PublishDialog
+          open={publishOpen}
+          onOpenChange={setPublishOpen}
+          model={model}
+        />
+      )}
 
       {/* Drop zone (shown until a dashboard is generated) */}
       {!data && (
