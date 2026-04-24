@@ -130,6 +130,7 @@ export default function CFODashboard() {
   const { data: kpiGoals } = trpc.kpiGoals.list.useQuery({ year: new Date().getFullYear() });
   const { data: employees } = trpc.hr.employees.list.useQuery({ status: "active" });
   const { data: expenseTxns } = trpc.transactions.list.useQuery({ type: "expense" });
+  const { data: openDeals } = trpc.crm.deals.list.useQuery({ status: "open" });
 
   // ── Cash ────────────────────────────────────────────────────
   const cashPosition = useMemo(() =>
@@ -242,6 +243,17 @@ export default function CFODashboard() {
   const headcount = (employees ?? []).length;
   const revPerFte = headcount > 0 ? arr / headcount : null;
   const burnPerFte = headcount > 0 ? estimatedBurn / headcount : null;
+
+  // Pipeline (from open CRM deals)
+  const pipeline = useMemo(() => {
+    const deals = openDeals ?? [];
+    const open = deals.reduce((s: number, d: any) => s + parseFloat(d.amount || "0"), 0);
+    const weighted = deals.reduce((s: number, d: any) =>
+      s + parseFloat(d.amount || "0") * ((d.probability ?? 50) / 100), 0);
+    const quarterlyRunRate = threeMonthAvgRev * 3;
+    const coverage = quarterlyRunRate > 0 ? open / quarterlyRunRate : null;
+    return { open, weighted, coverage, count: deals.length };
+  }, [openDeals, threeMonthAvgRev]);
 
   // Margin trajectory from financial model (multi-year projection)
   const marginTrajectory = useMemo(() => {
@@ -525,6 +537,25 @@ export default function CFODashboard() {
           </ResponsiveContainer>
         </CardContent>
       </Card>
+
+      {pipeline.count > 0 && (
+        <div className="border rounded-lg bg-muted/20 px-3 py-2 flex items-center gap-4 flex-wrap text-xs">
+          <span className="text-[11px] uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+            <Target className="h-3 w-3" /> Pipeline
+          </span>
+          <span><span className="text-muted-foreground">Open:</span> <span className="font-semibold">{fmtCompact(pipeline.open)}</span> <span className="text-muted-foreground">({pipeline.count} deals)</span></span>
+          <span><span className="text-muted-foreground">Weighted:</span> <span className="font-semibold">{fmtCompact(pipeline.weighted)}</span></span>
+          {pipeline.coverage !== null && (
+            <span>
+              <span className="text-muted-foreground">Coverage:</span>{" "}
+              <span className={`font-semibold ${pipeline.coverage >= 3 ? "text-emerald-600 dark:text-emerald-400" : pipeline.coverage >= 2 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}>
+                {pipeline.coverage.toFixed(1)}x
+              </span>{" "}
+              <span className="text-[10px] text-muted-foreground">vs last qtr run-rate (3x target)</span>
+            </span>
+          )}
+        </div>
+      )}
 
       {/* ── 3 · CAPITAL EFFICIENCY ──────────────────────────── */}
       <div className="flex items-baseline gap-2 pt-2">
