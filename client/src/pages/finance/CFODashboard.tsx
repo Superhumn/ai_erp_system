@@ -133,6 +133,7 @@ export default function CFODashboard() {
   const { data: expenseTxns } = trpc.transactions.list.useQuery({ type: "expense" });
   const { data: openDeals } = trpc.crm.deals.list.useQuery({ status: "open" });
   const { data: allPOs } = trpc.purchaseOrders.list.useQuery();
+  const { data: investorUpdatesList } = trpc.investorUpdates.list.useQuery();
 
   // ── Cash ────────────────────────────────────────────────────
   const cashPosition = useMemo(() =>
@@ -245,6 +246,21 @@ export default function CFODashboard() {
   const headcount = (employees ?? []).length;
   const revPerFte = headcount > 0 ? arr / headcount : null;
   const burnPerFte = headcount > 0 ? estimatedBurn / headcount : null;
+
+  // Last investor update
+  const lastInvestorUpdate = useMemo(() => {
+    const ups = investorUpdatesList ?? [];
+    if (ups.length === 0) return null;
+    const sorted = [...ups].sort((a: any, b: any) => {
+      const da = new Date(a.sentAt || a.createdAt).getTime();
+      const db = new Date(b.sentAt || b.createdAt).getTime();
+      return db - da;
+    });
+    const latest = sorted[0] as any;
+    const sentDate = new Date(latest.sentAt || latest.createdAt);
+    const daysAgo = Math.floor((Date.now() - sentDate.getTime()) / 86400000);
+    return { title: latest.title, date: sentDate, daysAgo };
+  }, [investorUpdatesList]);
 
   // DPO — Days Payable Outstanding
   const dpo = useMemo(() => {
@@ -754,6 +770,32 @@ export default function CFODashboard() {
       <div className="flex items-baseline gap-2 pt-2">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">5 · Actions</h3>
         <span className="text-[11px] text-muted-foreground/70">Click a topic to generate analysis grounded in your current metrics.</span>
+      </div>
+
+      <div className="border rounded-lg bg-muted/20 px-3 py-2 flex items-center gap-4 flex-wrap text-xs">
+        <span className="text-[11px] uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+          <Presentation className="h-3 w-3" /> Investor Cadence
+        </span>
+        {lastInvestorUpdate ? (
+          <>
+            <span>
+              <span className="text-muted-foreground">Last update:</span>{" "}
+              <span className="font-semibold">{lastInvestorUpdate.title}</span>{" "}
+              <span className="text-muted-foreground">({lastInvestorUpdate.date.toLocaleDateString()})</span>
+            </span>
+            <span>
+              <span className="text-muted-foreground">Sent:</span>{" "}
+              <span className={`font-semibold ${lastInvestorUpdate.daysAgo <= 45 ? "text-emerald-600 dark:text-emerald-400" : lastInvestorUpdate.daysAgo <= 100 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}>
+                {lastInvestorUpdate.daysAgo}d ago
+              </span>{" "}
+              <span className="text-[10px] text-muted-foreground">
+                {lastInvestorUpdate.daysAgo <= 45 ? "monthly cadence" : lastInvestorUpdate.daysAgo <= 100 ? "quarterly" : "overdue"}
+              </span>
+            </span>
+          </>
+        ) : (
+          <span className="text-muted-foreground">No investor updates sent yet. Send the first one to establish cadence.</span>
+        )}
       </div>
       <Card>
         <CardHeader className="pb-2">
