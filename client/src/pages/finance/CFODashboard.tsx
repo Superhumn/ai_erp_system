@@ -74,6 +74,7 @@ const BENCHMARKS = {
   revPerFte:  { great: 200_000, ok: 150_000, poor: 100_000 },
   forecastAcc:{ great: 90,  ok: 80,  poor: 70 }, // % accuracy, higher is better
   magic:      { great: 0.75, ok: 0.5, poor: 0.25 }, // Magic Number (quarterly)
+  closeDays:  { great: 10,  ok: 20,  poor: 40 }, // days since last close, lower better
 };
 
 function benchColor(v: number | null, band: { great: number; ok: number; poor: number }, lowerBetter = false): string {
@@ -358,6 +359,46 @@ export default function CFODashboard() {
     const coverage = quarterlyRunRate > 0 ? open / quarterlyRunRate : null;
     return { open, weighted, coverage, count: deals.length };
   }, [openDeals, threeMonthAvgRev]);
+
+  // Month-end close days — time from last-closed month-end to today.
+  // Derived from financialModel: the latest row that has actualValue means
+  // that period is closed.
+  const closeDays = useMemo(() => {
+    const rows = modelData ?? [];
+    const closed = rows
+      .filter((r: any) => r.actualValue && parseFloat(r.actualValue) !== 0)
+      .map((r: any) => ({ year: r.year, month: r.month }))
+      .filter((r: any) => r.year && r.month);
+    if (closed.length === 0) return null;
+    const mostRecent = closed.reduce((a: any, b: any) =>
+      (b.year * 12 + b.month) > (a.year * 12 + a.month) ? b : a);
+    const closeDate = new Date(mostRecent.year, mostRecent.month, 0); // last day of that month
+    return Math.floor((Date.now() - closeDate.getTime()) / 86400000);
+  }, [modelData]);
+
+  // Real CAC and CAC payback from QB S&M spend and new-customer count
+  const cacReal = useMemo(() => {
+    if (!opexBreakdown || opexBreakdown.sm === 0 || !invoicesList?.length) return null;
+    // Count new customers in the trailing 3 months (first-ever invoice in that window)
+    const now = new Date();
+    const cutoff = new Date(now.getFullYear(), now.getMonth() - 3, 1).getTime();
+    const firstInvoiceByCustomer = new Map<string, number>();
+    for (const inv of invoicesList) {
+      const name = (inv as any).customer?.name || `Customer ${(inv as any).customerId ?? "—"}`;
+      const t = new Date((inv as any).issueDate || (inv as any).createdAt).getTime();
+      if (!firstInvoiceByCustomer.has(name) || t < firstInvoiceByCustomer.get(name)!) {
+        firstInvoiceByCustomer.set(name, t);
+      }
+    }
+    const newCustomers = Array.from(firstInvoiceByCustomer.values()).filter((t) => t >= cutoff).length;
+    if (newCustomers === 0) return null;
+    const quarterlySM = opexBreakdown.sm / 4;
+    const cac = quarterlySM / newCustomers;
+    const arpu = threeMonthAvgRev / Math.max(1, firstInvoiceByCustomer.size);
+    const gm = (grossMarginPct ?? 70) / 100;
+    const paybackMonths = arpu > 0 && gm > 0 ? cac / (arpu * gm) : null;
+    return { cac, newCustomers, paybackMonths };
+  }, [opexBreakdown, invoicesList, threeMonthAvgRev, grossMarginPct]);
 
   // OpEx breakdown by function (R&D / S&M / G&A / Other) from QB expense accounts
   const opexBreakdown = useMemo(() => {
@@ -784,6 +825,17 @@ export default function CFODashboard() {
                  hint={magicNumber !== null
                    ? benchLabel(magicNumber, BENCHMARKS.magic)
                    : "Needs S&M in QB"} />
+        <KpiCard icon={DollarSign} label="CAC (real)"
+                 value={cacReal ? fmtCompact(cacReal.cac) : "—"}
+                 sub={cacReal
+                   ? `${cacReal.paybackMonths ? `${cacReal.paybackMonths.toFixed(0)}mo payback` : ""} · ${cacReal.newCustomers} new custs`
+                   : "Needs QB S&M + new customers"} />
+        <KpiCard icon={Clock} label="Days to Close"
+                 value={closeDays !== null ? `${closeDays}d` : "—"}
+                 tone={benchColor(closeDays, BENCHMARKS.closeDays, true)}
+                 hint={closeDays !== null
+                   ? benchLabel(closeDays, BENCHMARKS.closeDays, true)
+                   : "Enter actuals in model"} />
       </div>
 
       {opexBreakdown && (
