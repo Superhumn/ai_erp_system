@@ -25,7 +25,7 @@ const marketingProcedure = protectedProcedure.use(({ ctx, next }) => {
 
 export const marketingRouter = router({
   marketing: router({
-    providerStatus: protectedProcedure.query(() => ({
+    providerStatus: marketingProcedure.query(() => ({
       configured: isSocialProviderConfigured(),
     })),
 
