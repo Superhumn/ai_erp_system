@@ -140,9 +140,15 @@ export default function CFODashboard() {
   const { data: kpiGoals } = trpc.kpiGoals.list.useQuery({ year: new Date().getFullYear() });
   const { data: employees } = trpc.employees.list.useQuery({ status: "active" });
   const { data: expenseTxns } = trpc.transactions.list.useQuery({ type: "expense" });
+  // Format YYYY-MM-DD in local time. Using `toISOString().slice(0,10)` would
+  // shift the date by one day in timezones ahead of UTC (local midnight
+  // serializes to the previous UTC date).
+  const fmtLocalDate = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const today = new Date();
   const { data: qbPnl } = trpc.quickbooks.getProfitAndLoss.useQuery({
-    startDate: new Date(new Date().getFullYear(), new Date().getMonth() - 11, 1).toISOString().slice(0, 10),
-    endDate: new Date().toISOString().slice(0, 10),
+    startDate: fmtLocalDate(new Date(today.getFullYear(), today.getMonth() - 11, 1)),
+    endDate: fmtLocalDate(today),
     summarizeBy: "Month",
   });
   const { data: openDeals } = trpc.crm.deals.list.useQuery({ status: "open" });
