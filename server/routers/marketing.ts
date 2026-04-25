@@ -322,5 +322,255 @@ export const marketingRouter = router({
         .input(z.object({ postId: z.number() }))
         .query(({ input }) => db.getLatestMetricsForPost(input.postId)),
     }),
+
+    // --- Influencer CRM ---
+    influencers: router({
+      list: marketingProcedure
+        .input(z.object({
+          status: z.string().optional(),
+          tier: z.string().optional(),
+          platform: z.string().optional(),
+          search: z.string().optional(),
+          assignedTo: z.number().optional(),
+          limit: z.number().optional(),
+          offset: z.number().optional(),
+        }).optional())
+        .query(({ input }) => db.getInfluencers(input)),
+
+      get: marketingProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getInfluencerById(input.id)),
+
+      pipelineCounts: marketingProcedure.query(() => db.getInfluencerPipelineCounts()),
+
+      performance: marketingProcedure
+        .input(z.object({ id: z.number() }))
+        .query(({ input }) => db.getInfluencerPerformance(input.id)),
+
+      create: marketingProcedure
+        .input(z.object({
+          fullName: z.string().min(1),
+          primaryHandle: z.string().optional(),
+          primaryPlatform: platformEnum.optional(),
+          handles: z.string().optional(),
+          email: z.string().optional(),
+          phone: z.string().optional(),
+          agentName: z.string().optional(),
+          agentEmail: z.string().optional(),
+          websiteUrl: z.string().optional(),
+          avatarUrl: z.string().optional(),
+          followerCount: z.number().optional(),
+          engagementRatePct: z.string().optional(),
+          avgViews: z.number().optional(),
+          tier: z.enum(["nano", "micro", "mid", "macro", "mega"]).optional(),
+          niche: z.string().optional(),
+          tags: z.string().optional(),
+          language: z.string().optional(),
+          country: z.string().optional(),
+          city: z.string().optional(),
+          rateCard: z.string().optional(),
+          currency: z.string().optional(),
+          status: z.enum(["prospect", "contacted", "negotiating", "agreed", "active", "completed", "paused", "blacklisted"]).optional(),
+          leadSource: z.enum(["search", "inbound", "referral", "agency", "engagement_funnel", "import", "manual"]).optional(),
+          notes: z.string().optional(),
+          crmContactId: z.number().optional(),
+          assignedTo: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createInfluencer({ ...input, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, "create", "influencer", id, input.fullName);
+          return { id };
+        }),
+
+      update: marketingProcedure
+        .input(z.object({
+          id: z.number(),
+          fullName: z.string().optional(),
+          primaryHandle: z.string().optional(),
+          primaryPlatform: platformEnum.optional(),
+          handles: z.string().optional(),
+          email: z.string().optional(),
+          phone: z.string().optional(),
+          agentName: z.string().optional(),
+          agentEmail: z.string().optional(),
+          websiteUrl: z.string().optional(),
+          avatarUrl: z.string().optional(),
+          followerCount: z.number().optional(),
+          engagementRatePct: z.string().optional(),
+          avgViews: z.number().optional(),
+          tier: z.enum(["nano", "micro", "mid", "macro", "mega"]).optional(),
+          niche: z.string().optional(),
+          tags: z.string().optional(),
+          language: z.string().optional(),
+          country: z.string().optional(),
+          city: z.string().optional(),
+          rateCard: z.string().optional(),
+          status: z.enum(["prospect", "contacted", "negotiating", "agreed", "active", "completed", "paused", "blacklisted"]).optional(),
+          notes: z.string().optional(),
+          crmContactId: z.number().optional(),
+          assignedTo: z.number().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...rest } = input;
+          await db.updateInfluencer(id, rest);
+          await createAuditLog(ctx.user.id, "update", "influencer", id);
+          return { success: true };
+        }),
+
+      delete: marketingProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteInfluencer(input.id);
+          await createAuditLog(ctx.user.id, "delete", "influencer", input.id);
+          return { success: true };
+        }),
+
+      // --- Outreach log ---
+      outreach: router({
+        list: marketingProcedure
+          .input(z.object({ influencerId: z.number() }))
+          .query(({ input }) => db.getInfluencerOutreach(input.influencerId)),
+        log: marketingProcedure
+          .input(z.object({
+            influencerId: z.number(),
+            campaignId: z.number().optional(),
+            channel: z.enum(["email", "dm", "phone", "in_person", "agent", "platform_message"]),
+            direction: z.enum(["outbound", "inbound"]).optional(),
+            subject: z.string().optional(),
+            body: z.string().optional(),
+          }))
+          .mutation(async ({ input, ctx }) => {
+            const id = await db.logInfluencerOutreach({ ...input, createdBy: ctx.user.id });
+            return { id };
+          }),
+        markResponse: marketingProcedure
+          .input(z.object({
+            id: z.number(),
+            response: z.enum(["interested", "not_interested", "no_response", "negotiating"]),
+          }))
+          .mutation(({ input }) => db.updateInfluencerOutreachResponse(input.id, input.response).then(() => ({ success: true }))),
+      }),
+    }),
+
+    // --- Campaign participations (influencer x campaign) ---
+    participations: router({
+      list: marketingProcedure
+        .input(z.object({
+          campaignId: z.number().optional(),
+          influencerId: z.number().optional(),
+          status: z.string().optional(),
+        }).optional())
+        .query(({ input }) => db.getInfluencerParticipations(input)),
+
+      campaignRollup: marketingProcedure
+        .input(z.object({ campaignId: z.number() }))
+        .query(({ input }) => db.getCampaignInfluencerRollup(input.campaignId)),
+
+      create: marketingProcedure
+        .input(z.object({
+          influencerId: z.number(),
+          campaignId: z.number(),
+          status: z.enum(["invited", "negotiating", "agreed", "in_progress", "completed", "cancelled"]).optional(),
+          agreedFee: z.string().optional(),
+          currency: z.string().optional(),
+          paymentStatus: z.enum(["pending", "invoiced", "paid", "refunded"]).optional(),
+          productGifted: z.boolean().optional(),
+          briefUrl: z.string().optional(),
+          contractUrl: z.string().optional(),
+          trackingCode: z.string().optional(),
+          notes: z.string().optional(),
+          startDate: z.date().optional(),
+          endDate: z.date().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createInfluencerParticipation({ ...input, createdBy: ctx.user.id });
+          await createAuditLog(ctx.user.id, "create", "influencerParticipation", id);
+          return { id };
+        }),
+
+      update: marketingProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(["invited", "negotiating", "agreed", "in_progress", "completed", "cancelled"]).optional(),
+          agreedFee: z.string().optional(),
+          paymentStatus: z.enum(["pending", "invoiced", "paid", "refunded"]).optional(),
+          productGifted: z.boolean().optional(),
+          briefUrl: z.string().optional(),
+          contractUrl: z.string().optional(),
+          trackingCode: z.string().optional(),
+          notes: z.string().optional(),
+          startDate: z.date().optional(),
+          endDate: z.date().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...rest } = input;
+          await db.updateInfluencerParticipation(id, rest);
+          await createAuditLog(ctx.user.id, "update", "influencerParticipation", id);
+          return { success: true };
+        }),
+
+      delete: marketingProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteInfluencerParticipation(input.id);
+          await createAuditLog(ctx.user.id, "delete", "influencerParticipation", input.id);
+          return { success: true };
+        }),
+    }),
+
+    // --- Deliverables ---
+    deliverables: router({
+      list: marketingProcedure
+        .input(z.object({ participationId: z.number() }))
+        .query(({ input }) => db.getInfluencerDeliverables(input.participationId)),
+
+      create: marketingProcedure
+        .input(z.object({
+          participationId: z.number(),
+          type: z.enum(["post", "story", "reel", "video", "live", "blog", "podcast"]),
+          platform: platformEnum,
+          status: z.enum(["planned", "submitted", "approved", "revision_requested", "published", "rejected"]).optional(),
+          scheduledAt: z.date().optional(),
+          publishedAt: z.date().optional(),
+          postUrl: z.string().optional(),
+          marketingPostId: z.number().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const id = await db.createInfluencerDeliverable(input);
+          await createAuditLog(ctx.user.id, "create", "influencerDeliverable", id);
+          return { id };
+        }),
+
+      update: marketingProcedure
+        .input(z.object({
+          id: z.number(),
+          status: z.enum(["planned", "submitted", "approved", "revision_requested", "published", "rejected"]).optional(),
+          scheduledAt: z.date().optional(),
+          publishedAt: z.date().optional(),
+          postUrl: z.string().optional(),
+          impressions: z.number().optional(),
+          views: z.number().optional(),
+          likes: z.number().optional(),
+          comments: z.number().optional(),
+          shares: z.number().optional(),
+          saves: z.number().optional(),
+          notes: z.string().optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const { id, ...rest } = input;
+          await db.updateInfluencerDeliverable(id, rest);
+          await createAuditLog(ctx.user.id, "update", "influencerDeliverable", id);
+          return { success: true };
+        }),
+
+      delete: marketingProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          await db.deleteInfluencerDeliverable(input.id);
+          await createAuditLog(ctx.user.id, "delete", "influencerDeliverable", input.id);
+          return { success: true };
+        }),
+    }),
   }),
 });

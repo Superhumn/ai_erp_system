@@ -1,10 +1,14 @@
-import { and, desc, eq, gte, lte, like, sql, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, lte, like, sql, inArray, or } from "drizzle-orm";
 import {
   socialAccounts, InsertSocialAccount,
   marketingCampaigns, InsertMarketingCampaign,
   marketingPosts, InsertMarketingPost,
   marketingEngagements, InsertMarketingEngagement,
   marketingMetrics, InsertMarketingMetric,
+  influencers, InsertInfluencer,
+  influencerCampaignParticipations, InsertInfluencerCampaignParticipation,
+  influencerDeliverables, InsertInfluencerDeliverable,
+  influencerOutreach, InsertInfluencerOutreach,
   crmContacts,
   orders,
 } from "../../drizzle/schema";
@@ -356,4 +360,272 @@ export async function suggestContactForHandle(handle: string) {
     )
     .limit(5);
   return candidates;
+}
+
+// ============================================
+// INFLUENCER CRM
+// ============================================
+
+export async function getInfluencers(filters?: {
+  status?: string;
+  tier?: string;
+  platform?: string;
+  search?: string;
+  assignedTo?: number;
+  limit?: number;
+  offset?: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.status) conditions.push(eq(influencers.status, filters.status as any));
+  if (filters?.tier) conditions.push(eq(influencers.tier, filters.tier as any));
+  if (filters?.platform) conditions.push(eq(influencers.primaryPlatform, filters.platform as any));
+  if (filters?.assignedTo) conditions.push(eq(influencers.assignedTo, filters.assignedTo));
+  if (filters?.search) {
+    conditions.push(
+      or(
+        like(influencers.fullName, `%${filters.search}%`),
+        like(influencers.primaryHandle, `%${filters.search}%`),
+        like(influencers.email, `%${filters.search}%`),
+        like(influencers.niche, `%${filters.search}%`),
+      ),
+    );
+  }
+  let query = db.select().from(influencers);
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query
+    .orderBy(desc(influencers.followerCount), desc(influencers.createdAt))
+    .limit(filters?.limit ?? 200)
+    .offset(filters?.offset ?? 0);
+}
+
+export async function getInfluencerById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(influencers).where(eq(influencers.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createInfluencer(data: InsertInfluencer) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(influencers).values(data);
+  return result[0].insertId;
+}
+
+export async function updateInfluencer(id: number, data: Partial<InsertInfluencer>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(influencers).set(data).where(eq(influencers.id, id));
+}
+
+export async function deleteInfluencer(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  // FK cascade handles participations -> deliverables, and outreach
+  await db.delete(influencers).where(eq(influencers.id, id));
+}
+
+export async function getInfluencerPipelineCounts() {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({
+      status: influencers.status,
+      count: sql<number>`count(*)`,
+    })
+    .from(influencers)
+    .groupBy(influencers.status);
+}
+
+// --- PARTICIPATIONS ---
+
+export async function getInfluencerParticipations(filters?: {
+  campaignId?: number;
+  influencerId?: number;
+  status?: string;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.campaignId) conditions.push(eq(influencerCampaignParticipations.campaignId, filters.campaignId));
+  if (filters?.influencerId) conditions.push(eq(influencerCampaignParticipations.influencerId, filters.influencerId));
+  if (filters?.status) conditions.push(eq(influencerCampaignParticipations.status, filters.status as any));
+  let query = db
+    .select({
+      participation: influencerCampaignParticipations,
+      influencer: influencers,
+      campaign: marketingCampaigns,
+    })
+    .from(influencerCampaignParticipations)
+    .leftJoin(influencers, eq(influencerCampaignParticipations.influencerId, influencers.id))
+    .leftJoin(marketingCampaigns, eq(influencerCampaignParticipations.campaignId, marketingCampaigns.id));
+  if (conditions.length > 0) query = query.where(and(...conditions)) as any;
+  return query.orderBy(desc(influencerCampaignParticipations.createdAt));
+}
+
+export async function createInfluencerParticipation(data: InsertInfluencerCampaignParticipation) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(influencerCampaignParticipations).values(data);
+  return result[0].insertId;
+}
+
+export async function updateInfluencerParticipation(
+  id: number,
+  data: Partial<InsertInfluencerCampaignParticipation>,
+) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(influencerCampaignParticipations).set(data).where(eq(influencerCampaignParticipations.id, id));
+}
+
+export async function deleteInfluencerParticipation(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(influencerCampaignParticipations).where(eq(influencerCampaignParticipations.id, id));
+}
+
+// --- DELIVERABLES ---
+
+export async function getInfluencerDeliverables(participationId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(influencerDeliverables)
+    .where(eq(influencerDeliverables.participationId, participationId))
+    .orderBy(desc(influencerDeliverables.scheduledAt));
+}
+
+export async function createInfluencerDeliverable(data: InsertInfluencerDeliverable) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(influencerDeliverables).values(data);
+  return result[0].insertId;
+}
+
+export async function updateInfluencerDeliverable(
+  id: number,
+  data: Partial<InsertInfluencerDeliverable>,
+) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(influencerDeliverables).set(data).where(eq(influencerDeliverables.id, id));
+}
+
+export async function deleteInfluencerDeliverable(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(influencerDeliverables).where(eq(influencerDeliverables.id, id));
+}
+
+// --- OUTREACH ---
+
+export async function getInfluencerOutreach(influencerId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(influencerOutreach)
+    .where(eq(influencerOutreach.influencerId, influencerId))
+    .orderBy(desc(influencerOutreach.sentAt));
+}
+
+export async function logInfluencerOutreach(data: InsertInfluencerOutreach) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(influencerOutreach).values(data);
+  if (data.direction === "outbound") {
+    await db.update(influencers).set({ lastOutreachAt: new Date() }).where(eq(influencers.id, data.influencerId));
+  }
+  return result[0].insertId;
+}
+
+export async function updateInfluencerOutreachResponse(
+  id: number,
+  response: "interested" | "not_interested" | "no_response" | "negotiating",
+) {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(influencerOutreach)
+    .set({ response, respondedAt: new Date() })
+    .where(eq(influencerOutreach.id, id));
+}
+
+// --- ROLLUPS ---
+
+export async function getInfluencerPerformance(influencerId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const participations = await db
+    .select()
+    .from(influencerCampaignParticipations)
+    .where(eq(influencerCampaignParticipations.influencerId, influencerId));
+
+  const participationIds = participations.map((p) => p.id);
+  let metrics = { deliverables: 0, published: 0, impressions: 0, views: 0, likes: 0, comments: 0, shares: 0 };
+  if (participationIds.length > 0) {
+    const [m] = await db
+      .select({
+        deliverables: sql<number>`count(*)`,
+        published: sql<number>`sum(case when ${influencerDeliverables.status} = 'published' then 1 else 0 end)`,
+        impressions: sql<number>`coalesce(sum(${influencerDeliverables.impressions}), 0)`,
+        views: sql<number>`coalesce(sum(${influencerDeliverables.views}), 0)`,
+        likes: sql<number>`coalesce(sum(${influencerDeliverables.likes}), 0)`,
+        comments: sql<number>`coalesce(sum(${influencerDeliverables.comments}), 0)`,
+        shares: sql<number>`coalesce(sum(${influencerDeliverables.shares}), 0)`,
+      })
+      .from(influencerDeliverables)
+      .where(inArray(influencerDeliverables.participationId, participationIds));
+    metrics = {
+      deliverables: Number(m?.deliverables ?? 0),
+      published: Number(m?.published ?? 0),
+      impressions: Number(m?.impressions ?? 0),
+      views: Number(m?.views ?? 0),
+      likes: Number(m?.likes ?? 0),
+      comments: Number(m?.comments ?? 0),
+      shares: Number(m?.shares ?? 0),
+    };
+  }
+
+  const totalSpend = participations.reduce(
+    (sum, p) => sum + Number(p.agreedFee ?? 0),
+    0,
+  );
+  const paidSpend = participations
+    .filter((p) => p.paymentStatus === "paid")
+    .reduce((sum, p) => sum + Number(p.agreedFee ?? 0), 0);
+
+  return {
+    participationCount: participations.length,
+    totalSpend,
+    paidSpend,
+    pendingSpend: totalSpend - paidSpend,
+    metrics,
+    cpm: metrics.impressions > 0 ? (totalSpend / metrics.impressions) * 1000 : null,
+  };
+}
+
+export async function getCampaignInfluencerRollup(campaignId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const [agg] = await db
+    .select({
+      participants: sql<number>`count(distinct ${influencerCampaignParticipations.influencerId})`,
+      totalCommitted: sql<string>`coalesce(sum(${influencerCampaignParticipations.agreedFee}), 0)`,
+      totalPaid: sql<string>`coalesce(sum(case when ${influencerCampaignParticipations.paymentStatus} = 'paid' then ${influencerCampaignParticipations.agreedFee} else 0 end), 0)`,
+    })
+    .from(influencerCampaignParticipations)
+    .where(eq(influencerCampaignParticipations.campaignId, campaignId));
+
+  return {
+    participants: Number(agg?.participants ?? 0),
+    totalCommitted: Number(agg?.totalCommitted ?? 0),
+    totalPaid: Number(agg?.totalPaid ?? 0),
+  };
 }

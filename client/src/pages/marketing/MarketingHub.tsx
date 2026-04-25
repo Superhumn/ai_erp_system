@@ -22,6 +22,7 @@ import {
   Megaphone, Calendar as CalendarIcon, PenSquare, Inbox, Target,
   Loader2, Plus, Send, Sparkles, Link as LinkIcon, CheckCircle2,
   TrendingUp, Eye, MousePointerClick, MessageCircle, AlertTriangle,
+  Users as UsersIcon, DollarSign, Mail, ExternalLink, Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format, isSameDay, addDays, startOfDay } from "date-fns";
@@ -496,6 +497,16 @@ function CampaignsTab() {
     { enabled: !!selectedId },
   );
 
+  const { data: influencerRollup } = m.marketing.participations.campaignRollup.useQuery(
+    { campaignId: selectedId ?? 0 },
+    { enabled: !!selectedId },
+  );
+
+  const { data: campaignParticipations } = m.marketing.participations.list.useQuery(
+    { campaignId: selectedId ?? 0 },
+    { enabled: !!selectedId },
+  );
+
   const [newName, setNewName] = useState("");
   const [newBudget, setNewBudget] = useState("");
   const create = m.marketing.campaigns.create.useMutation({
@@ -585,6 +596,44 @@ function CampaignsTab() {
               <div className="text-[11px] text-muted-foreground">
                 Attribution: CRM contacts that engaged with any of this campaign's posts, joined to orders placed on or after the campaign start date.
               </div>
+
+              {influencerRollup && (
+                <div className="border-t pt-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-medium flex items-center gap-1">
+                      <UsersIcon className="h-3 w-3" /> Influencers on this campaign
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {influencerRollup.participants} creator(s) · ${influencerRollup.totalCommitted.toLocaleString()} committed · ${influencerRollup.totalPaid.toLocaleString()} paid
+                    </div>
+                  </div>
+                  {campaignParticipations && campaignParticipations.length > 0 ? (
+                    <div className="space-y-1">
+                      {campaignParticipations.map((row: any) => (
+                        <div key={row.participation.id} className="text-xs rounded border p-2 flex items-center justify-between">
+                          <div>
+                            <span className="font-medium">{row.influencer?.fullName ?? "—"}</span>
+                            {row.influencer?.primaryHandle && (
+                              <span className="text-muted-foreground"> · @{row.influencer.primaryHandle}</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline" className="text-[10px]">{row.participation.status}</Badge>
+                            <Badge variant="secondary" className="text-[10px]">{row.participation.paymentStatus}</Badge>
+                            {row.participation.agreedFee && (
+                              <span className="text-muted-foreground">${Number(row.participation.agreedFee).toLocaleString()}</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground py-2 text-center">
+                      No influencers on this campaign yet. Add some from the Influencers tab.
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </CardContent>
@@ -684,6 +733,403 @@ function PostsTab() {
   );
 }
 
+// ---------- Influencer CRM ----------
+
+const INFLUENCER_STATUSES = [
+  { value: "prospect", label: "Prospect" },
+  { value: "contacted", label: "Contacted" },
+  { value: "negotiating", label: "Negotiating" },
+  { value: "agreed", label: "Agreed" },
+  { value: "active", label: "Active" },
+  { value: "completed", label: "Completed" },
+  { value: "paused", label: "Paused" },
+  { value: "blacklisted", label: "Blacklisted" },
+] as const;
+
+const INFLUENCER_TIERS = [
+  { value: "nano", label: "Nano (<10k)" },
+  { value: "micro", label: "Micro (10k–100k)" },
+  { value: "mid", label: "Mid (100k–500k)" },
+  { value: "macro", label: "Macro (500k–1M)" },
+  { value: "mega", label: "Mega (1M+)" },
+] as const;
+
+function tierFromFollowers(n: number): "nano" | "micro" | "mid" | "macro" | "mega" {
+  if (n < 10_000) return "nano";
+  if (n < 100_000) return "micro";
+  if (n < 500_000) return "mid";
+  if (n < 1_000_000) return "macro";
+  return "mega";
+}
+
+function NewInfluencerDialog({ onCreated }: { onCreated: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({
+    fullName: "",
+    primaryHandle: "",
+    primaryPlatform: "instagram" as Platform,
+    email: "",
+    followerCount: "",
+    niche: "",
+    notes: "",
+  });
+  const create = m.marketing.influencers.create.useMutation({
+    onSuccess: () => {
+      toast.success("Influencer added");
+      setOpen(false);
+      setForm({ fullName: "", primaryHandle: "", primaryPlatform: "instagram", email: "", followerCount: "", niche: "", notes: "" });
+      onCreated();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+  const handleSubmit = () => {
+    if (!form.fullName.trim()) { toast.error("Name is required"); return; }
+    const followerCount = form.followerCount ? Number(form.followerCount) : 0;
+    create.mutate({
+      fullName: form.fullName.trim(),
+      primaryHandle: form.primaryHandle || undefined,
+      primaryPlatform: form.primaryPlatform,
+      email: form.email || undefined,
+      followerCount,
+      tier: tierFromFollowers(followerCount),
+      niche: form.niche || undefined,
+      notes: form.notes || undefined,
+      status: "prospect",
+    });
+  };
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm"><Plus className="h-3 w-3 mr-1" /> Add influencer</Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader><DialogTitle>New influencer</DialogTitle></DialogHeader>
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <Label className="text-xs">Full name *</Label>
+              <Input className="h-8" value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Primary platform</Label>
+              <Select value={form.primaryPlatform} onValueChange={(v) => setForm({ ...form, primaryPlatform: v as Platform })}>
+                <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {PLATFORMS.map((p) => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <Label className="text-xs">Handle</Label>
+              <Input className="h-8" placeholder="@handle" value={form.primaryHandle} onChange={(e) => setForm({ ...form, primaryHandle: e.target.value })} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Email</Label>
+              <Input className="h-8" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <Label className="text-xs">Follower count</Label>
+              <Input className="h-8" type="number" value={form.followerCount} onChange={(e) => setForm({ ...form, followerCount: e.target.value })} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Niche</Label>
+              <Input className="h-8" placeholder="food / fitness / tech" value={form.niche} onChange={(e) => setForm({ ...form, niche: e.target.value })} />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Notes</Label>
+            <Textarea rows={3} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={create.isPending}>
+            {create.isPending && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+            Add
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function InfluencerDetailDialog({ id, open, onOpenChange }: { id: number | null; open: boolean; onOpenChange: (v: boolean) => void }) {
+  const enabled = !!id;
+  const { data: influencer } = m.marketing.influencers.get.useQuery({ id: id ?? 0 }, { enabled });
+  const { data: perf } = m.marketing.influencers.performance.useQuery({ id: id ?? 0 }, { enabled });
+  const { data: outreach, refetch: refetchOutreach } = m.marketing.influencers.outreach.list.useQuery({ influencerId: id ?? 0 }, { enabled });
+  const { data: participations, refetch: refetchParticipations } = m.marketing.participations.list.useQuery({ influencerId: id ?? 0 }, { enabled });
+  const { data: campaigns } = m.marketing.campaigns.list.useQuery(undefined, { enabled });
+
+  const utils = m.useUtils();
+  const updateStatus = m.marketing.influencers.update.useMutation({
+    onSuccess: () => {
+      utils.marketing.influencers.get.invalidate();
+      utils.marketing.influencers.list.invalidate();
+      utils.marketing.influencers.pipelineCounts.invalidate();
+    },
+  });
+  const logOutreach = m.marketing.influencers.outreach.log.useMutation({
+    onSuccess: () => { toast.success("Outreach logged"); refetchOutreach(); setOutreachBody(""); setOutreachSubject(""); },
+    onError: (err: any) => toast.error(err.message),
+  });
+  const addParticipation = m.marketing.participations.create.useMutation({
+    onSuccess: () => { toast.success("Added to campaign"); refetchParticipations(); setNewParticipationCampaign(""); setNewParticipationFee(""); },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const [outreachChannel, setOutreachChannel] = useState<"email" | "dm" | "phone" | "agent" | "platform_message">("email");
+  const [outreachSubject, setOutreachSubject] = useState("");
+  const [outreachBody, setOutreachBody] = useState("");
+  const [newParticipationCampaign, setNewParticipationCampaign] = useState("");
+  const [newParticipationFee, setNewParticipationFee] = useState("");
+
+  if (!influencer) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <UsersIcon className="h-4 w-4" /> {influencer.fullName}
+            {influencer.primaryHandle && (
+              <span className="text-xs text-muted-foreground font-normal">@{influencer.primaryHandle}</span>
+            )}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          <StatCard label="Followers" value={(influencer.followerCount ?? 0).toLocaleString()} icon={UsersIcon} hint={influencer.tier ?? ""} />
+          <StatCard label="Campaigns" value={perf?.participationCount ?? 0} icon={Target} />
+          <StatCard label="Total spend" value={`$${(perf?.totalSpend ?? 0).toLocaleString()}`} icon={DollarSign} hint={`$${(perf?.pendingSpend ?? 0).toLocaleString()} pending`} />
+          <StatCard label="Impressions" value={(perf?.metrics.impressions ?? 0).toLocaleString()} icon={Eye} hint={perf?.cpm ? `$${perf.cpm.toFixed(2)} CPM` : ""} />
+        </div>
+
+        <div className="flex items-center gap-2 mt-2">
+          <Label className="text-xs">Status</Label>
+          <Select value={influencer.status} onValueChange={(v) => updateStatus.mutate({ id: influencer.id, status: v as any })}>
+            <SelectTrigger className="h-7 w-40 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {INFLUENCER_STATUSES.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          {influencer.email && <a href={`mailto:${influencer.email}`} className="text-xs underline ml-auto"><Mail className="h-3 w-3 inline mr-1" />{influencer.email}</a>}
+          {influencer.websiteUrl && <a href={influencer.websiteUrl} target="_blank" rel="noreferrer" className="text-xs underline"><ExternalLink className="h-3 w-3 inline mr-1" />website</a>}
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-3 mt-3">
+          <Card>
+            <CardHeader className="pb-2"><CardTitle className="text-sm">Outreach log</CardTitle></CardHeader>
+            <CardContent className="space-y-2">
+              <div className="space-y-1 max-h-40 overflow-y-auto">
+                {outreach && outreach.length > 0 ? outreach.map((o: any) => (
+                  <div key={o.id} className="text-xs rounded border p-2">
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <Badge variant="outline" className="text-[10px]">{o.channel}</Badge>
+                      <Badge variant="secondary" className="text-[10px]">{o.direction}</Badge>
+                      <span>{format(new Date(o.sentAt), "MMM d, h:mm a")}</span>
+                      <Badge className="text-[10px] ml-auto">{o.response}</Badge>
+                    </div>
+                    {o.subject && <div className="font-medium mt-1">{o.subject}</div>}
+                    {o.body && <div className="line-clamp-2 mt-1">{o.body}</div>}
+                  </div>
+                )) : <div className="text-xs text-muted-foreground py-2 text-center">No outreach yet.</div>}
+              </div>
+              <div className="border-t pt-2 space-y-1">
+                <div className="flex gap-1">
+                  <Select value={outreachChannel} onValueChange={(v) => setOutreachChannel(v as any)}>
+                    <SelectTrigger className="h-7 w-28 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="email">Email</SelectItem>
+                      <SelectItem value="dm">DM</SelectItem>
+                      <SelectItem value="phone">Phone</SelectItem>
+                      <SelectItem value="agent">Agent</SelectItem>
+                      <SelectItem value="platform_message">Platform</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Input className="h-7 text-xs" placeholder="Subject (optional)" value={outreachSubject} onChange={(e) => setOutreachSubject(e.target.value)} />
+                </div>
+                <Textarea rows={2} placeholder="Message body" className="text-xs" value={outreachBody} onChange={(e) => setOutreachBody(e.target.value)} />
+                <Button
+                  size="sm"
+                  className="h-7 text-xs w-full"
+                  disabled={!outreachBody.trim() || logOutreach.isPending}
+                  onClick={() => logOutreach.mutate({ influencerId: influencer.id, channel: outreachChannel, subject: outreachSubject || undefined, body: outreachBody })}
+                >
+                  Log outreach
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2"><CardTitle className="text-sm">Campaign deals</CardTitle></CardHeader>
+            <CardContent className="space-y-2">
+              <div className="space-y-1 max-h-40 overflow-y-auto">
+                {participations && participations.length > 0 ? participations.map((row: any) => (
+                  <div key={row.participation.id} className="text-xs rounded border p-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{row.campaign?.name ?? `Campaign #${row.participation.campaignId}`}</span>
+                      <Badge variant="outline" className="text-[10px]">{row.participation.status}</Badge>
+                      <Badge className="text-[10px]" variant="secondary">{row.participation.paymentStatus}</Badge>
+                    </div>
+                    {row.participation.agreedFee && (
+                      <div className="text-muted-foreground mt-1">${Number(row.participation.agreedFee).toLocaleString()} {row.participation.currency}</div>
+                    )}
+                  </div>
+                )) : <div className="text-xs text-muted-foreground py-2 text-center">Not on any campaigns yet.</div>}
+              </div>
+              <div className="border-t pt-2 space-y-1">
+                <Select value={newParticipationCampaign} onValueChange={setNewParticipationCampaign}>
+                  <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Add to campaign…" /></SelectTrigger>
+                  <SelectContent>
+                    {campaigns?.map((c: any) => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <div className="flex gap-1">
+                  <Input className="h-7 text-xs" placeholder="Agreed fee" value={newParticipationFee} onChange={(e) => setNewParticipationFee(e.target.value)} />
+                  <Button
+                    size="sm"
+                    className="h-7 text-xs"
+                    disabled={!newParticipationCampaign || addParticipation.isPending}
+                    onClick={() => addParticipation.mutate({
+                      influencerId: influencer.id,
+                      campaignId: Number(newParticipationCampaign),
+                      agreedFee: newParticipationFee || undefined,
+                      status: "invited",
+                    })}
+                  >
+                    Add
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function InfluencersTab() {
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [search, setSearch] = useState("");
+  const { data: list, refetch } = m.marketing.influencers.list.useQuery({
+    status: statusFilter === "all" ? undefined : statusFilter,
+    search: search || undefined,
+  });
+  const { data: pipeline } = m.marketing.influencers.pipelineCounts.useQuery();
+  const utils = m.useUtils();
+  const del = m.marketing.influencers.delete.useMutation({
+    onSuccess: () => { toast.success("Removed"); utils.marketing.influencers.list.invalidate(); utils.marketing.influencers.pipelineCounts.invalidate(); },
+  });
+  const [detailId, setDetailId] = useState<number | null>(null);
+
+  const pipelineMap = useMemo(() => {
+    const map = new Map<string, number>();
+    (pipeline ?? []).forEach((row: any) => map.set(row.status, Number(row.count)));
+    return map;
+  }, [pipeline]);
+
+  return (
+    <div className="space-y-3">
+      <Card>
+        <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-sm">Pipeline</CardTitle>
+          <NewInfluencerDialog onCreated={() => { refetch(); utils.marketing.influencers.pipelineCounts.invalidate(); }} />
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
+            {INFLUENCER_STATUSES.map((s) => {
+              const count = pipelineMap.get(s.value) ?? 0;
+              const active = statusFilter === s.value;
+              return (
+                <button
+                  key={s.value}
+                  className={`rounded-md border p-2 text-left ${active ? "bg-muted" : ""}`}
+                  onClick={() => setStatusFilter(active ? "all" : s.value)}
+                >
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{s.label}</div>
+                  <div className="text-lg font-semibold">{count}</div>
+                </button>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-sm">Roster</CardTitle>
+          <div className="flex items-center gap-2">
+            <Input className="h-7 text-xs w-48" placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="h-7 text-xs w-32"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All statuses</SelectItem>
+                {INFLUENCER_STATUSES.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Handle</TableHead>
+                <TableHead>Tier</TableHead>
+                <TableHead>Followers</TableHead>
+                <TableHead>Niche</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {list?.map((inf: any) => (
+                <TableRow key={inf.id}>
+                  <TableCell className="font-medium">{inf.fullName}</TableCell>
+                  <TableCell>
+                    {inf.primaryHandle ? (
+                      <span className="text-xs">
+                        <Badge variant="outline" className="text-[10px] mr-1">{inf.primaryPlatform}</Badge>
+                        @{inf.primaryHandle}
+                      </span>
+                    ) : "—"}
+                  </TableCell>
+                  <TableCell>{inf.tier ? <Badge variant="secondary" className="text-[10px]">{inf.tier}</Badge> : "—"}</TableCell>
+                  <TableCell>{(inf.followerCount ?? 0).toLocaleString()}</TableCell>
+                  <TableCell>{inf.niche ?? "—"}</TableCell>
+                  <TableCell><Badge variant="outline">{inf.status}</Badge></TableCell>
+                  <TableCell className="text-right space-x-1">
+                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setDetailId(inf.id)}>Open</Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => del.mutate({ id: inf.id })}>
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {(!list || list.length === 0) && (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center text-xs text-muted-foreground py-6">
+                    No influencers yet. Add one to start tracking outreach and deals.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <InfluencerDetailDialog id={detailId} open={detailId !== null} onOpenChange={(v) => { if (!v) setDetailId(null); }} />
+    </div>
+  );
+}
+
 // ---------- Hub ----------
 
 export default function MarketingHub() {
@@ -696,7 +1142,7 @@ export default function MarketingHub() {
           <h1 className="text-xl font-bold tracking-[-0.02em] flex items-center gap-2">
             <Megaphone className="h-6 w-6" /> Marketing
           </h1>
-          <p className="text-muted-foreground text-sm">Social scheduling, engagement, and campaign ROI</p>
+          <p className="text-muted-foreground text-sm">Social scheduling, engagement, campaigns, and creator deals</p>
         </div>
       </div>
 
@@ -709,6 +1155,7 @@ export default function MarketingHub() {
           <TabsTrigger value="posts"><PenSquare className="h-3 w-3 mr-1" /> Posts</TabsTrigger>
           <TabsTrigger value="engagement"><Inbox className="h-3 w-3 mr-1" /> Engagement</TabsTrigger>
           <TabsTrigger value="campaigns"><Target className="h-3 w-3 mr-1" /> Campaigns</TabsTrigger>
+          <TabsTrigger value="influencers"><UsersIcon className="h-3 w-3 mr-1" /> Influencers</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview"><OverviewTab /></TabsContent>
@@ -716,6 +1163,7 @@ export default function MarketingHub() {
         <TabsContent value="posts"><PostsTab /></TabsContent>
         <TabsContent value="engagement"><EngagementTab /></TabsContent>
         <TabsContent value="campaigns"><CampaignsTab /></TabsContent>
+        <TabsContent value="influencers"><InfluencersTab /></TabsContent>
       </Tabs>
     </div>
   );
