@@ -5439,15 +5439,15 @@ ONLY return the JSON array, no other text.`;
         const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
         if (isExpired && token.refreshToken) {
           const refreshResult = await refreshQuickBooksToken(token.refreshToken);
-          if (!refreshResult.error) {
+          if (!refreshResult.error && refreshResult.access_token && refreshResult.expires_in) {
             await db.upsertQuickBooksOAuthToken({
               userId: ctx.user.id,
-              accessToken: refreshResult.access_token!,
-              refreshToken: refreshResult.refresh_token!,
-              expiresAt: new Date(Date.now() + refreshResult.expires_in! * 1000),
+              accessToken: refreshResult.access_token,
+              refreshToken: refreshResult.refresh_token ?? token.refreshToken,
+              expiresAt: new Date(Date.now() + refreshResult.expires_in * 1000),
               realmId: token.realmId,
             });
-            accessToken = refreshResult.access_token!;
+            accessToken = refreshResult.access_token;
           }
         }
 
