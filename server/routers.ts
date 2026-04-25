@@ -21368,6 +21368,9 @@ Return JSON array only. No markdown.`;
           type: stakeholder.type,
           title: stakeholder.title,
           relationship: stakeholder.relationship,
+          // Surfaced so the client can hide tier-gated sections (board
+          // materials, top-holder list) without a wasted FORBIDDEN call.
+          tier: stakeholder.tier,
           accreditedInvestor: stakeholder.accreditedInvestor,
         },
         grants: decoratedGrants,
@@ -21500,6 +21503,57 @@ Return JSON array only. No markdown.`;
         }
         return { success: true, emailSent: emailResult.success };
       }),
+
+    // ─── Board materials (board-tier only) ──────────────────────────
+    //
+    // Surfaces approved/signed board resolutions to investors with a
+    // board seat. Only `tier='board'` (or admin/exec for support) sees
+    // them — major investors without a seat get a clear FORBIDDEN, not
+    // an empty list, so they know the section exists but isn't theirs.
+    //
+    // Drafts and in-review resolutions are excluded so we don't leak
+    // pre-decisional material.
+    boardMaterials: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+      }
+      const stakeholder = ctx.user.role === "investor"
+        ? await db.getStakeholderByUserId(ctx.user.id)
+        : undefined;
+
+      // Tier gate: investor must hold tier='board'. Admin/exec bypass.
+      const allowed = ctx.user.role === "admin"
+        || ctx.user.role === "exec"
+        || stakeholder?.tier === "board";
+      if (!allowed) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Board materials are only available to investors with a board seat.",
+        });
+      }
+
+      const resolutions = await db.getBoardResolutions({
+        companyId: stakeholder?.companyId ?? undefined,
+      });
+      // Whitelist statuses we're willing to show. `approved`/`signed`/
+      // `archived` are board-history; everything else is pre-decisional.
+      const visible = (resolutions as Array<{
+        id: number; title: string; type: string; description: string | null;
+        documentUrl: string | null; status: string | null;
+        approvedAt: Date | null; submittedAt: Date | null;
+      }>).filter((r) =>
+        r.status === "approved" || r.status === "signed" || r.status === "archived",
+      );
+      return visible.map((r) => ({
+        id: r.id,
+        title: r.title,
+        type: r.type,
+        description: r.description,
+        documentUrl: r.documentUrl,
+        status: r.status,
+        approvedAt: r.approvedAt,
+      }));
+    }),
 
     // ─── Cap table summary (tier-aware) ─────────────────────────────
     //

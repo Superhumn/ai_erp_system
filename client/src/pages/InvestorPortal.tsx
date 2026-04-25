@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, TrendingUp, TrendingDown, Wallet, Clock, Receipt, LineChart, Megaphone, Shield, FileText, Download, UserCog, PieChart } from "lucide-react";
+import { Loader2, TrendingUp, TrendingDown, Wallet, Clock, Receipt, LineChart, Megaphone, Shield, FileText, Download, UserCog, PieChart, Gavel, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 
 // The logged-in existing-investor view. Reuses the same tRPC client the
@@ -258,9 +258,83 @@ export default function InvestorPortal() {
       {/* Cap table summary */}
       <CapTableSummarySection />
 
+      {/* Board materials — only renders when the investor holds tier=board. */}
+      {me.stakeholder.tier === "board" && <BoardMaterialsSection />}
+
       {/* Profile & Preferences */}
       <ProfileSection />
     </div>
+  );
+}
+
+// ─── Board materials (board-tier only) ───────────────────────────────
+//
+// Renders only when the investor's stakeholder has tier='board'. The
+// server independently re-checks the tier so a tampered client can't
+// just unhide this section to fetch the data. Drafts and in-review
+// resolutions are hidden server-side (only approved / signed /
+// archived flow through).
+function BoardMaterialsSection() {
+  const { data: resolutions, isLoading } = trpc.investorPortal.boardMaterials.useQuery();
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <Gavel className="h-4 w-4 text-muted-foreground" />
+          <CardTitle className="text-base">Board materials</CardTitle>
+          <Badge variant="outline" className="ml-1">Board seat</Badge>
+        </div>
+        <CardDescription>
+          Approved board resolutions. Drafts and pre-decisional materials are not shown.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="flex items-center justify-center py-6">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : !resolutions || resolutions.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No board resolutions have been approved yet.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {resolutions.map((r) => (
+              <div key={r.id} className="rounded-lg border p-3">
+                <div className="flex items-baseline justify-between gap-3 mb-1">
+                  <p className="text-sm font-medium">{r.title}</p>
+                  <Badge variant="outline" className="capitalize flex-shrink-0">
+                    {r.type.replace(/_/g, " ")}
+                  </Badge>
+                </div>
+                {r.description && (
+                  <p className="text-sm text-muted-foreground whitespace-pre-wrap line-clamp-3 mb-1">
+                    {r.description}
+                  </p>
+                )}
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs text-muted-foreground">
+                    {r.status === "signed" ? "Signed" : "Approved"}
+                    {r.approvedAt ? ` ${new Date(r.approvedAt).toLocaleDateString("en-US")}` : ""}
+                  </p>
+                  {r.documentUrl && (
+                    <a
+                      href={r.documentUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-primary hover:underline inline-flex items-center gap-1"
+                    >
+                      View document <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
