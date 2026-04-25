@@ -19878,7 +19878,12 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           type: z.enum(["founder", "employee", "investor", "advisor", "board_member", "contractor"]).optional(),
           title: z.string().optional(),
           relationship: z.string().optional(),
+          // Investor-portal entitlement tier — admin-only setting that drives
+          // which gated portal sections become visible.
+          tier: z.enum(["ordinary", "major", "board"]).optional(),
           address: z.string().optional(),
+          mailingAddress: z.string().optional(),
+          paymentPreference: z.string().optional(),
           taxId: z.string().optional(),
           accreditedInvestor: z.boolean().optional(),
           notes: z.string().optional(),
@@ -19914,6 +19919,67 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           await createAuditLog(ctx.user.id, 'delete', 'stakeholder', 0, `Deleted ${placeholders.length} placeholder stakeholders`);
           return { deleted: placeholders.length };
         }),
+
+      // Admin-side per-stakeholder document locker. Mirrors the
+      // investor-facing `investorPortal.documents.*` endpoints but lets
+      // an admin manage docs for any stakeholder. Files come up the wire
+      // as base64 — fine for typical investor docs (PDFs <10MB), and
+      // saves a presigned-URL round trip. We cap upload size at 25MB.
+      documents: router({
+        list: adminProcedure
+          .input(z.object({ stakeholderId: z.number() }))
+          .query(({ input }) => db.getStakeholderDocuments(input.stakeholderId)),
+        upload: adminProcedure
+          .input(z.object({
+            stakeholderId: z.number(),
+            title: z.string().min(1).max(256),
+            description: z.string().max(2000).optional(),
+            category: z.enum(["agreement", "side_letter", "k1", "capital_call", "distribution", "other"]).default("other"),
+            fileName: z.string().min(1).max(256),
+            mimeType: z.string().max(128),
+            // base64-encoded file body. 25MB raw → ~33MB base64; reject anything bigger.
+            base64: z.string().max(35_000_000),
+          }))
+          .mutation(async ({ input, ctx }) => {
+            const stakeholder = await db.getStakeholderById(input.stakeholderId);
+            if (!stakeholder) {
+              throw new TRPCError({ code: "NOT_FOUND", message: "Stakeholder not found" });
+            }
+            const buffer = Buffer.from(input.base64, "base64");
+            if (buffer.length > 25 * 1024 * 1024) {
+              throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: "File exceeds 25MB upload limit" });
+            }
+            // Slug the filename so storage keys stay tame; timestamp prefix
+            // prevents collisions across re-uploads of the same name.
+            const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 200);
+            const key = `investor-docs/${stakeholder.id}/${Date.now()}-${safeName}`;
+            const { storagePut } = await import("./storage");
+            const { url } = await storagePut(key, buffer, input.mimeType);
+            const ext = input.fileName.split(".").pop()?.toLowerCase() ?? null;
+            const result = await db.createStakeholderDocument({
+              companyId: stakeholder.companyId ?? undefined,
+              stakeholderId: stakeholder.id,
+              title: input.title,
+              description: input.description,
+              category: input.category,
+              fileType: ext,
+              mimeType: input.mimeType,
+              fileSize: buffer.length,
+              storageKey: key,
+              storageUrl: url,
+              uploadedBy: ctx.user.id,
+            });
+            await createAuditLog(ctx.user.id, "create", "stakeholder_document", result.id, input.title);
+            return { id: result.id };
+          }),
+        delete: adminProcedure
+          .input(z.object({ id: z.number() }))
+          .mutation(async ({ input, ctx }) => {
+            await db.deleteStakeholderDocument(input.id);
+            await createAuditLog(ctx.user.id, "delete", "stakeholder_document", input.id);
+            return { success: true };
+          }),
+      }),
     }),
 
     grants: router({
@@ -21434,6 +21500,108 @@ Return JSON array only. No markdown.`;
         }
         return { success: true, emailSent: emailResult.success };
       }),
+
+    // ─── My Documents (per-stakeholder document locker) ─────────────
+    //
+    // The investor sees only documents attached to their own stakeholder
+    // record. Admins can browse any stakeholder's locker via the
+    // `capTable.stakeholders.documents.*` admin endpoints.
+    documents: router({
+      list: protectedProcedure.query(async ({ ctx }) => {
+        const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+        if (!stakeholder) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+        }
+        const docs = await db.getStakeholderDocuments(stakeholder.id);
+        // Strip storageKey from the wire response — it's an internal
+        // bucket path the client has no business holding. Downloads go
+        // through `downloadUrl` which re-resolves it server-side.
+        return docs.map((d) => ({
+          id: d.id,
+          title: d.title,
+          description: d.description,
+          category: d.category,
+          fileType: d.fileType,
+          mimeType: d.mimeType,
+          fileSize: d.fileSize,
+          createdAt: d.createdAt,
+        }));
+      }),
+      // Returns a short-lived signed URL the browser can hit directly.
+      // We re-validate ownership on every call so a leaked id from one
+      // investor can't be replayed by another.
+      downloadUrl: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+          if (!stakeholder) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+          }
+          const doc = await db.getStakeholderDocumentById(input.id);
+          if (!doc || doc.stakeholderId !== stakeholder.id) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "Document not found" });
+          }
+          const { storageGet } = await import("./storage");
+          const { url } = await storageGet(doc.storageKey);
+          return { url, mimeType: doc.mimeType, title: doc.title };
+        }),
+    }),
+
+    // ─── Profile & Preferences (self-service) ───────────────────────
+    //
+    // The investor edits their own contact + payment + accreditation
+    // info. Email is editable but `userId` and `type` aren't — those
+    // are admin-controlled.
+    profile: router({
+      get: protectedProcedure.query(async ({ ctx }) => {
+        const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+        if (!stakeholder) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+        }
+        return {
+          name: stakeholder.name,
+          email: stakeholder.email,
+          address: stakeholder.address,
+          mailingAddress: stakeholder.mailingAddress,
+          paymentPreference: stakeholder.paymentPreference,
+          accreditedInvestor: stakeholder.accreditedInvestor,
+          accreditedReAttestedAt: stakeholder.accreditedReAttestedAt,
+        };
+      }),
+      update: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1).max(256).optional(),
+          email: z.string().email().optional(),
+          address: z.string().max(2000).optional(),
+          mailingAddress: z.string().max(2000).optional(),
+          paymentPreference: z.string().max(2000).optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+          if (!stakeholder) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+          }
+          await db.updateStakeholder(stakeholder.id, input);
+          return { success: true };
+        }),
+      // Re-attestation creates a timestamped self-certification that the
+      // investor still qualifies as accredited under the SEC's Reg D
+      // criteria. We don't re-validate the criteria here — that's a
+      // legal review the investor does themselves.
+      reAttestAccreditation: protectedProcedure
+        .input(z.object({ accredited: z.boolean() }))
+        .mutation(async ({ input, ctx }) => {
+          const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+          if (!stakeholder) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+          }
+          await db.updateStakeholder(stakeholder.id, {
+            accreditedInvestor: input.accredited,
+            accreditedReAttestedAt: new Date(),
+          });
+          return { success: true };
+        }),
+    }),
   }),
 
   // Investor Updates

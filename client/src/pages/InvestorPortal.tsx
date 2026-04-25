@@ -1,7 +1,13 @@
+import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, TrendingUp, TrendingDown, Wallet, Clock, Receipt, LineChart, Megaphone, Shield } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Loader2, TrendingUp, TrendingDown, Wallet, Clock, Receipt, LineChart, Megaphone, Shield, FileText, Download, UserCog } from "lucide-react";
+import { toast } from "sonner";
 
 // The logged-in existing-investor view. Reuses the same tRPC client the
 // rest of the dashboard uses, so the session auth cookie gates everything
@@ -245,6 +251,296 @@ export default function InvestorPortal() {
           )}
         </CardContent>
       </Card>
+
+      {/* My Documents */}
+      <MyDocumentsSection />
+
+      {/* Profile & Preferences */}
+      <ProfileSection />
+    </div>
+  );
+}
+
+// ─── My Documents ──────────────────────────────────────────────────────
+//
+// Per-investor locker: executed agreements, side letters, K-1s,
+// capital-call / distribution notices. Downloads go through a
+// short-lived signed URL the server issues per request — we never
+// hand the storage key to the browser.
+function MyDocumentsSection() {
+  const { data: docs, isLoading } = trpc.investorPortal.documents.list.useQuery();
+  const downloadMutation = trpc.investorPortal.documents.downloadUrl.useMutation({
+    onSuccess: ({ url }) => {
+      // Open in a new tab — keeps the portal context, lets the browser
+      // handle PDF preview / save-as for any other mime type.
+      window.open(url, "_blank", "noopener,noreferrer");
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const labelFor = (cat: string) => {
+    switch (cat) {
+      case "agreement": return "Agreement";
+      case "side_letter": return "Side Letter";
+      case "k1": return "K-1";
+      case "capital_call": return "Capital Call";
+      case "distribution": return "Distribution";
+      default: return "Document";
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <FileText className="h-4 w-4 text-muted-foreground" />
+          <CardTitle className="text-base">My documents</CardTitle>
+        </div>
+        <CardDescription>
+          Executed agreements, side letters, tax forms, and capital-call / distribution notices.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="flex items-center justify-center py-6">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : !docs || docs.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No documents have been shared with you yet. The team will upload your executed
+            agreements and tax documents here as they're available.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {docs.map((d) => {
+              const pendingForThisRow = downloadMutation.isPending
+                && (downloadMutation.variables as { id?: number } | undefined)?.id === d.id;
+              return (
+                <div key={d.id} className="flex items-center justify-between gap-3 rounded-lg border p-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <p className="text-sm font-medium truncate">{d.title}</p>
+                      <Badge variant="outline" className="flex-shrink-0">{labelFor(d.category)}</Badge>
+                    </div>
+                    {d.description && (
+                      <p className="text-xs text-muted-foreground truncate">{d.description}</p>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      Added {d.createdAt ? new Date(d.createdAt).toLocaleDateString("en-US") : "—"}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={pendingForThisRow}
+                    onClick={() => downloadMutation.mutate({ id: d.id })}
+                  >
+                    {pendingForThisRow ? (
+                      <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5 mr-1.5" />
+                    )}
+                    Download
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Profile & Preferences ─────────────────────────────────────────────
+//
+// Investor self-services: contact email, mailing address (for K-1s),
+// payment-preference note, and accreditation re-attestation. Edits use
+// optimistic-ish form state — we don't reset on every keystroke from
+// the server.
+function ProfileSection() {
+  const utils = trpc.useUtils();
+  const { data: profile, isLoading } = trpc.investorPortal.profile.get.useQuery();
+  const [draft, setDraft] = useState<{
+    name: string; email: string; address: string;
+    mailingAddress: string; paymentPreference: string;
+  } | null>(null);
+  const [editing, setEditing] = useState(false);
+
+  const updateMutation = trpc.investorPortal.profile.update.useMutation({
+    onSuccess: () => {
+      toast.success("Profile updated");
+      setEditing(false);
+      utils.investorPortal.profile.get.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+  const reAttest = trpc.investorPortal.profile.reAttestAccreditation.useMutation({
+    onSuccess: () => {
+      toast.success("Accreditation status recorded");
+      utils.investorPortal.profile.get.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  if (isLoading || !profile) {
+    return (
+      <Card>
+        <CardContent className="flex items-center justify-center py-8">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const startEdit = () => {
+    setDraft({
+      name: profile.name ?? "",
+      email: profile.email ?? "",
+      address: profile.address ?? "",
+      mailingAddress: profile.mailingAddress ?? "",
+      paymentPreference: profile.paymentPreference ?? "",
+    });
+    setEditing(true);
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <UserCog className="h-4 w-4 text-muted-foreground" />
+          <CardTitle className="text-base">Profile &amp; preferences</CardTitle>
+        </div>
+        <CardDescription>
+          Keep your contact, mailing, and payment info up to date so we send K-1s and
+          distributions to the right place.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {!editing || !draft ? (
+          <>
+            <ReadOnlyField label="Name" value={profile.name} />
+            <ReadOnlyField label="Email" value={profile.email} />
+            <ReadOnlyField label="Legal address" value={profile.address} multiline />
+            <ReadOnlyField label="Mailing address (for K-1s)" value={profile.mailingAddress} multiline />
+            <ReadOnlyField label="Payment preference" value={profile.paymentPreference} multiline />
+            <div className="pt-2 flex justify-end">
+              <Button size="sm" onClick={startEdit}>Edit</Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <FormField label="Name">
+              <Input
+                value={draft.name}
+                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+              />
+            </FormField>
+            <FormField label="Email">
+              <Input
+                type="email"
+                value={draft.email}
+                onChange={(e) => setDraft({ ...draft, email: e.target.value })}
+              />
+            </FormField>
+            <FormField label="Legal address">
+              <Textarea
+                rows={2}
+                value={draft.address}
+                onChange={(e) => setDraft({ ...draft, address: e.target.value })}
+              />
+            </FormField>
+            <FormField
+              label="Mailing address (for K-1s)"
+              hint="Where to send paper tax documents — leave blank to use the legal address."
+            >
+              <Textarea
+                rows={2}
+                value={draft.mailingAddress}
+                onChange={(e) => setDraft({ ...draft, mailingAddress: e.target.value })}
+              />
+            </FormField>
+            <FormField
+              label="Payment preference"
+              hint="A short note describing how you'd like to receive distributions — e.g. 'ACH preferred — contact admin to share routing details over a secure channel.' We don't store routing/account numbers in the portal."
+            >
+              <Textarea
+                rows={3}
+                value={draft.paymentPreference}
+                onChange={(e) => setDraft({ ...draft, paymentPreference: e.target.value })}
+              />
+            </FormField>
+            <div className="pt-2 flex justify-end gap-2">
+              <Button size="sm" variant="outline" onClick={() => { setEditing(false); setDraft(null); }}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={updateMutation.isPending}
+                onClick={() => updateMutation.mutate(draft)}
+              >
+                {updateMutation.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+                Save
+              </Button>
+            </div>
+          </>
+        )}
+
+        <div className="border-t pt-4">
+          <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">
+            Accreditation
+          </p>
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm">
+              <p>
+                Status:{" "}
+                <span className="font-medium">
+                  {profile.accreditedInvestor ? "Accredited" : "Not on file"}
+                </span>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {profile.accreditedReAttestedAt
+                  ? `Last re-attested ${new Date(profile.accreditedReAttestedAt).toLocaleDateString("en-US")}`
+                  : "Has not been re-attested yet."}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={reAttest.isPending}
+              onClick={() => reAttest.mutate({ accredited: true })}
+            >
+              {reAttest.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+              Re-attest
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ReadOnlyField({ label, value, multiline }: { label: string; value: string | null | undefined; multiline?: boolean }) {
+  return (
+    <div>
+      <p className="text-xs uppercase tracking-wider text-muted-foreground mb-1">{label}</p>
+      <p className={`text-sm ${value ? "" : "text-muted-foreground italic"} ${multiline ? "whitespace-pre-wrap" : ""}`}>
+        {value || "—"}
+      </p>
+    </div>
+  );
+}
+
+function FormField({
+  label, hint, children,
+}: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <Label className="text-xs uppercase tracking-wider text-muted-foreground mb-1">
+        {label}
+      </Label>
+      {children}
+      {hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
     </div>
   );
 }

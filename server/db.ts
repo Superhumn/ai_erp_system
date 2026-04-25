@@ -144,6 +144,7 @@ import {
   // Cap table & equity management
   shareClasses, InsertShareClass,
   stakeholders, InsertStakeholder,
+  stakeholderDocuments, InsertStakeholderDocument,
   equityGrants, InsertEquityGrant,
   valuations409a, InsertValuation409a,
   equityTransactions, InsertEquityTransaction,
@@ -12125,6 +12126,38 @@ export async function getStakeholderByUserId(userId: number) {
     .where(eq(stakeholders.userId, userId))
     .limit(1);
   return result[0];
+}
+
+// --- Stakeholder Documents (investor portal "My Documents" locker) ---
+
+export async function getStakeholderDocuments(stakeholderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(stakeholderDocuments)
+    .where(eq(stakeholderDocuments.stakeholderId, stakeholderId))
+    .orderBy(desc(stakeholderDocuments.createdAt));
+}
+
+export async function getStakeholderDocumentById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(stakeholderDocuments)
+    .where(eq(stakeholderDocuments.id, id))
+    .limit(1);
+  return result[0];
+}
+
+export async function createStakeholderDocument(data: InsertStakeholderDocument) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(stakeholderDocuments).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function deleteStakeholderDocument(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(stakeholderDocuments).where(eq(stakeholderDocuments.id, id));
 }
 
 export async function createEquityGrant(data: InsertEquityGrant) {

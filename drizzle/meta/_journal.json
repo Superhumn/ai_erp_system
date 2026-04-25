@@ -273,6 +273,13 @@
       "when": 1777651400000,
       "tag": "0037_investor_portal",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "5",
+      "when": 1777651500000,
+      "tag": "0038_investor_portal_phase2",
+      "breakpoints": true
     }
   ]
 }

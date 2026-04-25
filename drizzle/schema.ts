@@ -5496,9 +5496,27 @@ export const stakeholders = mysqlTable("stakeholders", {
   type: mysqlEnum("type", ["founder", "employee", "investor", "advisor", "board_member", "contractor"]).notNull(),
   title: varchar("title", { length: 128 }),
   relationship: varchar("relationship", { length: 128 }), // "Lead Investor", "Angel", etc.
+  // Investor-portal entitlement tier. Drives which gated sections (board
+  // materials, sensitive cap-table detail, etc.) are visible. Free tiers
+  // for now since most investors fit cleanly into ordinary / major / board.
+  tier: mysqlEnum("tier", ["ordinary", "major", "board"]).default("ordinary").notNull(),
   address: text("address"),
+  // Mailing address for K-1s / paper communications. Distinct from `address`
+  // (legal address) because some investors live at one place and want tax
+  // documents sent to a different one (CPA, family office, etc.).
+  mailingAddress: text("mailingAddress"),
+  // Free-text "how to pay me" — wire instructions, ACH preference, etc.
+  // Deliberately NOT a structured ACH field: storing actual routing /
+  // account numbers needs an encrypted vault we don't have yet, and the
+  // failure mode of leaking those is much worse than the inconvenience
+  // of a free-text note describing the preference.
+  paymentPreference: text("paymentPreference"),
   taxId: varchar("taxId", { length: 64 }),
   accreditedInvestor: boolean("accreditedInvestor").default(false),
+  // When the investor last re-attested they're accredited. Used so the
+  // portal can prompt for re-attestation after some interval (Reg D
+  // typically wants annual re-confirmation for ongoing offerings).
+  accreditedReAttestedAt: timestamp("accreditedReAttestedAt"),
   status: mysqlEnum("status", ["active", "inactive", "terminated", "departed"]).default("active"),
   terminationDate: timestamp("terminationDate"),
   notes: text("notes"),
@@ -5509,6 +5527,39 @@ export const stakeholders = mysqlTable("stakeholders", {
 
 export type Stakeholder = typeof stakeholders.$inferSelect;
 export type InsertStakeholder = typeof stakeholders.$inferInsert;
+
+// Per-stakeholder document locker. Used by the investor portal to surface
+// executed agreements, K-1s, capital-call notices, distribution notices
+// — anything tied to one investor rather than the company at large.
+//
+// Storage uses the project's `storagePut`/`storageGet` helpers (Forge
+// proxy or S3 depending on env), so we keep the key + the durable URL.
+export const stakeholderDocuments = mysqlTable("stakeholder_documents", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  stakeholderId: int("stakeholderId").notNull(),
+  title: varchar("title", { length: 256 }).notNull(),
+  description: text("description"),
+  category: mysqlEnum("category", [
+    "agreement",        // SAFE / note / SPA — what the investor signed
+    "side_letter",      // any individually-negotiated terms
+    "k1",               // tax forms
+    "capital_call",
+    "distribution",
+    "other",
+  ]).default("other").notNull(),
+  fileType: varchar("fileType", { length: 64 }),
+  mimeType: varchar("mimeType", { length: 128 }),
+  fileSize: bigint("fileSize", { mode: "number" }),
+  storageKey: varchar("storageKey", { length: 512 }).notNull(),
+  storageUrl: varchar("storageUrl", { length: 1024 }),
+  uploadedBy: int("uploadedBy"), // user id, nullable so backfills don't break
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type StakeholderDocument = typeof stakeholderDocuments.$inferSelect;
+export type InsertStakeholderDocument = typeof stakeholderDocuments.$inferInsert;
 
 export const equityGrants = mysqlTable("equity_grants", {
   id: int("id").autoincrement().primaryKey(),
