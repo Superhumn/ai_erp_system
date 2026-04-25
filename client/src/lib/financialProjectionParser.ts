@@ -580,9 +580,6 @@ export function deriveSeries(model: FinancialModel) {
     if (period.month !== undefined) {
       return period.year * 12 + (period.month - 1);
     }
-    if (period.quarter !== undefined) {
-      return period.year * 12 + (period.quarter - 1) * 3;
-    }
     return period.year * 12;
   };
 
