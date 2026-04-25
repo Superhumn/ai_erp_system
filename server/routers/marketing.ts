@@ -360,7 +360,7 @@ export const marketingRouter = router({
           websiteUrl: z.string().optional(),
           avatarUrl: z.string().optional(),
           followerCount: z.number().optional(),
-          engagementRatePct: z.string().optional(),
+          engagementRatePct: z.coerce.number().min(0).max(100).optional(),
           avgViews: z.number().optional(),
           tier: z.enum(["nano", "micro", "mid", "macro", "mega"]).optional(),
           niche: z.string().optional(),
