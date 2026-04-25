@@ -536,9 +536,16 @@ export async function getInfluencerOutreach(influencerId: number) {
 export async function logInfluencerOutreach(data: InsertInfluencerOutreach) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(influencerOutreach).values(data);
-  if (data.direction === "outbound") {
-    await db.update(influencers).set({ lastOutreachAt: new Date() }).where(eq(influencers.id, data.influencerId));
+  const normalizedData: InsertInfluencerOutreach = {
+    ...data,
+    direction: data.direction ?? "outbound",
+  };
+  const result = await db.insert(influencerOutreach).values(normalizedData);
+  if (normalizedData.direction === "outbound") {
+    await db
+      .update(influencers)
+      .set({ lastOutreachAt: new Date() })
+      .where(eq(influencers.id, normalizedData.influencerId));
   }
   return result[0].insertId;
 }
