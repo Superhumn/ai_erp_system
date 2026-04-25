@@ -166,6 +166,10 @@ export function toNumber(v: unknown): number | null {
     isPct = true;
     cleaned = cleaned.slice(0, -1);
   }
+  // Reject anything with non-numeric remnants (e.g., "250K") — magnitude
+  // suffixes like K/M/B aren't supported, and parseFloat would silently
+  // strip them and return a misleading partial number.
+  if (!/^-?(\d+(\.\d+)?|\.\d+)$/.test(cleaned)) return null;
   const n = parseFloat(cleaned);
   if (!Number.isFinite(n)) return null;
   const signed = isNeg ? -n : n;
@@ -644,17 +648,16 @@ export function deriveSeries(model: FinancialModel) {
     const lastCash = cash[n - 1];
     const lastNi = netIncome[n - 1];
     if (lastCash !== null && lastNi !== null && lastNi < 0) {
-      const stepSizes = periods
-        .slice(1)
-        .map((period, i) => period.sortKey - periods[i].sortKey)
-        .filter((delta) => delta > 0);
-
-      const inferredMonthsPerPeriod =
-        stepSizes.length > 0 && stepSizes.every((delta) => delta === stepSizes[0])
-          ? stepSizes[0]
-          : periods.every((p) => p.month !== undefined)
-            ? 1
-            : 12;
+      // Infer months-per-period from the calendar gap between the first two
+      // periods. sortKey isn't a months unit (year-only sortKeys differ by
+      // 100), so we walk the actual year/month fields instead.
+      let inferredMonthsPerPeriod = 12;
+      if (periods.length >= 2 && periods.every((p) => p.month !== undefined)) {
+        const a = periods[0]!;
+        const b = periods[1]!;
+        const gap = (b.year - a.year) * 12 + (b.month! - a.month!);
+        inferredMonthsPerPeriod = gap > 0 ? gap : 1;
+      }
 
       const burnPerMonth = -lastNi / inferredMonthsPerPeriod;
       runwayMonths = burnPerMonth > 0 ? lastCash / burnPerMonth : null;
