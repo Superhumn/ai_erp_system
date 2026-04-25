@@ -159,10 +159,14 @@ export default function DataRoomDetail() {
   });
 
   const refreshDocMutation = trpc.dataRoom.documents.refreshFromDrive.useMutation({
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       toast.success(`Refreshed from Drive (v${data.version})`);
-      refetchDocuments();
-      setSelectedDoc((prev) => (prev ? { ...prev, name: data.name } : prev));
+      const selectedId = selectedDoc?.id;
+      const refetched = await refetchDocuments();
+      if (selectedId) {
+        const fresh = refetched.data?.find((d) => d.id === selectedId);
+        if (fresh) setSelectedDoc(fresh);
+      }
     },
     onError: (error) => {
       toast.error(error.message);
@@ -170,9 +174,14 @@ export default function DataRoomDetail() {
   });
 
   const uploadNewVersionMutation = trpc.dataRoom.documents.uploadNewVersion.useMutation({
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       toast.success(`New version uploaded (v${data.version})`);
-      refetchDocuments();
+      const selectedId = selectedDoc?.id;
+      const refetched = await refetchDocuments();
+      if (selectedId) {
+        const fresh = refetched.data?.find((d) => d.id === selectedId);
+        if (fresh) setSelectedDoc(fresh);
+      }
     },
     onError: (error) => {
       toast.error(error.message);

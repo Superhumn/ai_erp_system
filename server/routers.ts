@@ -1,6 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { safeDecryptToken } from "./_core/crypto";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -33,13 +33,13 @@ import { detectEdiAnomalies, predictEdiErrors } from "./ediAiService";
 import { scoreSuppliers } from "./supplierScoringService";
 import * as db from "./db";
 import * as manufacturingDb from "./db/manufacturing";
-import { storagePut } from "./storage";
+import { storagePut, storageDelete } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getServiceAccountEmail, isServiceAccountConfigured } from "./_core/googleServiceAccount";
-import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss } from "./_core/quickbooks";
+import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss, parseProfitAndLossReport } from "./_core/quickbooks";
 import { listAllTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { queueFirefliesActionItemsForApproval } from "./firefliesSyncService";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
@@ -5459,58 +5459,7 @@ ONLY return the JSON array, no other text.`;
         });
         if (result.error) return { connected: true, error: result.error, months: [] as { label: string; income: number; cogs: number; expense: number }[] };
 
-        const report = result.data;
-        const columns: string[] = (report?.Columns?.Column ?? []).map((c: any) => c?.ColTitle ?? "");
-
-        const walkRows = (rows: any[], out: { label: string; values: number[] }[] = []): { label: string; values: number[] }[] => {
-          for (const r of rows ?? []) {
-            if (r?.Summary?.ColData) {
-              out.push({
-                label: r.Summary.ColData[0]?.value ?? r.group ?? "Row",
-                values: (r.Summary.ColData as any[]).slice(1).map((c) => parseFloat(c?.value ?? "0") || 0),
-              });
-            }
-            if (r?.Rows?.Row) walkRows(r.Rows.Row, out);
-          }
-          return out;
-        };
-        const rows = walkRows(report?.Rows?.Row ?? []);
-        const findRow = (needle: string) => rows.find((r) => r.label.toLowerCase().includes(needle.toLowerCase()));
-        const income  = findRow("Total Income")?.values ?? [];
-        const cogs    = findRow("Total Cost of Goods Sold")?.values ?? [];
-        const expense = findRow("Total Expenses")?.values ?? [];
-
-        const months = columns.slice(1, -1).map((label, i) => ({
-          label,
-          income:  income[i]  ?? 0,
-          cogs:    cogs[i]    ?? 0,
-          expense: expense[i] ?? 0,
-        }));
-
-        const EXPENSE_GROUPS = new Set(["Expenses", "OtherExpenses"]);
-        const walkExpenseAccounts = (
-          rows: any[],
-          inExpense: boolean,
-          out: { label: string; values: number[] }[] = [],
-        ): { label: string; values: number[] }[] => {
-          for (const r of rows ?? []) {
-            const nowInExpense = inExpense || EXPENSE_GROUPS.has(r?.group ?? "");
-            if (nowInExpense && r?.ColData && !r?.Rows) {
-              const label: string = r.ColData[0]?.value ?? r.group ?? "Row";
-              const values: number[] = (r.ColData as any[]).slice(1).map((c: any) => parseFloat(c?.value ?? "0") || 0);
-              if (label) out.push({ label, values });
-            }
-            if (r?.Rows?.Row) walkExpenseAccounts(r.Rows.Row, nowInExpense, out);
-          }
-          return out;
-        };
-        const expenseAccounts = walkExpenseAccounts(report?.Rows?.Row ?? [], false)
-          .map((r) => ({
-            name: r.label,
-            total: r.values.slice(0, -1).reduce((s, v) => s + v, 0),
-          }))
-          .filter((r) => r.total !== 0);
-
+        const { months, expenseAccounts } = parseProfitAndLossReport(result.data);
         return { connected: true, months, expenseAccounts };
       }),
   }),
@@ -12795,7 +12744,10 @@ Ask if they received the original request and if they can provide a quote.`;
             throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
           }
 
-          const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+          // Drive bytes are fetched with the data room owner's OAuth token
+          // (matching /api/drive/proxy), so admins can refresh without
+          // having connected their own Google account.
+          const { accessToken, error } = await getValidGoogleToken(room.ownerId);
           if (error) throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
 
           const { file: driveFile, error: metaError } = await getFileMetadata(accessToken, doc.googleDriveFileId);
@@ -12807,7 +12759,7 @@ Ask if they received the original request and if they can provide a quote.`;
             ? parseInt(driveFile.size)
             : undefined;
 
-          await db.updateDataRoomDocument(doc.id, {
+          const newVersion = await db.updateDataRoomDocumentBumpVersion(doc.id, {
             name: driveFile.name,
             fileType: getSimpleFileType(driveFile.mimeType),
             mimeType: driveFile.mimeType,
@@ -12815,10 +12767,9 @@ Ask if they received the original request and if they can provide a quote.`;
             storageUrl: driveFile.webViewLink || undefined,
             googleDriveWebViewLink: driveFile.webViewLink,
             thumbnailUrl: driveFile.thumbnailLink,
-            version: (doc.version || 1) + 1,
           });
 
-          return { success: true, name: driveFile.name, version: (doc.version || 1) + 1 };
+          return { success: true, name: driveFile.name, version: newVersion };
         }),
 
       // Replace a document's contents with a new uploaded file. Bumps version
@@ -12849,7 +12800,9 @@ Ask if they received the original request and if they can provide a quote.`;
           const key = `dataroom/${doc.dataRoomId}/${nanoid()}-${newName.replace(/[/\\]/g, '_')}`;
           const { url } = await storagePut(key, buffer, input.mimeType);
 
-          await db.updateDataRoomDocument(doc.id, {
+          const previousStorageKey = doc.storageType === 's3' ? doc.storageKey : null;
+
+          const newVersion = await db.updateDataRoomDocumentBumpVersion(doc.id, {
             name: newName,
             fileType: input.fileType,
             mimeType: input.mimeType,
@@ -12860,10 +12813,19 @@ Ask if they received the original request and if they can provide a quote.`;
             googleDriveFileId: null,
             googleDriveWebViewLink: null,
             thumbnailUrl: null,
-            version: (doc.version || 1) + 1,
           });
 
-          return { id: doc.id, url, version: (doc.version || 1) + 1 };
+          // Best-effort cleanup of the previous S3 object so replacing a
+          // file's bytes doesn't leave an orphaned blob behind. We swallow
+          // failures so a transient delete error doesn't fail the upload —
+          // the new version is already persisted at this point.
+          if (previousStorageKey) {
+            storageDelete(previousStorageKey).catch((err) => {
+              console.warn(`[dataRoom] failed to delete prior storage key ${previousStorageKey}:`, err);
+            });
+          }
+
+          return { id: doc.id, url, version: newVersion };
         }),
     }),
 

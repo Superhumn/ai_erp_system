@@ -6460,6 +6460,28 @@ export async function updateDataRoomDocument(id: number, data: Partial<InsertDat
   await db.update(dataRoomDocuments).set(data).where(eq(dataRoomDocuments.id, id));
 }
 
+// Update a document and bump its version atomically. The version increment
+// runs as `version = version + 1` in the same UPDATE so concurrent refreshes
+// can't both observe the same starting value and write the same new version.
+// Returns the new version read back from the row.
+export async function updateDataRoomDocumentBumpVersion(
+  id: number,
+  data: Partial<InsertDataRoomDocument>,
+): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .update(dataRoomDocuments)
+    .set({ ...data, version: sql`${dataRoomDocuments.version} + 1` })
+    .where(eq(dataRoomDocuments.id, id));
+  const [row] = await db
+    .select({ version: dataRoomDocuments.version })
+    .from(dataRoomDocuments)
+    .where(eq(dataRoomDocuments.id, id))
+    .limit(1);
+  return row?.version ?? 1;
+}
+
 export async function deleteDataRoomDocument(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
