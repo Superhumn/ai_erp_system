@@ -324,6 +324,184 @@ async function ensureTables() {
         createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
         updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
       )`,
+      // ============================================
+      // MARKETING — social scheduling, engagement, campaign ROI
+      // (canonical schema lives in drizzle/0037_marketing_social.sql; mirrored
+      // here so prod boots cleanly even if migrations have drifted.)
+      // ============================================
+      `CREATE TABLE IF NOT EXISTS social_accounts (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        platform ENUM('linkedin','twitter','facebook','instagram','tiktok','youtube','threads') NOT NULL,
+        handle VARCHAR(255) NOT NULL,
+        displayName VARCHAR(255),
+        avatarUrl TEXT,
+        provider ENUM('ayrshare','direct','manual') NOT NULL DEFAULT 'ayrshare',
+        providerProfileKey VARCHAR(255),
+        status ENUM('active','disconnected','error') NOT NULL DEFAULT 'active',
+        lastSyncedAt TIMESTAMP NULL,
+        createdBy INT,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS marketing_campaigns (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        goal ENUM('awareness','engagement','leads','conversions','retention') NOT NULL DEFAULT 'engagement',
+        status ENUM('draft','active','paused','completed','archived') NOT NULL DEFAULT 'draft',
+        startDate TIMESTAMP NULL,
+        endDate TIMESTAMP NULL,
+        budgetAmount DECIMAL(15,2),
+        spendAmount DECIMAL(15,2) DEFAULT '0',
+        currency VARCHAR(3) DEFAULT 'USD',
+        targetTags TEXT,
+        utmSource VARCHAR(128),
+        utmMedium VARCHAR(128),
+        utmCampaign VARCHAR(128),
+        notes TEXT,
+        createdBy INT,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS marketing_posts (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        campaignId INT,
+        title VARCHAR(255),
+        body TEXT NOT NULL,
+        mediaUrls TEXT,
+        platforms TEXT NOT NULL,
+        accountIds TEXT,
+        status ENUM('draft','scheduled','queued','posted','failed','cancelled') NOT NULL DEFAULT 'draft',
+        scheduledAt TIMESTAMP NULL,
+        postedAt TIMESTAMP NULL,
+        externalIds TEXT,
+        failureReason TEXT,
+        aiGenerated BOOLEAN DEFAULT FALSE,
+        createdBy INT,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS marketing_engagements (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        postId INT,
+        platform ENUM('linkedin','twitter','facebook','instagram','tiktok','youtube','threads') NOT NULL,
+        externalId VARCHAR(255) NOT NULL,
+        type ENUM('like','comment','share','mention','dm','reaction') NOT NULL,
+        authorHandle VARCHAR(255),
+        authorName VARCHAR(255),
+        authorAvatarUrl TEXT,
+        body TEXT,
+        permalink TEXT,
+        sentiment ENUM('positive','neutral','negative','unknown') DEFAULT 'unknown',
+        contactId INT,
+        repliedAt TIMESTAMP NULL,
+        fetchedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        occurredAt TIMESTAMP NULL,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS marketing_metrics (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        postId INT NOT NULL,
+        platform ENUM('linkedin','twitter','facebook','instagram','tiktok','youtube','threads') NOT NULL,
+        impressions INT DEFAULT 0,
+        reach INT DEFAULT 0,
+        clicks INT DEFAULT 0,
+        likes INT DEFAULT 0,
+        comments INT DEFAULT 0,
+        shares INT DEFAULT 0,
+        saves INT DEFAULT 0,
+        videoViews INT DEFAULT 0,
+        recordedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      // ============================================
+      // INFLUENCER CRM — creator relationships, deals, deliverables
+      // (canonical schema lives in drizzle/0038_influencer_crm.sql)
+      // ============================================
+      `CREATE TABLE IF NOT EXISTS influencers (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        fullName VARCHAR(255) NOT NULL,
+        primaryHandle VARCHAR(255),
+        primaryPlatform ENUM('linkedin','twitter','facebook','instagram','tiktok','youtube','threads'),
+        handles TEXT,
+        email VARCHAR(320),
+        phone VARCHAR(32),
+        agentName VARCHAR(255),
+        agentEmail VARCHAR(320),
+        websiteUrl TEXT,
+        avatarUrl TEXT,
+        followerCount INT DEFAULT 0,
+        engagementRatePct DECIMAL(6,3),
+        avgViews INT,
+        tier ENUM('nano','micro','mid','macro','mega'),
+        niche VARCHAR(128),
+        tags TEXT,
+        language VARCHAR(16),
+        country VARCHAR(64),
+        city VARCHAR(128),
+        rateCard TEXT,
+        currency VARCHAR(3) DEFAULT 'USD',
+        preferredPaymentMethod VARCHAR(64),
+        status ENUM('prospect','contacted','negotiating','agreed','active','completed','paused','blacklisted') NOT NULL DEFAULT 'prospect',
+        leadSource ENUM('search','inbound','referral','agency','engagement_funnel','import','manual') DEFAULT 'manual',
+        lastOutreachAt TIMESTAMP NULL,
+        notes TEXT,
+        crmContactId INT,
+        assignedTo INT,
+        createdBy INT,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS influencer_campaign_participations (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        influencerId INT NOT NULL,
+        campaignId INT NOT NULL,
+        status ENUM('invited','negotiating','agreed','in_progress','completed','cancelled') NOT NULL DEFAULT 'invited',
+        agreedFee DECIMAL(15,2),
+        currency VARCHAR(3) DEFAULT 'USD',
+        paymentStatus ENUM('pending','invoiced','paid','refunded') DEFAULT 'pending',
+        productGifted BOOLEAN DEFAULT FALSE,
+        briefUrl TEXT,
+        contractUrl TEXT,
+        trackingCode VARCHAR(64),
+        notes TEXT,
+        startDate TIMESTAMP NULL,
+        endDate TIMESTAMP NULL,
+        createdBy INT,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS influencer_deliverables (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        participationId INT NOT NULL,
+        type ENUM('post','story','reel','video','live','blog','podcast') NOT NULL,
+        platform ENUM('linkedin','twitter','facebook','instagram','tiktok','youtube','threads') NOT NULL,
+        status ENUM('planned','submitted','approved','revision_requested','published','rejected') NOT NULL DEFAULT 'planned',
+        scheduledAt TIMESTAMP NULL,
+        publishedAt TIMESTAMP NULL,
+        postUrl TEXT,
+        marketingPostId INT,
+        impressions INT DEFAULT 0,
+        views INT DEFAULT 0,
+        likes INT DEFAULT 0,
+        comments INT DEFAULT 0,
+        shares INT DEFAULT 0,
+        saves INT DEFAULT 0,
+        notes TEXT,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS influencer_outreach (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        influencerId INT NOT NULL,
+        campaignId INT,
+        channel ENUM('email','dm','phone','in_person','agent','platform_message') NOT NULL,
+        direction ENUM('outbound','inbound') NOT NULL DEFAULT 'outbound',
+        subject VARCHAR(255),
+        body TEXT,
+        response ENUM('pending','interested','not_interested','no_response','negotiating') DEFAULT 'pending',
+        sentAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        respondedAt TIMESTAMP NULL,
+        createdBy INT
+      )`,
     ];
     // Add missing columns to existing tables
     const alterColumns = [
@@ -411,16 +589,49 @@ async function cleanupPlaceholders() {
   }
 }
 
+// Run CRM duplicate merges only when CRM_DEDUP_ON_STARTUP=true.
+// Set that env var on the first deploy that includes migration 0035 so
+// duplicates are eliminated *before* the UNIQUE indexes are created.
+// Unset it after migration 0035 is applied to skip the full table scan
+// on subsequent boots.
+async function autoMergeCrmContacts() {
+  if (!ENV.crmDedupOnStartup) return;
+  try {
+    const db = await import("../db");
+    const groups = await db.findDuplicateCrmContactGroups();
+    if (groups.length === 0) return;
+    let merged = 0;
+    for (const g of groups) {
+      const sorted = [...g.contacts].sort((a: any, b: any) => a.id - b.id);
+      const primary = sorted[0];
+      const dupeIds = sorted.slice(1).map((c: any) => c.id);
+      if (dupeIds.length === 0) continue;
+      const result = await db.mergeCrmContacts(primary.id, dupeIds);
+      merged += result.merged;
+    }
+    if (merged > 0) console.log(`[Cleanup] Auto-merged ${merged} duplicate CRM contacts across ${groups.length} groups`);
+  } catch (e) {
+    console.warn("[Cleanup] CRM auto-merge skipped:", e instanceof Error ? e.message : e);
+  }
+}
+
 async function startServer() {
   await initErrorTracking();
 
   validateRequiredSecrets();
   validateCriticalConfig();
+
+  // Merge CRM duplicates BEFORE migrations so migration 0035's UNIQUE
+  // index creation doesn't fail with ER_DUP_ENTRY on existing rows.
+  await autoMergeCrmContacts();
+
   await runMigrationsAtStartup();
   await verifyDatabaseReadiness();
 
   // Ensure critical tables exist + cleanup placeholders
-  ensureTables().then(() => cleanupPlaceholders()).catch(console.warn);
+  ensureTables()
+    .then(() => cleanupPlaceholders())
+    .catch(console.warn);
 
   const emailConfigValidation = validateEmailConfig();
   if (!emailConfigValidation.valid) {

@@ -4167,7 +4167,16 @@ export const crmContacts = mysqlTable("crm_contacts", {
   assignedTo: int("assignedTo"), // User responsible for this contact
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (table) => ({
+  // Schema-level uniqueness guarantees. Multiple NULLs are allowed under
+  // MySQL's UNIQUE semantics, so contacts without an identifier are fine.
+  // Run crm.contacts.autoMergeDuplicates before migration 0035 if the
+  // deployment has existing duplicates.
+  emailUniq: uniqueIndex("crm_contacts_email_uniq").on(table.email),
+  phoneUniq: uniqueIndex("crm_contacts_phone_uniq").on(table.phone),
+  whatsappUniq: uniqueIndex("crm_contacts_whatsapp_uniq").on(table.whatsappNumber),
+  linkedinUniq: uniqueIndex("crm_contacts_linkedin_uniq").on(table.linkedinUrl),
+}));
 
 export type CrmContact = typeof crmContacts.$inferSelect;
 export type InsertCrmContact = typeof crmContacts.$inferInsert;

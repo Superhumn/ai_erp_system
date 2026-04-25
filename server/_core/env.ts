@@ -84,6 +84,12 @@ export const ENV = {
 
     // Airtable integration
     airtablePersonalAccessToken: process.env.AIRTABLE_PERSONAL_ACCESS_TOKEN ?? "",
+
+    // CRM deduplication: set to "true" on the first deploy that includes
+    // migration 0035 so the app merges existing duplicates *before* the
+    // UNIQUE indexes are created. After migration 0035 is applied, unset
+    // or set to "false" to avoid the full-table scan on every boot.
+    crmDedupOnStartup: process.env.CRM_DEDUP_ON_STARTUP === "true",
 };
 
 /**

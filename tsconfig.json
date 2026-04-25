@@ -3,7 +3,7 @@
   "exclude": ["node_modules", "build", "dist", "**/*.test.ts"],
   "compilerOptions": {
     "incremental": true,
-    "tsBuildInfoFile": "./node_modules/typescript/tsbuildinfo",
+    "tsBuildInfoFile": "./.tsbuildinfo",
     "noEmit": true,
     "target": "ES2022",
     "module": "ESNext",
@@ -18,6 +18,7 @@
     "allowImportingTsExtensions": true,
     "moduleResolution": "bundler",
     "baseUrl": ".",
+    "ignoreDeprecations": "5.0",
     "types": ["node", "vite/client"],
     "paths": {
       "@/*": ["./client/src/*"],

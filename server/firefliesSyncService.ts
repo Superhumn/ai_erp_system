@@ -171,20 +171,17 @@ export async function syncFirefliesMeetingsForUser(
           for (const participant of participants) {
             if (participant.email) {
               try {
-                let contact = await db.getCrmContactByEmail(participant.email);
-                if (!contact) {
-                  const contactId = await db.createCrmContact({
-                    firstName:
-                      (participant.name || participant.email.split("@")[0])
-                        .split(" ")[0] || "",
-                    fullName:
-                      participant.name || participant.email.split("@")[0],
-                    email: participant.email,
-                    source: "fireflies" as any,
-                  });
-                  contact = await db.getCrmContactById(contactId);
-                  result.contactsCreated++;
-                }
+                const { id: contactFoundId, created } = await db.findOrCreateCrmContact({
+                  firstName:
+                    (participant.name || participant.email.split("@")[0])
+                      .split(" ")[0] || "",
+                  fullName:
+                    participant.name || participant.email.split("@")[0],
+                  email: participant.email,
+                  source: "fireflies" as any,
+                });
+                if (created) result.contactsCreated++;
+                const contact = await db.getCrmContactById(contactFoundId);
 
                 if (contact) {
                   await db.createCrmDeal({
