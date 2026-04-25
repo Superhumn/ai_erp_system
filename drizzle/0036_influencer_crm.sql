@@ -41,10 +41,14 @@ CREATE TABLE IF NOT EXISTS `influencers` (
   CONSTRAINT `influencers_id` PRIMARY KEY(`id`),
   CONSTRAINT `influencers_crmContactId_fk` FOREIGN KEY (`crmContactId`) REFERENCES `crm_contacts`(`id`) ON DELETE SET NULL
 );
+--> statement-breakpoint
 
 CREATE INDEX `influencers_status_idx` ON `influencers` (`status`);
+--> statement-breakpoint
 CREATE INDEX `influencers_tier_idx` ON `influencers` (`tier`);
+--> statement-breakpoint
 CREATE INDEX `influencers_primaryPlatform_handle_idx` ON `influencers` (`primaryPlatform`, `primaryHandle`);
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `influencer_campaign_participations` (
   `id` int AUTO_INCREMENT NOT NULL,
@@ -68,10 +72,14 @@ CREATE TABLE IF NOT EXISTS `influencer_campaign_participations` (
   CONSTRAINT `influencer_campaign_participations_influencerId_fk` FOREIGN KEY (`influencerId`) REFERENCES `influencers`(`id`) ON DELETE CASCADE,
   CONSTRAINT `influencer_campaign_participations_campaignId_fk` FOREIGN KEY (`campaignId`) REFERENCES `marketing_campaigns`(`id`) ON DELETE CASCADE
 );
+--> statement-breakpoint
 
 CREATE INDEX `influencer_participations_campaign_idx` ON `influencer_campaign_participations` (`campaignId`);
+--> statement-breakpoint
 CREATE INDEX `influencer_participations_status_idx` ON `influencer_campaign_participations` (`status`);
+--> statement-breakpoint
 CREATE UNIQUE INDEX `influencer_participations_unique` ON `influencer_campaign_participations` (`influencerId`, `campaignId`);
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `influencer_deliverables` (
   `id` int AUTO_INCREMENT NOT NULL,
@@ -96,9 +104,12 @@ CREATE TABLE IF NOT EXISTS `influencer_deliverables` (
   CONSTRAINT `influencer_deliverables_participationId_fk` FOREIGN KEY (`participationId`) REFERENCES `influencer_campaign_participations`(`id`) ON DELETE CASCADE,
   CONSTRAINT `influencer_deliverables_marketingPostId_fk` FOREIGN KEY (`marketingPostId`) REFERENCES `marketing_posts`(`id`) ON DELETE SET NULL
 );
+--> statement-breakpoint
 
 CREATE INDEX `influencer_deliverables_participation_idx` ON `influencer_deliverables` (`participationId`);
+--> statement-breakpoint
 CREATE INDEX `influencer_deliverables_status_idx` ON `influencer_deliverables` (`status`);
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `influencer_outreach` (
   `id` int AUTO_INCREMENT NOT NULL,
@@ -116,6 +127,8 @@ CREATE TABLE IF NOT EXISTS `influencer_outreach` (
   CONSTRAINT `influencer_outreach_influencerId_fk` FOREIGN KEY (`influencerId`) REFERENCES `influencers`(`id`) ON DELETE CASCADE,
   CONSTRAINT `influencer_outreach_campaignId_fk` FOREIGN KEY (`campaignId`) REFERENCES `marketing_campaigns`(`id`) ON DELETE SET NULL
 );
+--> statement-breakpoint
 
 CREATE INDEX `influencer_outreach_influencer_idx` ON `influencer_outreach` (`influencerId`);
+--> statement-breakpoint
 CREATE INDEX `influencer_outreach_campaign_idx` ON `influencer_outreach` (`campaignId`);

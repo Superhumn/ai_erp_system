@@ -19,8 +19,10 @@ CREATE TABLE IF NOT EXISTS `social_accounts` (
   `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT `social_accounts_id` PRIMARY KEY(`id`)
 );
+--> statement-breakpoint
 
 CREATE INDEX `social_accounts_platform_handle_idx` ON `social_accounts` (`platform`, `handle`);
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `marketing_campaigns` (
   `id` int AUTO_INCREMENT NOT NULL,
@@ -42,8 +44,10 @@ CREATE TABLE IF NOT EXISTS `marketing_campaigns` (
   `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT `marketing_campaigns_id` PRIMARY KEY(`id`)
 );
+--> statement-breakpoint
 
 CREATE INDEX `marketing_campaigns_status_idx` ON `marketing_campaigns` (`status`);
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `marketing_posts` (
   `id` int AUTO_INCREMENT NOT NULL,
@@ -65,9 +69,12 @@ CREATE TABLE IF NOT EXISTS `marketing_posts` (
   CONSTRAINT `marketing_posts_id` PRIMARY KEY(`id`),
   CONSTRAINT `marketing_posts_campaignId_fk` FOREIGN KEY (`campaignId`) REFERENCES `marketing_campaigns`(`id`) ON DELETE SET NULL
 );
+--> statement-breakpoint
 
 CREATE INDEX `marketing_posts_status_scheduledAt_idx` ON `marketing_posts` (`status`, `scheduledAt`);
+--> statement-breakpoint
 CREATE INDEX `marketing_posts_campaignId_idx` ON `marketing_posts` (`campaignId`);
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `marketing_engagements` (
   `id` int AUTO_INCREMENT NOT NULL,
@@ -90,10 +97,14 @@ CREATE TABLE IF NOT EXISTS `marketing_engagements` (
   CONSTRAINT `marketing_engagements_postId_fk` FOREIGN KEY (`postId`) REFERENCES `marketing_posts`(`id`) ON DELETE SET NULL,
   CONSTRAINT `marketing_engagements_contactId_fk` FOREIGN KEY (`contactId`) REFERENCES `crm_contacts`(`id`) ON DELETE SET NULL
 );
+--> statement-breakpoint
 
 CREATE INDEX `marketing_engagements_post_platform_idx` ON `marketing_engagements` (`postId`, `platform`);
+--> statement-breakpoint
 CREATE INDEX `marketing_engagements_authorHandle_idx` ON `marketing_engagements` (`authorHandle`);
+--> statement-breakpoint
 CREATE INDEX `marketing_engagements_occurredAt_idx` ON `marketing_engagements` (`occurredAt`);
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `marketing_metrics` (
   `id` int AUTO_INCREMENT NOT NULL,
@@ -111,5 +122,6 @@ CREATE TABLE IF NOT EXISTS `marketing_metrics` (
   CONSTRAINT `marketing_metrics_id` PRIMARY KEY(`id`),
   CONSTRAINT `marketing_metrics_postId_fk` FOREIGN KEY (`postId`) REFERENCES `marketing_posts`(`id`) ON DELETE CASCADE
 );
+--> statement-breakpoint
 
 CREATE INDEX `marketing_metrics_post_platform_recorded_idx` ON `marketing_metrics` (`postId`, `platform`, `recordedAt`);
