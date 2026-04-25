@@ -4447,6 +4447,123 @@ export const crmCampaignRecipients = mysqlTable("crm_campaign_recipients", {
 export type CrmCampaignRecipient = typeof crmCampaignRecipients.$inferSelect;
 export type InsertCrmCampaignRecipient = typeof crmCampaignRecipients.$inferInsert;
 
+// ============================================
+// MARKETING — Social media management, scheduling, engagement, campaign ROI
+// ============================================
+
+// Connected social accounts (handle per platform). Credentials are held by the
+// provider aggregator (Ayrshare profile) — we only store a reference.
+export const socialAccounts = mysqlTable("social_accounts", {
+  id: int("id").autoincrement().primaryKey(),
+  platform: mysqlEnum("platform", ["linkedin", "twitter", "facebook", "instagram", "tiktok", "youtube", "threads"]).notNull(),
+  handle: varchar("handle", { length: 255 }).notNull(),
+  displayName: varchar("displayName", { length: 255 }),
+  avatarUrl: text("avatarUrl"),
+  provider: mysqlEnum("provider", ["ayrshare", "direct", "manual"]).default("ayrshare").notNull(),
+  providerProfileKey: varchar("providerProfileKey", { length: 255 }),
+  status: mysqlEnum("status", ["active", "disconnected", "error"]).default("active").notNull(),
+  lastSyncedAt: timestamp("lastSyncedAt"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SocialAccount = typeof socialAccounts.$inferSelect;
+export type InsertSocialAccount = typeof socialAccounts.$inferInsert;
+
+// A marketing campaign groups posts and (optionally) paid spend for ROI.
+export const marketingCampaigns = mysqlTable("marketing_campaigns", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  goal: mysqlEnum("goal", ["awareness", "engagement", "leads", "conversions", "retention"]).default("engagement").notNull(),
+  status: mysqlEnum("status", ["draft", "active", "paused", "completed", "archived"]).default("draft").notNull(),
+  startDate: timestamp("startDate"),
+  endDate: timestamp("endDate"),
+  budgetAmount: decimal("budgetAmount", { precision: 15, scale: 2 }),
+  spendAmount: decimal("spendAmount", { precision: 15, scale: 2 }).default("0"),
+  currency: varchar("currency", { length: 3 }).default("USD"),
+  targetTags: text("targetTags"), // JSON array of CRM tag IDs
+  utmSource: varchar("utmSource", { length: 128 }),
+  utmMedium: varchar("utmMedium", { length: 128 }),
+  utmCampaign: varchar("utmCampaign", { length: 128 }),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type MarketingCampaign = typeof marketingCampaigns.$inferSelect;
+export type InsertMarketingCampaign = typeof marketingCampaigns.$inferInsert;
+
+// Scheduled or published social posts (one logical post may fan out to many
+// platforms; we record one row per logical post and track per-platform external
+// IDs on the post so engagement/metrics can be keyed back correctly).
+export const marketingPosts = mysqlTable("marketing_posts", {
+  id: int("id").autoincrement().primaryKey(),
+  campaignId: int("campaignId").references(() => marketingCampaigns.id),
+  title: varchar("title", { length: 255 }),
+  body: text("body").notNull(),
+  mediaUrls: text("mediaUrls"), // JSON array of URLs
+  platforms: text("platforms").notNull(), // JSON array of platform enum values
+  accountIds: text("accountIds"), // JSON array of social_accounts.id
+  status: mysqlEnum("status", ["draft", "scheduled", "queued", "posted", "failed", "cancelled"]).default("draft").notNull(),
+  scheduledAt: timestamp("scheduledAt"),
+  postedAt: timestamp("postedAt"),
+  externalIds: text("externalIds"), // JSON object: { [platform]: { postId, permalink } }
+  failureReason: text("failureReason"),
+  aiGenerated: boolean("aiGenerated").default(false),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type MarketingPost = typeof marketingPosts.$inferSelect;
+export type InsertMarketingPost = typeof marketingPosts.$inferInsert;
+
+// Inbound engagement — comments, likes, shares, mentions, DMs pulled from each
+// platform. Sentiment scored async. Optional link to a CRM contact when the
+// author handle can be matched.
+export const marketingEngagements = mysqlTable("marketing_engagements", {
+  id: int("id").autoincrement().primaryKey(),
+  postId: int("postId").references(() => marketingPosts.id),
+  platform: mysqlEnum("platform", ["linkedin", "twitter", "facebook", "instagram", "tiktok", "youtube", "threads"]).notNull(),
+  externalId: varchar("externalId", { length: 255 }).notNull(),
+  type: mysqlEnum("type", ["like", "comment", "share", "mention", "dm", "reaction"]).notNull(),
+  authorHandle: varchar("authorHandle", { length: 255 }),
+  authorName: varchar("authorName", { length: 255 }),
+  authorAvatarUrl: text("authorAvatarUrl"),
+  body: text("body"),
+  permalink: text("permalink"),
+  sentiment: mysqlEnum("sentiment", ["positive", "neutral", "negative", "unknown"]).default("unknown"),
+  contactId: int("contactId").references(() => crmContacts.id),
+  repliedAt: timestamp("repliedAt"),
+  fetchedAt: timestamp("fetchedAt").defaultNow().notNull(),
+  occurredAt: timestamp("occurredAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type MarketingEngagement = typeof marketingEngagements.$inferSelect;
+export type InsertMarketingEngagement = typeof marketingEngagements.$inferInsert;
+
+// Time-series metrics per post per platform (impressions, reach, clicks, etc.)
+export const marketingMetrics = mysqlTable("marketing_metrics", {
+  id: int("id").autoincrement().primaryKey(),
+  postId: int("postId").notNull().references(() => marketingPosts.id),
+  platform: mysqlEnum("platform", ["linkedin", "twitter", "facebook", "instagram", "tiktok", "youtube", "threads"]).notNull(),
+  impressions: int("impressions").default(0),
+  reach: int("reach").default(0),
+  clicks: int("clicks").default(0),
+  likes: int("likes").default(0),
+  comments: int("comments").default(0),
+  shares: int("shares").default(0),
+  saves: int("saves").default(0),
+  videoViews: int("videoViews").default(0),
+  recordedAt: timestamp("recordedAt").defaultNow().notNull(),
+});
+
+export type MarketingMetric = typeof marketingMetrics.$inferSelect;
+export type InsertMarketingMetric = typeof marketingMetrics.$inferInsert;
+
 
 
 
