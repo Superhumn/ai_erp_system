@@ -653,7 +653,7 @@ export function deriveSeries(model: FinancialModel) {
 
       const inferredMonthsPerPeriod =
         stepSizes.length > 0 && stepSizes.every((delta) => delta === stepSizes[0])
-          ? (stepSizes[0] % 100 === 0 ? (stepSizes[0] / 100) * 12 : stepSizes[0] % 100)
+          ? stepSizes[0]
           : periods.every((p) => p.month !== undefined)
             ? 1
             : 12;
