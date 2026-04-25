@@ -166,6 +166,8 @@ export function toNumber(v: unknown): number | null {
     isPct = true;
     cleaned = cleaned.slice(0, -1);
   }
+  // Reject strings with non-numeric characters after stripping (e.g. "250K").
+  if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return null;
   const n = parseFloat(cleaned);
   if (!Number.isFinite(n)) return null;
   const signed = isNeg ? -n : n;
@@ -651,7 +653,7 @@ export function deriveSeries(model: FinancialModel) {
 
       const inferredMonthsPerPeriod =
         stepSizes.length > 0 && stepSizes.every((delta) => delta === stepSizes[0])
-          ? stepSizes[0]
+          ? (stepSizes[0] % 100 === 0 ? (stepSizes[0] / 100) * 12 : stepSizes[0] % 100)
           : periods.every((p) => p.month !== undefined)
             ? 1
             : 12;
