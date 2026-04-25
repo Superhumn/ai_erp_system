@@ -12681,6 +12681,99 @@ Ask if they received the original request and if they can provide a quote.`;
           await db.deleteDataRoomDocument(input.id);
           return { success: true };
         }),
+
+      // Refresh a single Drive-backed document from Google Drive — pulls the
+      // latest metadata (name, size, mime type, web view link, thumbnail) and
+      // bumps the document's version. The bytes themselves still stream
+      // through /api/drive/proxy so no download is needed.
+      refreshFromDrive: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const doc = await db.getDataRoomDocumentById(input.id);
+          if (!doc) throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
+          if (doc.storageType !== 'google_drive' || !doc.googleDriveFileId) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'This file is not linked to Google Drive. Use "Upload new version" instead.',
+            });
+          }
+
+          const room = await db.getDataRoomById(doc.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
+          const { accessToken, error } = await getValidGoogleToken(ctx.user.id);
+          if (error) throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+
+          const { file: driveFile, error: metaError } = await getFileMetadata(accessToken, doc.googleDriveFileId);
+          if (metaError || !driveFile) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: metaError || 'File not found in Google Drive' });
+          }
+
+          const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
+            ? parseInt(driveFile.size)
+            : undefined;
+
+          await db.updateDataRoomDocument(doc.id, {
+            name: driveFile.name,
+            fileType: getSimpleFileType(driveFile.mimeType),
+            mimeType: driveFile.mimeType,
+            fileSize,
+            storageUrl: driveFile.webViewLink || undefined,
+            googleDriveWebViewLink: driveFile.webViewLink,
+            thumbnailUrl: driveFile.thumbnailLink,
+            version: (doc.version || 1) + 1,
+          });
+
+          return { success: true, name: driveFile.name, version: (doc.version || 1) + 1 };
+        }),
+
+      // Replace a document's contents with a new uploaded file. Bumps version
+      // and stores the new bytes in S3. If the document was previously linked
+      // to Google Drive, the Drive link is detached because the uploaded file
+      // is now the source of truth.
+      uploadNewVersion: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          fileType: z.string(),
+          mimeType: z.string(),
+          fileSize: z.number(),
+          base64Content: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const doc = await db.getDataRoomDocumentById(input.id);
+          if (!doc) throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
+
+          const room = await db.getDataRoomById(doc.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
+          const newName = input.name || doc.name;
+          const buffer = Buffer.from(input.base64Content, 'base64');
+          const key = `dataroom/${doc.dataRoomId}/${nanoid()}-${newName.replace(/[/\\]/g, '_')}`;
+          const { url } = await storagePut(key, buffer, input.mimeType);
+
+          await db.updateDataRoomDocument(doc.id, {
+            name: newName,
+            fileType: input.fileType,
+            mimeType: input.mimeType,
+            fileSize: input.fileSize,
+            storageType: 's3',
+            storageUrl: url,
+            storageKey: key,
+            googleDriveFileId: null,
+            googleDriveWebViewLink: null,
+            thumbnailUrl: null,
+            version: (doc.version || 1) + 1,
+          });
+
+          return { id: doc.id, url, version: (doc.version || 1) + 1 };
+        }),
     }),
 
     // Shareable links
