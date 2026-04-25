@@ -5528,6 +5528,25 @@ export const stakeholders = mysqlTable("stakeholders", {
 export type Stakeholder = typeof stakeholders.$inferSelect;
 export type InsertStakeholder = typeof stakeholders.$inferInsert;
 
+// Pro-rata / participation interest signaled by an existing investor in
+// response to an open fundraising round. This is non-binding — it's a
+// "I'd like to participate, please reach out" notice the IR team can
+// follow up on, not a subscription document. Storing the indicated
+// amount is optional; some investors signal interest without a number.
+export const proRataIndications = mysqlTable("pro_rata_indications", {
+  id: int("id").autoincrement().primaryKey(),
+  campaignId: int("campaignId").notNull(),
+  stakeholderId: int("stakeholderId").notNull(),
+  indicatedAmount: decimal("indicatedAmount", { precision: 18, scale: 2 }),
+  notes: text("notes"),
+  status: mysqlEnum("status", ["interested", "withdrawn", "converted"]).default("interested").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ProRataIndication = typeof proRataIndications.$inferSelect;
+export type InsertProRataIndication = typeof proRataIndications.$inferInsert;
+
 // Per-stakeholder document locker. Used by the investor portal to surface
 // executed agreements, K-1s, capital-call notices, distribution notices
 // — anything tied to one investor rather than the company at large.

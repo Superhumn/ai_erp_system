@@ -17819,6 +17819,34 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
     listReminders: protectedProcedure
       .input(z.object({ status: z.string().optional(), dueBefore: z.date().optional() }).optional())
       .query(({ input }) => db.getFundraisingReminders(input ? { status: input.status } : undefined)),
+
+    // Admin view of pro-rata interest signaled by existing investors on
+    // an open round. Joined with the stakeholder name so IR can follow
+    // up offline. Counterpart to `investorPortal.indicateInterest`.
+    listProRataIndications: protectedProcedure
+      .input(z.object({ campaignId: z.number() }))
+      .query(async ({ input }) => {
+        const indications = await db.getProRataIndicationsForCampaign(input.campaignId);
+        const stakeholderById = new Map(
+          (await db.getStakeholders()).map((s: { id: number; name: string; email?: string | null }) => [s.id, s]),
+        );
+        return (indications as Array<{
+          id: number; stakeholderId: number; indicatedAmount: string | null;
+          notes: string | null; status: string; createdAt: Date;
+        }>).map((i) => {
+          const s = stakeholderById.get(i.stakeholderId);
+          return {
+            id: i.id,
+            stakeholderId: i.stakeholderId,
+            stakeholderName: s?.name ?? "Unknown",
+            stakeholderEmail: s?.email ?? null,
+            indicatedAmount: i.indicatedAmount,
+            notes: i.notes,
+            status: i.status,
+            createdAt: i.createdAt,
+          };
+        });
+      }),
   }),
   inventoryCosting: router({
     // Costing config per product
@@ -21502,6 +21530,109 @@ Return JSON array only. No markdown.`;
           console.warn("[Investor Portal] invite created but email not sent:", emailResult.error);
         }
         return { success: true, emailSent: emailResult.success };
+      }),
+
+    // ─── Active rounds + pro-rata signaling ─────────────────────────
+    //
+    // Surfaces fundraisingCampaigns with status='active' so existing
+    // investors can see when a round is open and signal pro-rata
+    // interest. The signal is non-binding — IR follows up offline to
+    // collect subscription docs. We deliberately don't expose the
+    // campaign's existing investor list (other check sizes / commits)
+    // here; that's an IR/founder view, not an investor view.
+    activeRounds: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+      }
+      const stakeholder = ctx.user.role === "investor"
+        ? await db.getStakeholderByUserId(ctx.user.id)
+        : undefined;
+      if (ctx.user.role === "investor" && !stakeholder) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+      }
+
+      const all = await db.getFundraisingCampaigns(stakeholder?.companyId ?? undefined);
+      type Campaign = {
+        id: number; name: string; description: string | null;
+        targetAmount: string | null; raisedAmount: string | null;
+        minimumInvestment: string | null; valuation: string | null;
+        roundType: string; equityOffered: string | null;
+        startDate: Date | null; targetCloseDate: Date | null;
+        status: string;
+      };
+      const open = (all as Campaign[]).filter((c) => c.status === "active");
+
+      // Decorate each open round with the caller's existing pro-rata
+      // signal (if any) so the UI can show "you indicated $X" instead
+      // of a generic CTA. Admins viewing for support get null here.
+      const decorated = await Promise.all(
+        open.map(async (c) => {
+          const myIndication = stakeholder
+            ? await db.getProRataIndication(c.id, stakeholder.id)
+            : undefined;
+          return {
+            id: c.id,
+            name: c.name,
+            description: c.description,
+            roundType: c.roundType,
+            targetAmount: c.targetAmount,
+            raisedAmount: c.raisedAmount,
+            minimumInvestment: c.minimumInvestment,
+            valuation: c.valuation,
+            equityOffered: c.equityOffered,
+            targetCloseDate: c.targetCloseDate,
+            myIndication: myIndication
+              ? {
+                  indicatedAmount: myIndication.indicatedAmount,
+                  notes: myIndication.notes,
+                  status: myIndication.status,
+                  createdAt: myIndication.createdAt,
+                }
+              : null,
+          };
+        }),
+      );
+      return decorated;
+    }),
+
+    indicateInterest: protectedProcedure
+      .input(z.object({
+        campaignId: z.number(),
+        // Decimal-as-string: stays out of float-rounding territory and
+        // matches how Drizzle's decimal column accepts values.
+        indicatedAmount: z.string()
+          .regex(/^\d+(\.\d{1,2})?$/, "Enter an amount like 50000 or 50000.00")
+          .optional(),
+        notes: z.string().max(2000).optional(),
+        // Investors can withdraw a prior indication; the IR team still
+        // sees the row historically so they know it was withdrawn.
+        withdraw: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (ctx.user.role !== "investor") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Only investors can signal pro-rata interest." });
+        }
+        const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+        if (!stakeholder) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+        }
+        // Verify the campaign is real, active, and in the same company.
+        const all = await db.getFundraisingCampaigns(stakeholder.companyId ?? undefined);
+        const campaign = (all as Array<{ id: number; status: string }>).find((c) => c.id === input.campaignId);
+        if (!campaign) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Round not found" });
+        }
+        if (campaign.status !== "active") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "This round is no longer open." });
+        }
+        await db.upsertProRataIndication({
+          campaignId: input.campaignId,
+          stakeholderId: stakeholder.id,
+          indicatedAmount: input.indicatedAmount,
+          notes: input.notes,
+          status: input.withdraw ? "withdrawn" : "interested",
+        });
+        return { success: true };
       }),
 
     // ─── Board materials (board-tier only) ──────────────────────────

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, TrendingUp, TrendingDown, Wallet, Clock, Receipt, LineChart, Megaphone, Shield, FileText, Download, UserCog, PieChart, Gavel, ExternalLink } from "lucide-react";
+import { Loader2, TrendingUp, TrendingDown, Wallet, Clock, Receipt, LineChart, Megaphone, Shield, FileText, Download, UserCog, PieChart, Gavel, ExternalLink, Rocket, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 
 // The logged-in existing-investor view. Reuses the same tRPC client the
@@ -255,6 +255,10 @@ export default function InvestorPortal() {
       {/* My Documents */}
       <MyDocumentsSection />
 
+      {/* Active rounds — only renders when the company has an open round.
+          The query returns an empty array otherwise; the section hides itself. */}
+      <ActiveRoundsSection />
+
       {/* Cap table summary */}
       <CapTableSummarySection />
 
@@ -335,6 +339,200 @@ function BoardMaterialsSection() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// ─── Active rounds ────────────────────────────────────────────────────
+//
+// Surfaces every fundraisingCampaign with status='active' and lets the
+// investor signal pro-rata interest. The signal is non-binding — IR
+// follows up offline to collect subscription docs. Hides itself when
+// no active rounds exist (typical case).
+function ActiveRoundsSection() {
+  const { data: rounds, isLoading } = trpc.investorPortal.activeRounds.useQuery();
+  if (isLoading) return null;
+  if (!rounds || rounds.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <Rocket className="h-4 w-4 text-muted-foreground" />
+          <CardTitle className="text-base">Active rounds</CardTitle>
+        </div>
+        <CardDescription>
+          The team is currently raising. Indicate interest below if you'd like to
+          participate — IR will follow up to share subscription documents.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {rounds.map((raw) => (
+          <RoundCard key={raw.id} round={raw as RoundShape} />
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+type RoundShape = {
+  id: number;
+  name: string;
+  description: string | null;
+  roundType: string;
+  targetAmount: string | null;
+  raisedAmount: string | null;
+  minimumInvestment: string | null;
+  valuation: string | null;
+  equityOffered: string | null;
+  targetCloseDate: string | Date | null;
+  myIndication: {
+    indicatedAmount: string | null;
+    notes: string | null;
+    status: string;
+    createdAt: string | Date;
+  } | null;
+};
+
+function RoundCard({ round }: { round: RoundShape }) {
+  const utils = trpc.useUtils();
+  const [editing, setEditing] = useState(round.myIndication?.status !== "interested");
+  const [amount, setAmount] = useState(round.myIndication?.indicatedAmount ?? "");
+  const [notes, setNotes] = useState(round.myIndication?.notes ?? "");
+
+  const indicate = trpc.investorPortal.indicateInterest.useMutation({
+    onSuccess: () => {
+      toast.success("Interest noted — IR will reach out shortly.");
+      setEditing(false);
+      utils.investorPortal.activeRounds.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+  const withdraw = trpc.investorPortal.indicateInterest.useMutation({
+    onSuccess: () => {
+      toast.success("Interest withdrawn");
+      utils.investorPortal.activeRounds.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const fmtMoney = (v: string | null) => {
+    if (!v) return "—";
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? formatCurrency(n) : "—";
+  };
+  const closeLabel = round.targetCloseDate
+    ? new Date(round.targetCloseDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
+    : null;
+
+  return (
+    <div className="rounded-lg border p-4">
+      <div className="flex items-baseline justify-between gap-3 mb-1">
+        <p className="text-sm font-semibold">{round.name}</p>
+        <Badge variant="outline" className="capitalize flex-shrink-0">
+          {round.roundType.replace(/_/g, " ")}
+        </Badge>
+      </div>
+      {round.description && (
+        <p className="text-sm text-muted-foreground mb-3">{round.description}</p>
+      )}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+        <KpiTile label="Target" value={fmtMoney(round.targetAmount)} />
+        <KpiTile label="Raised" value={fmtMoney(round.raisedAmount)} />
+        <KpiTile label="Valuation" value={fmtMoney(round.valuation)} />
+        <KpiTile label="Min check" value={fmtMoney(round.minimumInvestment)} />
+      </div>
+      {closeLabel && (
+        <p className="text-xs text-muted-foreground mb-3">Target close: {closeLabel}</p>
+      )}
+
+      {/* Indication state machine: previously-signaled (compact) vs editable form. */}
+      {!editing && round.myIndication?.status === "interested" ? (
+        <div className="rounded-md border bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900 p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
+                <CheckCircle2 className="h-4 w-4" />
+                Interest signaled
+              </p>
+              {round.myIndication.indicatedAmount && (
+                <p className="text-sm mt-0.5">
+                  Indicated amount: {fmtMoney(round.myIndication.indicatedAmount)}
+                </p>
+              )}
+              {round.myIndication.notes && (
+                <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">
+                  {round.myIndication.notes}
+                </p>
+              )}
+            </div>
+            <div className="flex flex-col gap-1.5 flex-shrink-0">
+              <Button size="sm" variant="outline" onClick={() => setEditing(true)}>Update</Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={withdraw.isPending}
+                onClick={() => {
+                  if (confirm("Withdraw your interest in this round?")) {
+                    withdraw.mutate({ campaignId: round.id, withdraw: true });
+                  }
+                }}
+              >
+                Withdraw
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <FormField
+            label="Indicated amount (optional)"
+            hint="A directional figure helps IR prioritize follow-ups. You can leave it blank if you'd rather discuss live."
+          >
+            <Input
+              inputMode="decimal"
+              placeholder="e.g. 50000"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+          </FormField>
+          <FormField label="Notes (optional)">
+            <Textarea
+              rows={2}
+              placeholder="Anything you want IR to know — timing, structure preferences, etc."
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </FormField>
+          <div className="flex justify-end gap-2 pt-1">
+            {round.myIndication && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setEditing(false);
+                  setAmount(round.myIndication?.indicatedAmount ?? "");
+                  setNotes(round.myIndication?.notes ?? "");
+                }}
+              >
+                Cancel
+              </Button>
+            )}
+            <Button
+              size="sm"
+              disabled={indicate.isPending}
+              onClick={() => indicate.mutate({
+                campaignId: round.id,
+                indicatedAmount: amount.trim() || undefined,
+                notes: notes.trim() || undefined,
+              })}
+            >
+              {indicate.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+              {round.myIndication ? "Update" : "Signal interest"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

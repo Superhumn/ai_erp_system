@@ -280,6 +280,13 @@
       "when": 1777651500000,
       "tag": "0038_investor_portal_phase2",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "5",
+      "when": 1777651600000,
+      "tag": "0039_pro_rata_indications",
+      "breakpoints": true
     }
   ]
 }
