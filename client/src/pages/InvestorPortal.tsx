@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, TrendingUp, TrendingDown, Wallet, Clock, Receipt, LineChart, Megaphone, Shield, FileText, Download, UserCog } from "lucide-react";
+import { Loader2, TrendingUp, TrendingDown, Wallet, Clock, Receipt, LineChart, Megaphone, Shield, FileText, Download, UserCog, PieChart } from "lucide-react";
 import { toast } from "sonner";
 
 // The logged-in existing-investor view. Reuses the same tRPC client the
@@ -255,9 +255,104 @@ export default function InvestorPortal() {
       {/* My Documents */}
       <MyDocumentsSection />
 
+      {/* Cap table summary */}
+      <CapTableSummarySection />
+
       {/* Profile & Preferences */}
       <ProfileSection />
     </div>
+  );
+}
+
+// ─── Cap table summary ────────────────────────────────────────────────
+//
+// Tier-aware: ordinary investors see share-class totals + option pool;
+// major / board tiers additionally see a top-holders list (name + %,
+// never check size). The server enforces the gate — this component
+// just renders whatever the server returned.
+function CapTableSummarySection() {
+  const { data, isLoading } = trpc.investorPortal.capTableSummary.useQuery();
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardContent className="flex items-center justify-center py-8">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </CardContent>
+      </Card>
+    );
+  }
+  if (!data) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <PieChart className="h-4 w-4 text-muted-foreground" />
+          <CardTitle className="text-base">Cap table summary</CardTitle>
+        </div>
+        <CardDescription>
+          Fully-diluted ownership by share class as of today.
+          {data.tier !== "ordinary" && " Includes a top-holders list since you're at major/board tier."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="rounded-lg border p-3 mb-4">
+          <p className="text-xs uppercase tracking-wider text-muted-foreground mb-1">
+            Total shares outstanding
+          </p>
+          <p className="text-lg font-semibold">{formatShares(data.totalSharesOutstanding)}</p>
+          {data.optionPool && (
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Option pool: {formatShares(data.optionPool.sharesIssued)} ({data.optionPool.ownershipPct.toFixed(2)}%)
+              {data.optionPool.authorized
+                ? ` · ${formatShares(data.optionPool.authorized - data.optionPool.sharesIssued)} unallocated`
+                : ""}
+            </p>
+          )}
+        </div>
+
+        <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">
+          By share class
+        </p>
+        <div className="space-y-2 mb-4">
+          {data.classBreakdown.map((c) => (
+            <div key={c.id} className="flex items-baseline justify-between gap-3 rounded-lg border p-2.5">
+              <div className="min-w-0">
+                <p className="text-sm font-medium truncate">{c.name}</p>
+                <p className="text-xs text-muted-foreground capitalize">{c.type.replace(/_/g, " ")}</p>
+              </div>
+              <div className="text-right flex-shrink-0">
+                <p className="text-sm font-medium">{formatShares(c.sharesIssued)}</p>
+                <p className="text-xs text-muted-foreground">{c.ownershipPct.toFixed(2)}%</p>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {data.topHolders && data.topHolders.length > 0 && (
+          <>
+            <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">
+              Top holders (top 10)
+            </p>
+            <div className="space-y-1">
+              {data.topHolders.map((h) => (
+                <div key={h.name} className="flex items-center justify-between gap-3 px-2.5 py-1.5 rounded text-sm">
+                  <span className="truncate">{h.name}</span>
+                  <span className="text-muted-foreground flex-shrink-0">{h.ownershipPct.toFixed(2)}%</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {!data.topHolders && (
+          <p className="text-xs text-muted-foreground border-t pt-3">
+            Individual holder names are visible to major and board-tier investors only.
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

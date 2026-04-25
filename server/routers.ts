@@ -21501,6 +21501,105 @@ Return JSON array only. No markdown.`;
         return { success: true, emailSent: emailResult.success };
       }),
 
+    // ─── Cap table summary (tier-aware) ─────────────────────────────
+    //
+    // Every authenticated investor sees aggregate share-class totals and
+    // the option-pool size. Major / board tiers additionally see a top-
+    // holders list (name + ownership %, never check size). Ordinary
+    // tier deliberately doesn't get other-investor names — that's the
+    // line-item leak we want to avoid.
+    capTableSummary: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+      }
+      const stakeholder = ctx.user.role === "investor"
+        ? await db.getStakeholderByUserId(ctx.user.id)
+        : undefined;
+      if (ctx.user.role === "investor" && !stakeholder) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+      }
+
+      const companyId = stakeholder?.companyId ?? undefined;
+      const [grants, classes, allStakeholders] = await Promise.all([
+        db.getEquityGrants(companyId),
+        db.getShareClasses(companyId),
+        db.getStakeholders(companyId),
+      ]);
+
+      // Aggregate by share class. We only count grants that aren't fully
+      // cancelled / expired; partially-vested counts since the underlying
+      // shares still exist.
+      type Grant = { stakeholderId: number; shareClassId: number; shares: string | number | null; status?: string | null };
+      type ShareClass = { id: number; name: string; type: string; authorizedShares?: string | number | null };
+      type Stk = { id: number; name: string };
+
+      const live = (grants as Grant[]).filter(
+        (g) => g.status !== "cancelled" && g.status !== "expired",
+      );
+      const totalOutstanding = live.reduce(
+        (s, g) => s + parseFloat(String(g.shares ?? "0")),
+        0,
+      );
+
+      const classBreakdown = (classes as ShareClass[]).map((c) => {
+        const classGrants = live.filter((g) => g.shareClassId === c.id);
+        const sharesIssued = classGrants.reduce(
+          (s, g) => s + parseFloat(String(g.shares ?? "0")),
+          0,
+        );
+        const authorized = c.authorizedShares
+          ? parseFloat(String(c.authorizedShares))
+          : null;
+        return {
+          id: c.id,
+          name: c.name,
+          type: c.type,
+          sharesIssued,
+          authorized,
+          ownershipPct: totalOutstanding > 0 ? (sharesIssued / totalOutstanding) * 100 : 0,
+        };
+      });
+
+      // Option pool: the total of share classes with type="option_pool"
+      // (already in classBreakdown), so callers don't need to compute it.
+      const optionPool = classBreakdown.find((c) => c.type === "option_pool") ?? null;
+
+      // Top-holder list — only exposed to major / board tiers (or when
+      // the caller is an admin/exec doing support work). Aggregates each
+      // stakeholder's grants across all their share classes.
+      const tier = stakeholder?.tier ?? "ordinary";
+      const showTopHolders = tier === "major" || tier === "board"
+        || ctx.user.role === "admin" || ctx.user.role === "exec";
+
+      let topHolders: Array<{ name: string; sharesOutstanding: number; ownershipPct: number }> | null = null;
+      if (showTopHolders) {
+        const stakeholderById = new Map((allStakeholders as Stk[]).map((s) => [s.id, s]));
+        const bySh = new Map<number, number>();
+        for (const g of live) {
+          bySh.set(
+            g.stakeholderId,
+            (bySh.get(g.stakeholderId) ?? 0) + parseFloat(String(g.shares ?? "0")),
+          );
+        }
+        topHolders = Array.from(bySh.entries())
+          .map(([sid, shares]) => ({
+            name: stakeholderById.get(sid)?.name ?? "Unknown",
+            sharesOutstanding: shares,
+            ownershipPct: totalOutstanding > 0 ? (shares / totalOutstanding) * 100 : 0,
+          }))
+          .sort((a, b) => b.sharesOutstanding - a.sharesOutstanding)
+          .slice(0, 10);
+      }
+
+      return {
+        tier,
+        totalSharesOutstanding: totalOutstanding,
+        classBreakdown,
+        optionPool,
+        topHolders,
+      };
+    }),
+
     // ─── My Documents (per-stakeholder document locker) ─────────────
     //
     // The investor sees only documents attached to their own stakeholder
