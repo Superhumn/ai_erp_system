@@ -166,7 +166,9 @@ export function toNumber(v: unknown): number | null {
     isPct = true;
     cleaned = cleaned.slice(0, -1);
   }
-  const n = parseFloat(cleaned);
+  // Use Number() (not parseFloat) so trailing junk like "K"/"M" rejects rather
+  // than silently parsing the leading numeric part — see the "€250K" test case.
+  const n = cleaned === "" ? NaN : Number(cleaned);
   if (!Number.isFinite(n)) return null;
   const signed = isNeg ? -n : n;
   return isPct ? signed : signed;
@@ -580,9 +582,6 @@ export function deriveSeries(model: FinancialModel) {
     if (period.month !== undefined) {
       return period.year * 12 + (period.month - 1);
     }
-    if (period.quarter !== undefined) {
-      return period.year * 12 + (period.quarter - 1) * 3;
-    }
     return period.year * 12;
   };
 
@@ -639,8 +638,8 @@ export function deriveSeries(model: FinancialModel) {
 
   // Runway at last-period burn, in months.
   // Convert the last period's net income into a monthly burn rate based on
-  // the spacing between consecutive period sort keys:
-  //   monthly => 1, quarterly => 3, annual => 12.
+  // the spacing between consecutive periods in actual months (not sortKey
+  // units — sortKey is `year*100 + month`, so an annual delta is 100, not 12).
   let runwayMonths: number | null = null;
   const cash = metrics.cashBalance;
   if (cash && netIncome && n > 0) {
@@ -649,7 +648,7 @@ export function deriveSeries(model: FinancialModel) {
     if (lastCash !== null && lastNi !== null && lastNi < 0) {
       const stepSizes = periods
         .slice(1)
-        .map((period, i) => period.sortKey - periods[i].sortKey)
+        .map((period, i) => getPeriodMonthIndex(period) - getPeriodMonthIndex(periods[i]))
         .filter((delta) => delta > 0);
 
       const inferredMonthsPerPeriod =
