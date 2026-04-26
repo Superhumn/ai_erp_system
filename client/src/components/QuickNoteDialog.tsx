@@ -178,62 +178,14 @@ export function QuickNoteDialog({ open, onOpenChange }: QuickNoteDialogProps) {
             {parsed && parsed.items.length > 0 && (
               <ScrollArea className="max-h-[420px] pr-3">
                 <div className="space-y-2">
-                  {parsed.items.map((item) => {
-                    const meta = KIND_META[item.kind];
-                    const Icon = meta.icon;
-                    const isSelected = selected.has(item.id);
-                    const headline =
-                      (item as any).title ||
-                      (item.kind === "crm_contact"
-                        ? [(item as any).firstName, (item as any).lastName].filter(Boolean).join(" ") ||
-                          (item as any).organization ||
-                          "Contact"
-                        : item.summary);
-                    return (
-                      <label
-                        key={item.id}
-                        className={`flex items-start gap-3 rounded-md border p-3 cursor-pointer transition-colors ${
-                          isSelected ? "bg-accent/40 border-primary/40" : "hover:bg-accent/20"
-                        }`}
-                      >
-                        <Checkbox checked={isSelected} onCheckedChange={() => toggle(item.id)} className="mt-0.5" />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <Badge variant="outline" className={meta.tone}>
-                              <Icon className="h-3 w-3 mr-1" />
-                              {meta.label}
-                            </Badge>
-                            <span className="font-medium text-sm truncate">{headline}</span>
-                            <span className="text-xs text-muted-foreground ml-auto">
-                              {Math.round(item.confidence * 100)}%
-                            </span>
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-1">{item.summary}</p>
-                          {item.kind === "task" && (item as any).dueDate && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Due: {(item as any).dueDate}
-                              {(item as any).priority ? ` · ${(item as any).priority}` : ""}
-                            </p>
-                          )}
-                          {item.kind === "crm_contact" && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              {[(item as any).email, (item as any).phone, (item as any).organization]
-                                .filter(Boolean)
-                                .join(" · ")}
-                            </p>
-                          )}
-                          {item.kind === "reminder" && (item as any).remindAt && (
-                            <p className="text-xs text-muted-foreground mt-1">When: {(item as any).remindAt}</p>
-                          )}
-                          {item.sourceQuote && (
-                            <p className="text-xs italic text-muted-foreground mt-1">
-                              "{item.sourceQuote}"
-                            </p>
-                          )}
-                        </div>
-                      </label>
-                    );
-                  })}
+                  {parsed.items.map((item) => (
+                    <ParsedItemCard
+                      key={item.id}
+                      item={item}
+                      selected={selected.has(item.id)}
+                      onToggle={() => toggle(item.id)}
+                    />
+                  ))}
                 </div>
               </ScrollArea>
             )}
@@ -273,5 +225,81 @@ export function QuickNoteDialog({ open, onOpenChange }: QuickNoteDialogProps) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// Renders a single parsed item with kind-narrowed fields. The inner switch
+// keeps the type narrow so we never reach for fields that don't exist on
+// the variant.
+function ParsedItemCard({
+  item,
+  selected,
+  onToggle,
+}: {
+  item: NoteParsedItem;
+  selected: boolean;
+  onToggle: () => void;
+}) {
+  const meta = KIND_META[item.kind];
+  const Icon = meta.icon;
+
+  let headline: string;
+  let detail: string | null = null;
+
+  switch (item.kind) {
+    case "task": {
+      headline = item.title || item.summary;
+      if (item.dueDate) {
+        detail = `Due: ${item.dueDate}${item.priority ? ` · ${item.priority}` : ""}`;
+      } else if (item.priority) {
+        detail = `Priority: ${item.priority}`;
+      }
+      break;
+    }
+    case "crm_contact": {
+      headline =
+        [item.firstName, item.lastName].filter(Boolean).join(" ") ||
+        item.organization ||
+        "Contact";
+      const parts = [item.email, item.phone, item.organization].filter(Boolean);
+      detail = parts.length > 0 ? parts.join(" · ") : null;
+      break;
+    }
+    case "reminder": {
+      headline = item.title || item.summary;
+      detail = item.remindAt ? `When: ${item.remindAt}` : null;
+      break;
+    }
+    case "idea": {
+      headline = item.title || item.summary;
+      break;
+    }
+  }
+
+  return (
+    <label
+      className={`flex items-start gap-3 rounded-md border p-3 cursor-pointer transition-colors ${
+        selected ? "bg-accent/40 border-primary/40" : "hover:bg-accent/20"
+      }`}
+    >
+      <Checkbox checked={selected} onCheckedChange={onToggle} className="mt-0.5" />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge variant="outline" className={meta.tone}>
+            <Icon className="h-3 w-3 mr-1" />
+            {meta.label}
+          </Badge>
+          <span className="font-medium text-sm truncate">{headline}</span>
+          <span className="text-xs text-muted-foreground ml-auto">
+            {Math.round(item.confidence * 100)}%
+          </span>
+        </div>
+        <p className="text-xs text-muted-foreground mt-1">{item.summary}</p>
+        {detail && <p className="text-xs text-muted-foreground mt-1">{detail}</p>}
+        {item.sourceQuote && (
+          <p className="text-xs italic text-muted-foreground mt-1">"{item.sourceQuote}"</p>
+        )}
+      </div>
+    </label>
   );
 }

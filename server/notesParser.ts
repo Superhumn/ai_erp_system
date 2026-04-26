@@ -1,9 +1,13 @@
 import { invokeLLM } from "./_core/llm";
 import {
+  NOTE_ITEM_KINDS,
   NOTE_PARSE_JSON_SCHEMA,
+  type NoteItemKind,
   type NoteParseResult,
   type NoteParsedItem,
 } from "@shared/notes";
+
+const KIND_SET: ReadonlySet<NoteItemKind> = new Set(NOTE_ITEM_KINDS);
 
 const SYSTEM_PROMPT = `You are an assistant inside an ERP. The user jots quick notes (think Apple Notes) and you split each note into structured items that can be routed into the right system.
 
@@ -62,13 +66,13 @@ export async function parseNoteWithLLM(content: string, todayIso: string): Promi
     return { title: null, items: [] };
   }
 
-  // Defensive normalization: drop items missing required fields, ensure ids.
+  // Defensive normalization: drop items with unknown/missing kind, ensure ids.
   const items: NoteParsedItem[] = [];
   result.items.forEach((it, idx) => {
-    if (!it || !it.kind) return;
-    const id = it.id || `i${idx + 1}`;
+    if (!it || typeof it.kind !== "string" || !KIND_SET.has(it.kind as NoteItemKind)) return;
+    const id = typeof it.id === "string" && it.id.length > 0 ? it.id : `i${idx + 1}`;
     const confidence = typeof it.confidence === "number" ? it.confidence : 0.5;
-    const summary = it.summary || "";
+    const summary = typeof it.summary === "string" ? it.summary : "";
     items.push({ ...it, id, confidence, summary } as NoteParsedItem);
   });
 

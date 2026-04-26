@@ -232,19 +232,6 @@ function DashboardLayoutContent({
   const isMobile = useIsMobile();
   const [quickNoteOpen, setQuickNoteOpen] = useState(false);
 
-  // Quick Note shortcut (Cmd/Ctrl + Shift + N) — works from any focus,
-  // including inside other text fields, so the user can dump a thought instantly.
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'n' || e.key === 'N')) {
-        e.preventDefault();
-        setQuickNoteOpen(true);
-      }
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, []);
-
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -271,6 +258,7 @@ function DashboardLayoutContent({
             case 't': setLocation('/finance/transactions'); break; // Transactions
             case 's': setLocation('/settings'); break; // Settings
           case 'm': setLocation('/meetings'); break; // Meetings
+          case 'n': setQuickNoteOpen(true); break; // New quick note
           }
         };
         document.addEventListener('keydown', handleNextKey, { once: true });
@@ -293,7 +281,8 @@ function DashboardLayoutContent({
           'g a - Accounts\n' +
           'g t - Transactions\n' +
           'g s - Settings\n' +
-        'g m - Meetings',
+          'g m - Meetings\n' +
+          'g n - New Quick Note',
           { duration: 5000 }
         );
         return;
@@ -491,7 +480,7 @@ function DashboardLayoutContent({
                   <StickyNote className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Quick note (⌘⇧N)</TooltipContent>
+              <TooltipContent>Quick note (g then n)</TooltipContent>
             </Tooltip>
             <AutonomousAgentBar />
             <NotificationCenter />

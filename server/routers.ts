@@ -21725,10 +21725,10 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
           const parsed = await parseNoteWithLLM(input.content, new Date().toISOString().slice(0, 10));
           await db.updateNote(id, {
             title: input.title || parsed.title || undefined,
-            parsedItems: parsed as any,
+            parsedItems: parsed,
             status: "parsed",
             parsedAt: new Date(),
-            parseError: null as any,
+            parseError: null,
           });
           return { id, parsed };
         } catch (err) {
@@ -21748,10 +21748,10 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
           const parsed = await parseNoteWithLLM(note.content, new Date().toISOString().slice(0, 10));
           await db.updateNote(input.id, {
             title: note.title || parsed.title || undefined,
-            parsedItems: parsed as any,
+            parsedItems: parsed,
             status: "parsed",
             parsedAt: new Date(),
-            parseError: null as any,
+            parseError: null,
           });
           return parsed;
         } catch (err) {
@@ -21770,10 +21770,18 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
       .mutation(async ({ input, ctx }) => {
         const note = await db.getNoteById(input.id, ctx.user.id);
         if (!note) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
-        await db.updateNote(input.id, {
-          content: input.content,
-          title: input.title,
-        });
+
+        // When the content changes, any prior parse is stale — clear parse
+        // state and drop the note back to draft so the user re-parses.
+        const patch: Partial<typeof note> = { title: input.title };
+        if (input.content !== undefined && input.content !== note.content) {
+          patch.content = input.content;
+          patch.parsedItems = null;
+          patch.parsedAt = null;
+          patch.parseError = null;
+          patch.status = "draft";
+        }
+        await db.updateNote(input.id, patch);
         return { ok: true };
       }),
 
@@ -21785,12 +21793,12 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
       .mutation(async ({ input, ctx }) => {
         const note = await db.getNoteById(input.id, ctx.user.id);
         if (!note) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
-        const parsed = note.parsedItems as NoteParseResult | null;
+        const parsed = note.parsedItems;
         if (!parsed || !Array.isArray(parsed.items)) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Note has not been parsed yet" });
         }
 
-        const selected = parsed.items.filter((it: NoteParsedItem) => input.itemIds.includes(it.id));
+        const selected = parsed.items.filter((it) => input.itemIds.includes(it.id));
         const applied: NoteAppliedItem[] = [];
 
         for (const item of selected) {
@@ -21844,7 +21852,7 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
             const remindAt = item.remindAt ? new Date(item.remindAt) : undefined;
             // Reminders piggyback on the notifications table so they show up
             // in the existing notification center.
-            await db.createNotification({
+            const notificationId = await db.createNotification({
               userId: ctx.user.id,
               type: "reminder",
               title: item.title || "Reminder",
@@ -21860,7 +21868,7 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
               kind: "reminder",
               itemId: item.id,
               entityType: "notification",
-              entityId: null,
+              entityId: notificationId ? Number(notificationId) : null,
               label: item.title || item.summary,
             });
           } else if (item.kind === "idea") {
@@ -21875,11 +21883,15 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
           }
         }
 
-        const existingApplied = (note.appliedItems as NoteAppliedItem[] | null) || [];
-        const merged = [...existingApplied, ...applied];
+        // Idempotent merge: if an item was already applied (by itemId),
+        // keep the older record so retries don't create duplicate entries.
+        const existingApplied = note.appliedItems ?? [];
+        const existingIds = new Set(existingApplied.map((a) => a.itemId));
+        const newOnes = applied.filter((a) => !existingIds.has(a.itemId));
+        const merged: NoteAppliedItem[] = [...existingApplied, ...newOnes];
 
         await db.updateNote(note.id, {
-          appliedItems: merged as any,
+          appliedItems: merged,
           status: "applied",
           appliedAt: new Date(),
         });

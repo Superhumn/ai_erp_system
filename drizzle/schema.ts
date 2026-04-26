@@ -1,5 +1,6 @@
 import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, boolean, json, bigint, uniqueIndex, serial, type AnyMySqlColumn } from "drizzle-orm/mysql-core";
 import { relations } from "drizzle-orm";
+import type { NoteParseResult, NoteAppliedItem } from "../shared/notes";
 
 // ============================================
 // USER & ACCESS CONTROL
@@ -6432,10 +6433,10 @@ export const notes = mysqlTable("notes", {
   title: varchar("title", { length: 255 }),
   content: text("content").notNull(),
   status: mysqlEnum("status", ["draft", "parsed", "applied", "discarded"]).default("draft").notNull(),
-  // LLM-detected items, shape: { items: NoteParsedItem[] }
-  parsedItems: json("parsedItems"),
-  // What we actually inserted on apply, shape: NoteAppliedItem[]
-  appliedItems: json("appliedItems"),
+  // LLM-detected items.
+  parsedItems: json("parsedItems").$type<NoteParseResult>(),
+  // What we actually inserted on apply.
+  appliedItems: json("appliedItems").$type<NoteAppliedItem[]>(),
   parseError: text("parseError"),
   parsedAt: timestamp("parsedAt"),
   appliedAt: timestamp("appliedAt"),

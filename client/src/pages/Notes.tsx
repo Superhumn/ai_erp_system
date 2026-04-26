@@ -77,7 +77,7 @@ export default function Notes() {
             Notes
           </h1>
           <p className="text-sm text-muted-foreground">
-            Quick captures parsed by AI into tasks, contacts, and reminders. Press <kbd className="px-1.5 py-0.5 rounded border bg-muted text-[10px] font-mono">⌘⇧N</kbd> from anywhere.
+            Quick captures parsed by AI into tasks, contacts, and reminders. Press <kbd className="px-1.5 py-0.5 rounded border bg-muted text-[10px] font-mono">g</kbd> then <kbd className="px-1.5 py-0.5 rounded border bg-muted text-[10px] font-mono">n</kbd> from anywhere.
           </p>
         </div>
         <Button onClick={() => setComposeOpen(true)}>
@@ -108,7 +108,7 @@ export default function Notes() {
           <CardContent className="py-12 text-center text-muted-foreground">
             <StickyNote className="h-10 w-10 mx-auto mb-3 opacity-40" />
             <p className="font-medium">No notes yet</p>
-            <p className="text-sm">Hit <kbd className="px-1.5 py-0.5 rounded border bg-muted text-[10px] font-mono">⌘⇧N</kbd> or click <span className="font-medium">New note</span> to capture something.</p>
+            <p className="text-sm">Hit <kbd className="px-1.5 py-0.5 rounded border bg-muted text-[10px] font-mono">g</kbd> then <kbd className="px-1.5 py-0.5 rounded border bg-muted text-[10px] font-mono">n</kbd> or click <span className="font-medium">New note</span> to capture something.</p>
           </CardContent>
         </Card>
       )}

@@ -4,6 +4,16 @@
 
 export type NoteItemKind = "task" | "crm_contact" | "reminder" | "idea";
 
+export const NOTE_ITEM_KINDS: readonly NoteItemKind[] = ["task", "crm_contact", "reminder", "idea"];
+
+// Destinations a parsed item can land in once applied. Aligned with what
+// `notes.applyItems` actually writes to.
+export type NoteAppliedEntityType =
+  | "project_task"
+  | "crm_contact"
+  | "notification"
+  | "idea";
+
 export interface NoteParsedTask {
   kind: "task";
   id: string; // stable client id for selection (e.g. "t1")
@@ -65,7 +75,7 @@ export interface NoteParseResult {
 export interface NoteAppliedItem {
   kind: NoteItemKind;
   itemId: string;        // matches NoteParsedItem.id
-  entityType: string;    // "project_task" | "crm_contact" | "notification" | "idea"
+  entityType: NoteAppliedEntityType;
   entityId: number | null;
   label: string;
 }
