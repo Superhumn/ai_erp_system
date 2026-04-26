@@ -1,4 +1,4 @@
--- Migration 0035: Marketing & social media management
+-- Migration 0037: Marketing & social media management
 -- Tables: social_accounts, marketing_campaigns, marketing_posts,
 --         marketing_engagements, marketing_metrics
 -- Rationale: build social scheduling, engagement tracking, and campaign ROI
