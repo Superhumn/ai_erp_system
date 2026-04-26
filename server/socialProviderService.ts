@@ -4,6 +4,8 @@
  * When AYRSHARE_API_KEY is absent every method becomes a safe no-op so dev and
  * CI never depend on the network.
  */
+import { ENV } from "./_core/env";
+
 
 export type SocialPlatform =
   | "linkedin"
@@ -66,7 +68,7 @@ export interface MetricsFetchResult {
 const API_BASE = "https://app.ayrshare.com/api";
 
 function apiKey(): string | undefined {
-  const key = process.env.AYRSHARE_API_KEY;
+  const key = ENV.ayrshareApiKey
   return key && key.trim().length > 0 ? key.trim() : undefined;
 }
 
