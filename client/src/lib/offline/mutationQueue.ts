@@ -19,6 +19,15 @@ type QueueListener = (count: number) => void;
 const listeners = new Set<QueueListener>();
 let cachedCount = 0;
 
+/**
+ * In-memory fallback used when IndexedDB is unavailable (Safari private mode,
+ * blocked storage, quota exceeded). It only survives the current page load,
+ * but it lets a brief offline blip still recover instead of failing hard.
+ * Negative ids distinguish memory entries from real IDB autoIncrement ids.
+ */
+const memoryQueue: QueuedMutation[] = [];
+let nextMemoryId = -1;
+
 export function subscribeQueueSize(fn: QueueListener): () => void {
   listeners.add(fn);
   fn(cachedCount);
@@ -26,13 +35,28 @@ export function subscribeQueueSize(fn: QueueListener): () => void {
 }
 
 async function refreshCount(): Promise<void> {
-  const all = await idbAllMutations();
-  cachedCount = all.length;
+  let idbCount = 0;
+  try {
+    const all = await idbAllMutations();
+    idbCount = all.length;
+  } catch {
+    /* swallow — IDB may be unavailable; memory queue is still authoritative */
+  }
+  cachedCount = idbCount + memoryQueue.length;
   listeners.forEach((l) => l(cachedCount));
 }
 
 export async function enqueueMutation(m: Omit<QueuedMutation, "id" | "enqueuedAt">): Promise<void> {
-  await idbEnqueueMutation({ ...m, enqueuedAt: new Date().toISOString() });
+  const enqueued: QueuedMutation = { ...m, enqueuedAt: new Date().toISOString() };
+  try {
+    await idbEnqueueMutation(enqueued);
+  } catch (err) {
+    // IDB blocked / quota / private mode — fall back so the action isn't lost
+    // for this session. We don't throw because the caller already showed
+    // "Saved offline"; making it fail now would be a worse UX than degrading.
+    console.warn("[offline-queue] IndexedDB unavailable; using in-memory queue", err);
+    memoryQueue.push({ ...enqueued, id: nextMemoryId-- });
+  }
   await refreshCount();
 }
 
@@ -86,20 +110,31 @@ function invalidationsFor(path: string): string[][] {
   }
 }
 
-export async function drainMutationQueue(client: QueryClient): Promise<{
-  replayed: number;
-  failed: number;
-}> {
-  if (typeof navigator !== "undefined" && navigator.onLine === false) {
-    return { replayed: 0, failed: 0 };
+type DrainResult = { replayed: number; failed: number };
+
+async function doDrain(client: QueryClient): Promise<DrainResult> {
+  // Pull from IDB (may be empty if unavailable) and merge the in-memory
+  // fallback. Memory entries have negative ids; we splice them out of the
+  // module-local array on success rather than calling idbDeleteMutation.
+  let idbQueue: QueuedMutation[] = [];
+  try {
+    idbQueue = await idbAllMutations();
+  } catch {
+    /* swallow */
   }
-  const queue = await idbAllMutations();
+  const queue: QueuedMutation[] = [...idbQueue, ...memoryQueue];
+
   let replayed = 0;
   let failed = 0;
   for (const m of queue) {
     try {
       await replay(m);
-      if (m.id != null) await idbDeleteMutation(m.id);
+      if (m.id != null && m.id >= 0) {
+        await idbDeleteMutation(m.id);
+      } else {
+        const idx = memoryQueue.findIndex((x) => x.id === m.id);
+        if (idx >= 0) memoryQueue.splice(idx, 1);
+      }
       replayed++;
       for (const key of invalidationsFor(m.path)) {
         client.invalidateQueries({ queryKey: key });
@@ -114,6 +149,33 @@ export async function drainMutationQueue(client: QueryClient): Promise<{
   }
   await refreshCount();
   return { replayed, failed };
+}
+
+/**
+ * Drain the queue, holding a cross-tab lock so two tabs that come online at
+ * the same moment don't replay the same mutation twice. `navigator.locks`
+ * is supported in all modern browsers (Chromium 69+, Firefox 96+, Safari
+ * 15.4+). When unavailable, we fall back to plain serial drain — the worst
+ * case is the rare double-replay that the lock prevents.
+ */
+export async function drainMutationQueue(client: QueryClient): Promise<DrainResult> {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return { replayed: 0, failed: 0 };
+  }
+  const locks = (typeof navigator !== "undefined" ? navigator.locks : undefined);
+  if (locks?.request) {
+    const result = await locks.request(
+      "superhumn-offline-drain",
+      { ifAvailable: true },
+      async (lock) => {
+        // ifAvailable: another tab holds the lock — let it drain instead.
+        if (!lock) return null;
+        return doDrain(client);
+      },
+    );
+    return result ?? { replayed: 0, failed: 0 };
+  }
+  return doDrain(client);
 }
 
 export function startMutationQueueWorker(client: QueryClient): () => void {

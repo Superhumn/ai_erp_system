@@ -176,3 +176,21 @@ export async function idbDeleteMutation(id: number): Promise<void> {
     /* swallow */
   }
 }
+
+/**
+ * Wipe both stores. Called on logout so a different user signing in on the
+ * same device can't see the previous user's cached data or have their queued
+ * mutations replayed under the new session's cookies.
+ */
+export async function idbClearAll(): Promise<void> {
+  try {
+    await tx(QUERIES_STORE, "readwrite", (s) => {
+      s.clear();
+    });
+    await tx(MUTATIONS_STORE, "readwrite", (s) => {
+      s.clear();
+    });
+  } catch {
+    /* swallow — best-effort */
+  }
+}

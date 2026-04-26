@@ -28,10 +28,15 @@ type Persisted = {
   updatedAt: number;
 };
 
+/**
+ * Use superjson for the queryKey too — plain JSON.stringify drops `undefined`
+ * inside objects and coerces it to `null` inside arrays, which breaks
+ * round-tripping for tRPC inputs that have optional fields. superjson keeps
+ * undefined/Date/Map/etc. faithful, so write-key === restore-key === the key
+ * React Query asks for at hydrate time.
+ */
 function stableKey(queryKey: unknown): string {
-  return JSON.stringify(queryKey, (_k, v) =>
-    v instanceof Date ? { __date: v.toISOString() } : v,
-  );
+  return superjson.stringify(queryKey);
 }
 
 export async function hydrateQueryCache(client: QueryClient): Promise<number> {
@@ -50,16 +55,16 @@ export async function hydrateQueryCache(client: QueryClient): Promise<number> {
         return;
       }
       try {
-        const queryKey = JSON.parse(key, (_k, v) => {
-          if (v && typeof v === "object" && "__date" in v && typeof v.__date === "string") {
-            return new Date(v.__date);
-          }
-          return v;
-        });
+        const queryKey = superjson.parse(key);
         const data = superjson.parse(entry.data);
-        client.setQueryData(queryKey, data, { updatedAt: entry.updatedAt });
+        client.setQueryData(queryKey as readonly unknown[], data, {
+          updatedAt: entry.updatedAt,
+        });
         // Mark stale so React Query refetches in background once online.
-        client.invalidateQueries({ queryKey, refetchType: "none" });
+        client.invalidateQueries({
+          queryKey: queryKey as readonly unknown[],
+          refetchType: "none",
+        });
         restored++;
       } catch {
         await idbDeleteQuery(key);
@@ -67,6 +72,26 @@ export async function hydrateQueryCache(client: QueryClient): Promise<number> {
     }),
   );
   return restored;
+}
+
+/**
+ * Routers whose responses we never persist. Auth/session data must always
+ * come from the server — caching it would let an offline hydrate make the
+ * UI think the user is signed in (or as a different user, on a shared
+ * device) before the server has a chance to say otherwise.
+ */
+const PERSIST_DENY_ROOTS = new Set(["auth", "session"]);
+
+/**
+ * tRPC + react-query keys look like `[["router", "procedure"], { input, type }]`.
+ * Returns the router segment (`"router"`) so we can deny-list whole routers.
+ */
+function rootRouterOf(queryKey: unknown): string | null {
+  if (!Array.isArray(queryKey) || queryKey.length === 0) return null;
+  const head = queryKey[0];
+  if (Array.isArray(head) && typeof head[0] === "string") return head[0];
+  if (typeof head === "string") return head;
+  return null;
 }
 
 export function attachQueryCachePersistence(client: QueryClient): () => void {
@@ -77,8 +102,8 @@ export function attachQueryCachePersistence(client: QueryClient): () => void {
     if (query.state.status !== "success") return;
     if (query.state.data === undefined) return;
 
-    // Don't persist mutations or one-off auth probes — only standard queries.
-    // (TanStack Query's "queries" cache is exactly that, so no extra filter needed.)
+    const root = rootRouterOf(query.queryKey);
+    if (root && PERSIST_DENY_ROOTS.has(root)) return;
 
     const key = stableKey(query.queryKey);
     const persisted: Persisted = {

@@ -122,12 +122,13 @@ export default function Messaging() {
   // while offline writes to the IndexedDB queue and sync replays it on
   // reconnect (see lib/offline/mutationQueue.ts).
   const online = useOnlineStatus();
+  // Toasts are owned by the caller (handleSendMessage) so we don't double up
+  // with useOfflineMutation's "Saved offline" toast on a network failure.
   const sendMutationTrpc = trpc.crm.whatsapp.sendMessage.useMutation({
     onSuccess: () => {
       toast.success("Message sent");
       refetchMessages();
     },
-    onError: (err) => toast.error(err.message),
   });
   const sendMutation = useOfflineMutation<{
     contactId: number;
@@ -201,9 +202,12 @@ export default function Messaging() {
         content: text,
         messageType: "text",
       });
-    } catch {
+    } catch (err) {
       // Restore the draft so the user doesn't lose their message on a hard error.
+      // Network errors don't reach this branch — useOfflineMutation queues them
+      // and toasts "Saved offline" on its own.
       setMessageText(text);
+      toast.error(err instanceof Error ? err.message : "Failed to send message");
     }
   }
 

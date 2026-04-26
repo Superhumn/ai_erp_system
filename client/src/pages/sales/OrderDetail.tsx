@@ -15,7 +15,7 @@ import { ArrowLeft, ShoppingCart, Calendar, DollarSign, User, Loader2 } from "lu
 import { Link, useParams } from "wouter";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useOfflineMutation } from "@/hooks/useOfflineMutation";
 import { toast } from "sonner";
 
@@ -47,8 +47,15 @@ export default function OrderDetail() {
   });
 
   // Track an optimistic local status so the UI updates instantly, even when
-  // the request is queued offline.
+  // the request is queued offline. Cleared as soon as the server's value
+  // catches up (online refetch or queued replay), otherwise the UI would be
+  // stuck on the optimistic value forever.
   const [pendingStatus, setPendingStatus] = useState<OrderStatus | null>(null);
+  useEffect(() => {
+    if (pendingStatus && order?.status === pendingStatus) {
+      setPendingStatus(null);
+    }
+  }, [order?.status, pendingStatus]);
 
   const updateStatus = useOfflineMutation<{ id: number; status: OrderStatus }>({
     path: "orders.update",
