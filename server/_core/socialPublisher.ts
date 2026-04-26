@@ -12,6 +12,8 @@
 // YouTube Shorts have no horizontal mode), in which case we mark the post
 // `skipped` with a `skipReason`.
 
+import { uploadVideoToYouTube, type OAuthTokens } from "./youtube";
+
 export type Platform =
   | "tiktok"
   | "youtube"
@@ -87,33 +89,60 @@ export function planPublish(platforms: Platform[], cuts: VideoCuts): PlatformFit
 export interface PublishInput {
   platform: Platform;
   videoUrl: string;
+  title: string;
   caption: string;
   hashtags?: string;
-  accessToken?: string | null;
+  tokens: OAuthTokens | null;
+  // Privacy controls for platforms that have them (currently YouTube only).
+  privacyStatus?: "public" | "unlisted" | "private";
 }
 
 export interface PublishResult {
   externalId: string | null;
   externalUrl: string | null;
+  // If the platform's OAuth refresh produced new tokens, the caller should
+  // persist these so the next publish doesn't re-refresh. Null = no change.
+  refreshedTokens: OAuthTokens | null;
 }
 
-// Dispatches the upload to the platform's API. Each branch is a stub that
-// returns a pretend external id; replace with real calls once OAuth is wired.
+// Dispatches the upload to the platform's API. YouTube is real; TikTok and
+// Instagram remain stubbed pending their OAuth + SDK wiring.
 //
-// When implementing for real:
+// References:
 //   tiktok:    https://developers.tiktok.com/doc/content-posting-api-get-started
-//   youtube:   googleapis videos.insert (multipart, resumable for >256MB)
 //   instagram: Graph API two-step (create container → publish)
 export async function publishToPlatform(input: PublishInput): Promise<PublishResult> {
-  if (!input.accessToken) {
+  if (!input.tokens?.accessToken) {
     throw new Error(`Missing OAuth credentials for ${input.platform}. Connect the account in Marketing → Settings.`);
   }
-  // Placeholder so the pipeline is end-to-end runnable in dev. Each platform
-  // needs its own real implementation; throwing here would block the rest of
-  // the fan-out from being tested.
+
+  if (input.platform === "youtube" || input.platform === "youtube_shorts") {
+    // Shorts auto-detection on YouTube: a vertical video <= 60s is shown as
+    // a Short. The selector already enforces vertical for `youtube_shorts`,
+    // so the same upload endpoint works for both.
+    const tagList = input.hashtags
+      ? input.hashtags.split(/[\s,]+/).map(t => t.replace(/^#/, "")).filter(Boolean)
+      : undefined;
+    const result = await uploadVideoToYouTube(input.tokens, {
+      videoUrl: input.videoUrl,
+      title: input.title,
+      description: input.caption,
+      tags: tagList,
+      privacyStatus: input.privacyStatus ?? "private",
+    });
+    return {
+      externalId: result.videoId,
+      externalUrl: result.url,
+      refreshedTokens: result.refreshedTokens,
+    };
+  }
+
+  // TikTok / Instagram remain stubbed so the pipeline is testable end-to-end.
+  // Replace with real platform calls when wiring those OAuth flows.
   const fakeId = `${input.platform}_${Date.now()}`;
   return {
     externalId: fakeId,
     externalUrl: `https://example.com/${input.platform}/${fakeId}`,
+    refreshedTokens: null,
   };
 }

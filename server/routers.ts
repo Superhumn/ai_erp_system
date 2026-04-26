@@ -49,6 +49,7 @@ import { runFormFillerAgent } from "./formFillerAgent";
 import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound, pollAllPartners, startEdiPolling, stopEdiPolling } from "./ediTransportService";
 import { purchaseOrderTextEndpoints, shipmentTextEndpoints, paymentTextEndpoints, workOrderTextEndpoints, inventoryTextEndpoints } from "./naturalLanguageRouterExtensions";
 import { planPublish, publishToPlatform, type Platform as SocialPlatform } from "./_core/socialPublisher";
+import { getYouTubeAuthUrl } from "./_core/youtube";
 import { encrypt, decrypt } from "./_core/crypto";
 import { ENV } from "./_core/env";
 import { createDecipheriv, createHash } from "crypto";
@@ -21791,11 +21792,10 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         // OAuth lookup is by base platform — both `youtube` and `youtube_shorts`
         // share a YouTube credential; both `instagram_*` share Instagram.
         const credentials = await db.getSocialPlatformCredentials({ companyId: video.companyId ?? undefined });
-        const tokenFor = (p: SocialPlatform): string | null => {
-          const base = p.startsWith("youtube") ? "youtube" : p.startsWith("instagram") ? "instagram" : "tiktok";
-          const cred = credentials.find((c: any) => c.platform === base && c.isActive);
-          return cred?.accessToken ?? null;
-        };
+        const baseFor = (p: SocialPlatform) =>
+          p.startsWith("youtube") ? "youtube" : p.startsWith("instagram") ? "instagram" : "tiktok";
+        const credFor = (p: SocialPlatform) =>
+          credentials.find((c: any) => c.platform === baseFor(p) && c.isActive) ?? null;
 
         const results = [];
         for (const fit of plan) {
@@ -21832,14 +21832,33 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
             continue;
           }
 
+          const cred = credFor(fit.platform);
           try {
             const pub = await publishToPlatform({
               platform: fit.platform,
               videoUrl: fit.pickedUrl,
-              caption: input.caption ?? video.title,
+              title: video.title,
+              caption: input.caption ?? video.description ?? video.title,
               hashtags: input.hashtags ?? video.tags ?? undefined,
-              accessToken: tokenFor(fit.platform),
+              tokens: cred
+                ? {
+                    accessToken: cred.accessToken ?? "",
+                    refreshToken: cred.refreshToken,
+                    expiresAt: cred.tokenExpiresAt,
+                  }
+                : null,
             });
+            // If OAuth refresh produced new tokens, persist them so the next
+            // upload doesn't re-spend the refresh budget.
+            if (pub.refreshedTokens && cred) {
+              await db.upsertSocialPlatformCredential({
+                companyId: cred.companyId,
+                platform: cred.platform,
+                accessToken: pub.refreshedTokens.accessToken,
+                refreshToken: pub.refreshedTokens.refreshToken,
+                tokenExpiresAt: pub.refreshedTokens.expiresAt,
+              });
+            }
             await db.updateSocialPost(row.id, {
               status: "published",
               publishedAt: new Date(),
@@ -21875,12 +21894,44 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
           tokenExpiresAt: c.tokenExpiresAt,
         }));
       }),
+    // Returns the platform's OAuth consent URL. The frontend opens this in a
+    // popup/new tab; the user authorizes; the platform redirects to our
+    // /api/oauth/<platform>/callback route which writes the credential.
+    getConnectUrl: protectedProcedure
+      .input(z.object({ platform: z.enum(["tiktok", "youtube", "instagram"]) }))
+      .mutation(({ input, ctx }) => {
+        if (input.platform === "youtube") {
+          return { url: getYouTubeAuthUrl(ctx.user.id) };
+        }
+        // TikTok and Instagram require their own developer apps + scopes; the
+        // shape is the same so the UI works identically once those are wired.
+        throw new TRPCError({
+          code: "NOT_IMPLEMENTED",
+          message: `${input.platform} OAuth is not wired yet. YouTube is available now; TikTok and Instagram are next.`,
+        });
+      }),
+
+    disconnectCredential: protectedProcedure
+      .input(z.object({ platform: z.enum(["tiktok", "youtube", "instagram"]) }))
+      .mutation(async ({ input, ctx }) => {
+        await db.upsertSocialPlatformCredential({
+          platform: input.platform,
+          accessToken: null as any,
+          refreshToken: null as any,
+          tokenExpiresAt: null as any,
+          isActive: false,
+          createdBy: ctx.user.id,
+        });
+        return { success: true };
+      }),
+
     saveCredential: protectedProcedure
       .input(z.object({
         platform: z.enum(["tiktok", "youtube", "instagram"]),
         accountHandle: z.string().optional(),
         accessToken: z.string().optional(),
         refreshToken: z.string().optional(),
+        tokenExpiresAt: z.date().optional(),
         externalAccountId: z.string().optional(),
         isActive: z.boolean().optional(),
       }))

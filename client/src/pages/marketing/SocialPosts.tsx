@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   Video, Plus, Upload, Send, Loader2, ExternalLink,
-  CheckCircle2, AlertTriangle, XCircle, Clock,
+  CheckCircle2, AlertTriangle, XCircle, Clock, Link2, Unlink,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -39,6 +39,36 @@ export default function SocialPosts() {
   const utils = trpc.useUtils?.();
   const videosQuery = (trpc as any).marketing.listVideos.useQuery();
   const postsQuery = (trpc as any).marketing.listPosts.useQuery();
+  const credsQuery = (trpc as any).marketing.listCredentials.useQuery();
+
+  // The YouTube OAuth callback redirects back to /marketing with a query
+  // string. Surface success/error as toasts and clean the URL.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("yt_success")) {
+      toast.success("YouTube connected");
+      utils?.marketing?.listCredentials?.invalidate();
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (params.get("yt_error")) {
+      toast.error(`YouTube connect failed: ${params.get("yt_error")}`);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, [utils]);
+
+  const connectMut = (trpc as any).marketing.getConnectUrl.useMutation({
+    onSuccess: (data: any) => {
+      // Top-level redirect (rather than popup) so the session cookie carries.
+      window.location.href = data.url;
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const disconnectMut = (trpc as any).marketing.disconnectCredential.useMutation({
+    onSuccess: () => {
+      toast.success("Disconnected");
+      utils?.marketing?.listCredentials?.invalidate();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
 
   const [createOpen, setCreateOpen] = useState(false);
   const [title, setTitle] = useState("");
@@ -131,6 +161,48 @@ export default function SocialPosts() {
           </DialogContent>
         </Dialog>
       </div>
+
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-sm">Connected accounts</CardTitle></CardHeader>
+        <CardContent className="space-y-1.5">
+          {(["youtube", "tiktok", "instagram"] as const).map(p => {
+            const cred = (credsQuery.data ?? []).find((c: any) => c.platform === p);
+            const connected = !!cred?.isConnected && cred?.isActive;
+            const label = p === "youtube" ? "YouTube" : p === "tiktok" ? "TikTok" : "Instagram";
+            return (
+              <div key={p} className="flex items-center justify-between border rounded-md px-2 py-1.5">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="font-medium">{label}</span>
+                  {connected ? (
+                    <Badge className="bg-green-500/10 text-green-700 text-[10px]">
+                      <CheckCircle2 className="h-3 w-3 mr-0.5" /> Connected{cred.accountHandle ? ` · ${cred.accountHandle}` : ""}
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-[10px]">Not connected</Badge>
+                  )}
+                </div>
+                {connected ? (
+                  <Button
+                    size="sm" variant="outline" className="h-7 text-xs"
+                    onClick={() => disconnectMut.mutate({ platform: p })}
+                    disabled={disconnectMut.isPending}
+                  >
+                    <Unlink className="h-3 w-3 mr-1" /> Disconnect
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm" className="h-7 text-xs"
+                    onClick={() => connectMut.mutate({ platform: p })}
+                    disabled={connectMut.isPending}
+                  >
+                    <Link2 className="h-3 w-3 mr-1" /> Connect
+                  </Button>
+                )}
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-sm">Videos</CardTitle></CardHeader>
