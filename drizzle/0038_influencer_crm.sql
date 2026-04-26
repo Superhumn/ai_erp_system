@@ -1,7 +1,7 @@
--- Migration 0036: Influencer CRM (creator relationships, outreach, deliverables)
+-- Migration 0038: Influencer CRM (creator relationships, outreach, deliverables)
 -- Tables: influencers, influencer_campaign_participations,
 --         influencer_deliverables, influencer_outreach
--- Builds on 0035 (marketing module). Tracks creators end-to-end: discovery →
+-- Builds on 0037 (marketing module). Tracks creators end-to-end: discovery →
 -- outreach → negotiation → deliverables → performance, joined to existing
 -- marketing_campaigns and crm_contacts.
 
