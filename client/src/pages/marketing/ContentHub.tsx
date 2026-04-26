@@ -20,6 +20,7 @@ import {
   Instagram, Hash, FileText, TrendingUp, Users, Search,
 } from "lucide-react";
 import { toast } from "sonner";
+import SocialPosts from "./SocialPosts";
 
 const contentTypes = [
   { value: "blog", label: "Blog Post", icon: FileText },
@@ -98,6 +99,7 @@ export default function ContentHub() {
           <TabsList>
             <TabsTrigger value="create">Create Content</TabsTrigger>
             <TabsTrigger value="saved">Saved ({savedContent.length})</TabsTrigger>
+            <TabsTrigger value="video">Video Publishing</TabsTrigger>
           </TabsList>
         </div>
 
@@ -198,6 +200,10 @@ export default function ContentHub() {
               ))}
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="video">
+          <SocialPosts />
         </TabsContent>
       </Tabs>
     </div>

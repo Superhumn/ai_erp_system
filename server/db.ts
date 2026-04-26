@@ -169,6 +169,10 @@ import {
   financialModel, InsertFinancialModel,
   // KPI Goals
   kpiGoals, InsertKpiGoal,
+  // Marketing — video assets and social posting
+  marketingVideos, InsertMarketingVideo,
+  socialPosts, InsertSocialPost,
+  socialPlatformCredentials, InsertSocialPlatformCredential,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -12656,3 +12660,105 @@ export async function updateInvestmentCommitment(id: number, data: Partial<Inser
 
 // Re-export transactional PTO helpers defined in the modular db layer
 export { createLeaveRequestWithPtoAdjustment, decideLeaveRequestWithPtoAdjustment, cancelLeaveRequestWithPtoRestore } from "./db/hr";
+
+// ============================================
+// MARKETING — VIDEO ASSETS & SOCIAL POSTING
+// ============================================
+
+export async function getMarketingVideos(filters?: { companyId?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.companyId) conditions.push(eq(marketingVideos.companyId, filters.companyId));
+  if (conditions.length > 0) {
+    return db.select().from(marketingVideos).where(and(...conditions)).orderBy(desc(marketingVideos.createdAt));
+  }
+  return db.select().from(marketingVideos).orderBy(desc(marketingVideos.createdAt));
+}
+
+export async function getMarketingVideoById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(marketingVideos).where(eq(marketingVideos.id, id)).limit(1);
+  return result[0] || null;
+}
+
+export async function createMarketingVideo(data: InsertMarketingVideo) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(marketingVideos).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateMarketingVideo(id: number, data: Partial<InsertMarketingVideo>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(marketingVideos).set({ ...data, updatedAt: new Date() } as any).where(eq(marketingVideos.id, id));
+}
+
+export async function deleteMarketingVideo(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(socialPosts).where(eq(socialPosts.videoId, id));
+  await db.delete(marketingVideos).where(eq(marketingVideos.id, id));
+}
+
+export async function getSocialPosts(filters?: { videoId?: number; platform?: string; status?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.videoId) conditions.push(eq(socialPosts.videoId, filters.videoId));
+  if (filters?.platform) conditions.push(eq(socialPosts.platform, filters.platform as any));
+  if (filters?.status) conditions.push(eq(socialPosts.status, filters.status as any));
+  if (conditions.length > 0) {
+    return db.select().from(socialPosts).where(and(...conditions)).orderBy(desc(socialPosts.createdAt));
+  }
+  return db.select().from(socialPosts).orderBy(desc(socialPosts.createdAt));
+}
+
+export async function createSocialPost(data: InsertSocialPost) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(socialPosts).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateSocialPost(id: number, data: Partial<InsertSocialPost>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(socialPosts).set({ ...data, updatedAt: new Date() } as any).where(eq(socialPosts.id, id));
+}
+
+export async function getSocialPlatformCredentials(filters?: { companyId?: number; platform?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (filters?.companyId) conditions.push(eq(socialPlatformCredentials.companyId, filters.companyId));
+  if (filters?.platform) conditions.push(eq(socialPlatformCredentials.platform, filters.platform as any));
+  if (conditions.length > 0) {
+    return db.select().from(socialPlatformCredentials).where(and(...conditions));
+  }
+  return db.select().from(socialPlatformCredentials);
+}
+
+export async function upsertSocialPlatformCredential(data: InsertSocialPlatformCredential) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const existing = await db
+    .select()
+    .from(socialPlatformCredentials)
+    .where(and(
+      eq(socialPlatformCredentials.companyId, data.companyId ?? 0),
+      eq(socialPlatformCredentials.platform, data.platform),
+    ))
+    .limit(1);
+  if (existing[0]) {
+    await db
+      .update(socialPlatformCredentials)
+      .set({ ...data, updatedAt: new Date() } as any)
+      .where(eq(socialPlatformCredentials.id, existing[0].id));
+    return { id: existing[0].id };
+  }
+  const result = await db.insert(socialPlatformCredentials).values(data);
+  return { id: result[0].insertId };
+}
