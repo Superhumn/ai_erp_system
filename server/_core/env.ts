@@ -90,6 +90,9 @@ export const ENV = {
     // UNIQUE indexes are created. After migration 0035 is applied, unset
     // or set to "false" to avoid the full-table scan on every boot.
     crmDedupOnStartup: process.env.CRM_DEDUP_ON_STARTUP === "true",
+
+    // Ayrshare social media aggregator
+    ayrshareApiKey: process.env.AYRSHARE_API_KEY ?? "",
 };
 
 /**
