@@ -1,4 +1,9 @@
 import { trpc } from "@/lib/trpc";
+import {
+  attachQueryCachePersistence,
+  hydrateQueryCache,
+} from "@/lib/offline/queryCache";
+import { startMutationQueueWorker } from "@/lib/offline/mutationQueue";
 import { UNAUTHED_ERR_MSG } from '@shared/const';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink, TRPCClientError } from "@trpc/client";
@@ -14,12 +19,25 @@ const queryClient = new QueryClient({
       retry: 1,
       staleTime: 30_000, // 30s — prevents constant refetching
       refetchOnWindowFocus: false,
+      // Show cached data while offline; refetch transparently when online.
+      networkMode: "offlineFirst",
     },
     mutations: {
       retry: 0,
+      // Mutations without explicit offline handling still surface the error;
+      // pages that opt in via useOfflineMutation queue to IndexedDB.
+      networkMode: "online",
     },
   },
 });
+
+// Restore any previously-cached query data from IndexedDB before first render
+// so users see something other than spinners when they come back offline.
+// Runs in parallel with the React Query Provider mounting — restored entries
+// land in the cache and components pick them up on next render.
+void hydrateQueryCache(queryClient);
+attachQueryCachePersistence(queryClient);
+startMutationQueueWorker(queryClient);
 
 const redirectToLoginIfUnauthorized = (error: unknown) => {
   if (!(error instanceof TRPCClientError)) return;
