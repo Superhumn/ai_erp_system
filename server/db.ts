@@ -169,6 +169,8 @@ import {
   financialModel, InsertFinancialModel,
   // KPI Goals
   kpiGoals, InsertKpiGoal,
+  // Quick Notes
+  notes, InsertNote,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -12656,3 +12658,68 @@ export async function updateInvestmentCommitment(id: number, data: Partial<Inser
 
 // Re-export transactional PTO helpers defined in the modular db layer
 export { createLeaveRequestWithPtoAdjustment, decideLeaveRequestWithPtoAdjustment, cancelLeaveRequestWithPtoRestore } from "./db/hr";
+
+// ============================================
+// QUICK NOTES
+// ============================================
+
+export async function createNote(data: InsertNote) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(notes).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateNote(id: number, data: Partial<InsertNote>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(notes).set({ ...data, updatedAt: new Date() } as any).where(eq(notes.id, id));
+}
+
+export async function getNoteById(id: number, userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(notes)
+    .where(and(eq(notes.id, id), eq(notes.userId, userId)))
+    .limit(1);
+  return result[0] || null;
+}
+
+export async function listNotesForUser(userId: number, limit = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(notes)
+    .where(eq(notes.userId, userId))
+    .orderBy(desc(notes.createdAt))
+    .limit(limit);
+}
+
+export async function deleteNote(id: number, userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(notes).where(and(eq(notes.id, id), eq(notes.userId, userId)));
+}
+
+// Find or create the per-user "Notes Inbox" project that holds tasks
+// promoted from quick notes. projectTasks.projectId is NOT NULL, so
+// we need a parent project to attach to.
+export async function getOrCreateNotesInboxProject(userId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const projectNumber = `NOTES-INBOX-${userId}`;
+  const existing = await db.select().from(projects)
+    .where(eq(projects.projectNumber, projectNumber))
+    .limit(1);
+  if (existing[0]) return existing[0].id;
+  const result = await db.insert(projects).values({
+    projectNumber,
+    name: "Notes Inbox",
+    description: "Tasks captured from quick notes.",
+    type: "internal",
+    status: "active",
+    priority: "medium",
+    ownerId: userId,
+    createdBy: userId,
+  });
+  return result[0].insertId;
+}

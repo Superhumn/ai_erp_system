@@ -144,6 +144,9 @@ const SOPs = lazy(() => import("./pages/SOPs"));
 // Meetings
 const Meetings = lazy(() => import("./pages/Meetings"));
 
+// Quick Notes
+const Notes = lazy(() => import("./pages/Notes"));
+
 // Messaging
 const Messaging = lazy(() => import("./pages/Messaging"));
 
@@ -325,6 +328,9 @@ function Router() {
 
           {/* Meetings */}
           <Route path="/meetings" component={Meetings} />
+
+          {/* Quick Notes */}
+          <Route path="/notes" component={Notes} />
 
           {/* Messaging */}
           <Route path="/messaging" component={Messaging} />

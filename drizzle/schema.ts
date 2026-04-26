@@ -6420,3 +6420,28 @@ export const codeAiSessions = mysqlTable("codeAiSessions", {
 
 export type CodeAiSession = typeof codeAiSessions.$inferSelect;
 export type InsertCodeAiSession = typeof codeAiSessions.$inferInsert;
+
+// ============================================
+// QUICK NOTES — Apple-Notes-style capture that an LLM parses
+// into actionable items routed elsewhere (tasks, CRM, etc.)
+// ============================================
+
+export const notes = mysqlTable("notes", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id),
+  title: varchar("title", { length: 255 }),
+  content: text("content").notNull(),
+  status: mysqlEnum("status", ["draft", "parsed", "applied", "discarded"]).default("draft").notNull(),
+  // LLM-detected items, shape: { items: NoteParsedItem[] }
+  parsedItems: json("parsedItems"),
+  // What we actually inserted on apply, shape: NoteAppliedItem[]
+  appliedItems: json("appliedItems"),
+  parseError: text("parseError"),
+  parsedAt: timestamp("parsedAt"),
+  appliedAt: timestamp("appliedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Note = typeof notes.$inferSelect;
+export type InsertNote = typeof notes.$inferInsert;
