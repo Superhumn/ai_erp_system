@@ -4518,7 +4518,7 @@ export const marketingPosts = mysqlTable("marketing_posts", {
   status: mysqlEnum("status", ["draft", "scheduled", "queued", "posted", "failed", "cancelled"]).default("draft").notNull(),
   scheduledAt: timestamp("scheduledAt"),
   postedAt: timestamp("postedAt"),
-  externalIds: text("externalIds"), // JSON object: { [platform]: { postId, permalink } }
+  externalIds: text("externalIds"), // JSON object: { [platform]: { id, permalink } }
   failureReason: text("failureReason"),
   aiGenerated: boolean("aiGenerated").default(false),
   createdBy: int("createdBy"),
