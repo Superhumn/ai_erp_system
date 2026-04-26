@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+} from "@/components/ui/select"
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
@@ -746,13 +746,6 @@ const INFLUENCER_STATUSES = [
   { value: "blacklisted", label: "Blacklisted" },
 ] as const;
 
-const INFLUENCER_TIERS = [
-  { value: "nano", label: "Nano (<10k)" },
-  { value: "micro", label: "Micro (10k–100k)" },
-  { value: "mid", label: "Mid (100k–500k)" },
-  { value: "macro", label: "Macro (500k–1M)" },
-  { value: "mega", label: "Mega (1M+)" },
-] as const;
 
 function tierFromFollowers(n: number): "nano" | "micro" | "mid" | "macro" | "mega" {
   if (n < 10_000) return "nano";
