@@ -95,7 +95,13 @@ export const marketingRouter = router({
           notes: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const id = await db.createMarketingCampaign({ ...input, createdBy: ctx.user.id });
+          const { budgetAmount, spendAmount, ...rest } = input;
+          const id = await db.createMarketingCampaign({
+            ...rest,
+            createdBy: ctx.user.id,
+            ...(budgetAmount !== undefined && { budgetAmount: budgetAmount.toString() }),
+            ...(spendAmount !== undefined && { spendAmount: spendAmount.toString() }),
+          });
           await createAuditLog(ctx.user.id, "create", "marketingCampaign", id, input.name);
           return { id };
         }),
@@ -112,8 +118,12 @@ export const marketingRouter = router({
           notes: z.string().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const { id, ...rest } = input;
-          await db.updateMarketingCampaign(id, rest);
+          const { id, budgetAmount, spendAmount, ...rest } = input;
+          await db.updateMarketingCampaign(id, {
+            ...rest,
+            ...(budgetAmount !== undefined && { budgetAmount: budgetAmount.toString() }),
+            ...(spendAmount !== undefined && { spendAmount: spendAmount.toString() }),
+          });
           await createAuditLog(ctx.user.id, "update", "marketingCampaign", id);
           return { success: true };
         }),
@@ -483,7 +493,12 @@ export const marketingRouter = router({
           endDate: z.date().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const id = await db.createInfluencerParticipation({ ...input, createdBy: ctx.user.id });
+          const { agreedFee, ...rest } = input;
+          const id = await db.createInfluencerParticipation({
+            ...rest,
+            createdBy: ctx.user.id,
+            ...(agreedFee !== undefined && { agreedFee: agreedFee.toString() }),
+          });
           await createAuditLog(ctx.user.id, "create", "influencerParticipation", id);
           return { id };
         }),
@@ -503,8 +518,11 @@ export const marketingRouter = router({
           endDate: z.date().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const { id, ...rest } = input;
-          await db.updateInfluencerParticipation(id, rest);
+          const { id, agreedFee, ...rest } = input;
+          await db.updateInfluencerParticipation(id, {
+            ...rest,
+            ...(agreedFee !== undefined && { agreedFee: agreedFee.toString() }),
+          });
           await createAuditLog(ctx.user.id, "update", "influencerParticipation", id);
           return { success: true };
         }),
