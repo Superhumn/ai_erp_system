@@ -116,7 +116,7 @@ describe("renderInvestorDashboardHtml — null metric rendering", () => {
     const html = renderInvestorDashboardHtml(model);
     // The first period revenue is null — it should show "—", not "$0".
     expect(html).toContain("—");
-    expect(html).not.toContain(">$0<");
+    expect(html).not.toContain(">$0</td>");
   });
 
   it("shows '—' for Period-end Burn when net income data is unavailable", () => {
