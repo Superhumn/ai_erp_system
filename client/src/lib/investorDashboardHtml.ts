@@ -326,7 +326,7 @@ export function renderInvestorDashboardHtml(
   const lastNi = derived.netIncome
     ? [...derived.netIncome].reverse().find((v): v is number => v !== null) ?? null
     : null;
-  const lastBurn = lastNi !== null && lastNi < 0 ? -lastNi : null;
+  const lastBurn = lastNi === null ? null : lastNi < 0 ? -lastNi : 0;
   const peakHeadcount = model.metrics.headcount
     ? Math.max(...model.metrics.headcount.filter((v): v is number => v !== null))
     : null;
