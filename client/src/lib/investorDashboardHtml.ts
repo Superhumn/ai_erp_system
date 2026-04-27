@@ -314,18 +314,19 @@ export function renderInvestorDashboardHtml(
   // ── KPI values ─────────────────────────────────────────────────────────
   const top = model.metrics.revenue ?? model.metrics.arr ?? [];
   const topLabel = model.metrics.revenue ? "Revenue" : "ARR";
-  const firstTop = top[0] ?? 0;
-  const lastTop = top[top.length - 1] ?? 0;
+  const topValues = top.filter((v): v is number => v !== null);
+  const firstTop = topValues.length > 0 ? topValues[0] : null;
+  const lastTop = topValues.length > 0 ? topValues[topValues.length - 1] : null;
   const firstYear = periods[0]?.year;
   const lastYear = periods[periods.length - 1]?.year;
   const cash = model.metrics.cashBalance;
   const lastCash = cash ? cash[cash.length - 1] : null;
-  const minCash = cash ? Math.min(...cash.filter((v): v is number => v !== null)) : null;
-  const lastNi =
-    derived.netIncome && derived.netIncome.length > 0
-      ? derived.netIncome[derived.netIncome.length - 1]
-      : null;
-  const lastBurn = lastNi !== null && lastNi < 0 ? -lastNi : 0;
+  const numericCash = cash?.filter((v): v is number => v !== null) ?? [];
+  const minCash = numericCash.length > 0 ? Math.min(...numericCash) : null;
+  const lastNi = derived.netIncome
+    ? [...derived.netIncome].reverse().find((v): v is number => v !== null) ?? null
+    : null;
+  const lastBurn = lastNi !== null && lastNi < 0 ? -lastNi : null;
   const peakHeadcount = model.metrics.headcount
     ? Math.max(...model.metrics.headcount.filter((v): v is number => v !== null))
     : null;
@@ -350,10 +351,10 @@ export function renderInvestorDashboardHtml(
     });
   }
   kpis.push({
-    label: "Year-end Burn",
-    value: lastBurn > 0 ? fmtMoney(lastBurn, currency) : "Profitable",
+    label: "Period-end Burn",
+    value: lastBurn === null ? "—" : lastBurn > 0 ? fmtMoney(lastBurn, currency) : "Profitable",
     sub:
-      lastBurn > 0 && derived.runwayMonths !== null && Number.isFinite(derived.runwayMonths)
+      lastBurn !== null && lastBurn > 0 && derived.runwayMonths !== null && Number.isFinite(derived.runwayMonths)
         ? `${derived.runwayMonths.toFixed(0)} months runway`
         : undefined,
   });
@@ -433,7 +434,7 @@ export function renderInvestorDashboardHtml(
 
   // ── Yearly table ───────────────────────────────────────────────────────
   const tableRows = periods.map((p, i) => {
-    const rev = top[i] ?? 0;
+    const rev = top[i] ?? null;
     const cogsV = model.metrics.cogs?.[i] ?? null;
     const gp = derived.grossProfit?.[i] ?? null;
     const gm = derived.grossMargin?.[i] ?? null;
@@ -446,7 +447,7 @@ export function renderInvestorDashboardHtml(
     return `
       <tr>
         <td>${esc(p.label)}</td>
-        <td>${fmtMoney(rev, currency)}</td>
+        <td>${rev === null ? "—" : fmtMoney(rev, currency)}</td>
         <td>${cogsV === null ? "—" : fmtMoney(cogsV, currency)}</td>
         <td>${gp === null ? "—" : fmtMoney(gp, currency)}</td>
         <td>${fmtPct(gm)}</td>
@@ -578,7 +579,7 @@ export function renderInvestorDashboardHtml(
   </div>
 
   <footer>
-    Snapshot generated ${esc(generatedAt)} &middot; VC Corner Dashboard Generator
+    Snapshot generated ${esc(generatedAt)}
   </footer>
 </main>
 </body>

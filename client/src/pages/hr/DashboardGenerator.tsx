@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -338,6 +338,20 @@ function PublishDialog({
   const [selectedFolderId, setSelectedFolderId] = useState<string>("__root__");
   const [docName, setDocName] = useState<string>(defaultSnapshotName(model));
 
+  // Reset folder when the user picks a different data room.
+  const handleRoomChange = (roomId: string) => {
+    setSelectedRoomId(roomId);
+    setSelectedFolderId("__root__");
+  };
+
+  // Re-initialize the document name each time the dialog is opened (or the
+  // model's company name changes), so the pre-fill is always fresh.
+  useEffect(() => {
+    if (open) {
+      setDocName(defaultSnapshotName(model));
+    }
+  }, [open, model]);
+
   const { data: rooms, isLoading: roomsLoading } = trpc.dataRoom.list.useQuery();
   const roomIdNum = selectedRoomId ? parseInt(selectedRoomId, 10) : null;
   const { data: folders } = trpc.dataRoom.folders.list.useQuery(
@@ -403,7 +417,7 @@ function PublishDialog({
                 No data rooms yet. Create one from the Data Room section first.
               </div>
             ) : (
-              <Select value={selectedRoomId} onValueChange={setSelectedRoomId}>
+              <Select value={selectedRoomId} onValueChange={handleRoomChange}>
                 <SelectTrigger>
                   <SelectValue placeholder="Pick a data room" />
                 </SelectTrigger>
