@@ -37,6 +37,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { QuickCreateDialog } from "@/components/QuickCreateDialog";
 import { Link, useLocation } from "wouter";
+import { DetailSheet } from "@/components/DetailSheet";
 
 export default function InventoryHub() {
   const [, navigate] = useLocation();
@@ -45,6 +46,7 @@ export default function InventoryHub() {
   const [showShipmentDialog, setShowShipmentDialog] = useState(false);
   const [showProductionDialog, setShowProductionDialog] = useState(false);
   const [selectedItem, setSelectedItem] = useState<any>(null);
+  const [detailItem, setDetailItem] = useState<any>(null);
   const [showNewInventoryDialog, setShowNewInventoryDialog] = useState(false);
   const [showQcHoldDialog, setShowQcHoldDialog] = useState(false);
   const [qcHoldReason, setQcHoldReason] = useState("");
@@ -732,7 +734,7 @@ export default function InventoryHub() {
                 </TableHeader>
                 <TableBody>
                   {inventoryRows.map((row) => (
-                    <TableRow key={row.id} className="hover:bg-muted/50 h-8">
+                    <TableRow key={row.id} className="hover:bg-muted/50 h-8 cursor-pointer" onClick={() => setDetailItem(row)}>
                       {/* Sticky left columns */}
                       <TableCell className="sticky left-0 z-10 bg-background px-2 py-1 font-mono text-xs">{row.sku || "—"}</TableCell>
                       <TableCell className="sticky left-[80px] z-10 bg-background px-2 py-1 border-r max-w-[160px]">
@@ -765,7 +767,7 @@ export default function InventoryHub() {
                       </TableCell>
                       <TableCell className="px-2 py-1">{getPOStatusBadge(row.poStatus)}</TableCell>
                       <TableCell className="px-2 py-1 text-xs text-muted-foreground">{fmtDate(row.lastPODate)}</TableCell>
-                      <TableCell className="px-2 py-1 text-xs truncate max-w-[130px]">
+                      <TableCell className="px-2 py-1 text-xs truncate max-w-[130px]" onClick={(e) => e.stopPropagation()}>
                         <select
                           value={row.productId ? (products?.find((p: any) => p.id === row.productId)?.preferredVendorId || "") : ""}
                           onChange={(e) => {
@@ -794,7 +796,7 @@ export default function InventoryHub() {
                       <TableCell className="px-2 py-1 text-right font-mono text-xs font-medium">{fmtCurrency(row.totalValue)}</TableCell>
                       <TableCell className="px-2 py-1 text-xs text-muted-foreground">{fmtDate(row.lastUpdated)}</TableCell>
                       <TableCell className="px-2 py-1 text-center">{getStatusBadge(row.status)}</TableCell>
-                      <TableCell className="px-2 py-1 text-right">
+                      <TableCell className="px-2 py-1 text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end gap-0.5">
                           <Button
                             size="sm"
@@ -981,6 +983,86 @@ export default function InventoryHub() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Inventory Item Detail Side Panel */}
+      <DetailSheet
+        open={!!detailItem}
+        onOpenChange={(o) => !o && setDetailItem(null)}
+        title={detailItem?.productName}
+        subtitle={detailItem?.sku ? `SKU: ${detailItem.sku}` : undefined}
+        width="md"
+      >
+        {detailItem && (
+          <div className="space-y-4 text-sm">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Status</p>
+                {getStatusBadge(detailItem.status)}
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Category</p>
+                <p className="font-medium">{detailItem.category || "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Location</p>
+                <p className="font-medium">{detailItem.location || "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Unit Cost</p>
+                <p className="font-medium font-mono">{fmtCurrency(detailItem.unitCost)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">On Hand</p>
+                <p className="font-medium font-mono">{detailItem.qtyOnHand.toLocaleString()}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Available</p>
+                <p className="font-medium font-mono">{detailItem.available.toLocaleString()}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Reserved</p>
+                <p className="font-medium font-mono">{detailItem.reserved > 0 ? detailItem.reserved.toLocaleString() : "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Reorder Point</p>
+                <p className="font-medium font-mono">{detailItem.reorderPoint > 0 ? detailItem.reorderPoint.toLocaleString() : "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">In Transit</p>
+                <p className="font-medium font-mono text-blue-600">{detailItem.inTransit > 0 ? `+${detailItem.inTransit.toLocaleString()}` : "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Total Value</p>
+                <p className="font-medium font-mono">{fmtCurrency(detailItem.totalValue)}</p>
+              </div>
+              {detailItem.openPONumbers && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-0.5">Open PO#</p>
+                  <p className="font-medium font-mono">{detailItem.openPONumbers}</p>
+                </div>
+              )}
+              {detailItem.lastShipment && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-0.5">Last Shipment</p>
+                  <p className="font-medium font-mono">{detailItem.lastShipment}</p>
+                </div>
+              )}
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Last Updated</p>
+                <p className="font-medium">{fmtDate(detailItem.lastUpdated)}</p>
+              </div>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <Button size="sm" variant="outline" onClick={() => { setSelectedItem(detailItem); setShowShipmentDialog(true); setDetailItem(null); }}>
+                <Send className="h-3 w-3 mr-1" /> Create Shipment
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => { setSelectedItem(detailItem); setShowProductionDialog(true); setDetailItem(null); }}>
+                <Factory className="h-3 w-3 mr-1" /> Allocate to WO
+              </Button>
+            </div>
+          </div>
+        )}
+      </DetailSheet>
     </div>
   );
 }
