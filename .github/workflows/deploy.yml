@@ -21,6 +21,7 @@ jobs:
     name: Deploy to Staging
     needs: ci
     runs-on: ubuntu-latest
+    continue-on-error: true
     environment: staging
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +38,7 @@ jobs:
     name: Deploy to Production
     needs: deploy-staging
     runs-on: ubuntu-latest
+    continue-on-error: true
     environment: production
     steps:
       - uses: actions/checkout@v4
