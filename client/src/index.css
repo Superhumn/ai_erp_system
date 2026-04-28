@@ -4,9 +4,10 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  /* Standard Tailwind spacing (0.25rem = 4px per unit).
-     Previously over-compressed to 0.2rem which made the entire app too dense. */
-  --spacing: 0.25rem;
+  /* Compact spacing: 20% smaller than the Tailwind default of 0.25rem.
+     This scales every p-*, gap-*, space-y-*, m-* utility across the whole
+     app without touching individual page files. */
+  --spacing: 0.2rem;
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-display: "Inter", var(--font-sans);
   --radius-sm: calc(var(--radius) - 4px);
@@ -207,33 +208,53 @@
 }
 
 /* ============================================
-   DENSITY: COMFORTABLE
-   Mild tightening for data-heavy pages.
-   Applied on DashboardLayout root so every
-   authenticated page picks it up. Add `not-compact`
+   DENSITY: COMPACT
+   Global pass that tightens the most common Tailwind
+   spacing/sizing classes used across pages. Applied on
+   DashboardLayout root so every authenticated page picks
+   it up without per-page migration. Add `not-compact`
    to opt out a subtree (e.g. onboarding, empty states).
    ============================================ */
 .density-compact {
-  --dense-card-pad-y: 0.5rem;     /* 8px  */
-  --dense-card-pad-x: 0.875rem;   /* 14px */
-  --dense-gap: 0.75rem;           /* 12px */
+  --dense-card-pad-y: 0.25rem;    /* 4px  */
+  --dense-card-pad-x: 0.625rem;   /* 10px */
+  --dense-gap: 0.5rem;            /* 8px */
 }
 
-/* Vertical stack spacing: moderate reduction */
-.density-compact :where(.space-y-6:not(.not-compact *) > * + *) { margin-top: 1rem; }
-.density-compact :where(.space-y-8:not(.not-compact *) > * + *) { margin-top: 1.25rem; }
-.density-compact :where(.gap-6:not(.not-compact *))             { gap: 1rem; }
-.density-compact :where(.gap-8:not(.not-compact *))             { gap: 1.25rem; }
+/* Vertical stack spacing: space-y-4/6/8 -> space-y-2/3/4 */
+.density-compact :where(.space-y-4:not(.not-compact *) > * + *) { margin-top: 0.5rem; }
+.density-compact :where(.space-y-6:not(.not-compact *) > * + *) { margin-top: 0.75rem; }
+.density-compact :where(.space-y-8:not(.not-compact *) > * + *) { margin-top: 1rem; }
+.density-compact :where(.gap-4:not(.not-compact *))             { gap: 0.5rem; }
+.density-compact :where(.gap-6:not(.not-compact *))             { gap: 0.75rem; }
+.density-compact :where(.gap-8:not(.not-compact *))             { gap: 1rem; }
 
 /* Card surfaces */
-.density-compact :where([data-slot="card"]:not(.not-compact *))         { padding-top: var(--dense-card-pad-y); padding-bottom: var(--dense-card-pad-y); gap: 0.5rem; }
+.density-compact :where([data-slot="card"]:not(.not-compact *))         { padding-top: var(--dense-card-pad-y); padding-bottom: var(--dense-card-pad-y); gap: 0.375rem; border-radius: 0.75rem; }
 .density-compact :where([data-slot="card-header"]:not(.not-compact *))  { padding-left: var(--dense-card-pad-x); padding-right: var(--dense-card-pad-x); }
 .density-compact :where([data-slot="card-content"]:not(.not-compact *)) { padding-left: var(--dense-card-pad-x); padding-right: var(--dense-card-pad-x); }
 .density-compact :where([data-slot="card-footer"]:not(.not-compact *))  { padding-left: var(--dense-card-pad-x); padding-right: var(--dense-card-pad-x); }
+.density-compact :where([data-slot="card-title"]:not(.not-compact *))   { font-size: 0.8125rem; } /* 13px */
 
-/* Recharts — reasonable chart heights */
+/* Form controls */
+.density-compact :where([data-slot="button"]:not(.not-compact *))[data-size="default"], .density-compact :where(button.h-9:not(.not-compact *)) { height: 1.75rem; padding-top: 0.125rem; padding-bottom: 0.125rem; }
+.density-compact :where(input.h-9:not(.not-compact *)),
+.density-compact :where(select.h-9:not(.not-compact *)),
+.density-compact :where([data-slot="input"]:not(.not-compact *))  { height: 1.75rem; padding-top: 0.125rem; padding-bottom: 0.125rem; }
+
+/* Page titles — most pages use text-lg/text-xl/text-2xl for h1 */
+.density-compact :where(h1.text-2xl:not(.not-compact *)) { font-size: 1.125rem; line-height: 1.5rem; }
+.density-compact :where(h1.text-xl:not(.not-compact *))  { font-size: 1rem;     line-height: 1.375rem; }
+.density-compact :where(h1.text-lg:not(.not-compact *))  { font-size: 0.9375rem; }
+.density-compact :where(h2.text-xl:not(.not-compact *))  { font-size: 0.9375rem; }
+
+/* Tables */
+.density-compact :where(table:not(.not-compact *) th)  { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+.density-compact :where(table:not(.not-compact *) td)  { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+
+/* Recharts — shrink default chart heights by 20-25% */
 .density-compact :where(.recharts-responsive-container:not(.not-compact *)) {
-  max-height: 240px;
+  max-height: 200px;
 }
 
 /* ============================================

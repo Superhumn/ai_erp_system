@@ -439,7 +439,7 @@ export function SpreadsheetTable<T extends { id: number | string }>({
     );
   };
 
-  const cellPadding = compact ? "px-3 py-1.5" : "px-4 py-3";
+  const cellPadding = compact ? "px-1.5 py-0.5" : "px-2 py-1";
   const fontSize = compact ? "text-xs" : "text-sm";
 
   // Calculate total columns for expanded row
@@ -448,18 +448,18 @@ export function SpreadsheetTable<T extends { id: number | string }>({
   const hasSelection = selectedRows && selectedRows.size > 0;
 
   return (
-    <div className="flex flex-col h-full gap-3">
+    <div className="flex flex-col h-full gap-2">
       {/* Bulk Actions Toolbar - slides in when rows are selected */}
       {hasSelection && bulkActions.length > 0 && (
-        <div className="flex items-center gap-3 px-4 py-2.5 bg-primary/8 border border-primary/25 rounded-lg animate-in slide-in-from-top-2 duration-200">
-          <div className="flex items-center gap-2">
-            <CheckCircle className="h-4 w-4 text-primary" />
-            <span className="text-sm font-semibold text-primary">
+        <div className="flex items-center gap-2 px-2.5 py-1.5 bg-primary/8 border border-primary/25 rounded-lg animate-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center gap-1.5">
+            <CheckCircle className="h-3.5 w-3.5 text-primary" />
+            <span className="text-xs font-semibold text-primary">
               {selectedRows.size} row{selectedRows.size !== 1 ? "s" : ""} selected
             </span>
           </div>
           <div className="flex-1" />
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             {bulkActions.map((action) => (
               <Button
                 key={action.key}
@@ -477,7 +477,7 @@ export function SpreadsheetTable<T extends { id: number | string }>({
               onClick={() => onSelectionChange?.(new Set())}
               className="text-muted-foreground"
             >
-              <X className="h-3.5 w-3.5 mr-1" />
+              <X className="h-3 w-3 mr-1" />
               Clear
             </Button>
           </div>
@@ -487,13 +487,13 @@ export function SpreadsheetTable<T extends { id: number | string }>({
       {/* Toolbar */}
       <div className="flex items-center gap-2 flex-wrap">
         {showSearch && (
-          <div className="relative flex-1 min-w-[200px] max-w-[320px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          <div className="relative flex-1 min-w-[200px] max-w-[300px]">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
             <input
               placeholder="Search..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="h-9 w-full rounded-lg border border-border bg-background pl-9 pr-3 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-ring focus:ring-2 focus:ring-ring/20 transition-colors"
+              className="h-8 w-full rounded-lg border border-border bg-background pl-8 pr-3 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-ring focus:ring-2 focus:ring-ring/20 transition-colors"
             />
           </div>
         )}
@@ -504,8 +504,8 @@ export function SpreadsheetTable<T extends { id: number | string }>({
             value={filters[col.key as string] || "all"}
             onValueChange={(v) => setFilters({ ...filters, [col.key as string]: v })}
           >
-            <SelectTrigger className="w-[140px] h-9">
-              <Filter className="h-3.5 w-3.5 mr-1.5" />
+            <SelectTrigger className="w-[130px] h-8 text-sm">
+              <Filter className="h-3 w-3 mr-1" />
               <SelectValue placeholder={col.header} />
             </SelectTrigger>
             <SelectContent>
@@ -520,15 +520,15 @@ export function SpreadsheetTable<T extends { id: number | string }>({
         <div className="flex-1" />
 
         {showExport && (
-          <Button variant="outline" size="sm" onClick={exportToCsv}>
-            <Download className="h-4 w-4" />
+          <Button variant="outline" size="sm" onClick={exportToCsv} className="h-8">
+            <Download className="h-3.5 w-3.5" />
             Export
           </Button>
         )}
 
         {onAdd && (
-          <Button size="sm" onClick={onAdd}>
-            <Plus className="h-4 w-4" />
+          <Button size="sm" onClick={onAdd} className="h-8">
+            <Plus className="h-3.5 w-3.5" />
             {addLabel}
           </Button>
         )}
@@ -536,17 +536,17 @@ export function SpreadsheetTable<T extends { id: number | string }>({
 
       {/* Table */}
       <div
-        className="rounded-xl border border-border bg-card overflow-hidden shadow-sm"
+        className="rounded-lg border border-border bg-card overflow-hidden shadow-sm"
         style={{ maxHeight, overflowY: "auto" }}
       >
         <table className="w-full border-collapse">
           <thead className={cn(stickyHeader && "sticky top-0 z-10")}>
             <tr className="bg-muted/60 border-b-2 border-border">
               {expandable && (
-                <th className="w-10 px-3 py-2.5" />
+                <th className="w-8 px-1.5 py-1.5" />
               )}
               {onSelectionChange && (
-                <th className="w-10 px-3 py-2.5">
+                <th className="w-10 px-1.5 py-1.5">
                   <input
                     type="checkbox"
                     checked={selectedRows?.size === filteredData.length && filteredData.length > 0}
@@ -559,13 +559,13 @@ export function SpreadsheetTable<T extends { id: number | string }>({
                 <th
                   key={col.key as string}
                   className={cn(
-                    "px-4 py-2.5 text-left font-semibold text-muted-foreground text-[11px] tracking-wider uppercase whitespace-nowrap select-none",
+                    "px-1.5 py-1 text-left font-semibold text-muted-foreground text-[11px] tracking-wider uppercase whitespace-nowrap select-none",
                     col.sortable && "cursor-pointer hover:text-foreground transition-colors"
                   )}
                   style={{ width: col.width }}
                   onClick={() => col.sortable && handleSort(col.key as string)}
                 >
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1">
                     {col.header}
                     {col.sortable && (
                       <span className="inline-flex flex-col leading-none opacity-50">
@@ -589,26 +589,26 @@ export function SpreadsheetTable<T extends { id: number | string }>({
             {isLoading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i} className="animate-pulse">
-                  {expandable && <td className="w-10 px-3 py-3" />}
-                  {onSelectionChange && <td className="w-10 px-3 py-3" />}
+                  {expandable && <td className="w-8 px-1.5 py-1" />}
+                  {onSelectionChange && <td className="w-10 px-1.5 py-1" />}
                   {columns.map((col) => (
-                    <td key={col.key as string} className="px-4 py-3">
+                    <td key={col.key as string} className="px-1.5 py-1">
                       {/* Vary skeleton widths to look realistic without being repetitive */}
-                      <div className="h-4 rounded bg-muted" style={{ width: `${50 + ((i * 17 + col.header.length * 7) % 40)}%` }} />
+                      <div className="h-3 rounded bg-muted" style={{ width: `${50 + ((i * 17 + col.header.length * 7) % 40)}%` }} />
                     </td>
                   ))}
                 </tr>
               ))
             ) : filteredData.length === 0 ? (
               <tr>
-                <td colSpan={totalColumns} className="px-4 py-16 text-center">
-                  <div className="flex flex-col items-center gap-3">
-                    <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
-                      <Search className="h-5 w-5 text-muted-foreground" />
+                <td colSpan={totalColumns} className="px-4 py-10 text-center">
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center">
+                      <Search className="h-4 w-4 text-muted-foreground" />
                     </div>
                     <div>
                       <p className="text-sm font-medium text-foreground">{emptyMessage}</p>
-                      <p className="text-xs text-muted-foreground mt-1">
+                      <p className="text-xs text-muted-foreground mt-0.5">
                         {search
                           ? "Try a different search term"
                           : Object.values(filters).some(v => v && v !== "all")
@@ -635,7 +635,7 @@ export function SpreadsheetTable<T extends { id: number | string }>({
                     onClick={(e) => handleRowClick(row, e)}
                   >
                     {expandable && (
-                      <td className="w-10 px-3 py-3">
+                      <td className="w-8 px-1.5 py-0.5">
                         <ChevronRight
                           className={cn(
                             "h-4 w-4 text-muted-foreground transition-transform duration-150",
@@ -645,7 +645,7 @@ export function SpreadsheetTable<T extends { id: number | string }>({
                       </td>
                     )}
                     {onSelectionChange && (
-                      <td className="w-10 px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                      <td className="w-10 px-1.5 py-0.5" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={selectedRows?.has(row.id) || false}
@@ -680,7 +680,7 @@ export function SpreadsheetTable<T extends { id: number | string }>({
                     <tr key={`${row.id}-expanded`}>
                       <td colSpan={totalColumns} className="p-0">
                         <div className="border-t border-b border-primary/20 bg-primary/4">
-                          <div className="px-6 py-4">
+                          <div className="px-3 py-2">
                             {renderExpanded(row, () => setExpandedId(null))}
                           </div>
                         </div>
@@ -694,8 +694,8 @@ export function SpreadsheetTable<T extends { id: number | string }>({
             {enableInlineCreate && onInlineCreate && !isLoading && (
               isCreatingNewRow ? (
                 <tr className="bg-primary/5 border-t-2 border-primary/20">
-                  {expandable && <td className="w-10 px-3 py-3" />}
-                  {onSelectionChange && <td className="w-10 px-3 py-3" />}
+                  {expandable && <td className="w-8 px-1.5 py-0.5" />}
+                  {onSelectionChange && <td className="w-10 px-1.5 py-0.5" />}
                   {columns.map((col) => (
                     <td
                       key={col.key as string}
@@ -736,8 +736,8 @@ export function SpreadsheetTable<T extends { id: number | string }>({
                   className="hover:bg-muted/40 cursor-pointer transition-colors duration-100"
                   onClick={startNewRow}
                 >
-                  {expandable && <td className="w-10 px-3 py-3" />}
-                  {onSelectionChange && <td className="w-10 px-3 py-3" />}
+                  {expandable && <td className="w-8 px-1.5 py-0.5" />}
+                  {onSelectionChange && <td className="w-10 px-1.5 py-0.5" />}
                   <td
                     colSpan={columns.length}
                     className={cn(cellPadding, fontSize, "text-muted-foreground")}

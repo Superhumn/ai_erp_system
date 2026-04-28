@@ -337,7 +337,7 @@ function DashboardLayoutContent({
           disableTransition={isResizing}
         >
           {/* Header: logo + wordmark */}
-          <SidebarHeader className="h-12 justify-center border-b border-sidebar-border">
+          <SidebarHeader className="h-10 justify-center border-b border-sidebar-border">
             <div className="flex items-center gap-2.5 px-3 transition-all w-full">
               <button
                 onClick={toggleSidebar}
@@ -355,13 +355,13 @@ function DashboardLayoutContent({
           </SidebarHeader>
 
           {/* Flat navigation - all items visible, no dropdowns */}
-          <SidebarContent className="overflow-y-auto px-2 py-3">
+          <SidebarContent className="overflow-y-auto px-2 py-2">
             <nav className="flex flex-col gap-px">
               {getMenuGroups(user?.role).map((group, gi) => (
                 <div key={group.label}>
-                  {gi > 0 && !isCollapsed && <div className="border-t border-border/40 my-2" />}
+                  {gi > 0 && !isCollapsed && <div className="border-t border-border/30 my-1" />}
                   {!isCollapsed && (
-                    <p className="px-2 mb-1 text-[11px] font-semibold tracking-wider uppercase text-muted-foreground/60">
+                    <p className="px-2 mb-0.5 text-[10px] font-semibold tracking-wider uppercase text-muted-foreground/60">
                       {group.label}
                     </p>
                   )}
@@ -371,13 +371,13 @@ function DashboardLayoutContent({
                       <button
                         key={item.path}
                         onClick={() => setLocation(item.path)}
-                        className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm transition-colors duration-100 w-full ${
+                        className={`flex items-center gap-2 px-2 py-1 rounded-md text-[13px] transition-colors duration-100 w-full ${
                           isActive
                             ? "bg-primary/10 text-primary font-medium"
                             : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-foreground"
                         } ${isCollapsed ? "justify-center" : ""}`}
                       >
-                        <item.icon className={`h-4 w-4 shrink-0 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
+                        <item.icon className={`h-[14px] w-[14px] shrink-0 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
                         {!isCollapsed && <span className="truncate">{item.label}</span>}
                       </button>
                     );
@@ -462,7 +462,7 @@ function DashboardLayoutContent({
 
       <SidebarInset className="flex flex-col bg-background">
         {/* Top bar: AI search + agent status + notifications */}
-        <header className="flex h-12 items-center justify-between gap-3 border-b border-border bg-card/80 backdrop-blur-sm px-4 sticky top-0 z-40">
+        <header className="flex h-10 items-center justify-between gap-3 border-b border-border bg-card/80 backdrop-blur-sm px-4 sticky top-0 z-40">
           <div className="flex items-center gap-2 shrink-0">
             {isMobile && <SidebarTrigger className="h-8 w-8 rounded-md" />}
           </div>
@@ -473,7 +473,7 @@ function DashboardLayoutContent({
             <NotificationCenter />
           </div>
         </header>
-        <main className="density-compact flex-1 overflow-auto p-4 pb-4 md:p-5 md:pb-5 lg:p-6 lg:pb-6">{children}</main>
+        <main className="density-compact flex-1 overflow-auto p-3 pb-3 md:p-4 md:pb-4 lg:p-5 lg:pb-5">{children}</main>
       </SidebarInset>
 
       {/* Floating AI removed - using toolbar only */}
