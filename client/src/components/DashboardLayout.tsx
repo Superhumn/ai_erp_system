@@ -361,7 +361,7 @@ function DashboardLayoutContent({
                 <div key={group.label}>
                   {gi > 0 && !isCollapsed && <div className="border-t border-border/40 my-2" />}
                   {!isCollapsed && (
-                    <p className="px-2 mb-1 text-[10px] font-semibold tracking-wider uppercase text-muted-foreground/60">
+                    <p className="px-2 mb-1 text-[11px] font-semibold tracking-wider uppercase text-muted-foreground/60">
                       {group.label}
                     </p>
                   )}

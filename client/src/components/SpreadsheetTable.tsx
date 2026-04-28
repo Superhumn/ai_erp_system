@@ -593,7 +593,8 @@ export function SpreadsheetTable<T extends { id: number | string }>({
                   {onSelectionChange && <td className="w-10 px-3 py-3" />}
                   {columns.map((col) => (
                     <td key={col.key as string} className="px-4 py-3">
-                      <div className="h-4 rounded bg-muted" style={{ width: `${50 + (i * 13 + col.header.length * 5) % 40}%` }} />
+                      {/* Vary skeleton widths to look realistic without being repetitive */}
+                      <div className="h-4 rounded bg-muted" style={{ width: `${50 + ((i * 17 + col.header.length * 7) % 40)}%` }} />
                     </td>
                   ))}
                 </tr>
@@ -608,7 +609,11 @@ export function SpreadsheetTable<T extends { id: number | string }>({
                     <div>
                       <p className="text-sm font-medium text-foreground">{emptyMessage}</p>
                       <p className="text-xs text-muted-foreground mt-1">
-                        {search ? "Try a different search term" : "Get started by adding your first item"}
+                        {search
+                          ? "Try a different search term"
+                          : Object.values(filters).some(v => v && v !== "all")
+                          ? "Try adjusting your filters"
+                          : "Get started by adding your first item"}
                       </p>
                     </div>
                     {emptyAction && <div className="mt-1">{emptyAction}</div>}
@@ -623,8 +628,8 @@ export function SpreadsheetTable<T extends { id: number | string }>({
                       "group transition-colors duration-100",
                       (expandable || onRowClick) && "cursor-pointer",
                       selectedRows?.has(row.id)
-                        ? "bg-primary/8"
-                        : "hover:bg-primary/4",
+                        ? "bg-primary/15"
+                        : "hover:bg-primary/8",
                       expandedId === row.id && "bg-muted/40"
                     )}
                     onClick={(e) => handleRowClick(row, e)}

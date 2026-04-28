@@ -226,7 +226,7 @@
 .density-compact :where(.gap-8:not(.not-compact *))             { gap: 1.25rem; }
 
 /* Card surfaces */
-.density-compact :where([data-slot="card"]:not(.not-compact *))         { gap: 0.5rem; }
+.density-compact :where([data-slot="card"]:not(.not-compact *))         { padding-top: var(--dense-card-pad-y); padding-bottom: var(--dense-card-pad-y); gap: 0.5rem; }
 .density-compact :where([data-slot="card-header"]:not(.not-compact *))  { padding-left: var(--dense-card-pad-x); padding-right: var(--dense-card-pad-x); }
 .density-compact :where([data-slot="card-content"]:not(.not-compact *)) { padding-left: var(--dense-card-pad-x); padding-right: var(--dense-card-pad-x); }
 .density-compact :where([data-slot="card-footer"]:not(.not-compact *))  { padding-left: var(--dense-card-pad-x); padding-right: var(--dense-card-pad-x); }
