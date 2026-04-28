@@ -285,6 +285,16 @@ export function registerLocalAuthRoutes(app: Express) {
           if (invite && invite.status === "pending" && new Date(invite.expiresAt) > new Date()) {
             await db.updateUserRole(newUser.id, invite.role as any);
             await db.updateTeamInvite(invite.id, { status: "accepted", acceptedAt: new Date() });
+            // Investor-portal flow: when the invite carries a linked stakeholder,
+            // attach the newly created user to that cap-table row so their
+            // `/investor-portal` view resolves on first login.
+            if (invite.linkedStakeholderId) {
+              try {
+                await db.updateStakeholder(invite.linkedStakeholderId, { userId: newUser.id });
+              } catch (linkErr) {
+                console.warn("[Local Auth] Failed to link stakeholder on invite accept:", linkErr);
+              }
+            }
             inviteAccepted = true;
           }
         } catch (inviteErr) {
