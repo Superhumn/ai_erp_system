@@ -260,6 +260,34 @@
                   "when": 1777039200000,
                   "tag": "0036_crm_contact_dedup_indexes",
                   "breakpoints": true
+          },
+          {
+                  "idx": 37,
+                  "version": "5",
+                  "when": 1777651300000,
+                  "tag": "0037_data_room_live_financials",
+                  "breakpoints": true
+          },
+          {
+                  "idx": 38,
+                  "version": "5",
+                  "when": 1777651400000,
+                  "tag": "0038_investor_portal",
+                  "breakpoints": true
+          },
+          {
+                  "idx": 39,
+                  "version": "5",
+                  "when": 1777651500000,
+                  "tag": "0039_investor_portal_phase2",
+                  "breakpoints": true
+          },
+          {
+                  "idx": 40,
+                  "version": "5",
+                  "when": 1777651600000,
+                  "tag": "0040_pro_rata_indications",
+                  "breakpoints": true
           }
     ]
 }
