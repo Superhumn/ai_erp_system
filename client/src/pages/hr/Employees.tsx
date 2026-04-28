@@ -45,6 +45,7 @@ import { toast } from "sonner";
 import { format, addMonths } from "date-fns";
 import { getStatusColor } from "@/lib/statusColors";
 import DocumentsCell from "@/components/DocumentsCell";
+import { DetailSheet } from "@/components/DetailSheet";
 
 // ── helpers ──────────────────────────────────────────────────────
 function fmt$(v: string | number | null | undefined): string {
@@ -1055,27 +1056,21 @@ export default function PeopleAndEquity() {
         </CardContent>
       </Card>
 
-      {/* Person Detail Dialog */}
-      <Dialog open={selectedPerson !== null} onOpenChange={(open) => { if (!open) setSelectedPerson(null); }}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          {selectedPerson && (() => {
-            const personGrants = selectedPerson.stakeholderId
-              ? (grantsByStakeholder.get(selectedPerson.stakeholderId) || [])
-              : [];
-
-            return (
-              <>
-                <DialogHeader>
-                  <DialogTitle className="text-xl">{selectedPerson.name}</DialogTitle>
-                  <DialogDescription>{selectedPerson.title !== "-" ? selectedPerson.title : ""} {selectedPerson.department !== "-" ? `- ${selectedPerson.department}` : ""}</DialogDescription>
-                </DialogHeader>
-
-                <PersonDetailContent person={selectedPerson} personGrants={personGrants} scMap={scMap} />
-              </>
-            );
-          })()}
-        </DialogContent>
-      </Dialog>
+      {/* Person Detail Side Panel */}
+      <DetailSheet
+        open={selectedPerson !== null}
+        onOpenChange={(open) => { if (!open) setSelectedPerson(null); }}
+        title={selectedPerson?.name}
+        subtitle={[selectedPerson?.title !== "-" ? selectedPerson?.title : "", selectedPerson?.department !== "-" ? selectedPerson?.department : ""].filter(Boolean).join(" — ") || undefined}
+        width="lg"
+      >
+        {selectedPerson && (() => {
+          const personGrants = selectedPerson.stakeholderId
+            ? (grantsByStakeholder.get(selectedPerson.stakeholderId) || [])
+            : [];
+          return <PersonDetailContent person={selectedPerson} personGrants={personGrants} scMap={scMap} />;
+        })()}
+      </DetailSheet>
 
       <AlertDialog open={!!employeeToDelete} onOpenChange={(open) => !open && setEmployeeToDelete(null)}>
         <AlertDialogContent>

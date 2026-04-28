@@ -342,18 +342,18 @@ function DashboardLayoutContent({
           className="border-r border-sidebar-border bg-sidebar"
           disableTransition={isResizing}
         >
-          {/* Lightfield-style header: logo + wordmark */}
+          {/* Header: logo + wordmark */}
           <SidebarHeader className="h-10 justify-center border-b border-sidebar-border">
             <div className="flex items-center gap-2.5 px-3 transition-all w-full">
               <button
                 onClick={toggleSidebar}
-                className="h-7 w-7 flex items-center justify-center hover:bg-accent rounded-md transition-colors duration-100 focus:outline-none shrink-0"
+                className="h-7 w-7 flex items-center justify-center hover:bg-sidebar-accent rounded-md transition-colors duration-100 focus:outline-none shrink-0"
                 aria-label="Toggle navigation"
               >
                 <PanelLeft className="h-3.5 w-3.5 text-muted-foreground" />
               </button>
               {!isCollapsed && (
-                <span className="font-semibold tracking-[-0.02em] truncate text-[13px] text-foreground">
+                <span className="font-semibold tracking-tight truncate text-sm text-foreground">
                   ERP System
                 </span>
               )}
@@ -366,6 +366,11 @@ function DashboardLayoutContent({
               {getMenuGroups(user?.role).map((group, gi) => (
                 <div key={group.label}>
                   {gi > 0 && !isCollapsed && <div className="border-t border-border/30 my-1" />}
+                  {!isCollapsed && (
+                    <p className="px-2 mb-0.5 text-[10px] font-semibold tracking-wider uppercase text-muted-foreground/60">
+                      {group.label}
+                    </p>
+                  )}
                   {group.items.map(item => {
                     const isActive = location === item.path;
                     const btn = (
@@ -374,8 +379,8 @@ function DashboardLayoutContent({
                         onClick={() => setLocation(item.path)}
                         className={`flex items-center gap-2 px-2 py-1 rounded-md text-[13px] transition-colors duration-100 w-full ${
                           isActive
-                            ? "bg-accent text-foreground font-medium"
-                            : "text-sidebar-foreground hover:bg-accent/60 hover:text-foreground"
+                            ? "bg-primary/10 text-primary font-medium"
+                            : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-foreground"
                         } ${isCollapsed ? "justify-center" : ""}`}
                       >
                         <item.icon className={`h-[14px] w-[14px] shrink-0 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
@@ -463,7 +468,7 @@ function DashboardLayoutContent({
 
       <SidebarInset className="flex flex-col bg-background">
         {/* Top bar: AI search + agent status + notifications */}
-        <header className="flex h-10 items-center justify-between gap-3 border-b border-border bg-background px-4 sticky top-0 z-40">
+        <header className="flex h-10 items-center justify-between gap-3 border-b border-border bg-card/80 backdrop-blur-sm px-4 sticky top-0 z-40">
           <div className="flex items-center gap-2 shrink-0">
             {isMobile && <SidebarTrigger className="h-8 w-8 rounded-md" />}
           </div>

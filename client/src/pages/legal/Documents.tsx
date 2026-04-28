@@ -43,6 +43,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { DetailSheet } from "@/components/DetailSheet";
 
 type LegalDocument = {
   id: number;
@@ -59,6 +60,7 @@ export default function Documents() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState<{ id: number; name: string } | null>(null);
+  const [selectedDocument, setSelectedDocument] = useState<any | null>(null);
   const [formData, setFormData] = useState({
     name: "",
     type: "legal" as "contract" | "invoice" | "receipt" | "report" | "legal" | "hr" | "other",
@@ -283,7 +285,7 @@ export default function Documents() {
               </TableHeader>
               <TableBody>
                 {filteredDocuments.map((doc: any) => (
-                  <TableRow key={doc.id}>
+                  <TableRow key={doc.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setSelectedDocument(doc)}>
                     <TableCell className="font-medium">{doc.name}</TableCell>
                     <TableCell>
                       <Badge className={typeColors[doc.type]}>{doc.type}</Badge>
@@ -294,7 +296,7 @@ export default function Documents() {
                         ? format(new Date(doc.createdAt), "MMM d, yyyy")
                         : "-"}
                     </TableCell>
-                    <TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1">
                         {doc.fileUrl && (
                           <Button variant="ghost" size="sm" asChild>
@@ -321,6 +323,45 @@ export default function Documents() {
           )}
         </CardContent>
       </Card>
+
+      <DetailSheet
+        open={!!selectedDocument}
+        onOpenChange={(o) => !o && setSelectedDocument(null)}
+        title={selectedDocument?.name}
+        subtitle={selectedDocument ? format(new Date(selectedDocument.createdAt), "MMM d, yyyy") : undefined}
+        width="md"
+      >
+        {selectedDocument && (
+          <div className="space-y-4 text-sm">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Type</p>
+                <Badge className={typeColors[selectedDocument.type]}>{selectedDocument.type}</Badge>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Uploaded</p>
+                <p className="font-medium">{format(new Date(selectedDocument.createdAt), "MMM d, yyyy")}</p>
+              </div>
+            </div>
+            {selectedDocument.description && (
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Description</p>
+                <p className="text-sm whitespace-pre-wrap">{selectedDocument.description}</p>
+              </div>
+            )}
+            {selectedDocument.fileUrl && (
+              <div>
+                <Button variant="outline" size="sm" asChild>
+                  <a href={selectedDocument.fileUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5">
+                    <ExternalLink className="h-4 w-4" />
+                    Open File
+                  </a>
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+      </DetailSheet>
 
       <AlertDialog open={!!documentToDelete} onOpenChange={(open) => !open && setDocumentToDelete(null)}>
         <AlertDialogContent>
