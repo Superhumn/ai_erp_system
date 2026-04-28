@@ -144,6 +144,8 @@ import {
   // Cap table & equity management
   shareClasses, InsertShareClass,
   stakeholders, InsertStakeholder,
+  stakeholderDocuments, InsertStakeholderDocument,
+  proRataIndications, InsertProRataIndication,
   equityGrants, InsertEquityGrant,
   valuations409a, InsertValuation409a,
   equityTransactions, InsertEquityTransaction,
@@ -12114,6 +12116,88 @@ export async function getEquityGrantsByStakeholder(stakeholderId: number) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(equityGrants).where(eq(equityGrants.stakeholderId, stakeholderId)).orderBy(desc(equityGrants.grantDate));
+}
+
+// Investor Portal: resolve the logged-in user to their cap-table row.
+// Returns undefined when the user isn't linked (e.g. an admin invites a
+// stakeholder via teamInvites but they haven't accepted yet, or a user
+// is an employee rather than an investor).
+export async function getStakeholderByUserId(userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(stakeholders)
+    .where(eq(stakeholders.userId, userId))
+    .limit(1);
+  return result[0];
+}
+
+// --- Stakeholder Documents (investor portal "My Documents" locker) ---
+
+export async function getStakeholderDocuments(stakeholderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(stakeholderDocuments)
+    .where(eq(stakeholderDocuments.stakeholderId, stakeholderId))
+    .orderBy(desc(stakeholderDocuments.createdAt));
+}
+
+export async function getStakeholderDocumentById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(stakeholderDocuments)
+    .where(eq(stakeholderDocuments.id, id))
+    .limit(1);
+  return result[0];
+}
+
+export async function createStakeholderDocument(data: InsertStakeholderDocument) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(stakeholderDocuments).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function deleteStakeholderDocument(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(stakeholderDocuments).where(eq(stakeholderDocuments.id, id));
+}
+
+// --- Pro-rata indications (investor portal "Active Round" signaling) ---
+
+export async function getProRataIndicationsForCampaign(campaignId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(proRataIndications)
+    .where(eq(proRataIndications.campaignId, campaignId))
+    .orderBy(desc(proRataIndications.createdAt));
+}
+
+export async function getProRataIndication(campaignId: number, stakeholderId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(proRataIndications)
+    .where(and(
+      eq(proRataIndications.campaignId, campaignId),
+      eq(proRataIndications.stakeholderId, stakeholderId),
+    ))
+    .limit(1);
+  return result[0];
+}
+
+export async function upsertProRataIndication(data: InsertProRataIndication) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // The unique (campaignId, stakeholderId) index makes this an upsert via
+  // ON DUPLICATE KEY UPDATE — re-signaling replaces the prior record.
+  await db.insert(proRataIndications).values(data).onDuplicateKeyUpdate({
+    set: {
+      indicatedAmount: data.indicatedAmount,
+      notes: data.notes,
+      status: data.status ?? "interested",
+      updatedAt: new Date(),
+    },
+  });
 }
 
 export async function createEquityGrant(data: InsertEquityGrant) {

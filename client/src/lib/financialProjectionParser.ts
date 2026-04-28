@@ -166,9 +166,9 @@ export function toNumber(v: unknown): number | null {
     isPct = true;
     cleaned = cleaned.slice(0, -1);
   }
-  // Reject strings with non-numeric characters after stripping (e.g. "250K").
-  if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return null;
-  const n = parseFloat(cleaned);
+  // Use Number() (not parseFloat) so trailing junk like "K"/"M" rejects rather
+  // than silently parsing the leading numeric part — see the "€250K" test case.
+  const n = cleaned === "" ? NaN : Number(cleaned);
   if (!Number.isFinite(n)) return null;
   const signed = isNeg ? -n : n;
   return isPct ? signed : signed;
@@ -638,22 +638,25 @@ export function deriveSeries(model: FinancialModel) {
 
   // Runway at last-period burn, in months.
   // Convert the last period's net income into a monthly burn rate based on
-  // the spacing between consecutive period sort keys:
-  //   monthly => 1, quarterly => 3, annual => 12.
+  // the spacing between consecutive periods in actual months (not sortKey
+  // units — sortKey is `year*100 + month`, so an annual delta is 100, not 12).
   let runwayMonths: number | null = null;
   const cash = metrics.cashBalance;
   if (cash && netIncome && n > 0) {
     const lastCash = cash[n - 1];
     const lastNi = netIncome[n - 1];
     if (lastCash !== null && lastNi !== null && lastNi < 0) {
+      // Step size in MONTHS between consecutive periods. `sortKey` is
+      // `year * 100 + month`, so its deltas aren't comparable in months;
+      // we compute month indexes directly via `getPeriodMonthIndex`.
       const stepSizes = periods
         .slice(1)
-        .map((period, i) => period.sortKey - periods[i].sortKey)
+        .map((period, i) => getPeriodMonthIndex(period) - getPeriodMonthIndex(periods[i]))
         .filter((delta) => delta > 0);
 
       const inferredMonthsPerPeriod =
         stepSizes.length > 0 && stepSizes.every((delta) => delta === stepSizes[0])
-          ? (stepSizes[0] % 100 === 0 ? (stepSizes[0] / 100) * 12 : stepSizes[0] % 100)
+          ? stepSizes[0]
           : periods.every((p) => p.month !== undefined)
             ? 1
             : 12;
