@@ -11391,7 +11391,7 @@ Ask if they received the original request and if they can provide a quote.`;
               limit,
               since,
               fullAiParsing: true,
-              markAsSeen: true,
+              markAsSeen: false,
             });
 
             for (const { email } of parsedResults) {
