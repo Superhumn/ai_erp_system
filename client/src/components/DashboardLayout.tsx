@@ -52,11 +52,13 @@ import {
   PenTool,
   UserPlus,
   Package,
+  StickyNote,
 } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { AICommandBar } from './AICommandBar';
+import { QuickNoteDialog } from './QuickNoteDialog';
 import { useTheme } from "@/contexts/ThemeContext";
 // FloatingAIAssistant removed - toolbar only
 import { toast } from "sonner";
@@ -229,6 +231,8 @@ function DashboardLayoutContent({
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
+  const [quickNoteOpen, setQuickNoteOpen] = useState(false);
+
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -255,6 +259,7 @@ function DashboardLayoutContent({
             case 't': setLocation('/finance/transactions'); break; // Transactions
             case 's': setLocation('/settings'); break; // Settings
           case 'm': setLocation('/meetings'); break; // Meetings
+          case 'n': setQuickNoteOpen(true); break; // New quick note
           }
         };
         document.addEventListener('keydown', handleNextKey, { once: true });
@@ -277,7 +282,8 @@ function DashboardLayoutContent({
           'g a - Accounts\n' +
           'g t - Transactions\n' +
           'g s - Settings\n' +
-        'g m - Meetings',
+          'g m - Meetings\n' +
+          'g n - New Quick Note',
           { duration: 5000 }
         );
         return;
@@ -463,7 +469,20 @@ function DashboardLayoutContent({
           </div>
           <AICommandBar />
           <div className="flex items-center gap-2 shrink-0">
-            <OfflineIndicator />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  aria-label="Quick note"
+                  onClick={() => setQuickNoteOpen(true)}
+                >
+                  <StickyNote className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Quick note (g then n)</TooltipContent>
+            </Tooltip>
             <AutonomousAgentBar />
             <NotificationCenter />
           </div>
@@ -472,6 +491,8 @@ function DashboardLayoutContent({
       </SidebarInset>
 
       {/* Floating AI removed - using toolbar only */}
+
+      <QuickNoteDialog open={quickNoteOpen} onOpenChange={setQuickNoteOpen} />
     </>
   );
 }
