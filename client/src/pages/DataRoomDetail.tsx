@@ -294,6 +294,13 @@ export default function DataRoomDetail() {
     },
   });
 
+  const updateRoomMutation = trpc.dataRoom.update.useMutation({
+    onSuccess: () => {
+      refetchRoom();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   const finalizeMutation = trpc.dataRoom.finalizeInvestment.useMutation({
     onSuccess: () => {
       toast.success("Investment finalized and added to cap table!");
@@ -1574,6 +1581,51 @@ export default function DataRoomDetail() {
                         <p className="text-sm">{room.watermarkText}</p>
                       </div>
                     )}
+                  </div>
+                </div>
+
+                <div className="border-t pt-6 mt-6">
+                  <h3 className="font-medium mb-4">Live Financials Page</h3>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Expose a JSON-driven, always-current financials page at
+                    <code className="mx-1 px-1 py-0.5 rounded bg-muted text-xs">/dr/:code/financials</code>
+                    inside this data room. Respects the same password, email, and NDA gates as
+                    the document viewer. Intentionally narrow: cash, last-3-month revenue and burn,
+                    runway, and (optionally) outstanding AR.
+                  </p>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="min-w-0 pr-4">
+                        <Label>Include Live Financials page</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Visitors with a valid link can view current cash, revenue, burn, and runway.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={!!room.showLiveFinancials}
+                        disabled={updateRoomMutation.isPending}
+                        onCheckedChange={(checked) =>
+                          updateRoomMutation.mutate({ id: roomId, showLiveFinancials: checked })
+                        }
+                      />
+                    </div>
+                    <div className="flex items-center justify-between pl-4 border-l-2 border-muted">
+                      <div className="min-w-0 pr-4">
+                        <Label className={room.showLiveFinancials ? undefined : "text-muted-foreground"}>
+                          Also show outstanding AR total
+                        </Label>
+                        <p className="text-sm text-muted-foreground">
+                          Adds a single AR total figure. No per-customer or aging detail.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={!!room.liveFinancialsIncludeAr}
+                        disabled={!room.showLiveFinancials || updateRoomMutation.isPending}
+                        onCheckedChange={(checked) =>
+                          updateRoomMutation.mutate({ id: roomId, liveFinancialsIncludeAr: checked })
+                        }
+                      />
+                    </div>
                   </div>
                 </div>
                 {/* Google Drive sync — use header button only */}

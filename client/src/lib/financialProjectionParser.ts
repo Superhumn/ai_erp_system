@@ -646,6 +646,9 @@ export function deriveSeries(model: FinancialModel) {
     const lastCash = cash[n - 1];
     const lastNi = netIncome[n - 1];
     if (lastCash !== null && lastNi !== null && lastNi < 0) {
+      // Step size in MONTHS between consecutive periods. `sortKey` is
+      // `year * 100 + month`, so its deltas aren't comparable in months;
+      // we compute month indexes directly via `getPeriodMonthIndex`.
       const stepSizes = periods
         .slice(1)
         .map((period, i) => getPeriodMonthIndex(period) - getPeriodMonthIndex(periods[i]))
