@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { NotificationCenter } from "@/components/NotificationCenter";
+import { OfflineIndicator } from "@/components/OfflineIndicator";
 import { AutonomousAgentBar } from "@/components/AutonomousAgentBar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -462,11 +463,12 @@ function DashboardLayoutContent({
           </div>
           <AICommandBar />
           <div className="flex items-center gap-2 shrink-0">
+            <OfflineIndicator />
             <AutonomousAgentBar />
             <NotificationCenter />
           </div>
         </header>
-        <main className="flex-1 overflow-auto p-3">{children}</main>
+        <main className="density-compact flex-1 overflow-auto p-3 pb-3 md:p-4 md:pb-4 lg:p-5 lg:pb-5">{children}</main>
       </SidebarInset>
 
       {/* Floating AI removed - using toolbar only */}

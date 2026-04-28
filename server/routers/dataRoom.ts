@@ -127,6 +127,8 @@ export const dataRoomRouter = router({
         brandingLogo: z.string().nullable().optional(),
         brandingColor: z.string().nullable().optional(),
         brandingCompanyName: z.string().nullable().optional(),
+        showLiveFinancials: z.boolean().optional(),
+        liveFinancialsIncludeAr: z.boolean().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const room = await db.getDataRoomById(input.id);
@@ -922,6 +924,7 @@ export const dataRoomRouter = router({
               brandingLogo: room.brandingLogo,
               brandingColor: room.brandingColor,
               brandingCompanyName: room.brandingCompanyName,
+              showLiveFinancials: room.showLiveFinancials,
             },
             folders: folders.filter(f => !f.googleDriveFolderId || true),
             documents: documents.filter(d => !d.isHidden),
@@ -1000,6 +1003,103 @@ export const dataRoomRouter = router({
           }
 
           return { id };
+        }),
+
+      // Live current-financials feed for the data room's public page.
+      // This is the investor-facing counterpart to the frozen projections
+      // snapshot: metrics are recomputed at request time, gated by a valid
+      // link + any NDA/email/password gates that applied to `accessByLink`.
+      //
+      // Intentionally narrow: cash, last-3-mo revenue, last-3-mo burn,
+      // avg burn, runway, and optionally an AR total when the room owner
+      // has explicitly opted in. No customer-level detail, no AR aging,
+      // no risk radar.
+      getFinancials: publicProcedure
+        .input(z.object({
+          linkCode: z.string(),
+          visitorId: z.number().optional(),
+        }))
+        .query(async ({ input }) => {
+          const link = await db.getDataRoomLinkByCode(input.linkCode);
+          if (!link || !link.isActive) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Invalid link' });
+          }
+          if (link.expiresAt && new Date(link.expiresAt) < new Date()) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Link has expired' });
+          }
+
+          const room = await db.getDataRoomById(link.dataRoomId);
+          if (!room) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          }
+          if (!room.showLiveFinancials) {
+            throw new TRPCError({
+              code: 'FORBIDDEN',
+              message: 'Live financials are not enabled for this data room',
+            });
+          }
+
+          // Re-enforce every gate that applied at `accessByLink` time.
+          // This endpoint is separately reachable with only a link code, so
+          // any gate the room relies on (password, required visitor info,
+          // NDA) has to be checked here too — otherwise a caller who knows
+          // the link could skip the password/info prompt and fetch
+          // financials directly. We implement this via "visitor must
+          // exist" because `accessByLink` only issues a visitor row once
+          // its own checks pass.
+          const requiresVisitor =
+            !!link.password ||
+            !!link.requireEmail ||
+            !!link.requireName ||
+            !!link.requireCompany ||
+            !!room.requiresEmail ||
+            !!room.requiresNda;
+
+          if (requiresVisitor) {
+            if (!input.visitorId) {
+              throw new TRPCError({
+                code: 'FORBIDDEN',
+                message: 'Please access the data room through the normal flow before viewing live financials.',
+              });
+            }
+            const visitor = await db.getDataRoomVisitorById(input.visitorId);
+            if (!visitor || visitor.dataRoomId !== room.id) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'Invalid visitor for this data room' });
+            }
+            if (visitor.accessStatus === 'blocked' || visitor.accessStatus === 'revoked') {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'Your access has been revoked' });
+            }
+            if (room.requiresNda && !visitor.ndaAcceptedAt) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'NDA signature required' });
+            }
+          } else if (input.visitorId) {
+            // Even without gates, still honor blocked/revoked on known visitors.
+            const visitor = await db.getDataRoomVisitorById(input.visitorId);
+            if (visitor && (visitor.accessStatus === 'blocked' || visitor.accessStatus === 'revoked')) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'Your access has been revoked' });
+            }
+          }
+
+          const { computeLiveFinancials } = await import('../dataRoomLiveFinancials');
+          // dataRooms has no companyId column today (single-tenant); the helper
+          // still accepts one for when multi-tenancy lands per-room.
+          const snapshot = await computeLiveFinancials({
+            includeAr: !!room.liveFinancialsIncludeAr,
+          });
+
+          return {
+            room: {
+              name: room.name,
+              brandingCompanyName: room.brandingCompanyName,
+              brandingLogo: room.brandingLogo,
+              brandingColor: room.brandingColor,
+              brandColor: room.brandColor,
+              logoUrl: room.logoUrl,
+              watermarkEnabled: room.watermarkEnabled,
+              watermarkText: room.watermarkText,
+            },
+            financials: snapshot,
+          };
         }),
     }),
   }),

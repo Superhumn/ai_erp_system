@@ -411,16 +411,49 @@ async function cleanupPlaceholders() {
   }
 }
 
+// Run CRM duplicate merges only when CRM_DEDUP_ON_STARTUP=true.
+// Set that env var on the first deploy that includes migration 0035 so
+// duplicates are eliminated *before* the UNIQUE indexes are created.
+// Unset it after migration 0035 is applied to skip the full table scan
+// on subsequent boots.
+async function autoMergeCrmContacts() {
+  if (!ENV.crmDedupOnStartup) return;
+  try {
+    const db = await import("../db");
+    const groups = await db.findDuplicateCrmContactGroups();
+    if (groups.length === 0) return;
+    let merged = 0;
+    for (const g of groups) {
+      const sorted = [...g.contacts].sort((a: any, b: any) => a.id - b.id);
+      const primary = sorted[0];
+      const dupeIds = sorted.slice(1).map((c: any) => c.id);
+      if (dupeIds.length === 0) continue;
+      const result = await db.mergeCrmContacts(primary.id, dupeIds);
+      merged += result.merged;
+    }
+    if (merged > 0) console.log(`[Cleanup] Auto-merged ${merged} duplicate CRM contacts across ${groups.length} groups`);
+  } catch (e) {
+    console.warn("[Cleanup] CRM auto-merge skipped:", e instanceof Error ? e.message : e);
+  }
+}
+
 async function startServer() {
   await initErrorTracking();
 
   validateRequiredSecrets();
   validateCriticalConfig();
+
+  // Merge CRM duplicates BEFORE migrations so migration 0035's UNIQUE
+  // index creation doesn't fail with ER_DUP_ENTRY on existing rows.
+  await autoMergeCrmContacts();
+
   await runMigrationsAtStartup();
   await verifyDatabaseReadiness();
 
   // Ensure critical tables exist + cleanup placeholders
-  ensureTables().then(() => cleanupPlaceholders()).catch(console.warn);
+  ensureTables()
+    .then(() => cleanupPlaceholders())
+    .catch(console.warn);
 
   const emailConfigValidation = validateEmailConfig();
   if (!emailConfigValidation.valid) {
@@ -972,7 +1005,7 @@ async function startServer() {
             try {
               const { scanResult, parsedResults } = await scanAndCategorizeInbox(
                 { host: inbox.host!, port: inbox.port, secure: true, auth: { user: inbox.user!, pass: inbox.password! } },
-                { unseenOnly: true, limit: 50, fullAiParsing: true, markAsSeen: true }
+                { unseenOnly: true, limit: 50, fullAiParsing: true, markAsSeen: false }
               );
 
               // Save each email to DB and parse attachments
