@@ -1,7 +1,7 @@
 import { lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { Route, Switch } from "wouter";
+import { Route, Switch, Redirect } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { AIAgentProvider } from "./contexts/AIAgentContext";
@@ -100,6 +100,7 @@ const Payroll = lazy(() => import("./pages/hr/Payroll"));
 const EquityPortal = lazy(() => import("./pages/hr/EquityPortal"));
 const EquityReports = lazy(() => import("./pages/hr/EquityReports"));
 const InvestorsHub = lazy(() => import("./pages/hr/InvestorsHub"));
+const InvestorPortal = lazy(() => import("./pages/InvestorPortal"));
 const TimeTracking = lazy(() => import("./pages/hr/TimeTracking"));
 
 // Marketing
@@ -154,6 +155,7 @@ const InvestorUpdates = lazy(() => import("./pages/InvestorUpdates"));
 const DataRooms = lazy(() => import("./pages/DataRooms"));
 const DataRoomDetail = lazy(() => import("./pages/DataRoomDetail"));
 const DataRoomPublic = lazy(() => import("./pages/DataRoomPublic"));
+const DataRoomFinancialsPublic = lazy(() => import("./pages/DataRoomFinancialsPublic"));
 
 // Component Showcase
 const ComponentShowcase = lazy(() => import("./pages/ComponentShowcase"));
@@ -232,10 +234,10 @@ function Router() {
           <Route path="/crm/investors" component={CRMInvestors} />
           <Route path="/crm/campaigns" component={FundraisingCampaigns} />
 
-          {/* CRM — deduplicated: /crm now points to CRMHub only */}
+          {/* CRM — /crm/hub is canonical (sidebar-locked); /crm is a legacy alias */}
           <Route path="/crm/hub" component={CRMHub} />
           <Route path="/crm/dashboard" component={CRMDashboard} />
-          <Route path="/crm" component={CRMHub} />
+          <Route path="/crm"><Redirect to="/crm/hub" /></Route>
 
           {/* Operations */}
           <Route path="/operations" component={OperationsHub} />
@@ -302,6 +304,7 @@ function Router() {
           <Route path="/hr/equity-portal" component={EquityPortal} />
           <Route path="/hr/equity-reports" component={EquityReports} />
           <Route path="/hr/investors" component={InvestorsHub} />
+          <Route path="/investor-portal" component={InvestorPortal} />
           <Route path="/hr/time-tracking" component={TimeTracking} />
 
           {/* Legal */}
@@ -375,6 +378,8 @@ function App() {
                 <Route path="/login" component={Login} />
                 <Route path="/reset-password" component={ResetPassword} />
                 {/* Public Data Room Access (outside dashboard) */}
+                <Route path="/share/:code/financials" component={DataRoomFinancialsPublic} />
+                <Route path="/dr/:code/financials" component={DataRoomFinancialsPublic} />
                 <Route path="/share/:code" component={DataRoomPublic} />
                 <Route path="/dr/:code" component={DataRoomPublic} />
                 {/* Supplier Portal (public) */}

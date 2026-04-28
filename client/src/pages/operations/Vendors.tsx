@@ -30,7 +30,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Building2, Plus, Search, Loader2, Upload, ShoppingBag, Star, ExternalLink, CheckCircle2 } from "lucide-react";
+import { Building2, Plus, Search, Loader2, Upload, ShoppingBag, Star, ExternalLink, CheckCircle2, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { getStatusColor } from "@/lib/statusColors";
 import { useLocation } from "wouter";
@@ -66,6 +76,7 @@ export default function Vendors() {
   const [alibabaResults, setAlibabaResults] = useState<any[]>([]);
   const [alibabaUsedFallback, setAlibabaUsedFallback] = useState(false);
   const [expandedVendorId, setExpandedVendorId] = useState<number | null>(null);
+  const [vendorToDelete, setVendorToDelete] = useState<{ id: number; name: string } | null>(null);
   const [newMaterialName, setNewMaterialName] = useState("");
   const [newMaterialUnit, setNewMaterialUnit] = useState("kg");
   const [newMaterialCost, setNewMaterialCost] = useState("");
@@ -112,6 +123,17 @@ export default function Vendors() {
       toast.success("Vendor created successfully");
       setIsOpen(false);
       resetVendorForm();
+      utils.vendors.list.invalidate();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const deleteVendor = trpc.vendors.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Vendor deleted");
+      setVendorToDelete(null);
       utils.vendors.list.invalidate();
     },
     onError: (error) => {
@@ -292,17 +314,12 @@ export default function Vendors() {
   const isLoading = vendorsLoading;
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-semibold flex items-center gap-2">
-            <Building2 className="h-8 w-8" />
-            Vendors
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Manage suppliers and service providers.
-          </p>
-        </div>
+    <div className="space-y-2 animate-fade-in">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h1 className="text-sm font-bold tracking-[-0.02em] flex items-center gap-1.5">
+          <Building2 className="h-4 w-4" />
+          Vendors
+        </h1>
         <div className="flex gap-2">
         <Button variant="outline" onClick={() => window.location.href = "/import"}>
           <Upload className="h-4 w-4 mr-1" /> Import
@@ -650,6 +667,7 @@ export default function Vendors() {
                     <TableHead className="text-sm whitespace-nowrap">Notes</TableHead>
                     <TableHead className="text-sm whitespace-nowrap">Status</TableHead>
                     <TableHead className="text-sm whitespace-nowrap">Docs</TableHead>
+                    <TableHead className="text-sm whitespace-nowrap w-12"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -715,10 +733,24 @@ export default function Vendors() {
                         <TableCell className="text-sm whitespace-nowrap">
                           <DocumentsCell referenceType="vendor" referenceId={vendor.id} />
                         </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setVendorToDelete({ id: vendor.id, name: vendor.name });
+                            }}
+                            aria-label={`Delete vendor ${vendor.name}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
                       </TableRow>
                       {isExpanded && (
                         <TableRow>
-                          <TableCell colSpan={16} className="bg-muted/20 p-4">
+                          <TableCell colSpan={17} className="bg-muted/20 p-4">
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
                               <div><span className="text-xs text-muted-foreground block">Address</span>{vendor.address || "-"}, {vendor.city || ""} {vendor.state || ""} {vendor.country || ""}</div>
                               <div><span className="text-xs text-muted-foreground block">Lead Time</span>{vendor.defaultLeadTimeDays || 14} days</div>
@@ -818,6 +850,33 @@ export default function Vendors() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog open={!!vendorToDelete} onOpenChange={(open) => !open && setVendorToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete vendor?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes <span className="font-medium">{vendorToDelete?.name}</span>.
+              Purchase orders and raw materials linked to this vendor will keep their historical
+              record, but the vendor will no longer appear in lists or be selectable.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteVendor.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteVendor.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (vendorToDelete) deleteVendor.mutate({ id: vendorToDelete.id });
+              }}
+            >
+              {deleteVendor.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete vendor
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

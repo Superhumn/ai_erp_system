@@ -122,13 +122,20 @@ Provide: 1) Score X/10, 2) Key strengths, 3) Concerns, 4) Recommendation (advanc
   };
 
   return (
-    <div className="space-y-3 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold tracking-[-0.02em] flex items-center gap-2">
-            <UserPlus className="h-6 w-6" /> Recruiting
+    <div className="space-y-2 animate-fade-in">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-4 text-xs flex-wrap">
+          <h1 className="text-sm font-bold tracking-[-0.02em] flex items-center gap-1.5">
+            <UserPlus className="h-4 w-4" /> Recruiting
           </h1>
-          <p className="text-muted-foreground text-sm">Candidates, AI scoring, and interview scheduling</p>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Pipeline</span> <span className="font-bold">{stats.pipeline}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Interviews</span> <span className="font-bold">{stats.interviews}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Offers</span> <span className="font-bold text-green-600">{stats.offers}</span></div>
+          <div className="h-4 w-px bg-border" />
+          <div><span className="text-muted-foreground">Total</span> <span className="font-bold">{stats.total}</span></div>
         </div>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
@@ -168,17 +175,6 @@ Provide: 1) Score X/10, 2) Key strengths, 3) Concerns, 4) Recommendation (advanc
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      </div>
-
-      {/* KPI bar */}
-      <div className="flex items-center gap-4 text-xs border rounded-xl px-3 py-2 bg-card">
-        <div><span className="text-muted-foreground">Pipeline</span> <span className="font-bold">{stats.pipeline}</span></div>
-        <div className="h-5 w-px bg-border" />
-        <div><span className="text-muted-foreground">Interviews</span> <span className="font-bold">{stats.interviews}</span></div>
-        <div className="h-5 w-px bg-border" />
-        <div><span className="text-muted-foreground">Offers</span> <span className="font-bold text-green-600">{stats.offers}</span></div>
-        <div className="h-5 w-px bg-border" />
-        <div><span className="text-muted-foreground">Total</span> <span className="font-bold">{stats.total}</span></div>
       </div>
 
       {/* Filters */}

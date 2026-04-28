@@ -160,7 +160,7 @@ export default function DataRoomDetail() {
   const deleteDocMutation = trpc.dataRoom.documents.delete.useMutation({
     onSuccess: (_, variables) => {
       toast.success("Document deleted");
-      if (selectedDoc?.id === variables.id) setSelectedDoc(null);
+      if (variables && selectedDoc?.id === variables.id) setSelectedDoc(null);
       refetchDocuments();
     },
     onError: (error) => {
@@ -292,6 +292,13 @@ export default function DataRoomDetail() {
       toast.success("Status updated");
       refetchCommitments();
     },
+  });
+
+  const updateRoomMutation = trpc.dataRoom.update.useMutation({
+    onSuccess: () => {
+      refetchRoom();
+    },
+    onError: (error) => toast.error(error.message),
   });
 
   const finalizeMutation = trpc.dataRoom.finalizeInvestment.useMutation({
@@ -800,23 +807,22 @@ export default function DataRoomDetail() {
                         const isImg = ["png","jpg","jpeg","gif","webp","svg"].includes(ft);
                         const isOffice = ["doc","docx","xls","xlsx","ppt","pptx"].includes(ft);
 
-                        if (selectedDoc.storageType === "google_drive") {
-                          const drivePreviewUrl = selectedDoc.googleDriveFileId
-                            ? getGooglePreviewUrl(selectedDoc.googleDriveFileId)
-                            : selectedDoc.googleDriveWebViewLink ?? null;
-                          if (drivePreviewUrl) {
-                            return (
-                              <iframe
-                                key={selectedDoc.id}
-                                src={drivePreviewUrl}
-                                className="w-full h-full border-0"
-                             sandbox="allow-same-origin allow-scripts allow-popups"
-                                referrerPolicy="no-referrer"
-                                allow="autoplay"
-                                title={selectedDoc.name}
-                              />
-                            );
-                          }
+                        // Google Drive files: stream through our own proxy
+                        // endpoint. The server uses the connected Google
+                        // account's OAuth token to fetch the bytes on demand,
+                        // so the folder can stay private and the browser
+                        // never sees Google's third-party iframe block.
+                        if (selectedDoc.storageType === "google_drive" && selectedDoc.id != null) {
+                          return (
+                            <iframe
+                              key={selectedDoc.id}
+                              src={`/api/drive/proxy/${selectedDoc.id}`}
+                              className="w-full h-full border-0"
+                              referrerPolicy="no-referrer"
+                              allow="autoplay"
+                              title={selectedDoc.name}
+                            />
+                          );
                         }
 
                         if (!selectedDoc.storageUrl) {
@@ -1575,6 +1581,51 @@ export default function DataRoomDetail() {
                         <p className="text-sm">{room.watermarkText}</p>
                       </div>
                     )}
+                  </div>
+                </div>
+
+                <div className="border-t pt-6 mt-6">
+                  <h3 className="font-medium mb-4">Live Financials Page</h3>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Expose a JSON-driven, always-current financials page at
+                    <code className="mx-1 px-1 py-0.5 rounded bg-muted text-xs">/dr/:code/financials</code>
+                    inside this data room. Respects the same password, email, and NDA gates as
+                    the document viewer. Intentionally narrow: cash, last-3-month revenue and burn,
+                    runway, and (optionally) outstanding AR.
+                  </p>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="min-w-0 pr-4">
+                        <Label>Include Live Financials page</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Visitors with a valid link can view current cash, revenue, burn, and runway.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={!!room.showLiveFinancials}
+                        disabled={updateRoomMutation.isPending}
+                        onCheckedChange={(checked) =>
+                          updateRoomMutation.mutate({ id: roomId, showLiveFinancials: checked })
+                        }
+                      />
+                    </div>
+                    <div className="flex items-center justify-between pl-4 border-l-2 border-muted">
+                      <div className="min-w-0 pr-4">
+                        <Label className={room.showLiveFinancials ? undefined : "text-muted-foreground"}>
+                          Also show outstanding AR total
+                        </Label>
+                        <p className="text-sm text-muted-foreground">
+                          Adds a single AR total figure. No per-customer or aging detail.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={!!room.liveFinancialsIncludeAr}
+                        disabled={!room.showLiveFinancials || updateRoomMutation.isPending}
+                        onCheckedChange={(checked) =>
+                          updateRoomMutation.mutate({ id: roomId, liveFinancialsIncludeAr: checked })
+                        }
+                      />
+                    </div>
                   </div>
                 </div>
                 {/* Google Drive sync — use header button only */}

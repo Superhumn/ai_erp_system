@@ -86,11 +86,11 @@ export default function Recipes() {
     { enabled: !!shareRecipeId },
   );
   const shareRecipe = trpc.recipes.share.useMutation({
-    onSuccess: (_, variables) => { toast.success("Share updated"); if (shareRecipeId === variables.recipeId) refetchShares(); },
+    onSuccess: (_, variables) => { toast.success("Share updated"); if (variables && shareRecipeId === variables.recipeId) refetchShares(); },
     onError: (err) => toast.error(err.message),
   });
   const unshareRecipe = trpc.recipes.unshare.useMutation({
-    onSuccess: (_, variables) => { toast.success("Share removed"); if (shareRecipeId === variables.recipeId) refetchShares(); },
+    onSuccess: (_, variables) => { toast.success("Share removed"); if (variables && shareRecipeId === variables.recipeId) refetchShares(); },
     onError: (err) => toast.error(err.message),
   });
   const shareRecipeName = useMemo(
@@ -107,12 +107,9 @@ export default function Recipes() {
   }, [shares]);
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold tracking-[-0.02em]">Recipe Costing</h1>
-          <p className="text-muted-foreground">Manage formulations, batch costing, and yield-adjusted costs</p>
-        </div>
+    <div className="p-6 space-y-2">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h1 className="text-sm font-bold tracking-[-0.02em]">Recipes</h1>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
             <Button>

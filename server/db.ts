@@ -144,6 +144,8 @@ import {
   // Cap table & equity management
   shareClasses, InsertShareClass,
   stakeholders, InsertStakeholder,
+  stakeholderDocuments, InsertStakeholderDocument,
+  proRataIndications, InsertProRataIndication,
   equityGrants, InsertEquityGrant,
   valuations409a, InsertValuation409a,
   equityTransactions, InsertEquityTransaction,
@@ -207,7 +209,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     };
     const updateSet: Record<string, unknown> = {};
 
-    const textFields = ["name", "email", "loginMethod", "passwordHash"] as const;
+    const textFields = ["name", "email", "loginMethod"] as const;
     type TextField = (typeof textFields)[number];
 
     const assignNullable = (field: TextField) => {
@@ -8521,6 +8523,7 @@ export async function getCrmContacts(filters?: {
   pipelineStage?: string;
   assignedTo?: number;
   search?: string;
+  excludeEmail?: string;
   limit?: number;
   offset?: number;
 }) {
@@ -8542,6 +8545,12 @@ export async function getCrmContacts(filters?: {
   }
   if (filters?.assignedTo) {
     conditions.push(eq(crmContacts.assignedTo, filters.assignedTo));
+  }
+  if (filters?.excludeEmail) {
+    const normalized = filters.excludeEmail.trim().toLowerCase();
+    if (normalized) {
+      conditions.push(sql`(${crmContacts.email} IS NULL OR LOWER(${crmContacts.email}) != ${normalized})`);
+    }
   }
   if (filters?.search) {
     const escapedSearch = filters.search.replace(/[_%\\]/g, '\\$&');
@@ -8585,6 +8594,152 @@ export async function createCrmContact(data: InsertCrmContact) {
   if (!db) throw new Error("Database not available");
   const result = await db.insert(crmContacts).values(data);
   return result[0].insertId;
+}
+
+// ---------- CRM contact dedup helpers ----------
+
+function normalizeEmail(email?: string | null): string | null {
+  if (!email) return null;
+  const trimmed = email.trim().toLowerCase();
+  return trimmed || null;
+}
+
+function normalizePhone(phone?: string | null): string | null {
+  if (!phone) return null;
+  // Keep leading +, strip everything else to digits; treat 00 prefix as +.
+  let digits = phone.replace(/[^\d+]/g, "");
+  if (digits.startsWith("00")) digits = "+" + digits.slice(2);
+  // Require at least 7 digits to count as a real phone match.
+  const digitCount = digits.replace(/\D/g, "").length;
+  return digitCount >= 7 ? digits : null;
+}
+
+function normalizeLinkedin(url?: string | null): string | null {
+  if (!url) return null;
+  const lower = url.trim().toLowerCase();
+  if (!lower) return null;
+  // Canonicalize: strip scheme/www, trailing slash.
+  return lower.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/+$/, "");
+}
+
+export async function findCrmContactMatch(identity: {
+  email?: string | null;
+  phone?: string | null;
+  whatsappNumber?: string | null;
+  linkedinUrl?: string | null;
+}) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const email = normalizeEmail(identity.email);
+  const phone = normalizePhone(identity.phone);
+  const whatsapp = normalizePhone(identity.whatsappNumber);
+  const linkedin = normalizeLinkedin(identity.linkedinUrl);
+
+  const clauses: any[] = [];
+  if (email) clauses.push(sql`LOWER(${crmContacts.email}) = ${email}`);
+  if (phone) clauses.push(eq(crmContacts.phone, phone));
+  if (whatsapp) clauses.push(eq(crmContacts.whatsappNumber, whatsapp));
+  if (linkedin) clauses.push(sql`LOWER(${crmContacts.linkedinUrl}) LIKE ${"%" + linkedin + "%"}`);
+  if (clauses.length === 0) return undefined;
+
+  const result = await db.select().from(crmContacts).where(or(...clauses)).limit(1);
+  return result[0];
+}
+
+/**
+ * Insert a new crmContact, or merge into an existing one when email/phone/linkedin
+ * matches. On merge, only fills in fields that are currently empty on the match —
+ * never clobbers richer existing data.
+ */
+export async function findOrCreateCrmContact(data: InsertCrmContact): Promise<{ id: number; created: boolean }> {
+  // Normalize empty strings to undefined so they are stored as NULL and do not
+  // collide under the UNIQUE indexes on email/phone/whatsappNumber/linkedinUrl.
+  const normalized: InsertCrmContact = {
+    ...data,
+    email: data.email?.trim() || undefined,
+    phone: data.phone?.trim() || undefined,
+    whatsappNumber: data.whatsappNumber?.trim() || undefined,
+    linkedinUrl: data.linkedinUrl?.trim() || undefined,
+  };
+  const match = await findCrmContactMatch({
+    email: normalized.email,
+    phone: normalized.phone,
+    whatsappNumber: normalized.whatsappNumber,
+    linkedinUrl: normalized.linkedinUrl,
+  });
+  if (match) {
+    const db = await getDb();
+    const patch: Record<string, any> = {};
+    for (const [k, v] of Object.entries(normalized)) {
+      if (v == null) continue;
+      if ((match as any)[k] == null || (match as any)[k] === "") patch[k] = v;
+    }
+    if (db && Object.keys(patch).length > 0) {
+      patch.updatedAt = new Date();
+      await db.update(crmContacts).set(patch).where(eq(crmContacts.id, match.id));
+    }
+    return { id: match.id as number, created: false };
+  }
+  const id = await createCrmContact(normalized);
+  return { id, created: true };
+}
+
+/**
+ * Group existing contacts that share a normalized email, phone, whatsapp, or
+ * linkedin url. Each contact is added to every identifier group it qualifies
+ * for so that all duplicates are caught regardless of which identifiers overlap.
+ * Returns one group per cluster, each with 2+ contacts.
+ */
+export async function findDuplicateCrmContactGroups() {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select().from(crmContacts);
+
+  type Group = { key: string; reason: string; contacts: any[] };
+  const groups = new Map<string, Group>();
+  const assign = (key: string, reason: string, contact: any) => {
+    const existing = groups.get(key);
+    if (existing) existing.contacts.push(contact);
+    else groups.set(key, { key, reason, contacts: [contact] });
+  };
+  for (const c of rows) {
+    const email = normalizeEmail((c as any).email);
+    const phone = normalizePhone((c as any).phone);
+    const whatsapp = normalizePhone((c as any).whatsappNumber);
+    const linkedin = normalizeLinkedin((c as any).linkedinUrl);
+    if (email) assign("email:" + email, "email", c);
+    if (phone) assign("phone:" + phone, "phone", c);
+    if (whatsapp) assign("whatsapp:" + whatsapp, "whatsapp", c);
+    if (linkedin) assign("linkedin:" + linkedin, "linkedin", c);
+  }
+  return Array.from(groups.values()).filter((g) => g.contacts.length >= 2);
+}
+
+/**
+ * Merge duplicate contacts into a single primary. Reparents FKs on
+ * crm_interactions, crm_deals, crm_contact_tags, contact_captures,
+ * whatsapp_messages and crm_campaign_recipients, then deletes the duplicates.
+ * All operations run inside a single transaction so that a mid-merge failure
+ * cannot leave partially reparented data.
+ */
+export async function mergeCrmContacts(primaryId: number, duplicateIds: number[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const ids = duplicateIds.filter((id) => id !== primaryId);
+  if (ids.length === 0) return { merged: 0 };
+
+  await db.transaction(async (tx) => {
+    await tx.update(crmInteractions).set({ contactId: primaryId }).where(inArray(crmInteractions.contactId, ids));
+    await tx.update(crmDeals).set({ contactId: primaryId }).where(inArray(crmDeals.contactId, ids));
+    await tx.update(contactCaptures).set({ contactId: primaryId }).where(inArray(contactCaptures.contactId, ids));
+    await tx.update(whatsappMessages).set({ contactId: primaryId }).where(inArray(whatsappMessages.contactId, ids));
+    await tx.update(crmContactTags).set({ contactId: primaryId }).where(inArray(crmContactTags.contactId, ids));
+    await tx.update(crmCampaignRecipients).set({ contactId: primaryId }).where(inArray(crmCampaignRecipients.contactId, ids));
+    await tx.delete(crmContacts).where(inArray(crmContacts.id, ids));
+  });
+
+  return { merged: ids.length };
 }
 
 export async function updateCrmContact(id: number, data: Partial<InsertCrmContact>) {
@@ -9011,11 +9166,14 @@ export async function processVCardCapture(captureId: number, vcardData: string, 
   // Parse vCard data
   const parsedData = parseVCard(vcardData);
 
-  // Check for existing contact by email or phone
-  let existingContact = null;
-  if (parsedData.email) {
-    existingContact = await getCrmContactByEmail(parsedData.email);
-  }
+  // Match on email/phone/linkedin so a captured vCard with only a phone number
+  // still dedupes against an existing contact.
+  const existingContact = await findCrmContactMatch({
+    email: (parsedData as any).email,
+    phone: (parsedData as any).phone,
+    whatsappNumber: (parsedData as any).whatsappNumber,
+    linkedinUrl: (parsedData as any).linkedinUrl,
+  });
 
   let contactId: number;
 
@@ -9080,17 +9238,11 @@ export async function processLinkedInCapture(
     email: linkedinData.email,
   };
 
-  // Check for existing contact by LinkedIn URL or email
-  let existingContact = null;
-  if (linkedinData.email) {
-    existingContact = await getCrmContactByEmail(linkedinData.email);
-  }
-  if (!existingContact && linkedinData.profileUrl) {
-    const result = await db.select().from(crmContacts)
-      .where(eq(crmContacts.linkedinUrl, linkedinData.profileUrl))
-      .limit(1);
-    existingContact = result[0];
-  }
+  // Match on email/linkedin (and phone when present) via the shared helper.
+  const existingContact = await findCrmContactMatch({
+    email: linkedinData.email,
+    linkedinUrl: linkedinData.profileUrl,
+  });
 
   let contactId: number;
 
@@ -11969,7 +12121,12 @@ export async function getFundraisingCampaigns(companyId?: number) {
 export async function createFundraisingCampaign(data: InsertFundraisingCampaign) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(fundraisingCampaigns).values(data);
+  const now = new Date();
+  const result = await db.insert(fundraisingCampaigns).values({
+    ...data,
+    createdAt: data.createdAt ?? now,
+    updatedAt: data.updatedAt ?? now,
+  });
   return { id: result[0].insertId };
 }
 
@@ -12074,6 +12231,88 @@ export async function getEquityGrantsByStakeholder(stakeholderId: number) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(equityGrants).where(eq(equityGrants.stakeholderId, stakeholderId)).orderBy(desc(equityGrants.grantDate));
+}
+
+// Investor Portal: resolve the logged-in user to their cap-table row.
+// Returns undefined when the user isn't linked (e.g. an admin invites a
+// stakeholder via teamInvites but they haven't accepted yet, or a user
+// is an employee rather than an investor).
+export async function getStakeholderByUserId(userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(stakeholders)
+    .where(eq(stakeholders.userId, userId))
+    .limit(1);
+  return result[0];
+}
+
+// --- Stakeholder Documents (investor portal "My Documents" locker) ---
+
+export async function getStakeholderDocuments(stakeholderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(stakeholderDocuments)
+    .where(eq(stakeholderDocuments.stakeholderId, stakeholderId))
+    .orderBy(desc(stakeholderDocuments.createdAt));
+}
+
+export async function getStakeholderDocumentById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(stakeholderDocuments)
+    .where(eq(stakeholderDocuments.id, id))
+    .limit(1);
+  return result[0];
+}
+
+export async function createStakeholderDocument(data: InsertStakeholderDocument) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(stakeholderDocuments).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function deleteStakeholderDocument(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(stakeholderDocuments).where(eq(stakeholderDocuments.id, id));
+}
+
+// --- Pro-rata indications (investor portal "Active Round" signaling) ---
+
+export async function getProRataIndicationsForCampaign(campaignId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(proRataIndications)
+    .where(eq(proRataIndications.campaignId, campaignId))
+    .orderBy(desc(proRataIndications.createdAt));
+}
+
+export async function getProRataIndication(campaignId: number, stakeholderId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(proRataIndications)
+    .where(and(
+      eq(proRataIndications.campaignId, campaignId),
+      eq(proRataIndications.stakeholderId, stakeholderId),
+    ))
+    .limit(1);
+  return result[0];
+}
+
+export async function upsertProRataIndication(data: InsertProRataIndication) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // The unique (campaignId, stakeholderId) index makes this an upsert via
+  // ON DUPLICATE KEY UPDATE — re-signaling replaces the prior record.
+  await db.insert(proRataIndications).values(data).onDuplicateKeyUpdate({
+    set: {
+      indicatedAmount: data.indicatedAmount,
+      notes: data.notes,
+      status: data.status ?? "interested",
+      updatedAt: new Date(),
+    },
+  });
 }
 
 export async function createEquityGrant(data: InsertEquityGrant) {

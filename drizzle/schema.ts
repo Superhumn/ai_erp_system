@@ -11,7 +11,7 @@ export const users = mysqlTable("users", {
   name: text("name"),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor"]).default("user").notNull(),
+  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor", "investor"]).default("user").notNull(),
   departmentId: int("departmentId"),
   avatarUrl: text("avatarUrl"),
   phone: varchar("phone", { length: 32 }),
@@ -48,7 +48,7 @@ export type InsertLocalAuthCredential = typeof localAuthCredentials.$inferInsert
 export const teamInvitations = mysqlTable("teamInvitations", {
   id: int("id").autoincrement().primaryKey(),
   email: varchar("email", { length: 320 }).notNull(),
-  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor"]).default("user").notNull(),
+  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor", "investor"]).default("user").notNull(),
   inviteCode: varchar("inviteCode", { length: 64 }).notNull().unique(),
   invitedBy: int("invitedBy").notNull().references(() => users.id),
   linkedVendorId: int("linkedVendorId").references(() => vendors.id),
@@ -2858,7 +2858,14 @@ export const dataRooms = mysqlTable("data_rooms", {
   // Google Drive sync
   googleDriveFolderId: varchar("googleDriveFolderId", { length: 255 }),
   lastSyncedAt: timestamp("lastSyncedAt"),
-  
+
+  // Live current-financials page (investor-facing, JSON-driven, distinct from
+  // the frozen projections snapshot). When enabled, the data room exposes
+  // `/dr/:code/financials` with a trimmed set of metrics (cash, last-3-mo
+  // revenue/burn, runway, AR total).
+  showLiveFinancials: boolean("showLiveFinancials").default(false).notNull(),
+  liveFinancialsIncludeAr: boolean("liveFinancialsIncludeAr").default(false).notNull(),
+
   status: mysqlEnum("status", ["active", "archived", "draft"]).default("active").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -4167,7 +4174,16 @@ export const crmContacts = mysqlTable("crm_contacts", {
   assignedTo: int("assignedTo"), // User responsible for this contact
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (table) => ({
+  // Schema-level uniqueness guarantees. Multiple NULLs are allowed under
+  // MySQL's UNIQUE semantics, so contacts without an identifier are fine.
+  // Run crm.contacts.autoMergeDuplicates before migration 0035 if the
+  // deployment has existing duplicates.
+  emailUniq: uniqueIndex("crm_contacts_email_uniq").on(table.email),
+  phoneUniq: uniqueIndex("crm_contacts_phone_uniq").on(table.phone),
+  whatsappUniq: uniqueIndex("crm_contacts_whatsapp_uniq").on(table.whatsappNumber),
+  linkedinUniq: uniqueIndex("crm_contacts_linkedin_uniq").on(table.linkedinUrl),
+}));
 
 export type CrmContact = typeof crmContacts.$inferSelect;
 export type InsertCrmContact = typeof crmContacts.$inferInsert;
@@ -5480,9 +5496,27 @@ export const stakeholders = mysqlTable("stakeholders", {
   type: mysqlEnum("type", ["founder", "employee", "investor", "advisor", "board_member", "contractor"]).notNull(),
   title: varchar("title", { length: 128 }),
   relationship: varchar("relationship", { length: 128 }), // "Lead Investor", "Angel", etc.
+  // Investor-portal entitlement tier. Drives which gated sections (board
+  // materials, sensitive cap-table detail, etc.) are visible. Free tiers
+  // for now since most investors fit cleanly into ordinary / major / board.
+  tier: mysqlEnum("tier", ["ordinary", "major", "board"]).default("ordinary").notNull(),
   address: text("address"),
+  // Mailing address for K-1s / paper communications. Distinct from `address`
+  // (legal address) because some investors live at one place and want tax
+  // documents sent to a different one (CPA, family office, etc.).
+  mailingAddress: text("mailingAddress"),
+  // Free-text "how to pay me" — wire instructions, ACH preference, etc.
+  // Deliberately NOT a structured ACH field: storing actual routing /
+  // account numbers needs an encrypted vault we don't have yet, and the
+  // failure mode of leaking those is much worse than the inconvenience
+  // of a free-text note describing the preference.
+  paymentPreference: text("paymentPreference"),
   taxId: varchar("taxId", { length: 64 }),
   accreditedInvestor: boolean("accreditedInvestor").default(false),
+  // When the investor last re-attested they're accredited. Used so the
+  // portal can prompt for re-attestation after some interval (Reg D
+  // typically wants annual re-confirmation for ongoing offerings).
+  accreditedReAttestedAt: timestamp("accreditedReAttestedAt"),
   status: mysqlEnum("status", ["active", "inactive", "terminated", "departed"]).default("active"),
   terminationDate: timestamp("terminationDate"),
   notes: text("notes"),
@@ -5493,6 +5527,58 @@ export const stakeholders = mysqlTable("stakeholders", {
 
 export type Stakeholder = typeof stakeholders.$inferSelect;
 export type InsertStakeholder = typeof stakeholders.$inferInsert;
+
+// Pro-rata / participation interest signaled by an existing investor in
+// response to an open fundraising round. This is non-binding — it's a
+// "I'd like to participate, please reach out" notice the IR team can
+// follow up on, not a subscription document. Storing the indicated
+// amount is optional; some investors signal interest without a number.
+export const proRataIndications = mysqlTable("pro_rata_indications", {
+  id: int("id").autoincrement().primaryKey(),
+  campaignId: int("campaignId").notNull(),
+  stakeholderId: int("stakeholderId").notNull(),
+  indicatedAmount: decimal("indicatedAmount", { precision: 18, scale: 2 }),
+  notes: text("notes"),
+  status: mysqlEnum("status", ["interested", "withdrawn", "converted"]).default("interested").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ProRataIndication = typeof proRataIndications.$inferSelect;
+export type InsertProRataIndication = typeof proRataIndications.$inferInsert;
+
+// Per-stakeholder document locker. Used by the investor portal to surface
+// executed agreements, K-1s, capital-call notices, distribution notices
+// — anything tied to one investor rather than the company at large.
+//
+// Storage uses the project's `storagePut`/`storageGet` helpers (Forge
+// proxy or S3 depending on env), so we keep the key + the durable URL.
+export const stakeholderDocuments = mysqlTable("stakeholder_documents", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId"),
+  stakeholderId: int("stakeholderId").notNull(),
+  title: varchar("title", { length: 256 }).notNull(),
+  description: text("description"),
+  category: mysqlEnum("category", [
+    "agreement",        // SAFE / note / SPA — what the investor signed
+    "side_letter",      // any individually-negotiated terms
+    "k1",               // tax forms
+    "capital_call",
+    "distribution",
+    "other",
+  ]).default("other").notNull(),
+  fileType: varchar("fileType", { length: 64 }),
+  mimeType: varchar("mimeType", { length: 128 }),
+  fileSize: bigint("fileSize", { mode: "number" }),
+  storageKey: varchar("storageKey", { length: 512 }).notNull(),
+  storageUrl: varchar("storageUrl", { length: 1024 }),
+  uploadedBy: int("uploadedBy"), // user id, nullable so backfills don't break
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type StakeholderDocument = typeof stakeholderDocuments.$inferSelect;
+export type InsertStakeholderDocument = typeof stakeholderDocuments.$inferInsert;
 
 export const equityGrants = mysqlTable("equity_grants", {
   id: int("id").autoincrement().primaryKey(),
@@ -5724,9 +5810,13 @@ export const teamInvites = mysqlTable("team_invites", {
   companyId: int("companyId"),
   email: varchar("email", { length: 320 }).notNull(),
   name: varchar("name", { length: 256 }),
-  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor"]).default("user").notNull(),
+  role: mysqlEnum("role", ["user", "admin", "finance", "ops", "legal", "exec", "sales", "copacker", "vendor", "contractor", "investor"]).default("user").notNull(),
   invitedBy: int("invitedBy").notNull(),
   token: varchar("token", { length: 128 }).notNull().unique(),
+  // When an admin invites an existing stakeholder (typically an investor)
+  // to the portal, we remember which cap-table row to attach the new user
+  // to once they accept. Nullable for ordinary team invites.
+  linkedStakeholderId: int("linkedStakeholderId"),
   status: mysqlEnum("status", ["pending", "accepted", "expired", "cancelled"]).default("pending"),
   expiresAt: timestamp("expiresAt").notNull(),
   acceptedAt: timestamp("acceptedAt"),
