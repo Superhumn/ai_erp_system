@@ -115,7 +115,7 @@ Source: `server/routers.ts` (appRouter L258–L22514, 104 top-level keys).
 | `legalCases` | L22230–L22313 | 84 | ✗ legacy-only |
 | `financialReports` | L22314–L22513 | 200 | ✓ `server/routers/finance.ts` |
 
-## Legacy-only (36)
+## Legacy-only (35)
 
 These exist only in `server/routers.ts` — the extracted `server/routers/` tree does not cover them.
 
