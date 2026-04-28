@@ -1183,7 +1183,7 @@ async function startServer() {
             try {
               const { scanResult, parsedResults } = await scanAndCategorizeInbox(
                 { host: inbox.host!, port: inbox.port, secure: true, auth: { user: inbox.user!, pass: inbox.password! } },
-                { unseenOnly: true, limit: 50, fullAiParsing: true, markAsSeen: true }
+                { unseenOnly: true, limit: 50, fullAiParsing: true, markAsSeen: false }
               );
 
               // Save each email to DB and parse attachments

@@ -1,4 +1,5 @@
 import { getLoginUrl } from "@/const";
+import { idbClearAll } from "@/lib/offline/idb";
 import { trpc } from "@/lib/trpc";
 import { TRPCClientError } from "@trpc/client";
 import { useCallback, useEffect, useMemo } from "react";
@@ -38,6 +39,10 @@ export function useAuth(options?: UseAuthOptions) {
     } finally {
       utils.auth.me.setData(undefined, null);
       await utils.auth.me.invalidate();
+      // Wipe the offline cache + queued mutations so a different user signing
+      // in on the same device doesn't inherit previous-session data or have
+      // queued writes replayed under their cookie.
+      await idbClearAll();
     }
   }, [logoutMutation, utils]);
 

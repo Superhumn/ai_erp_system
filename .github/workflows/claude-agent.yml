@@ -1,0 +1,79 @@
+name: Claude Code Agent
+
+on:
+  issues:
+    types: [opened]
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    paths-ignore:
+      - '**/*.md'
+      - '**/package-lock.json'
+      - '**/yarn.lock'
+      - '**/pnpm-lock.yaml'
+      - '**/bun.lockb'
+      - '**/poetry.lock'
+      - '**/Cargo.lock'
+      - '**/Gemfile.lock'
+
+concurrency:
+  group: claude-${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  review-and-fix-pr:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check PR size
+        id: size
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          stats=$(gh pr view "$PR_NUMBER" --json additions,deletions)
+          total=$(echo "$stats" | jq '.additions + .deletions')
+          echo "Total LOC changed: $total"
+          if [ "$total" -gt 2000 ]; then
+            echo "PR too large (${total} LOC); skipping Claude review."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: anthropics/claude-code-action@v1
+        if: steps.size.outputs.skip == 'false'
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review this PR. If there are bugs, security issues, or code quality problems, fix them directly by pushing commits and post a comment explaining what you changed. If the code looks good, post a short approval comment.
+          claude_args: --model claude-sonnet-4-6
+
+  fix-issue:
+    if: >-
+      github.event_name == 'issues' &&
+      github.event.issue.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Read this issue. Create a branch, implement the fix or feature, run any available tests, then open a PR. Keep changes minimal.
+          claude_args: --model claude-haiku-4-5
