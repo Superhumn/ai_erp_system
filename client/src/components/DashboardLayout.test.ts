@@ -11,9 +11,9 @@ import { getMenuGroups } from "./DashboardLayout";
 // ── Canonical section order for admin (never reorder / rename without approval) ──
 const CANONICAL_SECTIONS = [
   "Command Center",
+  "Operations",
   "Sales",
   "Finance",
-  "Operations",
   "People",
   "Tools",
 ] as const;
