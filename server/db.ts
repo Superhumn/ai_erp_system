@@ -144,6 +144,8 @@ import {
   // Cap table & equity management
   shareClasses, InsertShareClass,
   stakeholders, InsertStakeholder,
+  stakeholderDocuments, InsertStakeholderDocument,
+  proRataIndications, InsertProRataIndication,
   equityGrants, InsertEquityGrant,
   valuations409a, InsertValuation409a,
   equityTransactions, InsertEquityTransaction,
@@ -9939,8 +9941,20 @@ export async function autoMatchChecklistDocuments(checklistId: number) {
         matchedDocuments: scored.map(s => ({ id: s.doc.id, name: s.doc.name, score: s.score })),
         status: 'complete',
       });
+    } else if (item.status === 'complete' && item.linkedDocumentIds) {
+      // Was auto-matched but no longer has scoring documents — reset to missing.
+      // Manually-ticked items (linkedDocumentIds is null) are left unchanged.
+      await updateChecklistItem(item.id, {
+        status: 'missing',
+        linkedDocumentIds: null,
+        linkedDocumentCount: 0,
+      } as any);
     }
   }
+
+  await recalculateChecklistProgress(checklistId);
+
+  return { matched: matchedCount, items: matchedItems };
 }
 
 // ============================================
@@ -10459,6 +10473,108 @@ const SERIES_B_DD_CATEGORIES: Record<string, { name: string; items: Array<{ name
   },
 };
 
+const FUNDRAISING_DD_CATEGORIES: Record<string, { name: string; items: Array<{ name: string; keywords: string[] }> }> = {
+  pitch: {
+    name: "Pitch Materials",
+    items: [
+      { name: "Pitch Deck", keywords: ["pitch deck", "investor deck", "presentation"] },
+      { name: "Executive Summary", keywords: ["executive summary", "one pager", "overview"] },
+      { name: "Company Overview", keywords: ["company overview", "about us"] },
+    ],
+  },
+  financial: {
+    name: "Financial Documents",
+    items: [
+      { name: "Financial Model / Projections", keywords: ["financial model", "projection", "forecast"] },
+      { name: "Income Statement (P&L)", keywords: ["income statement", "profit loss", "P&L"] },
+      { name: "Cash Flow Statement", keywords: ["cash flow", "burn rate", "runway"] },
+      { name: "Bank Statements", keywords: ["bank statement"] },
+      { name: "Cap Table", keywords: ["cap table", "capitalization", "equity", "share structure"] },
+    ],
+  },
+  corporate: {
+    name: "Corporate Documents",
+    items: [
+      { name: "Certificate of Incorporation", keywords: ["incorporation", "certificate", "articles"] },
+      { name: "Bylaws / Operating Agreement", keywords: ["bylaws", "operating agreement"] },
+      { name: "Shareholder Agreement", keywords: ["shareholder", "stockholder"] },
+      { name: "Board Approval Minutes", keywords: ["board minutes", "board resolutions"] },
+    ],
+  },
+  product: {
+    name: "Product & Market",
+    items: [
+      { name: "Product Demo or Screenshots", keywords: ["demo", "screenshot", "product video"] },
+      { name: "Market Size Analysis", keywords: ["market size", "TAM", "SAM", "SOM"] },
+      { name: "Competitive Analysis", keywords: ["competitive", "competitor", "differentiation"] },
+      { name: "Customer Testimonials / References", keywords: ["testimonial", "reference", "customer quote"] },
+    ],
+  },
+  team: {
+    name: "Team",
+    items: [
+      { name: "Org Chart", keywords: ["org chart", "organization", "team structure"] },
+      { name: "Founder Bios / Resumes", keywords: ["bio", "resume", "founder background", "linkedin"] },
+      { name: "Advisory Board List", keywords: ["advisory board", "advisor", "advisors"] },
+    ],
+  },
+  legal: {
+    name: "Legal & IP",
+    items: [
+      { name: "IP Portfolio / Patents", keywords: ["intellectual property", "patent", "trademark", "IP"] },
+      { name: "Key Contracts", keywords: ["contract", "agreement", "material"] },
+      { name: "Regulatory Licenses", keywords: ["license", "permit", "regulatory"] },
+    ],
+  },
+};
+
+const MA_DD_CATEGORIES: Record<string, { name: string; items: Array<{ name: string; keywords: string[] }> }> = {
+  ...STANDARD_DD_CATEGORIES,
+  business: {
+    name: "Business Overview",
+    items: [
+      { name: "Company Information Memo", keywords: ["information memo", "CIM", "company overview"] },
+      { name: "Customer List / Concentration Analysis", keywords: ["customer list", "customer concentration", "top customers"] },
+      { name: "Revenue by Customer / Product", keywords: ["revenue breakdown", "revenue by customer", "product revenue"] },
+      { name: "Backlog / Pipeline", keywords: ["backlog", "pipeline", "order book"] },
+    ],
+  },
+  hr: {
+    name: "Human Resources",
+    items: [
+      { name: "Employee List with Compensation", keywords: ["employee list", "compensation", "salary"] },
+      { name: "Key Employee Agreements", keywords: ["employment agreement", "key employee", "retention"] },
+      { name: "Non-Compete / NDA Agreements", keywords: ["non-compete", "NDA", "non-disclosure", "confidentiality"] },
+      { name: "Employee Benefits & Pension Plans", keywords: ["benefits", "pension", "401k", "ERISA"] },
+      { name: "HR Policies Manual", keywords: ["HR policy", "employee handbook", "code of conduct"] },
+    ],
+  },
+  real_estate: {
+    name: "Real Estate & Assets",
+    items: [
+      { name: "Lease Agreements", keywords: ["lease", "real estate", "property", "landlord"] },
+      { name: "Fixed Asset Register", keywords: ["fixed asset", "asset register", "PPE"] },
+      { name: "Equipment Schedules", keywords: ["equipment", "machinery", "asset schedule"] },
+    ],
+  },
+  it: {
+    name: "IT & Systems",
+    items: [
+      { name: "IT Systems Inventory", keywords: ["IT systems", "software", "systems inventory"] },
+      { name: "Cybersecurity Policies", keywords: ["cybersecurity", "information security", "security policy"] },
+      { name: "Data Privacy Compliance", keywords: ["GDPR", "CCPA", "data privacy", "privacy policy"] },
+    ],
+  },
+  environmental: {
+    name: "Environmental & Regulatory",
+    items: [
+      { name: "Environmental Compliance Reports", keywords: ["environmental", "EPA", "compliance report"] },
+      { name: "Regulatory Filings", keywords: ["regulatory filing", "government filing", "compliance"] },
+      { name: "Permits & Licenses", keywords: ["permit", "license", "certification"] },
+    ],
+  },
+};
+
 // Create a standard due diligence checklist
 export async function createStandardChecklist(
   dataRoomId: number,
@@ -10467,9 +10583,11 @@ export async function createStandardChecklist(
   customName?: string
 ) {
   // Select the appropriate category template
-  const categories = checklistType === 'series_b'
-    ? SERIES_B_DD_CATEGORIES
-    : STANDARD_DD_CATEGORIES;
+  const categories =
+    checklistType === 'series_b' ? SERIES_B_DD_CATEGORIES :
+    checklistType === 'fundraising' ? FUNDRAISING_DD_CATEGORIES :
+    checklistType === 'ma' ? MA_DD_CATEGORIES :
+    STANDARD_DD_CATEGORIES;
 
   // Generate name based on template type
   const templateNames: Record<string, string> = {
@@ -10499,10 +10617,11 @@ export async function createStandardChecklist(
         dataRoomId,
         categoryName: category.name,
         itemName: item.name,
-        matchKeywords: item.keywords ? JSON.stringify(item.keywords) : undefined,
+        requirement: 'required',
+        matchKeywords: item.keywords ? JSON.stringify(item.keywords) : null,
         sortOrder: sortOrder++,
         status: 'missing',
-      } as any);
+      });
     }
   }
 
@@ -12134,6 +12253,88 @@ export async function getEquityGrantsByStakeholder(stakeholderId: number) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(equityGrants).where(eq(equityGrants.stakeholderId, stakeholderId)).orderBy(desc(equityGrants.grantDate));
+}
+
+// Investor Portal: resolve the logged-in user to their cap-table row.
+// Returns undefined when the user isn't linked (e.g. an admin invites a
+// stakeholder via teamInvites but they haven't accepted yet, or a user
+// is an employee rather than an investor).
+export async function getStakeholderByUserId(userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(stakeholders)
+    .where(eq(stakeholders.userId, userId))
+    .limit(1);
+  return result[0];
+}
+
+// --- Stakeholder Documents (investor portal "My Documents" locker) ---
+
+export async function getStakeholderDocuments(stakeholderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(stakeholderDocuments)
+    .where(eq(stakeholderDocuments.stakeholderId, stakeholderId))
+    .orderBy(desc(stakeholderDocuments.createdAt));
+}
+
+export async function getStakeholderDocumentById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(stakeholderDocuments)
+    .where(eq(stakeholderDocuments.id, id))
+    .limit(1);
+  return result[0];
+}
+
+export async function createStakeholderDocument(data: InsertStakeholderDocument) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(stakeholderDocuments).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function deleteStakeholderDocument(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(stakeholderDocuments).where(eq(stakeholderDocuments.id, id));
+}
+
+// --- Pro-rata indications (investor portal "Active Round" signaling) ---
+
+export async function getProRataIndicationsForCampaign(campaignId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(proRataIndications)
+    .where(eq(proRataIndications.campaignId, campaignId))
+    .orderBy(desc(proRataIndications.createdAt));
+}
+
+export async function getProRataIndication(campaignId: number, stakeholderId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(proRataIndications)
+    .where(and(
+      eq(proRataIndications.campaignId, campaignId),
+      eq(proRataIndications.stakeholderId, stakeholderId),
+    ))
+    .limit(1);
+  return result[0];
+}
+
+export async function upsertProRataIndication(data: InsertProRataIndication) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // The unique (campaignId, stakeholderId) index makes this an upsert via
+  // ON DUPLICATE KEY UPDATE — re-signaling replaces the prior record.
+  await db.insert(proRataIndications).values(data).onDuplicateKeyUpdate({
+    set: {
+      indicatedAmount: data.indicatedAmount,
+      notes: data.notes,
+      status: data.status ?? "interested",
+      updatedAt: new Date(),
+    },
+  });
 }
 
 export async function createEquityGrant(data: InsertEquityGrant) {
