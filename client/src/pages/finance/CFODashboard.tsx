@@ -142,14 +142,14 @@ export default function CFODashboard() {
   const { data: expenseTxns } = trpc.transactions.list.useQuery({ type: "expense" });
   // QB P&L isn't currently exposed on the live tRPC tree (the `settings`
   // router lives in the orphaned extracted tree, not the canonical
-  // monolith). The downstream consumers all gate on
+  // monolith — see CLAUDE.md). The downstream consumers all gate on
   // `qbPnl?.connected`, so we type the stub to the shape they read but
   // leave it undefined until the monolith grows the route.
   const qbPnl: {
     connected?: boolean;
     months?: Array<{ income?: number; cogs?: number; expense?: number }>;
     expenseAccounts?: Array<{ name: string; total: number }>;
-  } = undefined as any;
+  } | undefined = undefined;
   const { data: openDeals } = trpc.crm.deals.list.useQuery({ status: "open" });
   const { data: allPOs } = trpc.purchaseOrders.list.useQuery();
   const { data: investorUpdatesList } = trpc.investorUpdates.list.useQuery();
