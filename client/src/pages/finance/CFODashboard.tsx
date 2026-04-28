@@ -140,16 +140,17 @@ export default function CFODashboard() {
   const { data: kpiGoals } = trpc.kpiGoals.list.useQuery({ year: new Date().getFullYear() });
   const { data: employees } = trpc.employees.list.useQuery({ status: "active" });
   const { data: expenseTxns } = trpc.transactions.list.useQuery({ type: "expense" });
-  // QB P&L isn't currently exposed on the live tRPC tree (the `settings`
-  // router lives in the orphaned extracted tree, not the canonical
-  // monolith — see CLAUDE.md). The downstream consumers all gate on
-  // `qbPnl?.connected`, so we type the stub to the shape they read but
-  // leave it undefined until the monolith grows the route.
-  const qbPnl: {
-    connected?: boolean;
-    months?: Array<{ income?: number; cogs?: number; expense?: number }>;
-    expenseAccounts?: Array<{ name: string; total: number }>;
-  } | undefined = undefined;
+  // Format YYYY-MM-DD in local time. Using `toISOString().slice(0,10)` would
+  // shift the date by one day in timezones ahead of UTC (local midnight
+  // serializes to the previous UTC date).
+  const fmtLocalDate = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const today = new Date();
+  const { data: qbPnl } = trpc.quickbooks.getProfitAndLoss.useQuery({
+    startDate: fmtLocalDate(new Date(today.getFullYear(), today.getMonth() - 11, 1)),
+    endDate: fmtLocalDate(today),
+    summarizeBy: "Month",
+  });
   const { data: openDeals } = trpc.crm.deals.list.useQuery({ status: "open" });
   const { data: allPOs } = trpc.purchaseOrders.list.useQuery();
   const { data: investorUpdatesList } = trpc.investorUpdates.list.useQuery();

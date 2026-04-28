@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { NotificationCenter } from "@/components/NotificationCenter";
+import { OfflineIndicator } from "@/components/OfflineIndicator";
 import { AutonomousAgentBar } from "@/components/AutonomousAgentBar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -462,6 +463,7 @@ function DashboardLayoutContent({
           </div>
           <AICommandBar />
           <div className="flex items-center gap-2 shrink-0">
+            <OfflineIndicator />
             <AutonomousAgentBar />
             <NotificationCenter />
           </div>

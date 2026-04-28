@@ -166,11 +166,9 @@ export function toNumber(v: unknown): number | null {
     isPct = true;
     cleaned = cleaned.slice(0, -1);
   }
-  // Reject anything that isn't a clean signed decimal — this catches
-  // suffixes like "K"/"M"/"bn" (which we deliberately do not parse,
-  // because guessing scale is too easy to get wrong) and stray letters.
-  if (!/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(cleaned)) return null;
-  const n = parseFloat(cleaned);
+  // Use Number() (not parseFloat) so trailing junk like "K"/"M" rejects rather
+  // than silently parsing the leading numeric part — see the "€250K" test case.
+  const n = cleaned === "" ? NaN : Number(cleaned);
   if (!Number.isFinite(n)) return null;
   const signed = isNeg ? -n : n;
   return isPct ? signed : signed;
@@ -640,8 +638,8 @@ export function deriveSeries(model: FinancialModel) {
 
   // Runway at last-period burn, in months.
   // Convert the last period's net income into a monthly burn rate based on
-  // the spacing between consecutive period sort keys:
-  //   monthly => 1, quarterly => 3, annual => 12.
+  // the spacing between consecutive periods in actual months (not sortKey
+  // units — sortKey is `year*100 + month`, so an annual delta is 100, not 12).
   let runwayMonths: number | null = null;
   const cash = metrics.cashBalance;
   if (cash && netIncome && n > 0) {
@@ -658,7 +656,7 @@ export function deriveSeries(model: FinancialModel) {
 
       const inferredMonthsPerPeriod =
         stepSizes.length > 0 && stepSizes.every((delta) => delta === stepSizes[0])
-          ? (stepSizes[0] % 100 === 0 ? (stepSizes[0] / 100) * 12 : stepSizes[0] % 100)
+          ? stepSizes[0]
           : periods.every((p) => p.month !== undefined)
             ? 1
             : 12;
