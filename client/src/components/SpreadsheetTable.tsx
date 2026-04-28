@@ -439,7 +439,7 @@ export function SpreadsheetTable<T extends { id: number | string }>({
     );
   };
 
-  const cellPadding = compact ? "px-1.5 py-0.5" : "px-2 py-1";
+  const cellPadding = compact ? "px-3 py-1.5" : "px-4 py-3";
   const fontSize = compact ? "text-xs" : "text-sm";
 
   // Calculate total columns for expanded row
@@ -448,60 +448,64 @@ export function SpreadsheetTable<T extends { id: number | string }>({
   const hasSelection = selectedRows && selectedRows.size > 0;
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Bulk Actions Toolbar - shows when items are selected */}
+    <div className="flex flex-col h-full gap-3">
+      {/* Bulk Actions Toolbar - slides in when rows are selected */}
       {hasSelection && bulkActions.length > 0 && (
-        <div className="flex items-center gap-2 mb-3 p-2 bg-primary/5 border border-primary/20 rounded-lg animate-in slide-in-from-top-2">
-          <span className="text-sm font-medium">
-            {selectedRows.size} item{selectedRows.size !== 1 ? 's' : ''} selected
-          </span>
+        <div className="flex items-center gap-3 px-4 py-2.5 bg-primary/8 border border-primary/25 rounded-lg animate-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center gap-2">
+            <CheckCircle className="h-4 w-4 text-primary" />
+            <span className="text-sm font-semibold text-primary">
+              {selectedRows.size} row{selectedRows.size !== 1 ? "s" : ""} selected
+            </span>
+          </div>
           <div className="flex-1" />
-          {bulkActions.map((action) => (
+          <div className="flex items-center gap-2">
+            {bulkActions.map((action) => (
+              <Button
+                key={action.key}
+                variant={action.variant === "destructive" ? "destructive" : "outline"}
+                size="sm"
+                onClick={() => onBulkAction?.(action.key, selectedRows)}
+              >
+                {action.icon}
+                {action.label}
+              </Button>
+            ))}
             <Button
-              key={action.key}
-              variant={action.variant === "destructive" ? "destructive" : "outline"}
+              variant="ghost"
               size="sm"
-              onClick={() => onBulkAction?.(action.key, selectedRows)}
-              className="h-7 text-xs"
+              onClick={() => onSelectionChange?.(new Set())}
+              className="text-muted-foreground"
             >
-              {action.icon}
-              {action.label}
+              <X className="h-3.5 w-3.5 mr-1" />
+              Clear
             </Button>
-          ))}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onSelectionChange?.(new Set())}
-            className="h-7 text-xs"
-          >
-            <X className="h-3 w-3 mr-1" />
-            Clear
-          </Button>
+          </div>
         </div>
       )}
 
       {/* Toolbar */}
-      <div className="flex items-center gap-2 mb-3 flex-wrap">
+      <div className="flex items-center gap-2 flex-wrap">
         {showSearch && (
-          <div className="relative flex-1 min-w-[200px] max-w-[300px]">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
+          <div className="relative flex-1 min-w-[200px] max-w-[320px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <input
               placeholder="Search..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-8 h-8 text-sm"
+              className="h-9 w-full rounded-lg border border-border bg-background pl-9 pr-3 text-sm outline-none placeholder:text-muted-foreground/60 focus:border-ring focus:ring-2 focus:ring-ring/20 transition-colors"
             />
           </div>
         )}
-        
+
         {showFilters && columns.filter(c => c.filterable && c.options).map((col) => (
           <Select
             key={col.key as string}
             value={filters[col.key as string] || "all"}
             onValueChange={(v) => setFilters({ ...filters, [col.key as string]: v })}
           >
-            <SelectTrigger className="w-[130px] h-8 text-sm">
-              <Filter className="h-3 w-3 mr-1" />
+            <SelectTrigger className="w-[140px] h-9">
+              <Filter className="h-3.5 w-3.5 mr-1.5" />
               <SelectValue placeholder={col.header} />
             </SelectTrigger>
             <SelectContent>
@@ -516,38 +520,38 @@ export function SpreadsheetTable<T extends { id: number | string }>({
         <div className="flex-1" />
 
         {showExport && (
-          <Button variant="outline" size="sm" onClick={exportToCsv} className="h-8">
-            <Download className="h-4 w-4 mr-1" />
+          <Button variant="outline" size="sm" onClick={exportToCsv}>
+            <Download className="h-4 w-4" />
             Export
           </Button>
         )}
 
         {onAdd && (
-          <Button size="sm" onClick={onAdd} className="h-8">
-            <Plus className="h-4 w-4 mr-1" />
+          <Button size="sm" onClick={onAdd}>
+            <Plus className="h-4 w-4" />
             {addLabel}
           </Button>
         )}
       </div>
 
       {/* Table */}
-      <div 
-        className="border rounded-lg overflow-auto bg-background"
-        style={{ maxHeight }}
+      <div
+        className="rounded-xl border border-border bg-card overflow-hidden shadow-sm"
+        style={{ maxHeight, overflowY: "auto" }}
       >
         <table className="w-full border-collapse">
-          <thead className={cn(stickyHeader && "sticky top-0 z-10 bg-muted/95 backdrop-blur")}>
-            <tr className="border-b">
+          <thead className={cn(stickyHeader && "sticky top-0 z-10")}>
+            <tr className="bg-muted/60 border-b-2 border-border">
               {expandable && (
-                <th className={cn(cellPadding, "w-8")} />
+                <th className="w-10 px-3 py-2.5" />
               )}
               {onSelectionChange && (
-                <th className={cn(cellPadding, "w-10")}>
+                <th className="w-10 px-3 py-2.5">
                   <input
                     type="checkbox"
                     checked={selectedRows?.size === filteredData.length && filteredData.length > 0}
                     onChange={toggleAllSelection}
-                    className="h-4 w-4 rounded border-gray-300"
+                    className="h-4 w-4 rounded border-border accent-primary cursor-pointer"
                   />
                 </th>
               )}
@@ -555,40 +559,59 @@ export function SpreadsheetTable<T extends { id: number | string }>({
                 <th
                   key={col.key as string}
                   className={cn(
-                    cellPadding,
-                    fontSize,
-                    "text-left font-medium text-muted-foreground whitespace-nowrap",
-                    col.sortable && "cursor-pointer hover:text-foreground select-none"
+                    "px-4 py-2.5 text-left font-semibold text-muted-foreground text-[11px] tracking-wider uppercase whitespace-nowrap select-none",
+                    col.sortable && "cursor-pointer hover:text-foreground transition-colors"
                   )}
                   style={{ width: col.width }}
                   onClick={() => col.sortable && handleSort(col.key as string)}
                 >
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1.5">
                     {col.header}
-                    {col.sortable && sortKey === col.key && (
-                      sortDir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
-                    )}
-                    {col.sortable && sortKey !== col.key && (
-                      <ArrowUpDown className="h-3 w-3 opacity-30" />
+                    {col.sortable && (
+                      <span className="inline-flex flex-col leading-none opacity-50">
+                        {sortKey === col.key ? (
+                          sortDir === "asc" ? (
+                            <ChevronUp className="h-3 w-3 opacity-100" />
+                          ) : (
+                            <ChevronDown className="h-3 w-3 opacity-100" />
+                          )
+                        ) : (
+                          <ArrowUpDown className="h-3 w-3" />
+                        )}
+                      </span>
                     )}
                   </div>
                 </th>
               ))}
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-border/60">
             {isLoading ? (
-              <tr>
-                <td colSpan={totalColumns} className="text-center py-8 text-muted-foreground">
-                  Loading...
-                </td>
-              </tr>
+              Array.from({ length: 6 }).map((_, i) => (
+                <tr key={i} className="animate-pulse">
+                  {expandable && <td className="w-10 px-3 py-3" />}
+                  {onSelectionChange && <td className="w-10 px-3 py-3" />}
+                  {columns.map((col) => (
+                    <td key={col.key as string} className="px-4 py-3">
+                      <div className="h-4 rounded bg-muted" style={{ width: `${50 + (i * 13 + col.header.length * 5) % 40}%` }} />
+                    </td>
+                  ))}
+                </tr>
+              ))
             ) : filteredData.length === 0 ? (
               <tr>
-                <td colSpan={totalColumns} className="text-center py-12 text-muted-foreground">
+                <td colSpan={totalColumns} className="px-4 py-16 text-center">
                   <div className="flex flex-col items-center gap-3">
-                    <p>{emptyMessage}</p>
-                    {emptyAction}
+                    <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
+                      <Search className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{emptyMessage}</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {search ? "Try a different search term" : "Get started by adding your first item"}
+                      </p>
+                    </div>
+                    {emptyAction && <div className="mt-1">{emptyAction}</div>}
                   </div>
                 </td>
               </tr>
@@ -596,32 +619,33 @@ export function SpreadsheetTable<T extends { id: number | string }>({
               filteredData.map((row) => (
                 <React.Fragment key={row.id}>
                   <tr
-                    key={row.id}
                     className={cn(
-                      "border-b hover:bg-muted/50 transition-colors",
+                      "group transition-colors duration-100",
                       (expandable || onRowClick) && "cursor-pointer",
-                      selectedRows?.has(row.id) && "bg-primary/5",
-                      expandedId === row.id && "bg-muted/30 border-b-0"
+                      selectedRows?.has(row.id)
+                        ? "bg-primary/8"
+                        : "hover:bg-primary/4",
+                      expandedId === row.id && "bg-muted/40"
                     )}
                     onClick={(e) => handleRowClick(row, e)}
                   >
                     {expandable && (
-                      <td className={cn(cellPadding, "w-8")}>
-                        <ChevronRight 
+                      <td className="w-10 px-3 py-3">
+                        <ChevronRight
                           className={cn(
-                            "h-4 w-4 text-muted-foreground transition-transform",
-                            expandedId === row.id && "rotate-90"
-                          )} 
+                            "h-4 w-4 text-muted-foreground transition-transform duration-150",
+                            expandedId === row.id && "rotate-90 text-primary"
+                          )}
                         />
                       </td>
                     )}
                     {onSelectionChange && (
-                      <td className={cn(cellPadding, "w-10")} onClick={(e) => e.stopPropagation()}>
+                      <td className="w-10 px-3 py-3" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={selectedRows?.has(row.id) || false}
                           onChange={() => toggleRowSelection(row.id)}
-                          className="h-4 w-4 rounded border-gray-300"
+                          className="h-4 w-4 rounded border-border accent-primary cursor-pointer"
                         />
                       </td>
                     )}
@@ -631,9 +655,9 @@ export function SpreadsheetTable<T extends { id: number | string }>({
                         className={cn(
                           cellPadding,
                           fontSize,
-                          col.editable && "cursor-text hover:bg-muted/80",
-                          col.type === "currency" && "text-right font-mono",
-                          col.type === "actions" && "w-10"
+                          col.editable && "cursor-text",
+                          col.type === "currency" && "text-right font-mono tabular-nums",
+                          col.type === "actions" && "w-12 text-right"
                         )}
                         onClick={(e) => {
                           if (col.editable) {
@@ -648,10 +672,10 @@ export function SpreadsheetTable<T extends { id: number | string }>({
                   </tr>
                   {/* Expanded Row Detail */}
                   {expandable && expandedId === row.id && renderExpanded && (
-                    <tr key={`${row.id}-expanded`} className="bg-muted/20">
+                    <tr key={`${row.id}-expanded`}>
                       <td colSpan={totalColumns} className="p-0">
-                        <div className="border-t border-b border-primary/20 bg-card">
-                          <div className="p-4">
+                        <div className="border-t border-b border-primary/20 bg-primary/4">
+                          <div className="px-6 py-4">
                             {renderExpanded(row, () => setExpandedId(null))}
                           </div>
                         </div>
@@ -664,9 +688,9 @@ export function SpreadsheetTable<T extends { id: number | string }>({
             {/* Inline Create Row */}
             {enableInlineCreate && onInlineCreate && !isLoading && (
               isCreatingNewRow ? (
-                <tr className="border-b bg-primary/5">
-                  {expandable && <td className={cn(cellPadding, "w-8")} />}
-                  {onSelectionChange && <td className={cn(cellPadding, "w-10")} />}
+                <tr className="bg-primary/5 border-t-2 border-primary/20">
+                  {expandable && <td className="w-10 px-3 py-3" />}
+                  {onSelectionChange && <td className="w-10 px-3 py-3" />}
                   {columns.map((col) => (
                     <td
                       key={col.key as string}
@@ -674,24 +698,24 @@ export function SpreadsheetTable<T extends { id: number | string }>({
                         cellPadding,
                         fontSize,
                         col.type === "currency" && "text-right font-mono",
-                        col.type === "actions" && "w-10"
+                        col.type === "actions" && "w-12"
                       )}
                     >
                       {col.type === "actions" ? (
-                        <div className="flex gap-1">
+                        <div className="flex justify-end gap-1">
                           <Button
                             variant="ghost"
-                            size="sm"
+                            size="icon-sm"
                             onClick={commitNewRow}
-                            className="h-7 w-7 p-0 text-green-600 hover:text-green-700"
+                            className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
                           >
                             <CheckCircle className="h-4 w-4" />
                           </Button>
                           <Button
                             variant="ghost"
-                            size="sm"
+                            size="icon-sm"
                             onClick={cancelNewRow}
-                            className="h-7 w-7 p-0 text-red-600 hover:text-red-700"
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
                           >
                             <X className="h-4 w-4" />
                           </Button>
@@ -703,16 +727,19 @@ export function SpreadsheetTable<T extends { id: number | string }>({
                   ))}
                 </tr>
               ) : (
-                <tr className="border-b hover:bg-muted/30 cursor-pointer" onClick={startNewRow}>
-                  {expandable && <td className={cn(cellPadding, "w-8")} />}
-                  {onSelectionChange && <td className={cn(cellPadding, "w-10")} />}
+                <tr
+                  className="hover:bg-muted/40 cursor-pointer transition-colors duration-100"
+                  onClick={startNewRow}
+                >
+                  {expandable && <td className="w-10 px-3 py-3" />}
+                  {onSelectionChange && <td className="w-10 px-3 py-3" />}
                   <td
                     colSpan={columns.length}
-                    className={cn(cellPadding, fontSize, "text-muted-foreground italic text-center")}
+                    className={cn(cellPadding, fontSize, "text-muted-foreground")}
                   >
-                    <div className="flex items-center justify-center gap-2">
-                      <Plus className="h-4 w-4" />
-                      <span>{inlineCreatePlaceholder}</span>
+                    <div className="flex items-center gap-2">
+                      <Plus className="h-3.5 w-3.5" />
+                      <span className="text-xs">{inlineCreatePlaceholder}</span>
                     </div>
                   </td>
                 </tr>
@@ -723,10 +750,14 @@ export function SpreadsheetTable<T extends { id: number | string }>({
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
-        <span>{filteredData.length} of {data.length} rows</span>
+      <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
+        <span>
+          {search || Object.values(filters).some(v => v && v !== "all")
+            ? `${filteredData.length} of ${data.length} rows`
+            : `${data.length} row${data.length !== 1 ? "s" : ""}`}
+        </span>
         {selectedRows && selectedRows.size > 0 && (
-          <span>{selectedRows.size} selected</span>
+          <span className="text-primary font-medium">{selectedRows.size} selected</span>
         )}
       </div>
     </div>
