@@ -1665,9 +1665,11 @@ export async function updateProject(id: number, data: Partial<InsertProject>) {
 export async function deleteProject(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(projectTasks).where(eq(projectTasks.projectId, id));
-  await db.delete(projectMilestones).where(eq(projectMilestones.projectId, id));
-  await db.delete(projects).where(eq(projects.id, id));
+  await db.transaction(async (tx) => {
+    await tx.delete(projectTasks).where(eq(projectTasks.projectId, id));
+    await tx.delete(projectMilestones).where(eq(projectMilestones.projectId, id));
+    await tx.delete(projects).where(eq(projects.id, id));
+  });
 }
 
 export async function createProjectMilestone(data: typeof projectMilestones.$inferInsert) {

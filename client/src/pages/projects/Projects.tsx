@@ -1046,7 +1046,7 @@ export default function Projects() {
             <DialogTitle>Delete project?</DialogTitle>
             <DialogDescription>
               This will permanently delete{" "}
-              <strong>{projectMap.get(deleteProjectId!)?.name ?? "this project"}</strong> and all
+              <strong>{deleteProjectId !== null ? (projectMap.get(deleteProjectId)?.name ?? "this project") : "this project"}</strong> and all
               its tasks and milestones. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
@@ -1055,7 +1055,7 @@ export default function Projects() {
             <Button
               variant="destructive"
               disabled={deleteProject.isPending}
-              onClick={() => deleteProjectId !== null && deleteProject.mutate({ id: deleteProjectId })}
+              onClick={() => { if (deleteProjectId !== null) deleteProject.mutate({ id: deleteProjectId }); }}
             >
               {deleteProject.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Delete
