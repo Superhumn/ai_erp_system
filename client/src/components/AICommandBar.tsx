@@ -296,19 +296,20 @@ function parseDate(text: string): ParsedDate | null {
 }
 
 // Extract material name from query
+// Shared unit pattern used across extractMaterialName regexes
+const WEIGHT_VOLUME_UNITS = "ton|tons|tonne|tonnes|mt|kg|kgs|lb|lbs|g|oz|units?|cases?|boxes?|pieces?|bags?|pallets?";
+
 function extractMaterialName(query: string): string | null {
-  const lowerQuery = query.toLowerCase();
-  
-  // Patterns to extract material name
+  // Patterns to extract material name (longer/more-specific alternatives listed first)
   const patterns = [
     // "[quantity] [unit] of [material]" - e.g., "3 tons of hemp protein", "500kg of oats"
-    /(?:[\d,]+\s*(?:ton|tons|tonne|tonnes|mt|kg|kgs|lb|lbs|g|oz|units?|cases?|boxes?|pieces?|bags?|pallets?)\s+of\s+)([a-zA-Z][a-zA-Z\s]+?)(?:\s+(?:from|by|before|for|at)|$)/i,
+    new RegExp(`(?:[\\d,]+\\s*(?:${WEIGHT_VOLUME_UNITS})\\s+of\\s+)([a-zA-Z][a-zA-Z\\s]+?)(?:\\s+(?:from|by|before|for|at)|$)`, "i"),
     // "order X of [material]" or "order [material]"
     /(?:order|purchase|buy|get|need)\s+(?:[\d,]+\s*(?:kg|kgs|lb|lbs|units?|cases?|boxes?|pieces?)?\s+(?:of\s+)?)?([a-zA-Z][a-zA-Z\s]+?)(?:\s+(?:from|by|before|for|at)|$)/i,
-    // "PO for [material]" or "make po for [material]"
-    /(?:make\s+po|po|purchase\s+order)\s+(?:for\s+)?(?:[\d,]+\s*(?:ton|tons|tonne|tonnes|mt|kg|kgs|lb|lbs|units?|cases?|boxes?|pieces?)?\s+(?:of\s+)?)?([a-zA-Z][a-zA-Z\s]+?)(?:\s+(?:from|by|before|for|at)|$)/i,
+    // "make po for [material]" or "purchase order for [material]" (longer form first, then "po")
+    new RegExp(`(?:make\\s+po|purchase\\s+order|po)\\s+(?:for\\s+)?(?:[\\d,]+\\s*(?:${WEIGHT_VOLUME_UNITS})?\\s+(?:of\\s+)?)?([a-zA-Z][a-zA-Z\\s]+?)(?:\\s+(?:from|by|before|for|at)|$)`, "i"),
     // "[quantity] [unit] [material]" (no "of") - e.g., "500kg mushrooms"
-    /(?:[\d,]+\s*(?:ton|tons|tonne|tonnes|mt|kg|kgs|lb|lbs|g|oz|units?|cases?|boxes?|pieces?)\s+(?:of\s+)?)([a-zA-Z][a-zA-Z\s]+?)(?:\s+(?:from|by|before|for|at)|$)/i,
+    new RegExp(`(?:[\\d,]+\\s*(?:${WEIGHT_VOLUME_UNITS})\\s+(?:of\\s+)?)([a-zA-Z][a-zA-Z\\s]+?)(?:\\s+(?:from|by|before|for|at)|$)`, "i"),
   ];
   
   for (const pattern of patterns) {
@@ -368,9 +369,10 @@ function parseIntent(query: string): ParsedIntent {
   const materialName = extractMaterialName(query);
 
   // Navigation/lookup queries must never be treated as creation intents.
-  // Detect questions like "where are my purchase orders", "show me POs", "list vendors", etc.
+  // Detect questions like "where are my purchase orders", "show me POs", "can you list vendors", etc.
   const isNavigationOrLookupQuery =
     /^(where|what|show|list|find|tell|how|which|when|who)\b/i.test(lowerQuery) ||
+    /^(can|could|would|should)\s+(you\s+)?(show|list|find|tell|display|get)\b/i.test(lowerQuery) ||
     /\bwhere (are|is)\b/.test(lowerQuery) ||
     query.trim().endsWith("?");
   
