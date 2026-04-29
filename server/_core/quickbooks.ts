@@ -276,6 +276,75 @@ export async function getProfitAndLoss(
   );
 }
 
+// Parsed shape of a QuickBooks P&L report. Used by the CFO dashboard.
+export type ProfitAndLossMonth = { label: string; income: number; cogs: number; expense: number };
+export type ProfitAndLossExpenseAccount = { name: string; total: number };
+export type ParsedProfitAndLoss = {
+  months: ProfitAndLossMonth[];
+  expenseAccounts: ProfitAndLossExpenseAccount[];
+};
+
+/**
+ * Walk a QuickBooks P&L report tree and return monthly income/COGS/expense
+ * totals plus a per-account expense breakdown. Pulled out of the routers so
+ * both the legacy and extracted trees can share one implementation.
+ */
+export function parseProfitAndLossReport(report: any): ParsedProfitAndLoss {
+  const columns: string[] = (report?.Columns?.Column ?? []).map((c: any) => c?.ColTitle ?? "");
+
+  const walkSummaryRows = (rows: any[], out: { label: string; values: number[] }[] = []) => {
+    for (const r of rows ?? []) {
+      if (r?.Summary?.ColData) {
+        out.push({
+          label: r.Summary.ColData[0]?.value ?? r.group ?? "Row",
+          values: (r.Summary.ColData as any[]).slice(1).map((c) => parseFloat(c?.value ?? "0") || 0),
+        });
+      }
+      if (r?.Rows?.Row) walkSummaryRows(r.Rows.Row, out);
+    }
+    return out;
+  };
+  const summaryRows = walkSummaryRows(report?.Rows?.Row ?? []);
+  const findRow = (needle: string) =>
+    summaryRows.find((r) => r.label.toLowerCase().includes(needle.toLowerCase()));
+  const income  = findRow("Total Income")?.values ?? [];
+  const cogs    = findRow("Total Cost of Goods Sold")?.values ?? [];
+  const expense = findRow("Total Expenses")?.values ?? [];
+
+  const months: ProfitAndLossMonth[] = columns.slice(1, -1).map((label, i) => ({
+    label,
+    income:  income[i]  ?? 0,
+    cogs:    cogs[i]    ?? 0,
+    expense: expense[i] ?? 0,
+  }));
+
+  const EXPENSE_GROUPS = new Set(["Expenses", "OtherExpenses"]);
+  const walkExpenseAccounts = (
+    rows: any[],
+    inExpense: boolean,
+    out: { label: string; values: number[] }[] = [],
+  ) => {
+    for (const r of rows ?? []) {
+      const nowInExpense = inExpense || EXPENSE_GROUPS.has(r?.group ?? "");
+      if (nowInExpense && r?.ColData && !r?.Rows) {
+        const label: string = r.ColData[0]?.value ?? r.group ?? "Row";
+        const values: number[] = (r.ColData as any[]).slice(1).map((c: any) => parseFloat(c?.value ?? "0") || 0);
+        if (label) out.push({ label, values });
+      }
+      if (r?.Rows?.Row) walkExpenseAccounts(r.Rows.Row, nowInExpense, out);
+    }
+    return out;
+  };
+  const expenseAccounts: ProfitAndLossExpenseAccount[] = walkExpenseAccounts(report?.Rows?.Row ?? [], false)
+    .map((r) => ({
+      name: r.label,
+      total: r.values.slice(0, -1).reduce((s, v) => s + v, 0),
+    }))
+    .filter((r) => r.total !== 0);
+
+  return { months, expenseAccounts };
+}
+
 /**
  * Get QuickBooks Items (Products/Services)
  * Returns inventory items with cost information

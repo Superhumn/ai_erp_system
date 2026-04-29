@@ -703,6 +703,15 @@ export async function updateInvoice(id: number, data: Partial<InsertInvoice>) {
   await db.update(invoices).set(data).where(eq(invoices.id, id));
 }
 
+export async function deleteInvoice(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.delete(invoiceItems).where(eq(invoiceItems.invoiceId, id));
+    await tx.delete(invoices).where(eq(invoices.id, id));
+  });
+}
+
 export async function createInvoiceItem(data: typeof invoiceItems.$inferInsert) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -1124,6 +1133,15 @@ export async function updatePurchaseOrder(id: number, data: Partial<InsertPurcha
   await db.update(purchaseOrders).set(data).where(eq(purchaseOrders.id, id));
 }
 
+export async function deletePurchaseOrder(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.delete(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, id));
+    await tx.delete(purchaseOrders).where(eq(purchaseOrders.id, id));
+  });
+}
+
 export async function getAllPurchaseOrderItems() {
   const db = await getDb();
   if (!db) return [];
@@ -1174,6 +1192,32 @@ export async function updateShipment(id: number, data: Partial<typeof shipments.
   const db = await getDb();
   if (!db) return;
   await db.update(shipments).set(data).where(eq(shipments.id, id));
+}
+
+export async function deleteShipment(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const receivingRecord = await db
+    .select({ id: poReceivingRecords.id })
+    .from(poReceivingRecords)
+    .where(eq(poReceivingRecords.shipmentId, id))
+    .limit(1);
+
+  if (receivingRecord.length > 0) {
+    throw new Error("Cannot delete shipment with linked receiving records");
+  }
+
+  const freightAllocation = await db
+    .select({ id: freightCostAllocations.id })
+    .from(freightCostAllocations)
+    .where(eq(freightCostAllocations.shipmentId, id))
+    .limit(1);
+
+  if (freightAllocation.length > 0) {
+    throw new Error("Cannot delete shipment with linked freight cost allocations");
+  }
+  await db.delete(shipments).where(eq(shipments.id, id));
 }
 
 // ============================================
@@ -1660,6 +1704,16 @@ export async function updateProject(id: number, data: Partial<InsertProject>) {
   const db = await getDb();
   if (!db) return;
   await db.update(projects).set(data).where(eq(projects.id, id));
+}
+
+export async function deleteProject(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.delete(projectTasks).where(eq(projectTasks.projectId, id));
+    await tx.delete(projectMilestones).where(eq(projectMilestones.projectId, id));
+    await tx.delete(projects).where(eq(projects.id, id));
+  });
 }
 
 export async function createProjectMilestone(data: typeof projectMilestones.$inferInsert) {
@@ -2593,6 +2647,15 @@ export async function updateTransferItem(id: number, data: Partial<InsertInvento
   if (!db) throw new Error("Database not available");
   await db.update(inventoryTransferItems).set(data).where(eq(inventoryTransferItems.id, id));
   return { success: true };
+}
+
+export async function deleteTransfer(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.delete(inventoryTransferItems).where(eq(inventoryTransferItems.transferId, id));
+    await tx.delete(inventoryTransfers).where(eq(inventoryTransfers.id, id));
+  });
 }
 
 export async function processTransferShipment(transferId: number) {
@@ -6462,6 +6525,28 @@ export async function updateDataRoomDocument(id: number, data: Partial<InsertDat
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(dataRoomDocuments).set(data).where(eq(dataRoomDocuments.id, id));
+}
+
+// Update a document and bump its version atomically. The version increment
+// runs as `version = version + 1` in the same UPDATE so concurrent refreshes
+// can't both observe the same starting value and write the same new version.
+// Returns the new version read back from the row.
+export async function updateDataRoomDocumentBumpVersion(
+  id: number,
+  data: Partial<InsertDataRoomDocument>,
+): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .update(dataRoomDocuments)
+    .set({ ...data, version: sql`${dataRoomDocuments.version} + 1` })
+    .where(eq(dataRoomDocuments.id, id));
+  const [row] = await db
+    .select({ version: dataRoomDocuments.version })
+    .from(dataRoomDocuments)
+    .where(eq(dataRoomDocuments.id, id))
+    .limit(1);
+  return row?.version ?? 1;
 }
 
 export async function deleteDataRoomDocument(id: number) {
