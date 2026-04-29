@@ -187,17 +187,22 @@ export async function syncFirefliesMeetingsForUser(
                 const contact = await db.getCrmContactById(contactFoundId);
 
                 if (contact) {
-                  await db.createCrmDeal({
-                    pipelineId,
-                    contactId: contact.id,
-                    name: `Deal from: ${fullTranscript?.title || t.title || "Meeting"}`,
-                    stage: "discovery",
-                    source: "meeting",
-                    notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
-                  });
-                  result.dealsCreated++;
+                  if (created) {
+                    // Only create a deal the first time we see this contact —
+                    // subsequent meetings with the same person just add interactions.
+                    await db.createCrmDeal({
+                      pipelineId,
+                      contactId: contact.id,
+                      name: `Deal from: ${fullTranscript?.title || t.title || "Meeting"}`,
+                      stage: "discovery",
+                      source: "meeting",
+                      notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
+                    });
+                    result.dealsCreated++;
+                  }
 
-                  // Log meeting as CRM interaction
+                  // Always log meeting as CRM interaction regardless of whether
+                  // the contact already existed.
                   await db.createCrmInteraction({
                     contactId: contact.id,
                     channel: "meeting",
