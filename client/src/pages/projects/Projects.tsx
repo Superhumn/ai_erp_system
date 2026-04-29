@@ -46,6 +46,7 @@ import {
   SlidersHorizontal,
   X,
   Circle,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -227,6 +228,8 @@ export default function Projects() {
   const [inlineText, setInlineText] = useState("");
   const inlineRef = useRef<HTMLInputElement>(null);
 
+  const [deleteProjectId, setDeleteProjectId] = useState<number | null>(null);
+
   useEffect(() => {
     const t = setTimeout(() => setStatsVisible(true), 100);
     return () => clearTimeout(t);
@@ -262,6 +265,16 @@ export default function Projects() {
   const updateTask = trpc.projects.updateTask.useMutation({
     onSuccess: () => (utils.projects as any).listAllTasks.invalidate(),
     onError: (e) => toast.error(e.message),
+  });
+
+  const deleteProject = (trpc.projects as any).delete.useMutation({
+    onSuccess: () => {
+      toast.success("Project deleted");
+      setDeleteProjectId(null);
+      utils.projects.list.invalidate();
+      (utils.projects as any).listAllTasks.invalidate();
+    },
+    onError: (e: any) => toast.error(e.message),
   });
 
   const projectList = useMemo(() => (projects as unknown as Project[]) || [], [projects]);
@@ -767,6 +780,14 @@ export default function Projects() {
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
                       <Badge variant="secondary" className="text-[11px]">{tasks.length}</Badge>
+                      <button
+                        type="button"
+                        aria-label="Delete project"
+                        onClick={(e) => { e.stopPropagation(); setDeleteProjectId(projectId); }}
+                        className="rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                       {collapsed ? (
                         <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
                       ) : (
@@ -1017,6 +1038,31 @@ export default function Projects() {
           })}
         </div>
       )}
+
+      {/* Delete project confirmation dialog */}
+      <Dialog open={deleteProjectId !== null} onOpenChange={(open) => { if (!open) setDeleteProjectId(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete project?</DialogTitle>
+            <DialogDescription>
+              This will permanently delete{" "}
+              <strong>{projectMap.get(deleteProjectId!)?.name ?? "this project"}</strong> and all
+              its tasks and milestones. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setDeleteProjectId(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={deleteProject.isPending}
+              onClick={() => deleteProjectId !== null && deleteProject.mutate({ id: deleteProjectId })}
+            >
+              {deleteProject.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

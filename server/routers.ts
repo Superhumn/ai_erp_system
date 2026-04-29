@@ -2891,6 +2891,13 @@ ONLY return the JSON array, no other text.`;
         await createAuditLog(ctx.user.id, 'update', 'projectTask', id);
         return { success: true };
       }),
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteProject(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'project', input.id);
+        return { success: true };
+      }),
     tasks: protectedProcedure
       .input(z.object({ projectId: z.number() }))
       .query(({ input }) => input.projectId === 0 ? db.getAllProjectTasks() : db.getProjectTasks(input.projectId)),
