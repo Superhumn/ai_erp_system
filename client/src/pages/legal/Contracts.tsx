@@ -35,11 +35,13 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
 import { getStatusColor } from "@/lib/statusColors";
+import { DetailSheet } from "@/components/DetailSheet";
 
 export default function Contracts() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
+  const [selectedContract, setSelectedContract] = useState<any | null>(null);
   const [formData, setFormData] = useState({
     title: "",
     type: "customer" as "customer" | "vendor" | "employment" | "nda" | "partnership" | "other",
@@ -275,7 +277,7 @@ export default function Contracts() {
               </TableHeader>
               <TableBody>
                 {filteredContracts.map((contract) => (
-                  <TableRow key={contract.id}>
+                  <TableRow key={contract.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setSelectedContract(contract)}>
                     <TableCell className="font-mono">{contract.contractNumber}</TableCell>
                     <TableCell className="font-medium max-w-xs truncate">{contract.title}</TableCell>
                     <TableCell>{contract.partyName || "-"}</TableCell>
@@ -309,6 +311,51 @@ export default function Contracts() {
           )}
         </CardContent>
       </Card>
+
+      <DetailSheet
+        open={!!selectedContract}
+        onOpenChange={(o) => !o && setSelectedContract(null)}
+        title={selectedContract?.title}
+        subtitle={selectedContract?.contractNumber}
+        width="md"
+      >
+        {selectedContract && (
+          <div className="space-y-4 text-sm">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Type</p>
+                <Badge className={typeColors[selectedContract.type]}>{selectedContract.type}</Badge>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Status</p>
+                <Badge className={getStatusColor(selectedContract.status)}>{selectedContract.status.replace("_", " ")}</Badge>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Counterparty</p>
+                <p className="font-medium">{selectedContract.partyName || "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Value</p>
+                <p className="font-medium font-mono">{selectedContract.value ? formatCurrency(selectedContract.value) : "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Start Date</p>
+                <p className="font-medium">{selectedContract.startDate ? format(new Date(selectedContract.startDate), "MMM d, yyyy") : "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">End Date</p>
+                <p className="font-medium">{selectedContract.endDate ? format(new Date(selectedContract.endDate), "MMM d, yyyy") : "—"}</p>
+              </div>
+            </div>
+            {selectedContract.description && (
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Description</p>
+                <p className="text-sm whitespace-pre-wrap">{selectedContract.description}</p>
+              </div>
+            )}
+          </div>
+        )}
+      </DetailSheet>
     </div>
   );
 }

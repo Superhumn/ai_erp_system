@@ -47,6 +47,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { DetailSheet } from "@/components/DetailSheet";
 
 type ContactType = "lead" | "prospect" | "customer" | "partner" | "investor" | "donor" | "vendor" | "other";
 type ContactSource = "iphone_bump" | "whatsapp" | "linkedin_scan" | "business_card" | "website" | "referral" | "event" | "cold_outreach" | "import" | "manual";
@@ -82,7 +83,6 @@ export default function CRMHub() {
   const [isCaptureDialogOpen, setIsCaptureDialogOpen] = useState(false);
   const [captureMethod, setCaptureMethod] = useState<string>("manual");
   const [selectedContact, setSelectedContact] = useState<any>(null);
-  const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [expandedDealId, setExpandedDealId] = useState<number | null>(null);
 
@@ -1072,7 +1072,6 @@ export default function CRMHub() {
                       className={`hover:bg-muted/50 cursor-pointer ${selectedIds.has(contact.id) ? "bg-primary/5" : ""}`}
                       onClick={() => {
                         setSelectedContact(contact);
-                        setIsDetailOpen(true);
                       }}
                     >
                       <TableCell onClick={(e) => e.stopPropagation()}>
@@ -1126,7 +1125,6 @@ export default function CRMHub() {
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => {
                               setSelectedContact(contact);
-                              setIsDetailOpen(true);
                             }}>
                               View Details
                             </DropdownMenuItem>
@@ -1271,30 +1269,28 @@ export default function CRMHub() {
       </Dialog>
 
       {/* Contact Detail Dialog — Full Profile View */}
-      <Dialog open={isDetailOpen} onOpenChange={(open) => { setIsDetailOpen(open); if (!open) setSelectedContact(null); }}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-xl">{selectedContact?.fullName}</DialogTitle>
-            <DialogDescription>
-              {selectedContact?.jobTitle && `${selectedContact.jobTitle} at `}
-              {selectedContact?.organization || "No organization"}
-              {selectedContact?.contactType && (
-                <Badge className="ml-2">{selectedContact.contactType}</Badge>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          {selectedContact && (() => {
-            const ContactDetailView = () => {
-              const [activeTab, setActiveTab] = useState<"profile" | "notes" | "emails" | "documents">("profile");
-              const [form, setForm] = useState({
-                email: selectedContact.email || "",
-                phone: selectedContact.phone || "",
-                whatsappNumber: selectedContact.whatsappNumber || "",
-                linkedinUrl: selectedContact.linkedinUrl || "",
-                contactType: selectedContact.contactType || "lead",
-                notes: selectedContact.notes || "",
-                organization: selectedContact.organization || "",
-                jobTitle: selectedContact.jobTitle || "",
+      <DetailSheet
+        open={!!selectedContact}
+        onOpenChange={(open) => { if (!open) setSelectedContact(null); }}
+        title={selectedContact?.fullName}
+        subtitle={[
+          selectedContact?.jobTitle,
+          selectedContact?.organization || "No organization",
+        ].filter(Boolean).join(" at ")}
+        width="lg"
+      >
+        {selectedContact && (() => {
+          const ContactDetailView = () => {
+            const [activeTab, setActiveTab] = useState<"profile" | "notes" | "emails" | "documents">("profile");
+            const [form, setForm] = useState({
+              email: selectedContact.email || "",
+              phone: selectedContact.phone || "",
+              whatsappNumber: selectedContact.whatsappNumber || "",
+              linkedinUrl: selectedContact.linkedinUrl || "",
+              contactType: selectedContact.contactType || "lead",
+              notes: selectedContact.notes || "",
+              organization: selectedContact.organization || "",
+              jobTitle: selectedContact.jobTitle || "",
               });
               const [newNote, setNewNote] = useState("");
 
@@ -1381,7 +1377,7 @@ export default function CRMHub() {
                         <Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Notes about this contact..." rows={3} />
                       </div>
                       <div className="flex justify-end gap-2 pt-2">
-                        <Button variant="outline" onClick={() => setIsDetailOpen(false)}>Cancel</Button>
+                        <Button variant="outline" onClick={() => setSelectedContact(null)}>Cancel</Button>
                         <Button onClick={() => updateContact.mutate({ id: selectedContact.id, ...form })} disabled={updateContact.isPending}>
                           {updateContact.isPending ? "Saving..." : "Save Changes"}
                         </Button>
@@ -1469,8 +1465,7 @@ export default function CRMHub() {
             };
             return <ContactDetailView />;
           })()}
-        </DialogContent>
-      </Dialog>
+      </DetailSheet>
     </div>
   );
 }
