@@ -9,7 +9,7 @@ import { SelectWithCreate } from "@/components/ui/select-with-create";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Play, CheckCircle, Eye, Factory, Trash2, Loader2 } from "lucide-react";
+import { Plus, Play, CheckCircle, Eye, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "wouter";
 
