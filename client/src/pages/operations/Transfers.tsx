@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Plus, ArrowRight, Truck, Package, Eye, Send, CheckCircle, Trash2, Loader2 } from "lucide-react";
+import { Plus, ArrowRight, Truck, Eye, Trash2, Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
 
 export default function Transfers() {
