@@ -3,7 +3,7 @@
 // Falls back to AWS S3 when Forge API credentials are not configured.
 
 import { ENV } from './_core/env';
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 // ── Forge proxy helpers ────────────────────────────────────────────────────────
@@ -193,5 +193,26 @@ export async function storageGet(relKey: string): Promise<{ key: string; url: st
     key,
     url: await buildDownloadUrl(baseUrl, key, apiKey),
   };
+}
+
+// Delete an object from the configured backend. S3 is implemented; the Forge
+// proxy doesn't currently expose a delete API, so we no-op there with a
+// warning rather than failing the caller.
+export async function storageDelete(relKey: string): Promise<void> {
+  if (!relKey) return;
+  const key = normalizeKey(relKey);
+  if (isS3Configured() && (!ENV.forgeApiUrl || !ENV.forgeApiKey)) {
+    const s3 = getS3Client();
+    await s3.send(new DeleteObjectCommand({ Bucket: ENV.awsS3Bucket, Key: key }));
+    return;
+  }
+  if (isS3Configured()) {
+    // Both backends configured — prefer S3 for deletion since that's where
+    // S3-keyed blobs live.
+    const s3 = getS3Client();
+    await s3.send(new DeleteObjectCommand({ Bucket: ENV.awsS3Bucket, Key: key }));
+    return;
+  }
+  console.warn(`[storage] delete skipped for key ${key}: Forge proxy has no delete API`);
 }
 
