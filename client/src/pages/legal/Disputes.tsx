@@ -17,13 +17,14 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  Scale, Plus, Search, Loader2, ChevronDown, ChevronRight,
-  AlertTriangle, Clock, DollarSign, Gavel, FileText, Upload,
-  Calendar, User, Building2, MapPin,
+  Scale, Plus, Search, Loader2,
+  DollarSign, Gavel, Upload,
+  Calendar, Building2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
+import { DetailSheet } from "@/components/DetailSheet";
 
 const priorityColors: Record<string, string> = {
   critical: "bg-red-600 text-white",
@@ -55,7 +56,7 @@ export default function Disputes() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [isOpen, setIsOpen] = useState(false);
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [selectedDispute, setSelectedDispute] = useState<any | null>(null);
   const [formData, setFormData] = useState({
     title: "",
     type: "customer" as "customer" | "vendor" | "employee" | "legal" | "regulatory" | "other",
@@ -328,121 +329,135 @@ export default function Disputes() {
             </div>
           ) : (
             <div className="divide-y">
-              {filtered.map((dispute: any) => {
-                const isExpanded = expandedId === dispute.id;
-                // Parse case details from description
-                const lines = (dispute.description || "").split("\n");
-                const mainDesc = lines.filter((l: string) => !l.startsWith("Case #:") && !l.startsWith("Jurisdiction:") && !l.startsWith("Court:") && !l.startsWith("Attorney:") && !l.startsWith("Next Hearing:")).join("\n").trim();
-                const caseNum = lines.find((l: string) => l.startsWith("Case #:"))?.replace("Case #: ", "") || "";
-                const jurisdiction = lines.find((l: string) => l.startsWith("Jurisdiction:"))?.replace("Jurisdiction: ", "") || "";
-                const court = lines.find((l: string) => l.startsWith("Court:"))?.replace("Court: ", "") || "";
-                const attorney = lines.find((l: string) => l.startsWith("Attorney:"))?.replace("Attorney: ", "") || "";
-                const nextHearing = lines.find((l: string) => l.startsWith("Next Hearing:"))?.replace("Next Hearing: ", "") || "";
-
-                return (
-                  <div key={dispute.id}>
-                    <button
-                      className="w-full text-left px-4 py-3 hover:bg-muted/40 transition-colors"
-                      onClick={() => setExpandedId(isExpanded ? null : dispute.id)}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="shrink-0 text-muted-foreground">
-                          {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium truncate">{dispute.title}</span>
-                            <span className="text-xs text-muted-foreground">{dispute.disputeNumber}</span>
-                          </div>
-                          <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
-                            {dispute.partyName && <span className="flex items-center gap-1"><Building2 className="h-3 w-3" />{dispute.partyName}</span>}
-                            {dispute.filedDate && <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{format(new Date(dispute.filedDate), "MMM d, yyyy")}</span>}
-                            {dispute.estimatedValue && parseFloat(dispute.estimatedValue) > 0 && (
-                              <span className="flex items-center gap-1"><DollarSign className="h-3 w-3" />{formatCurrency(parseFloat(dispute.estimatedValue))}</span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="shrink-0 flex items-center gap-2">
-                          <Badge className={priorityColors[dispute.priority] || priorityColors.medium}>
-                            {dispute.priority || "medium"}
-                          </Badge>
-                          <Badge className={typeColors[dispute.type] || typeColors.other}>
-                            {dispute.type}
-                          </Badge>
-                          <Badge className={statusColors[dispute.status] || statusColors.open}>
-                            {dispute.status}
-                          </Badge>
-                        </div>
+              {filtered.map((dispute: any) => (
+                <button
+                  key={dispute.id}
+                  className="w-full text-left px-4 py-3 hover:bg-muted/40 transition-colors"
+                  onClick={() => setSelectedDispute(dispute)}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium truncate">{dispute.title}</span>
+                        <span className="text-xs text-muted-foreground">{dispute.disputeNumber}</span>
                       </div>
-                    </button>
-
-                    {isExpanded && (
-                      <div className="px-4 pb-4 pt-1 bg-muted/20 border-t space-y-3">
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                          {caseNum && (
-                            <div className="text-sm">
-                              <span className="text-muted-foreground text-xs block">Case Number</span>
-                              <span className="font-medium">{caseNum}</span>
-                            </div>
-                          )}
-                          {jurisdiction && (
-                            <div className="text-sm">
-                              <span className="text-muted-foreground text-xs block">Jurisdiction</span>
-                              <span className="font-medium">{jurisdiction}</span>
-                            </div>
-                          )}
-                          {court && (
-                            <div className="text-sm">
-                              <span className="text-muted-foreground text-xs block">Court</span>
-                              <span className="font-medium">{court}</span>
-                            </div>
-                          )}
-                          {attorney && (
-                            <div className="text-sm">
-                              <span className="text-muted-foreground text-xs block">Attorney</span>
-                              <span className="font-medium">{attorney}</span>
-                            </div>
-                          )}
-                          {nextHearing && (
-                            <div className="text-sm">
-                              <span className="text-muted-foreground text-xs block">Next Hearing</span>
-                              <span className="font-medium text-amber-600">{nextHearing}</span>
-                            </div>
-                          )}
-                          <div className="text-sm">
-                            <span className="text-muted-foreground text-xs block">Filed</span>
-                            <span className="font-medium">{dispute.filedDate ? format(new Date(dispute.filedDate), "MMM d, yyyy") : "—"}</span>
-                          </div>
-                          <div className="text-sm">
-                            <span className="text-muted-foreground text-xs block">Exposure</span>
-                            <span className="font-medium">{dispute.estimatedValue ? formatCurrency(parseFloat(dispute.estimatedValue)) : "—"}</span>
-                          </div>
-                          <div className="text-sm">
-                            <span className="text-muted-foreground text-xs block">Assigned To</span>
-                            <span className="font-medium">{dispute.assignedTo || "Unassigned"}</span>
-                          </div>
-                        </div>
-                        {mainDesc && (
-                          <div>
-                            <span className="text-xs text-muted-foreground block mb-1">Description</span>
-                            <p className="text-sm whitespace-pre-wrap bg-background p-3 rounded border">{mainDesc}</p>
-                          </div>
-                        )}
-                        {dispute.resolution && (
-                          <div>
-                            <span className="text-xs text-muted-foreground block mb-1">Resolution</span>
-                            <p className="text-sm whitespace-pre-wrap bg-green-50 dark:bg-green-950/20 p-3 rounded border border-green-200">{dispute.resolution}</p>
-                          </div>
+                      <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
+                        {dispute.partyName && <span className="flex items-center gap-1"><Building2 className="h-3 w-3" />{dispute.partyName}</span>}
+                        {dispute.filedDate && <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{format(new Date(dispute.filedDate), "MMM d, yyyy")}</span>}
+                        {dispute.estimatedValue && parseFloat(dispute.estimatedValue) > 0 && (
+                          <span className="flex items-center gap-1"><DollarSign className="h-3 w-3" />{formatCurrency(parseFloat(dispute.estimatedValue))}</span>
                         )}
                       </div>
-                    )}
+                    </div>
+                    <div className="shrink-0 flex items-center gap-2">
+                      <Badge className={priorityColors[dispute.priority] || priorityColors.medium}>
+                        {dispute.priority || "medium"}
+                      </Badge>
+                      <Badge className={typeColors[dispute.type] || typeColors.other}>
+                        {dispute.type}
+                      </Badge>
+                      <Badge className={statusColors[dispute.status] || statusColors.open}>
+                        {dispute.status}
+                      </Badge>
+                    </div>
                   </div>
-                );
-              })}
+                </button>
+              ))}
             </div>
           )}
         </CardContent>
       </Card>
+
+      {/* Dispute Detail Side Panel */}
+      {(() => {
+        if (!selectedDispute) return null;
+        const lines = (selectedDispute.description || "").split("\n");
+        const mainDesc = lines.filter((l: string) => !l.startsWith("Case #:") && !l.startsWith("Jurisdiction:") && !l.startsWith("Court:") && !l.startsWith("Attorney:") && !l.startsWith("Next Hearing:")).join("\n").trim();
+        const caseNum = lines.find((l: string) => l.startsWith("Case #:"))?.replace("Case #: ", "") || "";
+        const jurisdiction = lines.find((l: string) => l.startsWith("Jurisdiction:"))?.replace("Jurisdiction: ", "") || "";
+        const court = lines.find((l: string) => l.startsWith("Court:"))?.replace("Court: ", "") || "";
+        const attorney = lines.find((l: string) => l.startsWith("Attorney:"))?.replace("Attorney: ", "") || "";
+        const nextHearing = lines.find((l: string) => l.startsWith("Next Hearing:"))?.replace("Next Hearing: ", "") || "";
+        return (
+          <DetailSheet
+            open={!!selectedDispute}
+            onOpenChange={(o) => !o && setSelectedDispute(null)}
+            title={selectedDispute.title}
+            subtitle={selectedDispute.disputeNumber}
+            width="md"
+          >
+            <div className="space-y-4 text-sm">
+              <div className="flex flex-wrap gap-2">
+                <Badge className={priorityColors[selectedDispute.priority] || priorityColors.medium}>{selectedDispute.priority || "medium"}</Badge>
+                <Badge className={typeColors[selectedDispute.type] || typeColors.other}>{selectedDispute.type}</Badge>
+                <Badge className={statusColors[selectedDispute.status] || statusColors.open}>{selectedDispute.status}</Badge>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {selectedDispute.partyName && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-0.5">Counterparty</p>
+                    <p className="font-medium">{selectedDispute.partyName}</p>
+                  </div>
+                )}
+                <div>
+                  <p className="text-xs text-muted-foreground mb-0.5">Filed</p>
+                  <p className="font-medium">{selectedDispute.filedDate ? format(new Date(selectedDispute.filedDate), "MMM d, yyyy") : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-0.5">Exposure</p>
+                  <p className="font-medium">{selectedDispute.estimatedValue ? formatCurrency(parseFloat(selectedDispute.estimatedValue)) : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-0.5">Assigned To</p>
+                  <p className="font-medium">{selectedDispute.assignedTo || "Unassigned"}</p>
+                </div>
+                {caseNum && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-0.5">Case Number</p>
+                    <p className="font-medium font-mono">{caseNum}</p>
+                  </div>
+                )}
+                {jurisdiction && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-0.5">Jurisdiction</p>
+                    <p className="font-medium">{jurisdiction}</p>
+                  </div>
+                )}
+                {court && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-0.5">Court</p>
+                    <p className="font-medium">{court}</p>
+                  </div>
+                )}
+                {attorney && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-0.5">Attorney</p>
+                    <p className="font-medium">{attorney}</p>
+                  </div>
+                )}
+                {nextHearing && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-0.5">Next Hearing</p>
+                    <p className="font-medium text-amber-600">{nextHearing}</p>
+                  </div>
+                )}
+              </div>
+              {mainDesc && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Description</p>
+                  <p className="text-sm whitespace-pre-wrap bg-muted/40 p-3 rounded border">{mainDesc}</p>
+                </div>
+              )}
+              {selectedDispute.resolution && (
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Resolution</p>
+                  <p className="text-sm whitespace-pre-wrap bg-green-50 dark:bg-green-950/20 p-3 rounded border border-green-200">{selectedDispute.resolution}</p>
+                </div>
+              )}
+            </div>
+          </DetailSheet>
+        );
+      })()}
     </div>
   );
 }

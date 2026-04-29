@@ -122,260 +122,260 @@ Source: `server/db.ts` (12882 lines, 924 top-level exports, 108 comment-banner s
 
 ## Per-section export listings
 
-### (preamble — connection, types, helpers)  L1–L190
+### (preamble — connection, types, helpers)  L1–L192
 
-- `getDb` — L179 — ✓ `db/connection`
+- `getDb` — L181 — ✓ `db/connection`
 
-### USER MANAGEMENT  L191–L323
+### USER MANAGEMENT  L193–L325
 
-- `upsertUser` — L195 — ✓ `db/auth`
-- `getUserByOpenId` — L254 — ✓ `db/auth`
-- `getUserByEmail` — L265 — ✓ `db/auth`
-- `getAllUsers` — L275 — ✓ `db/auth`
-- `updateUserRole` — L281 — ✓ `db/auth`
-- `deleteUser` — L287 — ✗ legacy-only
-- `updateUser` — L297 — ✗ legacy-only
-- `changeUserPassword` — L303 — ✗ legacy-only
+- `upsertUser` — L197 — ✓ `db/auth`
+- `getUserByOpenId` — L256 — ✓ `db/auth`
+- `getUserByEmail` — L267 — ✓ `db/auth`
+- `getAllUsers` — L277 — ✓ `db/auth`
+- `updateUserRole` — L283 — ✓ `db/auth`
+- `deleteUser` — L289 — ✗ legacy-only
+- `updateUser` — L299 — ✗ legacy-only
+- `changeUserPassword` — L305 — ✗ legacy-only
 
-### COMPANY MANAGEMENT  L324–L393
+### COMPANY MANAGEMENT  L326–L395
 
-- `getLocalAuthCredentialByEmail` — L328 — ✓ `db/auth`
-- `getLocalAuthCredentialByOpenId` — L339 — ✓ `db/auth`
-- `createLocalAuthCredential` — L350 — ✓ `db/auth`
-- `updateLocalAuthCredential` — L359 — ✓ `db/auth`
-- `getCompanies` — L368 — ✓ `db/auth`
-- `getCompanyById` — L374 — ✓ `db/auth`
-- `createCompany` — L381 — ✓ `db/auth`
-- `updateCompany` — L388 — ✓ `db/auth`
+- `getLocalAuthCredentialByEmail` — L330 — ✓ `db/auth`
+- `getLocalAuthCredentialByOpenId` — L341 — ✓ `db/auth`
+- `createLocalAuthCredential` — L352 — ✓ `db/auth`
+- `updateLocalAuthCredential` — L361 — ✓ `db/auth`
+- `getCompanies` — L370 — ✓ `db/auth`
+- `getCompanyById` — L376 — ✓ `db/auth`
+- `createCompany` — L383 — ✓ `db/auth`
+- `updateCompany` — L390 — ✓ `db/auth`
 
-### CUSTOMER MANAGEMENT  L394–L453
+### CUSTOMER MANAGEMENT  L396–L455
 
-- `getCustomers` — L398 — ✓ `db/sales`
-- `getCustomerById` — L407 — ✓ `db/sales`
-- `getCustomerByShopifyId` — L414 — ✓ `db/sales`
-- `getCustomerByHubspotId` — L421 — ✓ `db/sales`
-- `getCustomerByEmail` — L428 — ✓ `db/sales`
-- `createCustomer` — L435 — ✓ `db/sales`
-- `updateCustomer` — L442 — ✓ `db/sales`
-- `deleteCustomer` — L448 — ✓ `db/sales`
+- `getCustomers` — L400 — ✓ `db/sales`
+- `getCustomerById` — L409 — ✓ `db/sales`
+- `getCustomerByShopifyId` — L416 — ✓ `db/sales`
+- `getCustomerByHubspotId` — L423 — ✓ `db/sales`
+- `getCustomerByEmail` — L430 — ✓ `db/sales`
+- `createCustomer` — L437 — ✓ `db/sales`
+- `updateCustomer` — L444 — ✓ `db/sales`
+- `deleteCustomer` — L450 — ✓ `db/sales`
 
-### VENDOR MANAGEMENT  L454–L499
+### VENDOR MANAGEMENT  L456–L501
 
-- `getVendors` — L458 — ✓ `db/procurement`
-- `getVendorById` — L467 — ✓ `db/procurement`
-- `getVendorsByIds` — L474 — ✗ legacy-only
-- `createVendor` — L481 — ✓ `db/procurement`
-- `updateVendor` — L488 — ✓ `db/procurement`
-- `deleteVendor` — L494 — ✓ `db/procurement`
+- `getVendors` — L460 — ✓ `db/procurement`
+- `getVendorById` — L469 — ✓ `db/procurement`
+- `getVendorsByIds` — L476 — ✗ legacy-only
+- `createVendor` — L483 — ✓ `db/procurement`
+- `updateVendor` — L490 — ✓ `db/procurement`
+- `deleteVendor` — L496 — ✓ `db/procurement`
 
-### PRODUCT MANAGEMENT  L500–L556
+### PRODUCT MANAGEMENT  L502–L558
 
-- `getProducts` — L507 — ✓ `db/operations`
-- `getProductById` — L524 — ✓ `db/operations`
-- `getProductBySku` — L531 — ✓ `db/operations`
-- `createProduct` — L538 — ✓ `db/operations`
-- `updateProduct` — L545 — ✓ `db/operations`
-- `deleteProduct` — L551 — ✓ `db/operations`
+- `getProducts` — L509 — ✓ `db/operations`
+- `getProductById` — L526 — ✓ `db/operations`
+- `getProductBySku` — L533 — ✓ `db/operations`
+- `createProduct` — L540 — ✓ `db/operations`
+- `updateProduct` — L547 — ✓ `db/operations`
+- `deleteProduct` — L553 — ✓ `db/operations`
 
-### FINANCE - ACCOUNTS  L557–L589
+### FINANCE - ACCOUNTS  L559–L591
 
-- `getAccounts` — L561 — ✓ `db/finance`
-- `getAccountById` — L570 — ✓ `db/finance`
-- `createAccount` — L577 — ✓ `db/finance`
-- `updateAccount` — L584 — ✓ `db/finance`
+- `getAccounts` — L563 — ✓ `db/finance`
+- `getAccountById` — L572 — ✓ `db/finance`
+- `createAccount` — L579 — ✓ `db/finance`
+- `updateAccount` — L586 — ✓ `db/finance`
 
-### FINANCE - INVOICES  L590–L710
+### FINANCE - INVOICES  L592–L712
 
-- `getInvoices` — L594 — ✓ `db/finance`
-- `getInvoiceById` — L635 — ✓ `db/finance`
-- `getInvoiceWithItems` — L642 — ✓ `db/finance`
-- `createInvoice` — L678 — ✓ `db/finance`
-- `getInvoiceByNumber` — L685 — ✓ `db/finance`
-- `updateInvoice` — L698 — ✓ `db/finance`
-- `createInvoiceItem` — L704 — ✓ `db/finance`
+- `getInvoices` — L596 — ✓ `db/finance`
+- `getInvoiceById` — L637 — ✓ `db/finance`
+- `getInvoiceWithItems` — L644 — ✓ `db/finance`
+- `createInvoice` — L680 — ✓ `db/finance`
+- `getInvoiceByNumber` — L687 — ✓ `db/finance`
+- `updateInvoice` — L700 — ✓ `db/finance`
+- `createInvoiceItem` — L706 — ✓ `db/finance`
 
-### FINANCE - PAYMENTS  L711–L749
+### FINANCE - PAYMENTS  L713–L751
 
-- `getPayments` — L715 — ✓ `db/finance`
-- `getPaymentById` — L730 — ✓ `db/finance`
-- `createPayment` — L737 — ✓ `db/finance`
-- `updatePayment` — L744 — ✓ `db/finance`
+- `getPayments` — L717 — ✓ `db/finance`
+- `getPaymentById` — L732 — ✓ `db/finance`
+- `createPayment` — L739 — ✓ `db/finance`
+- `updatePayment` — L746 — ✓ `db/finance`
 
-### FINANCE - TRANSACTIONS  L750–L806
+### FINANCE - TRANSACTIONS  L752–L808
 
-- `getTransactions` — L754 — ✓ `db/finance`
-- `createTransaction` — L769 — ✓ `db/finance`
-- `createTransactionLine` — L776 — ✗ legacy-only
-- `getAccountByCode` — L789 — ✗ legacy-only
-- `getAccountByName` — L798 — ✗ legacy-only
+- `getTransactions` — L756 — ✓ `db/finance`
+- `createTransaction` — L771 — ✓ `db/finance`
+- `createTransactionLine` — L778 — ✗ legacy-only
+- `getAccountByCode` — L791 — ✗ legacy-only
+- `getAccountByName` — L800 — ✗ legacy-only
 
-### SALES - ORDERS  L807–L877
+### SALES - ORDERS  L809–L879
 
-- `getOrders` — L811 — ✓ `db/sales`
-- `getOrderById` — L826 — ✓ `db/sales`
-- `getOrderByShopifyId` — L833 — ✗ legacy-only
-- `getProductByShopifyId` — L840 — ✗ legacy-only
-- `getOrderWithItems` — L847 — ✓ `db/sales`
-- `createOrder` — L858 — ✓ `db/sales`
-- `updateOrder` — L865 — ✓ `db/sales`
-- `createOrderItem` — L871 — ✓ `db/sales`
+- `getOrders` — L813 — ✓ `db/sales`
+- `getOrderById` — L828 — ✓ `db/sales`
+- `getOrderByShopifyId` — L835 — ✗ legacy-only
+- `getProductByShopifyId` — L842 — ✗ legacy-only
+- `getOrderWithItems` — L849 — ✓ `db/sales`
+- `createOrder` — L860 — ✓ `db/sales`
+- `updateOrder` — L867 — ✓ `db/sales`
+- `createOrderItem` — L873 — ✓ `db/sales`
 
-### OPERATIONS - INVENTORY  L878–L975
+### OPERATIONS - INVENTORY  L880–L977
 
-- `getInventory` — L882 — ✓ `db/operations`
-- `createInventory` — L899 — ✓ `db/operations`
-- `updateInventory` — L906 — ✓ `db/operations`
-- `bulkUpdateInventory` — L912 — ✓ `db/operations`
-- `getInventoryByIds` — L969 — ✓ `db/operations`
+- `getInventory` — L884 — ✓ `db/operations`
+- `createInventory` — L901 — ✓ `db/operations`
+- `updateInventory` — L908 — ✓ `db/operations`
+- `bulkUpdateInventory` — L914 — ✓ `db/operations`
+- `getInventoryByIds` — L971 — ✓ `db/operations`
 
-### OPERATIONS - WAREHOUSES / LOCATIONS  L976–L1038
+### OPERATIONS - WAREHOUSES / LOCATIONS  L978–L1040
 
-- `getWarehouses` — L980 — ✓ `db/operations`
-- `getWarehouseById` — L1004 — ✓ `db/operations`
-- `getWarehouseByName` — L1011 — ✓ `db/operations`
-- `createWarehouse` — L1018 — ✓ `db/operations`
-- `updateWarehouse` — L1025 — ✓ `db/operations`
-- `deleteWarehouse` — L1032 — ✓ `db/operations`
+- `getWarehouses` — L982 — ✓ `db/operations`
+- `getWarehouseById` — L1006 — ✓ `db/operations`
+- `getWarehouseByName` — L1013 — ✓ `db/operations`
+- `createWarehouse` — L1020 — ✓ `db/operations`
+- `updateWarehouse` — L1027 — ✓ `db/operations`
+- `deleteWarehouse` — L1034 — ✓ `db/operations`
 
-### OPERATIONS - PRODUCTION BATCHES  L1039–L1070
+### OPERATIONS - PRODUCTION BATCHES  L1041–L1072
 
-- `getProductionBatches` — L1043 — ✓ `db/operations`
-- `createProductionBatch` — L1058 — ✓ `db/operations`
-- `updateProductionBatch` — L1065 — ✓ `db/operations`
+- `getProductionBatches` — L1045 — ✓ `db/operations`
+- `createProductionBatch` — L1060 — ✓ `db/operations`
+- `updateProductionBatch` — L1067 — ✓ `db/operations`
 
-### OPERATIONS - PURCHASE ORDERS  L1071–L1137
+### OPERATIONS - PURCHASE ORDERS  L1073–L1139
 
-- `getPurchaseOrders` — L1075 — ✓ `db/procurement`
-- `getPurchaseOrderById` — L1094 — ✓ `db/procurement`
-- `getPurchaseOrderWithItems` — L1101 — ✓ `db/procurement`
-- `createPurchaseOrder` — L1112 — ✓ `db/procurement`
-- `updatePurchaseOrder` — L1119 — ✓ `db/procurement`
-- `getAllPurchaseOrderItems` — L1125 — ✗ legacy-only
-- `createPurchaseOrderItem` — L1131 — ✓ `db/procurement`
+- `getPurchaseOrders` — L1077 — ✓ `db/procurement`
+- `getPurchaseOrderById` — L1096 — ✓ `db/procurement`
+- `getPurchaseOrderWithItems` — L1103 — ✓ `db/procurement`
+- `createPurchaseOrder` — L1114 — ✓ `db/procurement`
+- `updatePurchaseOrder` — L1121 — ✓ `db/procurement`
+- `getAllPurchaseOrderItems` — L1127 — ✗ legacy-only
+- `createPurchaseOrderItem` — L1133 — ✓ `db/procurement`
 
-### OPERATIONS - SHIPMENTS  L1138–L1176
+### OPERATIONS - SHIPMENTS  L1140–L1178
 
-- `getShipments` — L1142 — ✓ `db/procurement`
-- `getShipmentById` — L1157 — ✓ `db/procurement`
-- `createShipment` — L1164 — ✓ `db/procurement`
-- `updateShipment` — L1171 — ✓ `db/procurement`
+- `getShipments` — L1144 — ✓ `db/procurement`
+- `getShipmentById` — L1159 — ✓ `db/procurement`
+- `createShipment` — L1166 — ✓ `db/procurement`
+- `updateShipment` — L1173 — ✓ `db/procurement`
 
-### HR - DEPARTMENTS  L1177–L1196
+### HR - DEPARTMENTS  L1179–L1198
 
-- `getDepartments` — L1181 — ✓ `db/hr`
-- `createDepartment` — L1190 — ✓ `db/hr`
+- `getDepartments` — L1183 — ✓ `db/hr`
+- `createDepartment` — L1192 — ✓ `db/hr`
 
-### HR - EMPLOYEES  L1197–L1241
+### HR - EMPLOYEES  L1199–L1243
 
-- `getEmployees` — L1201 — ✓ `db/hr`
-- `getEmployeeById` — L1216 — ✓ `db/hr`
-- `createEmployee` — L1223 — ✓ `db/hr`
-- `updateEmployee` — L1230 — ✓ `db/hr`
-- `deleteEmployee` — L1236 — ✓ `db/hr`
+- `getEmployees` — L1203 — ✓ `db/hr`
+- `getEmployeeById` — L1218 — ✓ `db/hr`
+- `createEmployee` — L1225 — ✓ `db/hr`
+- `updateEmployee` — L1232 — ✓ `db/hr`
+- `deleteEmployee` — L1238 — ✓ `db/hr`
 
-### HR - COMPENSATION  L1242–L1258
+### HR - COMPENSATION  L1244–L1260
 
-- `getCompensationHistory` — L1246 — ✓ `db/hr`
-- `createCompensationRecord` — L1252 — ✓ `db/hr`
+- `getCompensationHistory` — L1248 — ✓ `db/hr`
+- `createCompensationRecord` — L1254 — ✓ `db/hr`
 
-### HR - EMPLOYEE PAYMENTS  L1259–L1284
+### HR - EMPLOYEE PAYMENTS  L1261–L1286
 
-- `getEmployeePayments` — L1263 — ✓ `db/hr`
-- `createEmployeePayment` — L1278 — ✓ `db/hr`
+- `getEmployeePayments` — L1265 — ✓ `db/hr`
+- `createEmployeePayment` — L1280 — ✓ `db/hr`
 
-### HR - EMPLOYEE PORTAL (self-service)  L1285–L1475
+### HR - EMPLOYEE PORTAL (self-service)  L1287–L1477
 
-- `getEmployeeByUserId` — L1289 — ✓ `db/hr`
-- `getPtoBalances` — L1296 — ✓ `db/hr`
-- `upsertPtoBalance` — L1304 — ✓ `db/hr`
-- `adjustPtoBalance` — L1326 — ✓ `db/hr`
-- `getLeaveRequests` — L1357 — ✓ `db/hr`
-- `getLeaveRequestById` — L1369 — ✓ `db/hr`
-- `createLeaveRequest` — L1376 — ✓ `db/hr`
-- `updateLeaveRequest` — L1383 — ✓ `db/hr`
-- `getOnboardingTasks` — L1389 — ✓ `db/hr`
-- `createOnboardingTask` — L1399 — ✓ `db/hr`
-- `updateOnboardingTask` — L1406 — ✓ `db/hr`
-- `getEmployeeBenefits` — L1415 — ✓ `db/hr`
-- `upsertEmployeeBenefit` — L1425 — ✓ `db/hr`
-- `updateEmployeeBenefit` — L1432 — ✓ `db/hr`
-- `getEmergencyContacts` — L1441 — ✓ `db/hr`
-- `createEmergencyContact` — L1451 — ✓ `db/hr`
-- `updateEmergencyContact` — L1458 — ✓ `db/hr`
-- `deleteEmergencyContact` — L1470 — ✓ `db/hr`
+- `getEmployeeByUserId` — L1291 — ✓ `db/hr`
+- `getPtoBalances` — L1298 — ✓ `db/hr`
+- `upsertPtoBalance` — L1306 — ✓ `db/hr`
+- `adjustPtoBalance` — L1328 — ✓ `db/hr`
+- `getLeaveRequests` — L1359 — ✓ `db/hr`
+- `getLeaveRequestById` — L1371 — ✓ `db/hr`
+- `createLeaveRequest` — L1378 — ✓ `db/hr`
+- `updateLeaveRequest` — L1385 — ✓ `db/hr`
+- `getOnboardingTasks` — L1391 — ✓ `db/hr`
+- `createOnboardingTask` — L1401 — ✓ `db/hr`
+- `updateOnboardingTask` — L1408 — ✓ `db/hr`
+- `getEmployeeBenefits` — L1417 — ✓ `db/hr`
+- `upsertEmployeeBenefit` — L1427 — ✓ `db/hr`
+- `updateEmployeeBenefit` — L1434 — ✓ `db/hr`
+- `getEmergencyContacts` — L1443 — ✓ `db/hr`
+- `createEmergencyContact` — L1453 — ✓ `db/hr`
+- `updateEmergencyContact` — L1460 — ✓ `db/hr`
+- `deleteEmergencyContact` — L1472 — ✓ `db/hr`
 
-### LEGAL - CONTRACTS  L1476–L1532
+### LEGAL - CONTRACTS  L1478–L1534
 
-- `getContracts` — L1480 — ✓ `db/legal`
-- `getContractById` — L1495 — ✓ `db/legal`
-- `getContractWithKeyDates` — L1502 — ✓ `db/legal`
-- `createContract` — L1513 — ✓ `db/legal`
-- `updateContract` — L1520 — ✓ `db/legal`
-- `createContractKeyDate` — L1526 — ✓ `db/legal`
+- `getContracts` — L1482 — ✓ `db/legal`
+- `getContractById` — L1497 — ✓ `db/legal`
+- `getContractWithKeyDates` — L1504 — ✓ `db/legal`
+- `createContract` — L1515 — ✓ `db/legal`
+- `updateContract` — L1522 — ✓ `db/legal`
+- `createContractKeyDate` — L1528 — ✓ `db/legal`
 
-### LEGAL - DISPUTES  L1533–L1571
+### LEGAL - DISPUTES  L1535–L1573
 
-- `getDisputes` — L1537 — ✓ `db/legal`
-- `getDisputeById` — L1552 — ✓ `db/legal`
-- `createDispute` — L1559 — ✓ `db/legal`
-- `updateDispute` — L1566 — ✓ `db/legal`
+- `getDisputes` — L1539 — ✓ `db/legal`
+- `getDisputeById` — L1554 — ✓ `db/legal`
+- `createDispute` — L1561 — ✓ `db/legal`
+- `updateDispute` — L1568 — ✓ `db/legal`
 
-### LEGAL - DOCUMENTS  L1572–L1610
+### LEGAL - DOCUMENTS  L1574–L1612
 
-- `getDocuments` — L1576 — ✓ `db/legal`
-- `createDocument` — L1592 — ✓ `db/legal`
-- `updateDocument` — L1599 — ✗ legacy-only
-- `deleteDocument` — L1605 — ✓ `db/legal`
+- `getDocuments` — L1578 — ✓ `db/legal`
+- `createDocument` — L1594 — ✓ `db/legal`
+- `updateDocument` — L1601 — ✗ legacy-only
+- `deleteDocument` — L1607 — ✓ `db/legal`
 
-### PROJECTS  L1611–L1715
+### PROJECTS  L1613–L1717
 
-- `getProjects` — L1615 — ✓ `db/projects`
-- `getProjectById` — L1630 — ✓ `db/projects`
-- `getProjectWithDetails` — L1637 — ✓ `db/projects`
-- `createProject` — L1650 — ✓ `db/projects`
-- `updateProject` — L1657 — ✓ `db/projects`
-- `createProjectMilestone` — L1663 — ✓ `db/projects`
-- `updateProjectMilestone` — L1670 — ✓ `db/projects`
-- `createProjectTask` — L1676 — ✓ `db/projects`
-- `updateProjectTask` — L1683 — ✓ `db/projects`
-- `getProjectTasks` — L1689 — ✓ `db/projects`
-- `getAllProjectTasks` — L1695 — ✓ `db/projects`
+- `getProjects` — L1617 — ✓ `db/projects`
+- `getProjectById` — L1632 — ✓ `db/projects`
+- `getProjectWithDetails` — L1639 — ✓ `db/projects`
+- `createProject` — L1652 — ✓ `db/projects`
+- `updateProject` — L1659 — ✓ `db/projects`
+- `createProjectMilestone` — L1665 — ✓ `db/projects`
+- `updateProjectMilestone` — L1672 — ✓ `db/projects`
+- `createProjectTask` — L1678 — ✓ `db/projects`
+- `updateProjectTask` — L1685 — ✓ `db/projects`
+- `getProjectTasks` — L1691 — ✓ `db/projects`
+- `getAllProjectTasks` — L1697 — ✓ `db/projects`
 
-### INVESTMENT GRANT CHECKLISTS  L1716–L1815
+### INVESTMENT GRANT CHECKLISTS  L1718–L1817
 
-- `getInvestmentGrantChecklists` — L1720 — ✓ `db/projects`
-- `getInvestmentGrantChecklistById` — L1740 — ✓ `db/projects`
-- `getInvestmentGrantChecklistWithItems` — L1747 — ✓ `db/projects`
-- `createInvestmentGrantChecklist` — L1761 — ✓ `db/projects`
-- `createInvestmentGrantChecklistWithItems` — L1768 — ✗ legacy-only
-- `updateInvestmentGrantChecklist` — L1789 — ✓ `db/projects`
-- `createInvestmentGrantItem` — L1795 — ✓ `db/projects`
-- `updateInvestmentGrantItem` — L1802 — ✓ `db/projects`
-- `getInvestmentGrantItems` — L1808 — ✓ `db/projects`
+- `getInvestmentGrantChecklists` — L1722 — ✓ `db/projects`
+- `getInvestmentGrantChecklistById` — L1742 — ✓ `db/projects`
+- `getInvestmentGrantChecklistWithItems` — L1749 — ✓ `db/projects`
+- `createInvestmentGrantChecklist` — L1763 — ✓ `db/projects`
+- `createInvestmentGrantChecklistWithItems` — L1770 — ✗ legacy-only
+- `updateInvestmentGrantChecklist` — L1791 — ✓ `db/projects`
+- `createInvestmentGrantItem` — L1797 — ✓ `db/projects`
+- `updateInvestmentGrantItem` — L1804 — ✓ `db/projects`
+- `getInvestmentGrantItems` — L1810 — ✓ `db/projects`
 
-### AUDIT LOGS  L1816–L1843
+### AUDIT LOGS  L1818–L1845
 
-- `createAuditLog` — L1820 — ✓ `db/system`
-- `getAuditLogs` — L1826 — ✓ `db/system`
+- `createAuditLog` — L1822 — ✓ `db/system`
+- `getAuditLogs` — L1828 — ✓ `db/system`
 
-### INTEGRATIONS  L1844–L1869
+### INTEGRATIONS  L1846–L1871
 
-- `getIntegrationConfigs` — L1848 — ✓ `db/system`
-- `createIntegrationConfig` — L1857 — ✓ `db/system`
-- `updateIntegrationConfig` — L1864 — ✓ `db/system`
+- `getIntegrationConfigs` — L1850 — ✓ `db/system`
+- `createIntegrationConfig` — L1859 — ✓ `db/system`
+- `updateIntegrationConfig` — L1866 — ✓ `db/system`
 
-### AI CONVERSATIONS  L1870–L1912
+### AI CONVERSATIONS  L1872–L1914
 
-- `getAiConversations` — L1874 — ✓ `db/ai`
-- `getAiConversationById` — L1880 — ✓ `db/ai`
-- `createAiConversation` — L1887 — ✓ `db/ai`
-- `getAiMessages` — L1894 — ✓ `db/ai`
-- `createAiMessage` — L1900 — ✓ `db/ai`
-- `updateAiConversation` — L1907 — ✓ `db/ai`
+- `getAiConversations` — L1876 — ✓ `db/ai`
+- `getAiConversationById` — L1882 — ✓ `db/ai`
+- `createAiConversation` — L1889 — ✓ `db/ai`
+- `getAiMessages` — L1896 — ✓ `db/ai`
+- `createAiMessage` — L1902 — ✓ `db/ai`
+- `updateAiConversation` — L1909 — ✓ `db/ai`
 
-### DASHBOARD METRICS  L1913–L1961
+### DASHBOARD METRICS  L1915–L1963
 
-- `getDashboardMetrics` — L1917 — ✓ `db/sales`
+- `getDashboardMetrics` — L1919 — ✓ `db/sales`
 
 ### SEARCH  L1962–L1993
 

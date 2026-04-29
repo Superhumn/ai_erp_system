@@ -30,7 +30,7 @@ setInterval(() => {
  * "Keys & OAuth → Redirect URIs" list or Intuit rejects the request.
  */
 export function getQuickBooksRedirectUri(): string {
-  return ENV.quickbooksRedirectUri || `${ENV.appUrl}/api/oauth/quickbooks/callback`;
+  return ENV.quickbooksRedirectUri || `${ENV.publicAppUrl}/api/oauth/quickbooks/callback`;
 }
 
 /**

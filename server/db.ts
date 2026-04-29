@@ -171,6 +171,8 @@ import {
   financialModel, InsertFinancialModel,
   // KPI Goals
   kpiGoals, InsertKpiGoal,
+  // Quick Notes
+  notes, InsertNote,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -701,6 +703,15 @@ export async function updateInvoice(id: number, data: Partial<InsertInvoice>) {
   await db.update(invoices).set(data).where(eq(invoices.id, id));
 }
 
+export async function deleteInvoice(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.delete(invoiceItems).where(eq(invoiceItems.invoiceId, id));
+    await tx.delete(invoices).where(eq(invoices.id, id));
+  });
+}
+
 export async function createInvoiceItem(data: typeof invoiceItems.$inferInsert) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -1122,6 +1133,15 @@ export async function updatePurchaseOrder(id: number, data: Partial<InsertPurcha
   await db.update(purchaseOrders).set(data).where(eq(purchaseOrders.id, id));
 }
 
+export async function deletePurchaseOrder(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.delete(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, id));
+    await tx.delete(purchaseOrders).where(eq(purchaseOrders.id, id));
+  });
+}
+
 export async function getAllPurchaseOrderItems() {
   const db = await getDb();
   if (!db) return [];
@@ -1172,6 +1192,32 @@ export async function updateShipment(id: number, data: Partial<typeof shipments.
   const db = await getDb();
   if (!db) return;
   await db.update(shipments).set(data).where(eq(shipments.id, id));
+}
+
+export async function deleteShipment(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const receivingRecord = await db
+    .select({ id: poReceivingRecords.id })
+    .from(poReceivingRecords)
+    .where(eq(poReceivingRecords.shipmentId, id))
+    .limit(1);
+
+  if (receivingRecord.length > 0) {
+    throw new Error("Cannot delete shipment with linked receiving records");
+  }
+
+  const freightAllocation = await db
+    .select({ id: freightCostAllocations.id })
+    .from(freightCostAllocations)
+    .where(eq(freightCostAllocations.shipmentId, id))
+    .limit(1);
+
+  if (freightAllocation.length > 0) {
+    throw new Error("Cannot delete shipment with linked freight cost allocations");
+  }
+  await db.delete(shipments).where(eq(shipments.id, id));
 }
 
 // ============================================
@@ -1658,6 +1704,16 @@ export async function updateProject(id: number, data: Partial<InsertProject>) {
   const db = await getDb();
   if (!db) return;
   await db.update(projects).set(data).where(eq(projects.id, id));
+}
+
+export async function deleteProject(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.delete(projectTasks).where(eq(projectTasks.projectId, id));
+    await tx.delete(projectMilestones).where(eq(projectMilestones.projectId, id));
+    await tx.delete(projects).where(eq(projects.id, id));
+  });
 }
 
 export async function createProjectMilestone(data: typeof projectMilestones.$inferInsert) {
@@ -2591,6 +2647,15 @@ export async function updateTransferItem(id: number, data: Partial<InsertInvento
   if (!db) throw new Error("Database not available");
   await db.update(inventoryTransferItems).set(data).where(eq(inventoryTransferItems.id, id));
   return { success: true };
+}
+
+export async function deleteTransfer(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.delete(inventoryTransferItems).where(eq(inventoryTransferItems.transferId, id));
+    await tx.delete(inventoryTransfers).where(eq(inventoryTransfers.id, id));
+  });
 }
 
 export async function processTransferShipment(transferId: number) {
@@ -12879,3 +12944,81 @@ export async function updateInvestmentCommitment(id: number, data: Partial<Inser
 
 // Re-export transactional PTO helpers defined in the modular db layer
 export { createLeaveRequestWithPtoAdjustment, decideLeaveRequestWithPtoAdjustment, cancelLeaveRequestWithPtoRestore } from "./db/hr";
+
+// ============================================
+// QUICK NOTES
+// ============================================
+
+export async function createNote(data: InsertNote) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(notes).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateNote(id: number, data: Partial<InsertNote>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(notes).set({ ...data, updatedAt: new Date() } as any).where(eq(notes.id, id));
+}
+
+export async function getNoteById(id: number, userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(notes)
+    .where(and(eq(notes.id, id), eq(notes.userId, userId)))
+    .limit(1);
+  return result[0] || null;
+}
+
+export async function listNotesForUser(userId: number, limit = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(notes)
+    .where(eq(notes.userId, userId))
+    .orderBy(desc(notes.createdAt))
+    .limit(limit);
+}
+
+export async function deleteNote(id: number, userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(notes).where(and(eq(notes.id, id), eq(notes.userId, userId)));
+}
+
+// In-process cache so concurrent applyItems calls for the same user
+// never race to create two Notes Inbox projects.  Works for single-instance
+// deployments; replace with a DB unique-index strategy when running replicas.
+const _notesInboxCache = new Map<number, Promise<number>>();
+
+// Find or create the per-user "Notes Inbox" project that holds tasks
+// promoted from quick notes. projectTasks.projectId is NOT NULL, so
+// we need a parent project to attach to.
+export async function getOrCreateNotesInboxProject(userId: number): Promise<number> {
+  const existing = _notesInboxCache.get(userId);
+  if (existing) return existing;
+  const promise = (async () => {
+    const db = await getDb();
+    if (!db) throw new Error("Database not available");
+    const projectNumber = `NOTES-INBOX-${userId}`;
+    const rows = await db.select().from(projects)
+      .where(eq(projects.projectNumber, projectNumber))
+      .limit(1);
+    if (rows[0]) return rows[0].id;
+    const result = await db.insert(projects).values({
+      projectNumber,
+      name: "Notes Inbox",
+      description: "Tasks captured from quick notes.",
+      type: "internal",
+      status: "active",
+      priority: "medium",
+      ownerId: userId,
+      createdBy: userId,
+    });
+    return result[0].insertId;
+  })();
+  _notesInboxCache.set(userId, promise);
+  // Remove from cache after resolution so errors don't stay cached forever
+  promise.catch(() => _notesInboxCache.delete(userId));
+  return promise;
+}
