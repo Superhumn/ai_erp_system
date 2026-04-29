@@ -280,6 +280,17 @@ export async function getAllUsers() {
   return db.select().from(users).orderBy(desc(users.createdAt));
 }
 
+/**
+ * Returns a Set of lowercased email addresses for all internal (registered)
+ * users. Use this to exclude team members from auto-created CRM contacts.
+ */
+export async function getInternalEmailSet(): Promise<Set<string>> {
+  const db = await getDb();
+  if (!db) return new Set();
+  const rows = await db.select({ email: users.email }).from(users);
+  return new Set(rows.map(r => (r.email ?? "").toLowerCase()).filter(Boolean));
+}
+
 export async function updateUserRole(userId: number, role: InsertUser['role']) {
   const db = await getDb();
   if (!db) return;
