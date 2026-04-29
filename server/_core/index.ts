@@ -903,7 +903,10 @@ async function startServer() {
       const stateValidation = validateOAuthState(state as string);
       if (stateValidation.error || stateValidation.userId !== user.id) return res.redirect('/settings/integrations?quickbooks_error=invalid_state');
       const tokenResult = await exchangeCodeForToken(code as string);
-      if (tokenResult.error) return res.redirect('/settings/integrations?quickbooks_error=token_exchange_failed');
+      if (tokenResult.error) {
+        const detail = tokenResult.intuitError ? `&detail=${encodeURIComponent(tokenResult.intuitError)}` : "";
+        return res.redirect(`/settings/integrations?quickbooks_error=token_exchange_failed${detail}`);
+      }
       const { upsertQuickBooksOAuthToken, createSyncLog } = await import('../db');
       await upsertQuickBooksOAuthToken({ userId: user.id, accessToken: tokenResult.access_token!, refreshToken: tokenResult.refresh_token!, expiresAt: new Date(Date.now() + (tokenResult.expires_in! * 1000)), realmId: realmId as string, scope: 'com.intuit.quickbooks.accounting' });
       await createSyncLog({ integration: 'quickbooks', action: 'connected', status: 'success', details: `QuickBooks connected - Realm ID: ${realmId}` });
