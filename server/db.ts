@@ -1197,7 +1197,26 @@ export async function updateShipment(id: number, data: Partial<typeof shipments.
 export async function deleteShipment(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  // Shipments has no child tables with declared FK constraints; a simple delete is safe.
+
+  const receivingRecord = await db
+    .select({ id: poReceivingRecords.id })
+    .from(poReceivingRecords)
+    .where(eq(poReceivingRecords.shipmentId, id))
+    .limit(1);
+
+  if (receivingRecord.length > 0) {
+    throw new Error("Cannot delete shipment with linked receiving records");
+  }
+
+  const freightAllocation = await db
+    .select({ id: freightCostAllocations.id })
+    .from(freightCostAllocations)
+    .where(eq(freightCostAllocations.shipmentId, id))
+    .limit(1);
+
+  if (freightAllocation.length > 0) {
+    throw new Error("Cannot delete shipment with linked freight cost allocations");
+  }
   await db.delete(shipments).where(eq(shipments.id, id));
 }
 
