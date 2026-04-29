@@ -1117,6 +1117,13 @@ ONLY return the JSON array, no other text.`;
     approveAndEmail: financeProcedure
       .input(z.object({ invoiceId: z.number() }))
       .mutation(async () => ({ success: true, invoiceNumber: 'INV-STUB' })),
+    delete: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteInvoice(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'invoice', input.id);
+        return { success: true };
+      }),
   }),
 
   // ============================================
@@ -1708,6 +1715,13 @@ ONLY return the JSON array, no other text.`;
         await createAuditLog(ctx.user.id, 'update', 'transfer', input.id, 'Cancelled transfer');
         return { success: true };
       }),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteTransfer(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'transfer', input.id);
+        return { success: true };
+      }),
   }),
 
   // ============================================
@@ -2193,6 +2207,13 @@ ONLY return the JSON array, no other text.`;
       }),
     // Natural language text-to-PO (V2 endpoints)
     createFromTextV2: purchaseOrderTextEndpoints.createFromText,
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deletePurchaseOrder(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'purchaseOrder', input.id);
+        return { success: true };
+      }),
   }),
 
   // ============================================
@@ -2316,6 +2337,13 @@ ONLY return the JSON array, no other text.`;
         } as any);
         await createAuditLog(ctx.user.id, 'create', 'shipment', result.id, shipmentNumber);
         return { trackingNumber, shipmentNumber, id: result.id };
+      }),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteShipment(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'shipment', input.id);
+        return { success: true };
       }),
   }),
 
@@ -2889,6 +2917,13 @@ ONLY return the JSON array, no other text.`;
         const { id, ...data } = input;
         await db.updateProjectTask(id, data);
         await createAuditLog(ctx.user.id, 'update', 'projectTask', id);
+        return { success: true };
+      }),
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteProject(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'project', input.id);
         return { success: true };
       }),
     tasks: protectedProcedure
@@ -9261,6 +9296,13 @@ Provide a brief status summary, any missing documents, and next steps.`;
         }
         return { success: true };
       }),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await manufacturingDb.deleteRecipe(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'recipe', input.id);
+        return { success: true };
+      }),
   }),
 
   moisture: router({
@@ -9480,6 +9522,13 @@ Provide a brief status summary, any missing documents, and next steps.`;
     createFromText: opsProcedure
       .input(z.object({ text: z.string() }))
       .mutation(async () => ({ id: 0, workOrderNumber: 'WO-STUB' })),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await manufacturingDb.deleteWorkOrder(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'work_order', input.id);
+        return { success: true };
+      }),
   }),
 
   // Production Orders

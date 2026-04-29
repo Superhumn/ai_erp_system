@@ -6,15 +6,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SelectWithCreate } from "@/components/ui/select-with-create";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Play, CheckCircle, Eye, Factory } from "lucide-react";
+import { Plus, Play, CheckCircle, Eye, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "wouter";
 
 export default function WorkOrders() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [deleteWOId, setDeleteWOId] = useState<number | null>(null);
   const [newWorkOrder, setNewWorkOrder] = useState({
     bomId: 0,
     productId: 0,
@@ -36,6 +37,15 @@ export default function WorkOrders() {
       setIsCreateOpen(false);
       utils.workOrders.list.invalidate();
       setNewWorkOrder({ bomId: 0, productId: 0, warehouseId: 0, quantity: "", priority: "normal", notes: "" });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const deleteMutation = trpc.workOrders.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Work order deleted");
+      setDeleteWOId(null);
+      utils.workOrders.list.invalidate();
     },
     onError: (err) => toast.error(err.message),
   });
@@ -277,6 +287,14 @@ export default function WorkOrders() {
                                 </Button>
                               </Link>
                             )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              aria-label="Delete work order"
+                              onClick={() => setDeleteWOId(wo.id)}
+                            >
+                              <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive" />
+                            </Button>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -287,6 +305,29 @@ export default function WorkOrders() {
             </Table>
           </CardContent>
         </Card>
+
+        {/* Delete confirmation */}
+        <Dialog open={deleteWOId !== null} onOpenChange={(open) => { if (!open) setDeleteWOId(null); }}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Delete work order?</DialogTitle>
+              <DialogDescription>
+                This will permanently delete the work order and its materials list. This cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setDeleteWOId(null)}>Cancel</Button>
+              <Button
+                variant="destructive"
+                disabled={deleteMutation.isPending}
+                onClick={() => { if (deleteWOId !== null) deleteMutation.mutate({ id: deleteWOId }); }}
+              >
+                {deleteMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Delete
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
   );
 }
