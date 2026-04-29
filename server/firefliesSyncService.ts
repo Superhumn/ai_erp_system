@@ -148,6 +148,12 @@ export async function syncFirefliesMeetingsForUser(
           actionItems.some((a: string) => dealKeywords.test(a));
 
         if (hasDealSignals && participants.length > 0) {
+          // Collect internal user emails so we never create a CRM contact for them
+          const internalUsers = await db.getAllUsers();
+          const internalEmails = new Set(
+            internalUsers.map(u => (u.email ?? "").toLowerCase()).filter(Boolean)
+          );
+
           // Find or create a default sales pipeline
           const pipelines = await db.getCrmPipelines("sales");
           let pipelineId = pipelines[0]?.id;
@@ -169,7 +175,7 @@ export async function syncFirefliesMeetingsForUser(
           }
 
           for (const participant of participants) {
-            if (participant.email) {
+            if (participant.email && !internalEmails.has(participant.email.toLowerCase())) {
               try {
                 const { id: contactFoundId, created } = await db.findOrCreateCrmContact({
                   firstName:

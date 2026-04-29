@@ -18735,6 +18735,12 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           const hasDealSignals = dealKeywords.test(overview) || actionItems.some((a: string) => dealKeywords.test(a));
 
           if (hasDealSignals && participants.length > 0) {
+            // Collect internal user emails so we never create a CRM contact for them
+            const internalUsers = await db.getAllUsers();
+            const internalEmails = new Set(
+              internalUsers.map((u: any) => (u.email ?? "").toLowerCase()).filter(Boolean)
+            );
+
             // Find or create a default sales pipeline for auto-created deals
             const pipelines = await db.getCrmPipelines("sales");
             let pipelineId = pipelines[0]?.id;
@@ -18749,7 +18755,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             }
 
             for (const participant of participants) {
-              if (participant.email) {
+              if (participant.email && !internalEmails.has(participant.email.toLowerCase())) {
                 try {
                   const { id: contactFoundId, created } = await db.findOrCreateCrmContact({
                     firstName: (participant.name || participant.email.split("@")[0]).split(" ")[0] || "",
@@ -18832,8 +18838,12 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
           Array.isArray(meeting.participants) ? meeting.participants : [];
         if (input.createContacts && parsedParticipants.length > 0) {
+          const internalUsers = await db.getAllUsers();
+          const internalEmails = new Set(
+            internalUsers.map((u: any) => (u.email ?? "").toLowerCase()).filter(Boolean)
+          );
           for (const p of parsedParticipants) {
-            if (p.email) {
+            if (p.email && !internalEmails.has(p.email.toLowerCase())) {
               try {
                 const { created } = await db.findOrCreateCrmContact({
                   firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
@@ -18918,6 +18928,13 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       const doContacts = input?.createContacts !== false;
       const doTasks = input?.createTasks === true;
       const doProjects = input?.createProjects === true;
+
+      // Collect internal user emails once so we never create CRM contacts for them
+      const internalUsers = doContacts ? await db.getAllUsers() : [];
+      const internalEmails = new Set(
+        internalUsers.map((u: any) => (u.email ?? "").toLowerCase()).filter(Boolean)
+      );
+
       for (const meeting of meetings) {
         if (doContacts) {
           // Auto-create contacts from participants
@@ -18925,7 +18942,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
             Array.isArray(meeting.participants) ? meeting.participants : [];
           for (const p of parsedParticipants) {
-            if (p.email) {
+            if (p.email && !internalEmails.has(p.email.toLowerCase())) {
               try {
                 const { created } = await db.findOrCreateCrmContact({
                   firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
