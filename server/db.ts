@@ -1197,6 +1197,7 @@ export async function updateShipment(id: number, data: Partial<typeof shipments.
 export async function deleteShipment(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  // Shipments has no child tables with declared FK constraints; a simple delete is safe.
   await db.delete(shipments).where(eq(shipments.id, id));
 }
 
