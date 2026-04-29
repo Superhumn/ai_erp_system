@@ -703,6 +703,15 @@ export async function updateInvoice(id: number, data: Partial<InsertInvoice>) {
   await db.update(invoices).set(data).where(eq(invoices.id, id));
 }
 
+export async function deleteInvoice(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.delete(invoiceItems).where(eq(invoiceItems.invoiceId, id));
+    await tx.delete(invoices).where(eq(invoices.id, id));
+  });
+}
+
 export async function createInvoiceItem(data: typeof invoiceItems.$inferInsert) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -1124,6 +1133,15 @@ export async function updatePurchaseOrder(id: number, data: Partial<InsertPurcha
   await db.update(purchaseOrders).set(data).where(eq(purchaseOrders.id, id));
 }
 
+export async function deletePurchaseOrder(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.delete(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, id));
+    await tx.delete(purchaseOrders).where(eq(purchaseOrders.id, id));
+  });
+}
+
 export async function getAllPurchaseOrderItems() {
   const db = await getDb();
   if (!db) return [];
@@ -1174,6 +1192,12 @@ export async function updateShipment(id: number, data: Partial<typeof shipments.
   const db = await getDb();
   if (!db) return;
   await db.update(shipments).set(data).where(eq(shipments.id, id));
+}
+
+export async function deleteShipment(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(shipments).where(eq(shipments.id, id));
 }
 
 // ============================================
@@ -2603,6 +2627,15 @@ export async function updateTransferItem(id: number, data: Partial<InsertInvento
   if (!db) throw new Error("Database not available");
   await db.update(inventoryTransferItems).set(data).where(eq(inventoryTransferItems.id, id));
   return { success: true };
+}
+
+export async function deleteTransfer(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.delete(inventoryTransferItems).where(eq(inventoryTransferItems.transferId, id));
+    await tx.delete(inventoryTransfers).where(eq(inventoryTransfers.id, id));
+  });
 }
 
 export async function processTransferShipment(transferId: number) {

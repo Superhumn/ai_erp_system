@@ -10,13 +10,14 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Plus, ArrowRight, Truck, Package, Eye, Send, CheckCircle } from "lucide-react";
+import { Plus, ArrowRight, Truck, Package, Eye, Send, CheckCircle, Trash2, Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
 
 export default function Transfers() {
   const [, setLocation] = useLocation();
   const [isOpen, setIsOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [deleteTransferId, setDeleteTransferId] = useState<number | null>(null);
   const [formData, setFormData] = useState({
     fromWarehouseId: 0,
     toWarehouseId: 0,
@@ -39,6 +40,15 @@ export default function Transfers() {
       utils.transfers.list.invalidate();
       // Navigate to the transfer detail page
       setLocation(`/operations/transfers/${result.id}`);
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const deleteMutation = trpc.transfers.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Transfer deleted");
+      setDeleteTransferId(null);
+      utils.transfers.list.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -302,13 +312,23 @@ export default function Transfers() {
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setLocation(`/operations/transfers/${transfer.id}`)}
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setLocation(`/operations/transfers/${transfer.id}`)}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Delete transfer"
+                            onClick={() => setDeleteTransferId(transfer.id)}
+                          >
+                            <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -317,6 +337,29 @@ export default function Transfers() {
             )}
           </CardContent>
         </Card>
+
+        {/* Delete confirmation */}
+        <Dialog open={deleteTransferId !== null} onOpenChange={(open) => { if (!open) setDeleteTransferId(null); }}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Delete transfer?</DialogTitle>
+              <DialogDescription>
+                This will permanently delete the transfer and all its items. This cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setDeleteTransferId(null)}>Cancel</Button>
+              <Button
+                variant="destructive"
+                disabled={deleteMutation.isPending}
+                onClick={() => { if (deleteTransferId !== null) deleteMutation.mutate({ id: deleteTransferId }); }}
+              >
+                {deleteMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Delete
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
   );
 }
