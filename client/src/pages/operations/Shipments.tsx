@@ -105,6 +105,14 @@ export default function Shipments() {
     onError: (err: any) => toast.error(err.message),
   });
 
+  const deleteShipment = trpc.shipments.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Shipment deleted");
+      utils.shipments.list.invalidate();
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
   const counts = useMemo(() => {
     const list = (shipments || []) as any[];
     return {
@@ -296,6 +304,12 @@ export default function Shipments() {
             onRowClick={(row) => setSelectedShipment(row)}
             expandedRowId={selectedShipment?.id ?? null}
             compact
+            bulkActions={[{ key: "delete", label: "Delete", variant: "destructive" }]}
+            onBulkAction={(action, ids) => {
+              if (action === "delete") {
+                Array.from(ids).forEach((id) => deleteShipment.mutate({ id: Number(id) }));
+              }
+            }}
           />
         </CardContent>
       </Card>
