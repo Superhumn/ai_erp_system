@@ -22,7 +22,6 @@ import {
   FolderPlus,
   Video,
   Tag,
-  ArrowRight,
   CheckCircle2,
   Filter,
   X,
@@ -37,8 +36,12 @@ export default function Meetings() {
   const [showFilters, setShowFilters] = useState(false);
   const [showProcessDialog, setShowProcessDialog] = useState(false);
   const [selectedMeetingId, setSelectedMeetingId] = useState<number | null>(null);
-  const [processCreateProject, setProcessCreateProject] = useState(false);
+  const [processCreateContacts, setProcessCreateContacts] = useState(true);
+  const [processCreateTasks, setProcessCreateTasks] = useState(true);
+  const [projectMode, setProjectMode] = useState<"none" | "new" | "existing">("none");
   const [processProjectName, setProcessProjectName] = useState("");
+  const [processExistingProjectId, setProcessExistingProjectId] = useState<number | undefined>(undefined);
+  const [predictedProjectId, setPredictedProjectId] = useState<number | undefined>(undefined);
 
   const { data: meetingsRaw, isLoading, refetch, error: meetingsError } = trpc.fireflies.meetings.list.useQuery({});
   const meetings = (meetingsRaw as any[] | undefined) || [];
@@ -198,14 +201,34 @@ export default function Meetings() {
     }
   };
 
+  const predictProject = (meetingTitle: string): number | undefined => {
+    const MIN_WORD_LENGTH = 2;
+    if (!availableProjects.length || !meetingTitle) return undefined;
+    const titleWords = meetingTitle.toLowerCase().split(/\W+/).filter((w) => w.length > MIN_WORD_LENGTH);
+    let bestId: number | undefined;
+    let bestScore = 0;
+    for (const p of availableProjects) {
+      const nameWordSet = new Set(
+        p.name.toLowerCase().split(/\W+/).filter((w: string) => w.length > MIN_WORD_LENGTH)
+      );
+      const score = titleWords.filter((w) => nameWordSet.has(w)).length;
+      if (score > bestScore) {
+        bestScore = score;
+        bestId = p.id;
+      }
+    }
+    return bestId;
+  };
+
   const handleProcessMeeting = () => {
     if (!selectedMeetingId) return;
     processMeetingMutation.mutate({
       meetingId: selectedMeetingId,
-      createContacts: true,
-      createTasks: true,
-      createProject: processCreateProject,
-      projectName: processProjectName || undefined,
+      createContacts: processCreateContacts,
+      createTasks: processCreateTasks,
+      createProject: projectMode === "new",
+      projectName: projectMode === "new" ? (processProjectName || undefined) : undefined,
+      projectId: projectMode === "existing" ? processExistingProjectId : undefined,
     } as any);
   };
 
@@ -610,37 +633,71 @@ export default function Meetings() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="flex items-center gap-3 rounded-lg bg-blue-50 p-3 dark:bg-blue-950/30">
-              <Users className="h-5 w-5 text-blue-600" />
-              <div>
+            <div className="flex items-center gap-3 rounded-lg border p-3">
+              <Users className="h-5 w-5 text-blue-600 shrink-0" />
+              <div className="flex-1">
                 <div className="text-sm font-medium">Create CRM Contacts</div>
                 <div className="text-xs text-muted-foreground">From meeting participants</div>
               </div>
-              <ArrowRight className="ml-auto h-4 w-4 text-blue-400" />
-              <CheckCircle2 className="h-4 w-4 text-green-500" />
+              <Switch checked={processCreateContacts} onCheckedChange={setProcessCreateContacts} />
             </div>
-            <div className="flex items-center gap-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-950/30">
-              <ListTodo className="h-5 w-5 text-purple-600" />
-              <div>
+            <div className="flex items-center gap-3 rounded-lg border p-3">
+              <ListTodo className="h-5 w-5 text-purple-600 shrink-0" />
+              <div className="flex-1">
                 <div className="text-sm font-medium">Create Tasks</div>
                 <div className="text-xs text-muted-foreground">From meeting action items</div>
               </div>
-              <ArrowRight className="ml-auto h-4 w-4 text-purple-400" />
-              <CheckCircle2 className="h-4 w-4 text-green-500" />
+              <Switch checked={processCreateTasks} onCheckedChange={setProcessCreateTasks} />
             </div>
-            <div className="space-y-2 rounded-lg border p-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <FolderPlus className="h-5 w-5 text-indigo-600" />
-                  <div>
-                    <div className="text-sm font-medium">Create Project</div>
-                    <div className="text-xs text-muted-foreground">Group tasks under a project</div>
-                  </div>
+            <div className="space-y-3 rounded-lg border p-3">
+              <div className="flex items-center gap-2">
+                <FolderPlus className="h-5 w-5 text-indigo-600 shrink-0" />
+                <div className="flex-1">
+                  <div className="text-sm font-medium">Project</div>
+                  <div className="text-xs text-muted-foreground">Group tasks under a project</div>
                 </div>
-                <Switch checked={processCreateProject} onCheckedChange={setProcessCreateProject} />
               </div>
-              {processCreateProject && (
-                <div className="pl-7">
+              <div className="flex gap-2 pl-7">
+                {(["none", "existing", "new"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setProjectMode(mode)}
+                    className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
+                      projectMode === mode
+                        ? "bg-indigo-600 text-white border-indigo-600"
+                        : "bg-background text-muted-foreground border-border hover:border-indigo-400"
+                    }`}
+                  >
+                    {mode === "none" ? "None" : mode === "existing" ? "Existing" : "New"}
+                  </button>
+                ))}
+              </div>
+              {projectMode === "existing" && (
+                <div className="pl-7 space-y-1">
+                  <Label className="text-xs">Select Project</Label>
+                  <Select
+                    value={processExistingProjectId !== undefined ? String(processExistingProjectId) : ""}
+                    onValueChange={(v) => setProcessExistingProjectId(Number(v))}
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="Choose a project…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableProjects.map((p) => (
+                        <SelectItem key={p.id} value={String(p.id)}>
+                          {p.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {predictedProjectId !== undefined && processExistingProjectId === predictedProjectId && (
+                    <p className="text-[11px] text-indigo-600">✦ Auto-predicted from meeting title</p>
+                  )}
+                </div>
+              )}
+              {projectMode === "new" && (
+                <div className="pl-7 space-y-1">
                   <Label className="text-xs">Project Name (optional)</Label>
                   <Input
                     placeholder="Auto-generated from meeting title"

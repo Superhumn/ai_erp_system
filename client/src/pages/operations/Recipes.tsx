@@ -5,11 +5,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Calculator, Link2, Plus, Share2, Trash2 } from "lucide-react";
+import { Calculator, Link2, Loader2, Plus, Share2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Recipes() {
@@ -17,6 +17,7 @@ export default function Recipes() {
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedRecipeId, setSelectedRecipeId] = useState<number | null>(null);
   const [formulation, setFormulation] = useState<"wet" | "dry">("wet");
+  const [deleteRecipeId, setDeleteRecipeId] = useState<number | null>(null);
   const [newRecipe, setNewRecipe] = useState({
     recipeId: "",
     name: "",
@@ -57,6 +58,16 @@ export default function Recipes() {
 
   const saveSnapshot = trpc.recipes.saveBatchSnapshot.useMutation({
     onSuccess: () => toast.success("Batch cost snapshot saved"),
+    onError: (err) => toast.error(err.message),
+  });
+
+  const deleteRecipe = trpc.recipes.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Recipe deleted");
+      setDeleteRecipeId(null);
+      if (selectedRecipeId === deleteRecipeId) setSelectedRecipeId(null);
+      refetch();
+    },
     onError: (err) => toast.error(err.message),
   });
 
@@ -233,6 +244,14 @@ export default function Recipes() {
                       <Share2 className="h-4 w-4 mr-1" />
                       Share
                     </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label="Delete recipe"
+                      onClick={() => setDeleteRecipeId(recipe.id)}
+                    >
+                      <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                    </Button>
                   </TableCell>
                 </TableRow>
               )) : (
@@ -242,6 +261,28 @@ export default function Recipes() {
           </Table>
         </CardContent>
       </Card>
+
+      <Dialog open={deleteRecipeId !== null} onOpenChange={(open) => { if (!open) setDeleteRecipeId(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete recipe?</DialogTitle>
+            <DialogDescription>
+              This will permanently delete the recipe and all its lines, procedures, and copacker shares. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setDeleteRecipeId(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={deleteRecipe.isPending}
+              onClick={() => { if (deleteRecipeId !== null) deleteRecipe.mutate({ id: deleteRecipeId }); }}
+            >
+              {deleteRecipe.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={shareRecipeId != null} onOpenChange={(open) => !open && setShareRecipeId(null)}>
         <DialogContent className="max-w-2xl">
