@@ -104,6 +104,9 @@ export async function syncFirefliesMeetingsForUser(
   try {
     const transcripts = await listTranscripts(apiKey);
 
+    // Fetch internal emails once before the loop to avoid repeated DB queries
+    const internalEmails = await db.getInternalEmailSet();
+
     for (const t of transcripts) {
       try {
         const existing = await db.getFirefliesMeetingByFirefliesId(t.id);
@@ -169,7 +172,7 @@ export async function syncFirefliesMeetingsForUser(
           }
 
           for (const participant of participants) {
-            if (participant.email) {
+            if (participant.email && !internalEmails.has(participant.email.toLowerCase())) {
               try {
                 const { id: contactFoundId, created } = await db.findOrCreateCrmContact({
                   firstName:
@@ -184,17 +187,22 @@ export async function syncFirefliesMeetingsForUser(
                 const contact = await db.getCrmContactById(contactFoundId);
 
                 if (contact) {
-                  await db.createCrmDeal({
-                    pipelineId,
-                    contactId: contact.id,
-                    name: `Deal from: ${fullTranscript?.title || t.title || "Meeting"}`,
-                    stage: "discovery",
-                    source: "meeting",
-                    notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
-                  });
-                  result.dealsCreated++;
+                  if (created) {
+                    // Only create a deal the first time we see this contact —
+                    // subsequent meetings with the same person just add interactions.
+                    await db.createCrmDeal({
+                      pipelineId,
+                      contactId: contact.id,
+                      name: `Deal from: ${fullTranscript?.title || t.title || "Meeting"}`,
+                      stage: "discovery",
+                      source: "meeting",
+                      notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
+                    });
+                    result.dealsCreated++;
+                  }
 
-                  // Log meeting as CRM interaction
+                  // Always log meeting as CRM interaction regardless of whether
+                  // the contact already existed.
                   await db.createCrmInteraction({
                     contactId: contact.id,
                     channel: "meeting",

@@ -18808,6 +18808,10 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       let dealsCreated = 0;
       let contactsCreated = 0;
       let tasksSuggested = 0;
+
+      // Fetch internal emails once so we never create CRM contacts for team members
+      const internalEmails = await db.getInternalEmailSet();
+
       for (const t of transcripts) {
         const existing = await db.getFirefliesMeetingByFirefliesId(t.id);
         if (existing) {
@@ -18855,7 +18859,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             }
 
             for (const participant of participants) {
-              if (participant.email) {
+              if (participant.email && !internalEmails.has(participant.email.toLowerCase())) {
                 try {
                   const { id: contactFoundId, created } = await db.findOrCreateCrmContact({
                     firstName: (participant.name || participant.email.split("@")[0]).split(" ")[0] || "",
@@ -18867,18 +18871,22 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
                   const contact = await db.getCrmContactById(contactFoundId);
 
                   if (contact) {
-                    // Create CRM deal from meeting
-                    await db.createCrmDeal({
-                      pipelineId,
-                      contactId: contact.id,
-                      name: `Deal from: ${fullTranscript?.title || t.title || "Meeting"}`,
-                      stage: "discovery",
-                      source: "meeting",
-                      notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
-                    });
-                    dealsCreated++;
+                    if (created) {
+                      // Only create a deal the first time we see this contact —
+                      // subsequent meetings with the same person just add interactions.
+                      await db.createCrmDeal({
+                        pipelineId,
+                        contactId: contact.id,
+                        name: `Deal from: ${fullTranscript?.title || t.title || "Meeting"}`,
+                        stage: "discovery",
+                        source: "meeting",
+                        notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
+                      });
+                      dealsCreated++;
+                    }
 
-                    // Log meeting as CRM interaction
+                    // Always log meeting as CRM interaction regardless of whether
+                    // the contact already existed.
                     await db.createCrmInteraction({
                       contactId: contact.id,
                       channel: "meeting",
@@ -18938,8 +18946,9 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
           Array.isArray(meeting.participants) ? meeting.participants : [];
         if (input.createContacts && parsedParticipants.length > 0) {
+          const internalEmails = await db.getInternalEmailSet();
           for (const p of parsedParticipants) {
-            if (p.email) {
+            if (p.email && !internalEmails.has(p.email.toLowerCase())) {
               try {
                 const { created } = await db.findOrCreateCrmContact({
                   firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
@@ -19024,6 +19033,10 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       const doContacts = input?.createContacts !== false;
       const doTasks = input?.createTasks === true;
       const doProjects = input?.createProjects === true;
+
+      // Collect internal user emails once so we never create CRM contacts for them
+      const internalEmails = doContacts ? await db.getInternalEmailSet() : new Set<string>();
+
       for (const meeting of meetings) {
         if (doContacts) {
           // Auto-create contacts from participants
@@ -19031,7 +19044,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
             Array.isArray(meeting.participants) ? meeting.participants : [];
           for (const p of parsedParticipants) {
-            if (p.email) {
+            if (p.email && !internalEmails.has(p.email.toLowerCase())) {
               try {
                 const { created } = await db.findOrCreateCrmContact({
                   firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
