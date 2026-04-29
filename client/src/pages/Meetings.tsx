@@ -24,7 +24,6 @@ import {
   FolderPlus,
   Video,
   Tag,
-  ArrowRight as _ArrowRight,
   CheckCircle2,
   Filter,
   X,
@@ -199,13 +198,16 @@ export default function Meetings() {
   };
 
   const predictProject = (meetingTitle: string): number | undefined => {
+    const MIN_WORD_LENGTH = 2;
     if (!availableProjects.length || !meetingTitle) return undefined;
-    const titleWords = meetingTitle.toLowerCase().split(/\W+/).filter((w) => w.length > 2);
+    const titleWords = meetingTitle.toLowerCase().split(/\W+/).filter((w) => w.length > MIN_WORD_LENGTH);
     let bestId: number | undefined;
     let bestScore = 0;
     for (const p of availableProjects) {
-      const nameWords = p.name.toLowerCase().split(/\W+/).filter((w: string) => w.length > 2);
-      const score = titleWords.filter((w) => nameWords.includes(w)).length;
+      const nameWordSet = new Set(
+        p.name.toLowerCase().split(/\W+/).filter((w: string) => w.length > MIN_WORD_LENGTH)
+      );
+      const score = titleWords.filter((w) => nameWordSet.has(w)).length;
       if (score > bestScore) {
         bestScore = score;
         bestId = p.id;
@@ -612,7 +614,7 @@ export default function Meetings() {
                       ))}
                     </SelectContent>
                   </Select>
-                  {processExistingProjectId !== undefined && processExistingProjectId === predictedProjectId && (
+                  {predictedProjectId !== undefined && processExistingProjectId === predictedProjectId && (
                     <p className="text-[11px] text-indigo-600">✦ Auto-predicted from meeting title</p>
                   )}
                 </div>
