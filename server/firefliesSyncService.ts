@@ -104,6 +104,9 @@ export async function syncFirefliesMeetingsForUser(
   try {
     const transcripts = await listTranscripts(apiKey);
 
+    // Fetch internal emails once before the loop to avoid repeated DB queries
+    const internalEmails = await db.getInternalEmailSet();
+
     for (const t of transcripts) {
       try {
         const existing = await db.getFirefliesMeetingByFirefliesId(t.id);
@@ -148,12 +151,6 @@ export async function syncFirefliesMeetingsForUser(
           actionItems.some((a: string) => dealKeywords.test(a));
 
         if (hasDealSignals && participants.length > 0) {
-          // Collect internal user emails so we never create a CRM contact for them
-          const internalUsers = await db.getAllUsers();
-          const internalEmails = new Set(
-            internalUsers.map(u => (u.email ?? "").toLowerCase()).filter(Boolean)
-          );
-
           // Find or create a default sales pipeline
           const pipelines = await db.getCrmPipelines("sales");
           let pipelineId = pipelines[0]?.id;
