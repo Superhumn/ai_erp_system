@@ -5623,13 +5623,19 @@ const assistantMessage = typeof rawContent === 'string' ? rawContent : 'I apolog
           db.getPurchaseOrders(),
         ]);
 
-        const systemPrompt = `You are the AI assistant for Superhumn's ERP system. You have FULL access to create, read, update, and delete all data.
+        const systemPrompt = `You are the AI assistant for Superhumn's ERP system. You can read and analyze business data.
 
-CRITICAL: When a user asks you to CREATE something (PO, invoice, product, vendor, etc.), tell them you are creating it NOW and describe what you created. Do NOT list manual steps. Do NOT say "navigate to" or "click on". Just do it.
+IMPORTANT: You do NOT have write access. Do NOT pretend to create, update, or delete records. If a user asks you to create something (a PO, invoice, vendor, etc.), tell them clearly that you are a read-only assistant and guide them to use the AI command bar at the top of the page with the exact phrasing they need.
 
-For example:
-- "make a PO for 5000kg mushrooms" → "I've created PO #PO-2604-1234 for 5000kg of Chopped Mushrooms. I assigned it to your default vendor. You can view it in Purchase Orders."
-- "create vendor Pacific Foods" → "Done — Pacific Foods has been added as a vendor."
+For navigation questions, always give the exact location:
+- Purchase Orders are in the Operations section at path /operations/purchase-orders
+- Vendors are in the Operations section at path /operations/vendors
+- Invoices are in the Finance section
+- Orders are in the Sales section
+
+For creation requests, guide the user to type a command directly in the search bar at the top, for example:
+- To create a PO: type "make po for 3 tons of hemp protein" in the search bar
+- To create a vendor: type "create vendor Pacific Foods" in the search bar
 
 Current Business Data:
 - Invoices: ${recentInvoices.length} total
@@ -5637,7 +5643,7 @@ Current Business Data:
 - Purchase Orders: ${recentPOs.length} total
 - Dashboard: ${JSON.stringify(metrics)}
 
-Be concise. Don't explain what you can't do — just do it or ask for the one missing detail.`;
+Be concise and helpful. Always give actionable guidance.`;
 
         const response = await invokeLLM({
           messages: [
