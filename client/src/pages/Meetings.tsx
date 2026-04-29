@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -238,6 +238,25 @@ export default function Meetings() {
     return arr.slice(0, 4);
   };
 
+  /** Render inline markdown bold (**text**) as <strong> elements. */
+  const renderInlineMd = (text: string): React.ReactNode => {
+    const parts = text.split(/\*\*(.+?)\*\*/g);
+    return parts.map((part, i) =>
+      i % 2 === 1 ? <strong key={i} className="font-semibold text-foreground">{part}</strong> : part
+    );
+  };
+
+  /**
+   * Parse an overview string that uses `- **Key:** value` list syntax into
+   * individual bullet strings. Falls back to a single-item array so the
+   * caller always gets an array.
+   */
+  const parseOverviewBullets = (overview: string): string[] => {
+    // Split on leading dash+space or dash+bold that indicates a new bullet
+    const items = overview.split(/(?:^|\s)-\s+(?=\*\*|\S)/).map((s) => s.trim()).filter(Boolean);
+    return items.length > 1 ? items : [overview];
+  };
+
   return (
     <div className="space-y-2">
       {/* ── Compact toolbar: stats + search + actions ── */}
@@ -410,51 +429,74 @@ export default function Meetings() {
 
                 {/* ── Expanded detail panel ── */}
                 {isExpanded && (
-                  <div className="space-y-3 border-t border-border/30 bg-muted/15 px-8 py-3 text-sm">
-                    {summary?.overview && (
-                      <div>
-                        <Label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Summary</Label>
-                        <p className="mt-1 text-[13px] leading-relaxed">{summary.overview}</p>
-                      </div>
-                    )}
-
-                    {summary?.shorthand_bullet && (
-                      <div>
-                        <Label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Key Points</Label>
-                        <ul className="mt-1 space-y-0.5">
-                          {(Array.isArray(summary.shorthand_bullet) ? summary.shorthand_bullet : [summary.shorthand_bullet]).map((b: string, i: number) => (
-                            <li key={i} className="flex items-start gap-1.5 text-[13px]">
-                              <span className="mt-[5px] h-1 w-1 shrink-0 rounded-full bg-foreground/30" />
-                              <span>{b}</span>
+                  <div className="space-y-4 border-t border-border/30 bg-muted/15 px-8 py-4 text-sm">
+                    {/* Tasks / Action Items — always shown first */}
+                    {actionItems.length > 0 && (
+                      <div className="rounded-md border border-border/50 bg-background/60 px-3 py-2.5">
+                        <Label className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                          <CheckCircle2 className="h-3 w-3" />
+                          Tasks ({actionItems.length})
+                        </Label>
+                        <ul className="mt-2 space-y-1.5">
+                          {actionItems.map((item: any, i: number) => (
+                            <li key={i} className="flex items-start gap-2 text-[13px]">
+                              <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500/70" />
+                              <span className="leading-snug">
+                                {renderInlineMd(typeof item === "string" ? item : item.text || item.description || JSON.stringify(item))}
+                              </span>
+                              {item.assignee && (
+                                <span className="shrink-0 text-[11px] font-medium text-blue-600 dark:text-blue-400">@{item.assignee}</span>
+                              )}
                             </li>
                           ))}
                         </ul>
                       </div>
                     )}
 
+                    {/* Summary */}
+                    {summary?.overview && (() => {
+                      const overviewBullets = parseOverviewBullets(summary.overview);
+                      return (
+                        <div>
+                          <Label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Summary</Label>
+                          {overviewBullets.length > 1 ? (
+                            <ul className="mt-1.5 space-y-1.5">
+                              {overviewBullets.map((bullet, i) => (
+                                <li key={i} className="flex items-start gap-2 text-[13px] leading-relaxed">
+                                  <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/40" />
+                                  <span>{renderInlineMd(bullet)}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="mt-1.5 text-[13px] leading-relaxed">{renderInlineMd(summary.overview)}</p>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Key Points */}
+                    {summary?.shorthand_bullet && (
+                      <div>
+                        <Label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Key Points</Label>
+                        <ul className="mt-1.5 space-y-1.5">
+                          {(Array.isArray(summary.shorthand_bullet) ? summary.shorthand_bullet : [summary.shorthand_bullet]).map((b: string, i: number) => (
+                            <li key={i} className="flex items-start gap-2 text-[13px] leading-relaxed">
+                              <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/30" />
+                              <span>{renderInlineMd(b)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Keywords */}
                     {summary?.keywords && (
                       <div className="flex flex-wrap items-center gap-1">
                         <Tag className="h-3 w-3 text-muted-foreground" />
                         {(Array.isArray(summary.keywords) ? summary.keywords : []).map((kw: string, i: number) => (
                           <Badge key={i} variant="outline" className="text-[10px] px-1.5 py-0">{kw}</Badge>
                         ))}
-                      </div>
-                    )}
-
-                    {actionItems.length > 0 && (
-                      <div>
-                        <Label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                          Action Items ({actionItems.length})
-                        </Label>
-                        <ul className="mt-1 space-y-1">
-                          {actionItems.map((item: any, i: number) => (
-                            <li key={i} className="flex items-start gap-1.5 text-[13px]">
-                              <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
-                              <span>{typeof item === "string" ? item : item.text || item.description || JSON.stringify(item)}</span>
-                              {item.assignee && <span className="text-[11px] text-blue-600 ml-1">@{item.assignee}</span>}
-                            </li>
-                          ))}
-                        </ul>
                       </div>
                     )}
 
