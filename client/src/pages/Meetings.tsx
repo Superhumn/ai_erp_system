@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import {
@@ -15,9 +16,6 @@ import {
   Loader2,
   Users,
   ListTodo,
-  Clock,
-  ChevronDown,
-  ChevronRight,
   ExternalLink,
   FileText,
   Zap,
@@ -35,7 +33,7 @@ export default function Meetings() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [panelMeeting, setPanelMeeting] = useState<any | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [showProcessDialog, setShowProcessDialog] = useState(false);
   const [selectedMeetingId, setSelectedMeetingId] = useState<number | null>(null);
@@ -45,17 +43,26 @@ export default function Meetings() {
   const { data: meetingsRaw, isLoading, refetch, error: meetingsError } = trpc.fireflies.meetings.list.useQuery({});
   const meetings = (meetingsRaw as any[] | undefined) || [];
 
-  const setExpandedMeetingWithUrl = (meetingId: number | null) => {
-    setExpandedId(meetingId);
+  const openPanel = (meeting: any) => {
+    setPanelMeeting(meeting);
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
-    if (meetingId != null) {
-      url.searchParams.set("meetingId", String(meetingId));
+    if (meeting != null) {
+      url.searchParams.set("meetingId", String(meeting.id));
       url.searchParams.delete("firefliesId");
     } else {
       url.searchParams.delete("meetingId");
       url.searchParams.delete("firefliesId");
     }
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  };
+
+  const closePanel = () => {
+    setPanelMeeting(null);
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("meetingId");
+    url.searchParams.delete("firefliesId");
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
   };
 
@@ -205,29 +212,28 @@ export default function Meetings() {
   const hasActiveFilters = search || statusFilter !== "all" || dateFrom || dateTo;
 
   useEffect(() => {
-    if (typeof window === "undefined" || !meetings.length) return;
+    if (typeof window === "undefined" || !meetingsWithParsed.length) return;
     const params = new URLSearchParams(window.location.search);
     const rawMeetingId = params.get("meetingId");
     const firefliesId = params.get("firefliesId");
 
-    let matchedId: number | null = null;
+    let matched: any | null = null;
     if (rawMeetingId) {
       const meetingId = Number(rawMeetingId);
-      if (Number.isFinite(meetingId) && meetingId > 0 && meetings.some((meeting: any) => meeting.id === meetingId)) {
-        matchedId = meetingId;
+      if (Number.isFinite(meetingId) && meetingId > 0) {
+        matched = meetingsWithParsed.find((m: any) => m.id === meetingId) ?? null;
       }
     } else if (firefliesId) {
-      const matchedMeeting = meetings.find((meeting: any) => meeting.firefliesId === firefliesId);
-      if (matchedMeeting) matchedId = matchedMeeting.id;
+      matched = meetingsWithParsed.find((m: any) => m.firefliesId === firefliesId) ?? null;
     }
 
-    if (matchedId != null && expandedId !== matchedId) {
-      setExpandedId(matchedId);
+    if (matched && panelMeeting?.id !== matched.id) {
+      setPanelMeeting(matched);
       window.requestAnimationFrame(() => {
-        document.getElementById(`meeting-row-${matchedId}`)?.scrollIntoView({ block: "center" });
+        document.getElementById(`meeting-row-${matched.id}`)?.scrollIntoView({ block: "center" });
       });
     }
-  }, [meetings, expandedId]);
+  }, [meetingsWithParsed]);
 
   const getBullets = (meeting: any): string[] => {
     const summary = meeting.parsedSummary;
@@ -252,9 +258,32 @@ export default function Meetings() {
    * caller always gets an array.
    */
   const parseOverviewBullets = (overview: string): string[] => {
-    // Split on leading dash+space or dash+bold that indicates a new bullet
-    const items = overview.split(/(?:^|\s)-\s+(?=\*\*|\S)/).map((s) => s.trim()).filter(Boolean);
-    return items.length > 1 ? items : [overview];
+    // Split on " - **" boundaries (each bullet starts "- **Label:**")
+    const parts = overview
+      .split(/\s+-\s+(?=\*\*)/)
+      .map((s) => s.replace(/^-\s+/, "").trim())
+      .filter(Boolean);
+    return parts.length > 1 ? parts : [overview];
+  };
+
+  /**
+   * Parse a shorthand_bullet that may be a single long string with emoji-headed
+   * sections (e.g. "🌱 **Title** text 🖥️ **Title2** text ...") into separate items.
+   */
+  const parseShorthandBullets = (raw: string | string[]): string[] => {
+    if (Array.isArray(raw)) return raw.filter(Boolean);
+    if (!raw) return [];
+    // Try newline split first
+    const byNewline = raw.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+    if (byNewline.length > 1) return byNewline;
+    // Split before emoji characters that start a new section
+    // Covers most common emoji ranges (Miscellaneous Symbols, Pictographs, etc.)
+    const byEmoji = raw
+      .split(/\s+(?=[\u{1F300}-\u{1F9FF}\u{2600}-\u{27BF}\u{1FA00}-\u{1FAFF}])/u)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (byEmoji.length > 1) return byEmoji;
+    return [raw];
   };
 
   return (
@@ -348,30 +377,22 @@ export default function Meetings() {
         <div className="divide-y divide-border/50 rounded-xl border">
           {filtered.map((meeting: any) => {
             const summary = meeting.parsedSummary;
-            const actionItems = meeting.parsedActionItems;
             const bullets = getBullets(meeting);
-            const isExpanded = expandedId === meeting.id;
 
             return (
-              <div id={`meeting-row-${meeting.id}`} key={meeting.id} className="group transition-colors hover:bg-accent/30">
-                {/* ── Main row: always visible ── */}
+              <div
+                id={`meeting-row-${meeting.id}`}
+                key={meeting.id}
+                className="group cursor-pointer transition-colors hover:bg-accent/30"
+                onClick={() => openPanel(meeting)}
+              >
+                {/* ── Main row ── */}
                 <div className="flex items-start gap-2 px-3 py-2">
-                  {/* Expand toggle */}
-                  <button
-                    className="mt-0.5 shrink-0 text-muted-foreground/60 hover:text-foreground transition-colors"
-                    onClick={() => setExpandedMeetingWithUrl(isExpanded ? null : meeting.id)}
-                  >
-                    {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                  </button>
-
                   {/* Content */}
                   <div className="min-w-0 flex-1">
                     {/* Title row */}
                     <div className="flex items-center gap-2">
-                      <span
-                        className="truncate text-[13px] font-medium cursor-pointer hover:text-foreground/80"
-                        onClick={() => setExpandedMeetingWithUrl(isExpanded ? null : meeting.id)}
-                      >
+                      <span className="truncate text-[13px] font-medium">
                         {meeting.title || "Untitled"}
                       </span>
                       <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
@@ -410,7 +431,7 @@ export default function Meetings() {
                       )}
                     </div>
 
-                    {/* Inline bullets - always visible */}
+                    {/* Inline preview bullets */}
                     {bullets.length > 0 && (
                       <ul className="mt-0.5 space-y-0">
                         {bullets.map((bullet: string, i: number) => (
@@ -426,130 +447,158 @@ export default function Meetings() {
                     )}
                   </div>
                 </div>
-
-                {/* ── Expanded detail panel ── */}
-                {isExpanded && (
-                  <div className="space-y-4 border-t border-border/30 bg-muted/15 px-8 py-4 text-sm">
-                    {/* Tasks / Action Items — always shown first */}
-                    {actionItems.length > 0 && (
-                      <div className="rounded-md border border-border/50 bg-background/60 px-3 py-2.5">
-                        <Label className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                          <CheckCircle2 className="h-3 w-3" />
-                          Tasks ({actionItems.length})
-                        </Label>
-                        <ul className="mt-2 space-y-1.5">
-                          {actionItems.map((item: any, i: number) => (
-                            <li key={i} className="flex items-start gap-2 text-[13px]">
-                              <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500/70" />
-                              <span className="leading-snug">
-                                {renderInlineMd(typeof item === "string" ? item : item.text || item.description || JSON.stringify(item))}
-                              </span>
-                              {item.assignee && (
-                                <span className="shrink-0 text-[11px] font-medium text-blue-600 dark:text-blue-400">@{item.assignee}</span>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    {/* Summary */}
-                    {summary?.overview && (() => {
-                      const overviewBullets = parseOverviewBullets(summary.overview);
-                      return (
-                        <div>
-                          <Label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Summary</Label>
-                          {overviewBullets.length > 1 ? (
-                            <ul className="mt-1.5 space-y-1.5">
-                              {overviewBullets.map((bullet, i) => (
-                                <li key={i} className="flex items-start gap-2 text-[13px] leading-relaxed">
-                                  <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/40" />
-                                  <span>{renderInlineMd(bullet)}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <p className="mt-1.5 text-[13px] leading-relaxed">{renderInlineMd(summary.overview)}</p>
-                          )}
-                        </div>
-                      );
-                    })()}
-
-                    {/* Key Points */}
-                    {summary?.shorthand_bullet && (
-                      <div>
-                        <Label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Key Points</Label>
-                        <ul className="mt-1.5 space-y-1.5">
-                          {(Array.isArray(summary.shorthand_bullet) ? summary.shorthand_bullet : [summary.shorthand_bullet]).map((b: string, i: number) => (
-                            <li key={i} className="flex items-start gap-2 text-[13px] leading-relaxed">
-                              <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/30" />
-                              <span>{renderInlineMd(b)}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    {/* Keywords */}
-                    {summary?.keywords && (
-                      <div className="flex flex-wrap items-center gap-1">
-                        <Tag className="h-3 w-3 text-muted-foreground" />
-                        {(Array.isArray(summary.keywords) ? summary.keywords : []).map((kw: string, i: number) => (
-                          <Badge key={i} variant="outline" className="text-[10px] px-1.5 py-0">{kw}</Badge>
-                        ))}
-                      </div>
-                    )}
-
-                    {(meeting.parsedParticipants?.length > 0) && (
-                      <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
-                        <Users className="h-3 w-3" />
-                        {meeting.parsedParticipants.map((p: any, i: number) => (
-                          <span key={i}>
-                            {typeof p === "string" ? p : p.displayName || p.name || p.email || "?"}
-                            {i < meeting.parsedParticipants.length - 1 && ","}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="flex items-center gap-1.5 pt-1">
-                      {meeting.recordingUrl && (
-                        <Button variant="outline" size="sm" className="h-6 text-[11px] px-2" asChild>
-                          <a href={meeting.recordingUrl} target="_blank" rel="noopener noreferrer">
-                            <Video className="mr-1 h-3 w-3" /> Recording <ExternalLink className="ml-1 h-2.5 w-2.5" />
-                          </a>
-                        </Button>
-                      )}
-                      {meeting.transcriptUrl && (
-                        <Button variant="outline" size="sm" className="h-6 text-[11px] px-2" asChild>
-                          <a href={meeting.transcriptUrl} target="_blank" rel="noopener noreferrer">
-                            <Mic className="mr-1 h-3 w-3" /> Transcript <ExternalLink className="ml-1 h-2.5 w-2.5" />
-                          </a>
-                        </Button>
-                      )}
-                      {meeting.processingStatus === "pending" && (
-                        <Button
-                          size="sm"
-                          className="h-6 text-[11px] px-2"
-                          onClick={() => {
-                            setSelectedMeetingId(meeting.id);
-                            setProcessProjectName("");
-                            setProcessCreateProject(false);
-                            setShowProcessDialog(true);
-                          }}
-                        >
-                          <Zap className="mr-1 h-3 w-3" />
-                          Process
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                )}
               </div>
             );
           })}
         </div>
       )}
+
+      {/* ── Meeting detail side panel ── */}
+      <Sheet open={!!panelMeeting} onOpenChange={(open) => { if (!open) closePanel(); }}>
+        <SheetContent side="right" className="w-full sm:max-w-xl flex flex-col p-0 gap-0">
+          {panelMeeting && (() => {
+            const m = panelMeeting;
+            const summary = m.parsedSummary;
+            const actionItems = m.parsedActionItems || [];
+
+            return (
+              <>
+                {/* Header */}
+                <SheetHeader className="border-b px-5 py-4 gap-1">
+                  <SheetTitle className="text-base leading-snug pr-6">{m.title || "Untitled"}</SheetTitle>
+                  <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
+                    <span>{fmtDate(m.date)} {fmtTime(m.date)}</span>
+                    <span>·</span>
+                    <span>{fmtDur(m.duration)}</span>
+                    <span>·</span>
+                    {statusBadge(m.processingStatus)}
+                    {m.parsedParticipants?.length > 0 && (
+                      <>
+                        <span>·</span>
+                        <span className="flex items-center gap-1">
+                          <Users className="h-3 w-3" />
+                          {m.parsedParticipants
+                            .map((p: any) => typeof p === "string" ? p : p.displayName || p.name || p.email || "?")
+                            .join(", ")}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </SheetHeader>
+
+                {/* Scrollable content */}
+                <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6">
+                  {/* Tasks */}
+                  {actionItems.length > 0 && (
+                    <section>
+                      <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Tasks ({actionItems.length})
+                      </h3>
+                      <ul className="space-y-2">
+                        {actionItems.map((item: any, i: number) => (
+                          <li key={i} className="flex items-start gap-2.5 text-[13px] leading-relaxed">
+                            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                            <span>
+                              {renderInlineMd(typeof item === "string" ? item : item.text || item.description || JSON.stringify(item))}
+                            </span>
+                            {item.assignee && (
+                              <span className="shrink-0 text-[11px] font-medium text-blue-600 dark:text-blue-400">@{item.assignee}</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  )}
+
+                  {/* Summary */}
+                  {summary?.overview && (() => {
+                    const bullets = parseOverviewBullets(summary.overview);
+                    return (
+                      <section>
+                        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Summary</h3>
+                        {bullets.length > 1 ? (
+                          <div className="space-y-3">
+                            {bullets.map((bullet, i) => (
+                              <p key={i} className="text-[13px] leading-relaxed">
+                                {renderInlineMd(bullet)}
+                              </p>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-[13px] leading-relaxed">{renderInlineMd(summary.overview)}</p>
+                        )}
+                      </section>
+                    );
+                  })()}
+
+                  {/* Key Points */}
+                  {summary?.shorthand_bullet && (() => {
+                    const points = parseShorthandBullets(summary.shorthand_bullet);
+                    return (
+                      <section>
+                        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Key Points</h3>
+                        <div className="space-y-3">
+                          {points.map((point: string, i: number) => (
+                            <p key={i} className="text-[13px] leading-relaxed">
+                              {renderInlineMd(point)}
+                            </p>
+                          ))}
+                        </div>
+                      </section>
+                    );
+                  })()}
+
+                  {/* Keywords */}
+                  {summary?.keywords && (Array.isArray(summary.keywords) ? summary.keywords : []).length > 0 && (
+                    <section>
+                      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Tags</h3>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(Array.isArray(summary.keywords) ? summary.keywords : []).map((kw: string, i: number) => (
+                          <Badge key={i} variant="outline" className="text-[11px] px-2 py-0.5">{kw}</Badge>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+                </div>
+
+                {/* Footer actions */}
+                <div className="border-t px-5 py-3 flex items-center gap-2">
+                  {m.recordingUrl && (
+                    <Button variant="outline" size="sm" className="text-xs" asChild>
+                      <a href={m.recordingUrl} target="_blank" rel="noopener noreferrer">
+                        <Video className="mr-1.5 h-3.5 w-3.5" /> Recording <ExternalLink className="ml-1 h-3 w-3" />
+                      </a>
+                    </Button>
+                  )}
+                  {m.transcriptUrl && (
+                    <Button variant="outline" size="sm" className="text-xs" asChild>
+                      <a href={m.transcriptUrl} target="_blank" rel="noopener noreferrer">
+                        <Mic className="mr-1.5 h-3.5 w-3.5" /> Transcript <ExternalLink className="ml-1 h-3 w-3" />
+                      </a>
+                    </Button>
+                  )}
+                  {m.processingStatus === "pending" && (
+                    <Button
+                      size="sm"
+                      className="ml-auto text-xs"
+                      onClick={() => {
+                        setSelectedMeetingId(m.id);
+                        setProcessProjectName("");
+                        setProcessCreateProject(false);
+                        setShowProcessDialog(true);
+                      }}
+                    >
+                      <Zap className="mr-1.5 h-3.5 w-3.5" />
+                      Process Meeting
+                    </Button>
+                  )}
+                </div>
+              </>
+            );
+          })()}
+        </SheetContent>
+      </Sheet>
 
       {/* ── Process dialog (unchanged logic) ── */}
       <Dialog open={showProcessDialog} onOpenChange={setShowProcessDialog}>
