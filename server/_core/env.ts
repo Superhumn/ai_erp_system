@@ -70,6 +70,13 @@ export const ENV = {
 
     // Airtable integration
     airtablePersonalAccessToken: process.env.AIRTABLE_PERSONAL_ACCESS_TOKEN ?? "",
+
+    // Alibaba Open Platform integration
+    alibabaApiKey: process.env.ALIBABA_API_KEY ?? "",
+    alibabaApiSecret: process.env.ALIBABA_API_SECRET ?? "",
+    alibabaApiAccessToken: process.env.ALIBABA_API_ACCESS_TOKEN ?? "",
+    alibabaApiSearchUrl: process.env.ALIBABA_API_SEARCH_URL ?? "",
+    alibabaApiPageSize: process.env.ALIBABA_API_PAGE_SIZE ?? "10",
 };
 
 /**

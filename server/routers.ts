@@ -48,6 +48,7 @@ import { testConnection, deliverOutbound, generateAndDeliver, pollSftpForInbound
 import { purchaseOrderTextEndpoints, shipmentTextEndpoints, paymentTextEndpoints, workOrderTextEndpoints, inventoryTextEndpoints } from "./naturalLanguageRouterExtensions";
 import { encrypt, decrypt } from "./_core/crypto";
 import { ENV } from "./_core/env";
+import { isAlibabaApiConfigured, searchAlibabaSuppliersViaApi } from "./alibabaApiService";
 import { createDecipheriv, createHash } from "crypto";
 // Decrypts a stored password supporting both the current AES-256-GCM format
 // (iv:authTag:ciphertext) and the legacy AES-256-CBC format (plain hex ciphertext).
@@ -558,6 +559,23 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const query = input.query.trim();
         const defaultCountry = input.country?.trim() || "China";
+
+        if (isAlibabaApiConfigured()) {
+          try {
+            const apiResult = await searchAlibabaSuppliersViaApi(input);
+            return {
+              suppliers: apiResult.suppliers,
+              usedFallback: false,
+              source: apiResult.source,
+            };
+          } catch (apiError) {
+            console.warn(
+              "[Alibaba API] Live search failed, falling back to AI suggestions:",
+              apiError instanceof Error ? apiError.message : String(apiError)
+            );
+          }
+        }
+
         const fallbackSuppliers = Array.from({ length: 8 }, (_, i) => {
           const priceFloor = (0.6 + i * 0.35).toFixed(2);
           const priceCeil = (1.8 + i * 0.55).toFixed(2);
@@ -639,9 +657,9 @@ ONLY return the JSON array, no other text.`;
             const text = typeof content === "string" ? content : String(content);
             const jsonMatch = text.match(/\[[\s\S]*\]/);
             const suppliers = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
-            return { suppliers: suppliers.slice(0, 10), usedFallback: false };
+            return { suppliers: suppliers.slice(0, 10), usedFallback: false, source: "ai_generated" };
           } catch {
-            return { suppliers: fallbackSuppliers, usedFallback: true };
+            return { suppliers: fallbackSuppliers, usedFallback: true, source: "ai_fallback" };
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -651,7 +669,7 @@ ONLY return the JSON array, no other text.`;
             message.toLowerCase().includes("overloaded");
 
           if (isProviderOverloaded) {
-            return { suppliers: fallbackSuppliers, usedFallback: true };
+            return { suppliers: fallbackSuppliers, usedFallback: true, source: "ai_fallback" };
           }
 
           throw error;

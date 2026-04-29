@@ -30,7 +30,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Building2, Plus, Search, Loader2, Upload, ShoppingBag, Star, ExternalLink, CheckCircle2 } from "lucide-react";
+import { Building2, Plus, Search, Loader2, Upload, ShoppingBag, Star, ExternalLink, CheckCircle2, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { getStatusColor } from "@/lib/statusColors";
 import { useLocation } from "wouter";
@@ -149,6 +149,34 @@ export default function Vendors() {
       .join(" ");
     const url = `https://www.alibaba.com/trade/search?SearchText=${encodeURIComponent(terms)}`;
     window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const buildAlibabaQuoteMessage = (supplier: any) => {
+    const dueDate = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toLocaleDateString();
+    return `Hello ${supplier.companyName},
+
+We are sourcing: ${supplier.productName}
+
+Please share your quotation with:
+1) Unit price and total price
+2) MOQ and available capacities
+3) Lead time
+4) Payment terms
+5) Shipping terms (FOB/CIF) and nearest port
+6) Quote validity
+
+Please send your quote by ${dueDate}.
+
+Thank you.`;
+  };
+
+  const copyAlibabaQuoteMessage = async (supplier: any) => {
+    try {
+      await navigator.clipboard.writeText(buildAlibabaQuoteMessage(supplier));
+      toast.success("Quote request message copied. Paste it into Alibaba chat.");
+    } catch {
+      toast.error("Unable to copy message. Please copy manually.");
+    }
   };
 
   const handleAddAlibabaSupplier = (supplier: any) => {
@@ -557,7 +585,41 @@ export default function Vendors() {
                               onClick={() => window.open(supplier.alibabaUrl, "_blank")}
                             >
                               <ExternalLink className="h-3 w-3 mr-1" />
-                              Alibaba
+                              View Listing
+                            </Button>
+                          )}
+                          {supplier.alibabaUrl && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-xs"
+                              onClick={() => {
+                                window.open(supplier.alibabaUrl, "_blank", "noopener,noreferrer");
+                                toast.info("Open the listing and use Alibaba chat to contact the supplier.");
+                              }}
+                            >
+                              <ShoppingBag className="h-3 w-3 mr-1" />
+                              Contact on Alibaba
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-xs"
+                            onClick={() => copyAlibabaQuoteMessage(supplier)}
+                          >
+                            <Copy className="h-3 w-3 mr-1" />
+                            Copy RFQ Msg
+                          </Button>
+                          {supplier.alibabaUrl && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs"
+                              onClick={() => window.open(supplier.alibabaUrl, "_blank")}
+                            >
+                              <ExternalLink className="h-3 w-3 mr-1" />
+                              Message Seller
                             </Button>
                           )}
                           <Button
