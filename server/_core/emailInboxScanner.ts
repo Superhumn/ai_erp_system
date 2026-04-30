@@ -177,7 +177,7 @@ export async function scanInbox(
           envelope: true,
           bodyStructure: true,
           source: true,
-        }, { uid: true });
+        }, { uid: true, markSeen: false });
 
         if (!message) continue;
 
@@ -306,7 +306,7 @@ async function parseImapMessage(
     let bodyHtml = "";
 
     // Fetch the body parts
-    const bodyPart = await client.download(uid.toString(), undefined, { uid: true });
+    const bodyPart = await client.download(uid.toString(), undefined, { uid: true, markSeen: false });
     if (bodyPart && bodyPart.content) {
       const chunks: Buffer[] = [];
       for await (const chunk of bodyPart.content) {
@@ -338,7 +338,7 @@ async function parseImapMessage(
           const isParseable = /pdf|image|msword|spreadsheet|csv|excel|png|jpg|jpeg/i.test(contentType) || /\.pdf$|\.png$|\.jpg$|\.jpeg$|\.xlsx?$|\.csv$|\.doc/i.test(filename);
           if (isParseable && (child.size || 0) < 5 * 1024 * 1024) {
             try {
-              const part = await client.download(uid.toString(), String(partIndex), { uid: true });
+              const part = await client.download(uid.toString(), String(partIndex), { uid: true, markSeen: false });
               if (part?.content) {
                 const chunks: Buffer[] = [];
                 for await (const chunk of part.content) chunks.push(chunk);
