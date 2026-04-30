@@ -55,7 +55,12 @@ export default function FundraisingCampaigns() {
   const round = campaigns?.[0] || null;
 
   useEffect(() => {
-    if (!isOpen || !round) return;
+    if (!isOpen) return;
+    if (!round) {
+      // Reset to blank when opening the create dialog
+      setFormData({ name: "", description: "", targetAmount: "", minimumInvestment: "", valuation: "", roundType: "seed", equityOffered: "", status: "planning", notes: "" });
+      return;
+    }
     setFormData({
       name: round.name || "",
       description: round.description || "",
