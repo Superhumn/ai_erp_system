@@ -208,14 +208,17 @@ export async function syncDriveFolder(
   async function syncRecursive(currentFolderId: string, depth: number) {
     if (depth > maxDepth) return;
 
+    // List subfolders — a failure here must not prevent listing files in the
+    // current folder, because the folder itself was already recorded by the
+    // parent call and its files should still be imported.
     const { folders, error: folderError } = await listDriveFolders(accessToken, currentFolderId);
     if (folderError) {
-      console.error(`[GoogleDrive] Error syncing folder ${currentFolderId}:`, folderError);
-      return;
+      console.error(`[GoogleDrive] Error listing subfolders in ${currentFolderId}:`, folderError);
+    } else {
+      allFolders.push(...folders);
     }
 
-    allFolders.push(...folders);
-
+    // Always fetch files regardless of whether subfolder listing succeeded.
     const { files, error: fileError } = await listDriveFiles(accessToken, currentFolderId);
     if (fileError) {
       console.error(`[GoogleDrive] Error getting files in ${currentFolderId}:`, fileError);
@@ -223,8 +226,11 @@ export async function syncDriveFolder(
       allFiles.push(...files);
     }
 
-    for (const folder of folders) {
-      await syncRecursive(folder.id, depth + 1);
+    // Only recurse into subfolders when we actually know what they are.
+    if (!folderError) {
+      for (const folder of folders) {
+        await syncRecursive(folder.id, depth + 1);
+      }
     }
   }
   
