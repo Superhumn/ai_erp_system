@@ -781,7 +781,7 @@ async function startServer() {
     const returnTo = sanitizeReturnTo(req.query.returnTo);
     try {
       if (!process.env.GOOGLE_CLIENT_ID) {
-        return res.redirect(`${returnTo}${returnTo.includes('?') ? '&' : '?'}error=google_oauth_not_configured`);
+        return res.redirect('/messaging?error=google_oauth_not_configured');
       }
       const { sdk: authSdk } = await import('./sdk');
       let user: Awaited<ReturnType<typeof authSdk.authenticateRequest>> | null = null;
@@ -794,7 +794,7 @@ async function startServer() {
       logger.error('Google Chat OAuth initiation error', {
         error: error instanceof Error ? error.message : String(error),
       });
-      return res.redirect(`${returnTo}${returnTo.includes('?') ? '&' : '?'}error=google_chat_oauth_failed`);
+      return res.redirect('/messaging?error=google_chat_oauth_failed');
     }
   });
 
