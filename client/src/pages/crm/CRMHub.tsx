@@ -123,7 +123,7 @@ export default function CRMHub() {
   const { data: pipelines } = trpc.crm.pipelines.list.useQuery();
 
   // AI Next Steps for expanded deal
-  const { data: nextStepsData, isLoading: nextStepsLoading } = (trpc.crm as any).deals.getNextSteps.useQuery(
+  const { data: nextStepsData, isLoading: nextStepsLoading } = trpc.crm.deals.getNextSteps.useQuery(
     { dealId: expandedDealId! },
     { enabled: !!expandedDealId }
   );
@@ -139,11 +139,11 @@ export default function CRMHub() {
     onError: (error) => toast.error(error.message),
   });
 
-  const updateDeal = (trpc.crm as any).deals.update.useMutation({
+  const updateDeal = trpc.crm.deals.update.useMutation({
     onSuccess: () => refetchDeals(),
   });
 
-  const createDeal = (trpc.crm as any).deals.create.useMutation({
+  const createDeal = trpc.crm.deals.create.useMutation({
     onSuccess: () => {
       toast.success("Deal created");
       setIsDealDialogOpen(false);
@@ -1183,7 +1183,7 @@ export default function CRMHub() {
               {(!dealForm.contactId || dealForm.contactId === 0) && (
                 <div className="space-y-2 mt-2">
                   <Input placeholder="Contact name *" value={dealForm.contactName || ""} onChange={(e) => setDealForm({ ...dealForm, contactName: e.target.value })} />
-                  <Input placeholder="Company name" value={dealForm.contactCompany || ""} onChange={(e) => setDealForm({ ...dealForm, contactCompany: e.target.value })} />
+                  <Input placeholder="Company name *" value={dealForm.contactCompany || ""} onChange={(e) => setDealForm({ ...dealForm, contactCompany: e.target.value })} />
                   <Input placeholder="Contact email" value={dealForm.contactEmail || ""} onChange={(e) => setDealForm({ ...dealForm, contactEmail: e.target.value })} />
                 </div>
               )}

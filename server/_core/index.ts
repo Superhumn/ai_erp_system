@@ -1430,11 +1430,11 @@ async function startServer() {
               result.totalSynced > 0 ||
               result.tasksSuggested > 0 ||
               result.contactsCreated > 0 ||
-              result.dealsCreated > 0
+              result.dealApprovalsQueued > 0
             ) {
               console.log(
                 `[Fireflies Sync] Synced ${result.totalSynced} new meetings (${result.totalSkipped} already had), ` +
-                  `task suggestions ${result.tasksSuggested}, contacts ${result.contactsCreated}, deals ${result.dealsCreated}`
+                  `task suggestions ${result.tasksSuggested}, contacts ${result.contactsCreated}, deal approvals queued ${result.dealApprovalsQueued}`
               );
             }
           } catch (e) {

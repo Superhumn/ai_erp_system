@@ -3810,6 +3810,7 @@ export const aiAgentTasks = mysqlTable("aiAgentTasks", {
     "create_product",
     "create_bom",
     "create_customer",
+    "create_crm_deal",
     "ingredient_rfq",
     "invoice_price_review"
   ]).notNull(),
