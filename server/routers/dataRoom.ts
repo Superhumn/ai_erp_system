@@ -599,8 +599,8 @@ export const dataRoomRouter = router({
           }
 
           // Get existing folders and documents to avoid duplicates
-          const existingFolders = await db.getDataRoomFolders(input.dataRoomId, null);
-          const existingDocs = await db.getDataRoomDocuments(input.dataRoomId, null);
+          const existingFolders = await db.getDataRoomFolders(input.dataRoomId);
+          const existingDocs = await db.getDataRoomDocuments(input.dataRoomId);
           const existingFoldersByDriveId = new Map(
             existingFolders
               .filter(f => f.googleDriveFolderId)
