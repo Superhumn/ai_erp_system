@@ -297,12 +297,11 @@ export function parseActionItems(rawItems: unknown): FirefliesActionItem[] {
     const text = stripTimestamps(rawText);
     const item: FirefliesActionItem = { text };
 
-    // Try to extract assignee patterns like "John:" or "@John" or "assigned to John"
+    // Only match unambiguous assignee markers. The leading "Name:" pattern was
+    // removed because it false-matches things like "Marketing: prepare deck".
     const assigneePatterns = [
-      /^([A-Z][a-z]+ ?[A-Z]?[a-z]*):\s*/,           // "John Smith: do something"
-      /@(\w+ ?\w*)/,                                    // "@John do something"
+      /@(\w+ ?\w*)/,                                  // "@John do something"
       /assigned to ([A-Z][a-z]+ ?[A-Z]?[a-z]*)/i,     // "assigned to John"
-      /\(([A-Z][a-z]+ ?[A-Z]?[a-z]*)\)\s*$/,          // "do something (John)"
     ];
 
     for (const pattern of assigneePatterns) {

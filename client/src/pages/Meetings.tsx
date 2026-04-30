@@ -160,9 +160,7 @@ export default function Meetings() {
 
   const filtered = meetingsWithParsed
     .filter((m: any) => {
-      if (statusFilter === "pending" && m.processingStatus !== "pending") return false;
-      if (statusFilter === "processed" && m.processingStatus !== "fully_processed") return false;
-      if (statusFilter !== "all" && statusFilter !== "pending" && statusFilter !== "processed" && m.processingStatus !== statusFilter) return false;
+      if (statusFilter !== "all" && m.processingStatus !== statusFilter) return false;
       if (!search) return true;
       const q = search.toLowerCase();
       const title = (m.title || "").toLowerCase();
@@ -257,6 +255,21 @@ export default function Meetings() {
       }
     }
     return bestId;
+  };
+
+  const openProcessDialog = (meeting: any) => {
+    setSelectedMeetingId(meeting.id);
+    setProcessProjectName("");
+    const predicted = predictProject(meeting.title || "");
+    setPredictedProjectId(predicted);
+    if (predicted !== undefined) {
+      setProjectMode("existing");
+      setProcessExistingProjectId(predicted);
+    } else {
+      setProjectMode("none");
+      setProcessExistingProjectId(undefined);
+    }
+    setShowProcessDialog(true);
   };
 
   const handleProcessMeeting = () => {
@@ -376,7 +389,11 @@ export default function Meetings() {
               <SelectItem value="all">All</SelectItem>
               <SelectItem value="pending">Pending</SelectItem>
               <SelectItem value="contacts_created">Contacts</SelectItem>
+              <SelectItem value="tasks_created">Tasks</SelectItem>
+              <SelectItem value="project_created">Project</SelectItem>
               <SelectItem value="fully_processed">Processed</SelectItem>
+              <SelectItem value="skipped">Skipped</SelectItem>
+              <SelectItem value="error">Error</SelectItem>
             </SelectContent>
           </Select>
           <Button
@@ -472,10 +489,7 @@ export default function Meetings() {
                           className="h-5 px-2 text-[10px] shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setSelectedMeetingId(meeting.id);
-                            setProcessProjectName("");
-                            setProjectMode("none");
-                            setShowProcessDialog(true);
+                            openProcessDialog(meeting);
                           }}
                         >
                           <Zap className="h-2.5 w-2.5 mr-0.5" />
@@ -670,12 +684,7 @@ export default function Meetings() {
                     <Button
                       size="sm"
                       className="ml-auto text-xs"
-                      onClick={() => {
-                        setSelectedMeetingId(m.id);
-                        setProcessProjectName("");
-                        setProjectMode("none");
-                        setShowProcessDialog(true);
-                      }}
+                      onClick={() => openProcessDialog(m)}
                     >
                       <Zap className="mr-1.5 h-3.5 w-3.5" />
                       Process Meeting
