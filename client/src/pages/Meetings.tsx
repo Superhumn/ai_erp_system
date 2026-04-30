@@ -20,7 +20,6 @@ import {
   FileText,
   Zap,
   FolderPlus,
-  Video,
   Tag,
   CheckCircle2,
   Filter,
@@ -594,6 +593,18 @@ export default function Meetings() {
 
                 {/* Scrollable content */}
                 <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6">
+                  {/* Inline recording player */}
+                  {m.recordingUrl && (
+                    <section>
+                      <video
+                        src={m.recordingUrl}
+                        controls
+                        preload="metadata"
+                        className="w-full rounded-lg bg-black"
+                      />
+                    </section>
+                  )}
+
                   {/* Tasks */}
                   {actionItems.length > 0 && (
                     <section>
@@ -672,13 +683,6 @@ export default function Meetings() {
 
                 {/* Footer actions */}
                 <div className="border-t px-5 py-3 flex items-center gap-2">
-                  {m.recordingUrl && (
-                    <Button variant="outline" size="sm" className="text-xs" asChild>
-                      <a href={m.recordingUrl} target="_blank" rel="noopener noreferrer">
-                        <Video className="mr-1.5 h-3.5 w-3.5" /> Recording <ExternalLink className="ml-1 h-3 w-3" />
-                      </a>
-                    </Button>
-                  )}
                   {m.transcriptUrl && (
                     <Button variant="outline" size="sm" className="text-xs" asChild>
                       <a href={m.transcriptUrl} target="_blank" rel="noopener noreferrer">
