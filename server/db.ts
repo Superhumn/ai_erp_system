@@ -5767,8 +5767,14 @@ export async function createInboundEmail(input: InsertInboundEmail) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  // Deduplicate: skip if same subject + sender + date already exists
-  if (input.subject && input.fromEmail) {
+  // Deduplicate: prefer messageId match (globally unique per RFC 2822),
+  // fall back to subject + sender check when messageId is absent
+  if (input.messageId) {
+    const existing = await db.select({ id: inboundEmails.id }).from(inboundEmails)
+      .where(eq(inboundEmails.messageId, input.messageId))
+      .limit(1);
+    if (existing.length > 0) return { id: existing[0].id };
+  } else if (input.subject && input.fromEmail) {
     const existing = await db.select({ id: inboundEmails.id }).from(inboundEmails)
       .where(and(
         eq(inboundEmails.subject, input.subject),

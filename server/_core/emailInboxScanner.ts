@@ -196,24 +196,9 @@ export async function scanInbox(
           const skipPatterns = /unsubscribe|newsletter|promo(tion)?|marketing|no-?reply@|noreply@|mailchimp|sendgrid\.net|constantcontact|hubspot|campaigns?@|updates?@|news@|digest@|weekly.*summary|daily.*digest/i;
           const isPromotional = skipPatterns.test(scannedEmail.subject) ||
                                 skipPatterns.test(scannedEmail.from.address) ||
-                                skipPatterns.test(scannedEmail.body || '');
+                                skipPatterns.test(scannedEmail.bodyText || '');
           if (isPromotional) {
             continue; // Skip this email
-          }
-
-          // Strip HTML from body to get plain text
-          if (scannedEmail.body) {
-            scannedEmail.body = scannedEmail.body
-              .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-              .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-              .replace(/<[^>]+>/g, ' ')
-              .replace(/&nbsp;/g, ' ')
-              .replace(/&amp;/g, '&')
-              .replace(/&lt;/g, '<')
-              .replace(/&gt;/g, '>')
-              .replace(/&quot;/g, '"')
-              .replace(/\s+/g, ' ')
-              .trim();
           }
 
           result.processedEmails.push(scannedEmail);
