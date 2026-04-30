@@ -1183,7 +1183,7 @@ export default function CRMHub() {
               {(!dealForm.contactId || dealForm.contactId === 0) && (
                 <div className="space-y-2 mt-2">
                   <Input placeholder="Contact name *" value={dealForm.contactName || ""} onChange={(e) => setDealForm({ ...dealForm, contactName: e.target.value })} />
-                  <Input placeholder="Company name" value={dealForm.contactCompany || ""} onChange={(e) => setDealForm({ ...dealForm, contactCompany: e.target.value })} />
+                  <Input placeholder="Company name *" value={dealForm.contactCompany || ""} onChange={(e) => setDealForm({ ...dealForm, contactCompany: e.target.value })} />
                   <Input placeholder="Contact email" value={dealForm.contactEmail || ""} onChange={(e) => setDealForm({ ...dealForm, contactEmail: e.target.value })} />
                 </div>
               )}

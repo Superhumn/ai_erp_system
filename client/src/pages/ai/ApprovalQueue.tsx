@@ -346,6 +346,7 @@ const taskTypeIcons: Record<string, any> = {
   reconcile_payment: DollarSign,
   reorder_materials: Package,
   vendor_followup: Mail,
+  create_crm_deal: Building2,
 };
 
 const taskTypeLabels: Record<string, string> = {
@@ -360,6 +361,7 @@ const taskTypeLabels: Record<string, string> = {
   reorder_materials: "Reorder Materials",
   vendor_followup: "Vendor Follow-up",
   query: "Suggested Task",
+  create_crm_deal: "Create CRM Deal",
 };
 
 const priorityColors: Record<string, string> = {
@@ -659,7 +661,26 @@ export default function ApprovalQueue() {
                     )}
                   </div>
                 )}
-                
+
+                {task.taskType === "create_crm_deal" && (
+                  <div className="text-sm text-muted-foreground space-y-1">
+                    <p><strong>Company:</strong> {taskData.company || "Unknown"}</p>
+                    {taskData.amount && <p><strong>Amount:</strong> {formatCurrency(taskData.amount)}</p>}
+                    {taskData.stage && <p><strong>Stage:</strong> {taskData.stage}</p>}
+                    {taskData.source && <p><strong>Source:</strong> {taskData.source}</p>}
+                    {taskData.notes && <p className="line-clamp-2"><strong>Notes:</strong> {taskData.notes}</p>}
+                    {task.resultData && (
+                      <p className="mt-2 p-2 bg-green-50 rounded border border-green-200">
+                        <strong>Created:</strong>{" "}
+                        <Link href={`/crm`} className="text-green-700 hover:underline inline-flex items-center gap-1">
+                          View Deal
+                          <ExternalLink className="h-3 w-3" />
+                        </Link>
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 {/* AI Reasoning */}
                 {task.aiReasoning && (
                   <div className="mt-3 p-3 bg-muted/50 rounded-lg">
