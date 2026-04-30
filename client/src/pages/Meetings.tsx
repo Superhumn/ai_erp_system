@@ -106,14 +106,55 @@ export default function Meetings() {
     }
   };
 
+  // Strip Fireflies transcript timestamps like "(00:30)" / "(1:23:45)" and
+  // markdown bullet/header artifacts from a single action-item string.
+  const cleanActionText = (s: string) =>
+    s
+      .replace(/\s*\(\d{1,2}:\d{2}(?::\d{2})?\)\s*/g, " ")
+      .replace(/^\s*(?:[-*•]|\d+[.)])\s+/, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  // Fireflies returns `summary.action_items` as a markdown string with
+  // "**Speaker**" headers. Parse it client-side as a fallback for meetings
+  // synced before the backend parser was fixed.
+  const parseActionItemsFromSummary = (raw: unknown): Array<{ text: string; assignee?: string }> => {
+    if (!raw) return [];
+    if (Array.isArray(raw)) {
+      return raw
+        .map((it) => (typeof it === "string" ? { text: cleanActionText(it) } : { text: cleanActionText(it?.text || it?.action_item || it?.description || ""), assignee: it?.assignee }))
+        .filter((it) => it.text);
+    }
+    if (typeof raw !== "string") return [];
+    const out: Array<{ text: string; assignee?: string }> = [];
+    let assignee: string | undefined;
+    for (const line of raw.split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t) continue;
+      const header = t.match(/^\*\*(.+?)\*\*:?\s*$/);
+      if (header) { assignee = header[1].trim(); continue; }
+      const text = cleanActionText(t);
+      if (text) out.push({ text, ...(assignee ? { assignee } : {}) });
+    }
+    return out;
+  };
+
   const meetingsWithParsed = useMemo(
     () =>
-      meetings.map((meeting: any) => ({
-        ...meeting,
-        parsedParticipants: parseSafe(meeting.participants) || [],
-        parsedSummary: parseSafe(meeting.summary),
-        parsedActionItems: parseSafe(meeting.actionItems) || [],
-      })),
+      meetings.map((meeting: any) => {
+        const parsedSummary = parseSafe(meeting.summary);
+        const stored = parseSafe(meeting.actionItems);
+        const storedArr = Array.isArray(stored) ? stored : [];
+        const parsedActionItems = storedArr.length > 0
+          ? storedArr.map((it: any) => ({ ...it, text: cleanActionText(typeof it === "string" ? it : it?.text || "") }))
+          : parseActionItemsFromSummary(parsedSummary?.action_items);
+        return {
+          ...meeting,
+          parsedParticipants: parseSafe(meeting.participants) || [],
+          parsedSummary,
+          parsedActionItems,
+        };
+      }),
     [meetings]
   );
 
@@ -175,11 +216,6 @@ export default function Meetings() {
     if (!date) return "-";
     const d = new Date(date);
     return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  };
-
-  const fmtTime = (date?: string | Date | null) => {
-    if (!date) return "";
-    return new Date(date).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   };
 
   const statusBadge = (status: string) => {
@@ -404,6 +440,8 @@ export default function Meetings() {
           {filtered.map((meeting: any) => {
             const summary = meeting.parsedSummary;
             const bullets = getBullets(meeting);
+            const tasks = (meeting.parsedActionItems || []) as Array<{ text: string; assignee?: string }>;
+            const previewTasks = tasks.slice(0, 3);
 
             return (
               <div
@@ -422,7 +460,7 @@ export default function Meetings() {
                         {meeting.title || "Untitled"}
                       </span>
                       <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
-                        {fmtDate(meeting.date)} {fmtTime(meeting.date)}
+                        {fmtDate(meeting.date)}
                       </span>
                       <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
                         {fmtDur(meeting.duration)}
@@ -471,6 +509,28 @@ export default function Meetings() {
                     {!bullets.length && summary?.overview && (
                       <p className="mt-0.5 text-[12px] text-muted-foreground line-clamp-1 leading-[1.4]">{summary.overview}</p>
                     )}
+
+                    {/* Inline task preview */}
+                    {previewTasks.length > 0 && (
+                      <ul className="mt-1 space-y-0">
+                        {previewTasks.map((task, i) => (
+                          <li key={i} className="flex items-start gap-1.5 text-[12px] leading-[1.4]">
+                            <CheckCircle2 className="mt-[2px] h-3 w-3 shrink-0 text-emerald-500" />
+                            <span className="line-clamp-1">
+                              {task.assignee && (
+                                <span className="font-medium text-blue-600 dark:text-blue-400 mr-1">@{task.assignee}</span>
+                              )}
+                              <span className="text-foreground/80">{task.text}</span>
+                            </span>
+                          </li>
+                        ))}
+                        {tasks.length > previewTasks.length && (
+                          <li className="text-[11px] text-muted-foreground pl-[18px]">
+                            +{tasks.length - previewTasks.length} more
+                          </li>
+                        )}
+                      </ul>
+                    )}
                   </div>
                 </div>
               </div>
@@ -493,7 +553,7 @@ export default function Meetings() {
                 <SheetHeader className="border-b px-5 py-4 gap-1">
                   <SheetTitle className="text-base leading-snug pr-6">{m.title || "Untitled"}</SheetTitle>
                   <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
-                    <span>{fmtDate(m.date)} {fmtTime(m.date)}</span>
+                    <span>{fmtDate(m.date)}</span>
                     <span>·</span>
                     <span>{fmtDur(m.duration)}</span>
                     <span>·</span>
@@ -522,17 +582,19 @@ export default function Meetings() {
                         Tasks ({actionItems.length})
                       </h3>
                       <ul className="space-y-2">
-                        {actionItems.map((item: any, i: number) => (
-                          <li key={i} className="flex items-start gap-2.5 text-[13px] leading-relaxed">
-                            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
-                            <span>
-                              {renderInlineMd(typeof item === "string" ? item : item.text || item.description || JSON.stringify(item))}
-                            </span>
-                            {item.assignee && (
-                              <span className="shrink-0 text-[11px] font-medium text-blue-600 dark:text-blue-400">@{item.assignee}</span>
-                            )}
-                          </li>
-                        ))}
+                        {actionItems.map((item: any, i: number) => {
+                          const rawText = typeof item === "string" ? item : item.text || item.description || "";
+                          const text = cleanActionText(rawText);
+                          return (
+                            <li key={i} className="flex items-start gap-2.5 text-[13px] leading-relaxed">
+                              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                              <span>{renderInlineMd(text)}</span>
+                              {item.assignee && (
+                                <span className="shrink-0 text-[11px] font-medium text-blue-600 dark:text-blue-400">@{item.assignee}</span>
+                              )}
+                            </li>
+                          );
+                        })}
                       </ul>
                     </section>
                   )}

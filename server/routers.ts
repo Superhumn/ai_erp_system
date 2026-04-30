@@ -18984,20 +18984,39 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           projectId = input.projectId;
         }
 
-        // Queue tasks from action items for approval
-        if (input.createTasks && meeting.actionItems) {
-          const parsedParticipants: Array<{ name: string; email: string }> =
-            typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
-            Array.isArray(meeting.participants) ? meeting.participants : [];
-          tasksCreated += await queueFirefliesActionItemsForApproval({
-            userId: ctx.user.id,
-            meetingId: meeting.id,
-            meetingTitle: meeting.title || 'Untitled meeting',
-            actionItems: (meeting.actionItems ? JSON.parse(meeting.actionItems) : []) as Array<{ text: string; assignee?: string; dueDate?: string }>,
-            participants: parsedParticipants,
-            preferredProjectId: projectId,
-            preferredAssigneeId: input.assigneeId,
-          });
+        // Queue tasks from action items for approval. Older meetings may have
+        // an empty `actionItems` column (the previous parser didn't handle
+        // Fireflies' markdown string format) — fall back to re-parsing from
+        // the stored `summary` JSON so the Process button still works.
+        if (input.createTasks) {
+          let storedItems: Array<{ text: string; assignee?: string; dueDate?: string }> = [];
+          try {
+            storedItems = meeting.actionItems ? JSON.parse(meeting.actionItems) : [];
+          } catch { storedItems = []; }
+          if (storedItems.length === 0 && meeting.summary) {
+            try {
+              const summaryObj = JSON.parse(meeting.summary);
+              storedItems = parseActionItems(summaryObj?.action_items);
+            } catch { /* leave empty */ }
+          }
+          if (storedItems.length > 0) {
+            const parsedParticipants: Array<{ name: string; email: string }> =
+              typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
+              Array.isArray(meeting.participants) ? meeting.participants : [];
+            tasksCreated += await queueFirefliesActionItemsForApproval({
+              userId: ctx.user.id,
+              meetingId: meeting.id,
+              meetingTitle: meeting.title || 'Untitled meeting',
+              actionItems: storedItems,
+              participants: parsedParticipants,
+              preferredProjectId: projectId,
+              preferredAssigneeId: input.assigneeId,
+            });
+            // Persist the freshly parsed items so subsequent reads see them
+            await db.updateFirefliesMeeting(input.meetingId, {
+              actionItems: JSON.stringify(storedItems),
+            });
+          }
         }
 
         const status: 'fully_processed' | 'contacts_created' | 'tasks_created' | 'pending' =

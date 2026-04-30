@@ -234,6 +234,46 @@ export async function getTranscript(apiKey: string, transcriptId: string): Promi
  * assignee names and due dates from natural language.
  */
 export function parseActionItems(rawItems: unknown): FirefliesActionItem[] {
+  // Strip embedded `(MM:SS)` / `(HH:MM:SS)` transcript timestamps
+  const stripTimestamps = (s: string) =>
+    s.replace(/\s*\(\d{1,2}:\d{2}(?::\d{2})?\)\s*/g, " ").replace(/\s+/g, " ").trim();
+
+  // Fireflies returns `summary.action_items` as a single markdown string
+  // shaped like:
+  //   **Speaker Name**
+  //   - Do the thing (00:30)
+  //   - Follow up next week (01:45)
+  //
+  //   **Other Speaker**
+  //   - Send the deck
+  // Parse into individual items, treating the bold header as the assignee.
+  const itemsFromMarkdown = (raw: string): FirefliesActionItem[] => {
+    const lines = raw.split(/\r?\n/);
+    let currentAssignee: string | undefined;
+    const out: FirefliesActionItem[] = [];
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      const headerMatch = line.match(/^\*\*(.+?)\*\*:?\s*$/);
+      if (headerMatch) {
+        currentAssignee = headerMatch[1].trim();
+        continue;
+      }
+      // Accept "- text", "* text", "1. text", or a bare line
+      const bulletMatch = line.match(/^(?:[-*•]|\d+[.)])\s+(.*)$/);
+      const text = stripTimestamps(bulletMatch ? bulletMatch[1] : line);
+      if (!text) continue;
+      const item: FirefliesActionItem = { text };
+      if (currentAssignee) item.assignee = currentAssignee;
+      out.push(item);
+    }
+    return out;
+  };
+
+  if (typeof rawItems === "string") {
+    return rawItems.trim() ? itemsFromMarkdown(rawItems) : [];
+  }
+
   const normalizedItems: string[] = Array.isArray(rawItems)
     ? rawItems
         .map((item) => {
@@ -247,8 +287,15 @@ export function parseActionItems(rawItems: unknown): FirefliesActionItem[] {
         .filter((text) => text.trim().length > 0)
     : [];
 
-  return normalizedItems.map((text) => {
-    const item: FirefliesActionItem = { text: text.trim() };
+  // If the array elements themselves contain markdown (one giant string per
+  // entry, or "**Speaker**\n- item" blocks), defer to the markdown parser.
+  if (normalizedItems.some((t) => /^\s*\*\*.+\*\*/m.test(t) || /\n\s*[-*•]/.test(t))) {
+    return itemsFromMarkdown(normalizedItems.join("\n"));
+  }
+
+  return normalizedItems.map((rawText) => {
+    const text = stripTimestamps(rawText);
+    const item: FirefliesActionItem = { text };
 
     // Try to extract assignee patterns like "John:" or "@John" or "assigned to John"
     const assigneePatterns = [
