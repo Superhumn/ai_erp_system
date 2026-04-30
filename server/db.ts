@@ -13040,6 +13040,29 @@ export async function getSocialPlatformCredentials(filters?: { companyId?: numbe
   return db.select().from(socialPlatformCredentials);
 }
 
+// Clears the tokens and marks a credential as inactive. Used by the
+// disconnectCredential router endpoint to avoid null-as-any casts.
+export async function disconnectSocialPlatformCredential(
+  platform: "tiktok" | "youtube" | "instagram",
+  companyId?: number | null,
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const companyCondition = companyId == null
+    ? isNull(socialPlatformCredentials.companyId)
+    : eq(socialPlatformCredentials.companyId, companyId);
+  await db
+    .update(socialPlatformCredentials)
+    .set({
+      accessToken: null,
+      refreshToken: null,
+      tokenExpiresAt: null,
+      isActive: false,
+      updatedAt: new Date(),
+    })
+    .where(and(companyCondition, eq(socialPlatformCredentials.platform, platform)));
+}
+
 // Upserts a credential row keyed by (companyId, platform). When companyId is
 // null/undefined the lookup uses IS NULL — without that, an undefined input
 // would try to match `companyId = NULL` literally and never hit, producing

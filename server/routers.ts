@@ -22682,7 +22682,7 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
       }))
       .mutation(async ({ input }) => {
         const { id, ...data } = input;
-        await db.updateMarketingVideo(id, data as any);
+        await db.updateMarketingVideo(id, data);
         return { success: true };
       }),
     deleteVideo: protectedProcedure
@@ -22880,36 +22880,11 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
 
     disconnectCredential: protectedProcedure
       .input(z.object({ platform: z.enum(["tiktok", "youtube", "instagram"]) }))
-      .mutation(async ({ input, ctx }) => {
-        await db.upsertSocialPlatformCredential({
-          platform: input.platform,
-          accessToken: null as any,
-          refreshToken: null as any,
-          tokenExpiresAt: null as any,
-          isActive: false,
-          createdBy: ctx.user.id,
-        });
+      .mutation(async ({ input }) => {
+        await db.disconnectSocialPlatformCredential(input.platform);
         return { success: true };
       }),
 
-    saveCredential: protectedProcedure
-      .input(z.object({
-        platform: z.enum(["tiktok", "youtube", "instagram"]),
-        accountHandle: z.string().optional(),
-        accessToken: z.string().optional(),
-        refreshToken: z.string().optional(),
-        tokenExpiresAt: z.date().optional(),
-        externalAccountId: z.string().optional(),
-        isActive: z.boolean().optional(),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        const result = await db.upsertSocialPlatformCredential({
-          ...input,
-          createdBy: ctx.user.id,
-        });
-        await createAuditLog(ctx.user.id, 'update', 'socialPlatformCredential', result.id, input.platform);
-        return result;
-      }),
   }),
 
   // ============================================
