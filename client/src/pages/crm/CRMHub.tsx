@@ -144,8 +144,12 @@ export default function CRMHub() {
   });
 
   const createDeal = (trpc.crm as any).deals.create.useMutation({
-    onSuccess: () => {
-      toast.success("Deal created");
+    onSuccess: (res: any) => {
+      if (res?.pendingApproval) {
+        toast.success(`Deal for "${res.company}" submitted for approval`);
+      } else {
+        toast.success("Deal created");
+      }
       setIsDealDialogOpen(false);
       setDealForm({ name: "", contactId: 0, contactName: "", contactEmail: "", contactCompany: "", stage: "discovery", amount: "", source: "", notes: "" });
       refetchDeals();
@@ -1183,7 +1187,7 @@ export default function CRMHub() {
               {(!dealForm.contactId || dealForm.contactId === 0) && (
                 <div className="space-y-2 mt-2">
                   <Input placeholder="Contact name *" value={dealForm.contactName || ""} onChange={(e) => setDealForm({ ...dealForm, contactName: e.target.value })} />
-                  <Input placeholder="Company name" value={dealForm.contactCompany || ""} onChange={(e) => setDealForm({ ...dealForm, contactCompany: e.target.value })} />
+                  <Input placeholder="Company name *" value={dealForm.contactCompany || ""} onChange={(e) => setDealForm({ ...dealForm, contactCompany: e.target.value })} />
                   <Input placeholder="Contact email" value={dealForm.contactEmail || ""} onChange={(e) => setDealForm({ ...dealForm, contactEmail: e.target.value })} />
                 </div>
               )}
