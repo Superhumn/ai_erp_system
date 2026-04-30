@@ -113,9 +113,18 @@ export default function Meetings() {
     }
   };
 
-  // Remove Fireflies transcript timestamps like "(00:30)" / "(1:23:45)".
-  const stripTimestamps = (s: string) =>
-    s.replace(/\s*\(\d{1,2}:\d{2}(?::\d{2})?\)\s*/g, " ").replace(/\s+/g, " ").trim();
+  // Remove Fireflies transcript timestamps in any of these shapes:
+  //   (00:30) | (1:23:45) | (00:00 - 10:46) | * (00:00 - 10:46) ... | - 08:40)
+  const stripTimestamps = (s: string) => {
+    const TS = String.raw`\d{1,2}:\d{2}(?::\d{2})?`;
+    return s
+      .replace(new RegExp(String.raw`\(\s*${TS}(?:\s*[-–]\s*${TS})?\s*\)`, "g"), " ")
+      .replace(new RegExp(String.raw`(?:^|\s)[-–]\s*${TS}\s*\)`, "g"), " ")
+      .replace(new RegExp(String.raw`(?:^|\s)\(\s*${TS}\s*[-–]\s*${TS}\s*(?=\s|$)`, "g"), " ")
+      .replace(/^\s*[*•]\s+/, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  };
 
   // Strip timestamps + markdown bullet/header artifacts from a single
   // action-item string.

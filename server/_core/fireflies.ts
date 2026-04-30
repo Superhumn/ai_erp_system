@@ -150,40 +150,43 @@ export async function listTranscripts(
 
 /**
  * Fetch all available transcripts using paginated requests.
- * Falls back to a single request if the API does not support `skip`.
+ *
+ * Fireflies' `transcripts(limit, skip)` query is unreliable past the first
+ * page on some plans — it errors with "Invalid argument(s)". To stay robust:
+ * fetch page 1 always, then try to keep paging, but if any subsequent page
+ * fails just return what was collected so far.
  */
 export async function listAllTranscripts(apiKey: string, pageSize: number = 50): Promise<FirefliesTranscript[]> {
-  const size = Math.max(1, Math.min(pageSize, 100));
+  const size = Math.max(1, Math.min(pageSize, 50));
   const all: FirefliesTranscript[] = [];
   const seenIds = new Set<string>();
 
-  try {
-    let skip = 0;
-    while (true) {
-      const page = await listTranscripts(apiKey, { limit: size, skip });
-      if (!page.length) break;
+  let skip = 0;
+  while (true) {
+    let page: FirefliesTranscript[] = [];
+    try {
+      page = await listTranscripts(apiKey, { limit: size, skip });
+    } catch (error: any) {
+      // First-page failure is a real error; surface it. After that, treat
+      // any pagination error as "end of stream" and return what we have.
+      if (skip === 0) throw error;
+      console.warn(`[Fireflies] Pagination stopped at skip=${skip}: ${error?.message || error}`);
+      break;
+    }
+    if (!page.length) break;
 
-      for (const item of page) {
-        if (!item?.id || seenIds.has(item.id)) continue;
-        seenIds.add(item.id);
-        all.push(item);
-      }
-
-      if (page.length < size) break;
-      skip += size;
-
-      // Hard cap to prevent runaway loops if upstream pagination behaves unexpectedly.
-      if (all.length >= 2000) break;
+    for (const item of page) {
+      if (!item?.id || seenIds.has(item.id)) continue;
+      seenIds.add(item.id);
+      all.push(item);
     }
 
-    return all;
-  } catch (error: any) {
-    // Older Fireflies API variants may not support `skip`.
-    if (typeof error?.message === "string" && /skip/i.test(error.message)) {
-      return listTranscripts(apiKey, { limit: size });
-    }
-    throw error;
+    if (page.length < size) break;
+    skip += size;
+    if (all.length >= 2000) break;
   }
+
+  return all;
 }
 
 /**
@@ -234,9 +237,21 @@ export async function getTranscript(apiKey: string, transcriptId: string): Promi
  * assignee names and due dates from natural language.
  */
 export function parseActionItems(rawItems: unknown): FirefliesActionItem[] {
-  // Strip embedded `(MM:SS)` / `(HH:MM:SS)` transcript timestamps
+  // Strip embedded transcript timestamps in any of these shapes:
+  //   (00:30)            single
+  //   (1:23:45)          single with hours
+  //   (00:30 - 01:45)    range
+  //   * (00:00 - 10:46)  bullet-prefixed leading artifact
+  //   - 08:40)           orphan closing fragment
+  const TS = String.raw`\d{1,2}:\d{2}(?::\d{2})?`;
   const stripTimestamps = (s: string) =>
-    s.replace(/\s*\(\d{1,2}:\d{2}(?::\d{2})?\)\s*/g, " ").replace(/\s+/g, " ").trim();
+    s
+      .replace(new RegExp(String.raw`\(\s*${TS}(?:\s*[-–]\s*${TS})?\s*\)`, "g"), " ")
+      .replace(new RegExp(String.raw`(?:^|\s)[-–]\s*${TS}\s*\)`, "g"), " ")
+      .replace(new RegExp(String.raw`(?:^|\s)\(\s*${TS}\s*[-–]\s*${TS}\s*(?=\s|$)`, "g"), " ")
+      .replace(/^\s*[*•]\s+/, "")
+      .replace(/\s+/g, " ")
+      .trim();
 
   // Fireflies returns `summary.action_items` as a single markdown string
   // shaped like:
