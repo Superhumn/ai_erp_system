@@ -11403,6 +11403,7 @@ Ask if they received the original request and if they can provide a quote.`;
             for (const { email } of parsedResults) {
               try {
                 await db.createInboundEmail?.({
+                  messageId: email.messageId,
                   fromEmail: email.from.address,
                   fromName: email.from.name || "",
                   toEmail: email.to.join(", ") || "inbox",
