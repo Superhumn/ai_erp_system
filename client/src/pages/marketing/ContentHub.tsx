@@ -49,7 +49,7 @@ export default function ContentHub() {
   const [generatedContent, setGeneratedContent] = useState("");
   const [savedContent, setSavedContent] = useState<ContentItem[]>([]);
 
-  const aiMutation = (trpc.ai as any).query.useMutation({
+  const aiMutation = trpc.ai.query.useMutation({
     onSuccess: (data: any) => {
       setGeneratedContent(data.response || data.answer || "");
       setGenerating(false);

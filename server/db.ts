@@ -9181,6 +9181,40 @@ export async function deleteCrmDeal(id: number) {
   await db.delete(crmDeals).where(eq(crmDeals.id, id));
 }
 
+// Looks up an existing deal that represents the same client company.
+// Match is case-insensitive and considers either deal.name == company
+// or the linked contact's organization == company.
+export async function findCrmDealByCompany(company: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const normalized = company.trim().toLowerCase();
+  if (!normalized) return undefined;
+  const result = await db
+    .select({ deal: crmDeals })
+    .from(crmDeals)
+    .leftJoin(crmContacts, eq(crmDeals.contactId, crmContacts.id))
+    .where(
+      or(
+        sql`LOWER(${crmDeals.name}) = ${normalized}`,
+        sql`LOWER(${crmContacts.organization}) = ${normalized}`,
+      ),
+    )
+    .limit(1);
+  return result[0]?.deal;
+}
+
+// True iff a `create_crm_deal` approval task is already queued for this company.
+export async function hasPendingDealApprovalForCompany(company: string): Promise<boolean> {
+  const lc = company.trim().toLowerCase();
+  if (!lc) return false;
+  const tasks = await getAiAgentTasks({ taskType: 'create_crm_deal', status: 'pending_approval' });
+  return (tasks as any[]).some(t => {
+    try {
+      return ((JSON.parse(t.taskData || '{}').company) || '').toString().trim().toLowerCase() === lc;
+    } catch { return false; }
+  });
+}
+
 export async function getCrmDealStats(pipelineId?: number) {
   const db = await getDb();
   if (!db) return null;

@@ -79,7 +79,7 @@ export default function AutonomousSettings() {
     onError: (err) => toast.error(err.message),
   });
 
-  const initializeDefaultsMutation = (trpc.autonomousWorkflows.orchestrator as any).initializeDefaults.useMutation({
+  const initializeDefaultsMutation = trpc.autonomousWorkflows.orchestrator.initializeDefaults.useMutation({
     onSuccess: () => {
       workflowsQuery.refetch();
       toast.success("Default workflows initialized");

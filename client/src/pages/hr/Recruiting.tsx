@@ -57,7 +57,7 @@ export default function Recruiting() {
   });
 
   // AI scoring
-  const aiMutation = (trpc.ai as any).query.useMutation({
+  const aiMutation = trpc.ai.query.useMutation({
     onSuccess: (data: any) => {
       try {
         const text = data.response || data.answer || "";
