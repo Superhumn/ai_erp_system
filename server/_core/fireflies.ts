@@ -108,17 +108,19 @@ export async function getFirefliesUser(apiKey: string): Promise<FirefliesUser> {
 }
 
 /**
- * List recent transcripts from Fireflies
+ * List recent transcripts from Fireflies. Supports a `toDate` cursor (Unix
+ * ms) so callers can paginate backwards in time when `skip` is unreliable.
  */
 export async function listTranscripts(
   apiKey: string,
-  options: { limit?: number; skip?: number } = {}
+  options: { limit?: number; skip?: number; toDate?: number } = {}
 ): Promise<FirefliesTranscript[]> {
   const limit = options.limit ?? 50;
   const skip = options.skip ?? 0;
+  const toDate = options.toDate;
   const query = `
-    query ListTranscripts($limit: Int, $skip: Int) {
-      transcripts(limit: $limit, skip: $skip) {
+    query ListTranscripts($limit: Int, $skip: Int, $toDate: DateTime) {
+      transcripts(limit: $limit, skip: $skip, toDate: $toDate) {
         id
         title
         date
@@ -144,46 +146,66 @@ export async function listTranscripts(
     }
   `;
 
-  const data = await firefliesQuery<{ transcripts: FirefliesTranscript[] }>(apiKey, query, { limit, skip });
+  const variables: Record<string, unknown> = { limit, skip };
+  if (toDate != null) variables.toDate = new Date(toDate).toISOString();
+  const data = await firefliesQuery<{ transcripts: FirefliesTranscript[] }>(apiKey, query, variables);
   return data.transcripts || [];
 }
 
 /**
- * Fetch all available transcripts using paginated requests.
+ * Fetch transcripts from Fireflies using a date cursor.
  *
- * Fireflies' `transcripts(limit, skip)` query is unreliable past the first
- * page on some plans — it errors with "Invalid argument(s)". To stay robust:
- * fetch page 1 always, then try to keep paging, but if any subsequent page
- * fails just return what was collected so far.
+ * Fireflies caps `limit` at 50 and `skip` is unreliable past the first page,
+ * so we paginate by `toDate`: each subsequent request asks for transcripts
+ * older than the oldest one we just received. This works regardless of the
+ * account plan and lets callers walk all the way back in history.
+ *
+ * Pass `untilDateMs` to stop once a transcript at or before that timestamp
+ * is reached — useful for "fetch everything older than what we already have".
  */
-export async function listAllTranscripts(apiKey: string, pageSize: number = 50): Promise<FirefliesTranscript[]> {
-  const size = Math.max(1, Math.min(pageSize, 50));
+export async function listAllTranscripts(
+  apiKey: string,
+  options: { pageSize?: number; maxItems?: number; untilDateMs?: number; startToDateMs?: number } = {},
+): Promise<FirefliesTranscript[]> {
+  const size = Math.max(1, Math.min(options.pageSize ?? 50, 50));
+  const maxItems = options.maxItems ?? 2000;
+  const untilDateMs = options.untilDateMs;
   const all: FirefliesTranscript[] = [];
   const seenIds = new Set<string>();
 
-  let skip = 0;
+  let toDate: number | undefined = options.startToDateMs;
+  let firstCall = true;
   while (true) {
     let page: FirefliesTranscript[] = [];
     try {
-      page = await listTranscripts(apiKey, { limit: size, skip });
+      page = await listTranscripts(apiKey, { limit: size, toDate });
     } catch (error: any) {
-      // First-page failure is a real error; surface it. After that, treat
-      // any pagination error as "end of stream" and return what we have.
-      if (skip === 0) throw error;
-      console.warn(`[Fireflies] Pagination stopped at skip=${skip}: ${error?.message || error}`);
+      if (firstCall) throw error;
+      console.warn(`[Fireflies] Pagination stopped at toDate=${toDate}: ${error?.message || error}`);
       break;
     }
+    firstCall = false;
     if (!page.length) break;
 
+    let oldestInPage: number | undefined;
+    let hitFloor = false;
     for (const item of page) {
       if (!item?.id || seenIds.has(item.id)) continue;
+      const itemDate = typeof item.date === "number" ? item.date : Number(item.date) || 0;
+      if (untilDateMs != null && itemDate <= untilDateMs) { hitFloor = true; continue; }
       seenIds.add(item.id);
       all.push(item);
+      if (oldestInPage === undefined || itemDate < oldestInPage) oldestInPage = itemDate;
     }
 
+    if (hitFloor) break;
     if (page.length < size) break;
-    skip += size;
-    if (all.length >= 2000) break;
+    if (oldestInPage === undefined) break;
+    // Step the cursor 1ms before the oldest item to avoid re-fetching it.
+    const next = oldestInPage - 1;
+    if (toDate !== undefined && next >= toDate) break; // no progress, stop
+    toDate = next;
+    if (all.length >= maxItems) break;
   }
 
   return all;

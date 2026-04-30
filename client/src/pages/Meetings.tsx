@@ -45,12 +45,17 @@ export default function Meetings() {
   const [processExistingProjectId, setProcessExistingProjectId] = useState<number | undefined>(undefined);
   const [predictedProjectId, setPredictedProjectId] = useState<number | undefined>(undefined);
   const [processAssigneeId, setProcessAssigneeId] = useState<number | undefined>(undefined);
+  const [existingContactIds, setExistingContactIds] = useState<number[]>([]);
+  const [contactSearch, setContactSearch] = useState("");
 
   const { data: projectsRaw } = trpc.projects.list.useQuery();
   const availableProjects = (projectsRaw as Array<{ id: number; name: string }> | undefined) || [];
 
   const { data: routingOptions } = trpc.fireflies.taskRoutingOptions.useQuery();
   const availableAssignees = (routingOptions?.assignees as Array<{ id: number; name: string; email: string }> | undefined) || [];
+
+  const { data: contactsRaw } = trpc.crm.contacts.list.useQuery({ limit: 500 });
+  const availableContacts = (contactsRaw as Array<{ id: number; fullName?: string; firstName?: string; lastName?: string; email?: string }> | undefined) || [];
 
   const { data: meetingsRaw, isLoading, refetch, error: meetingsError } = trpc.fireflies.meetings.list.useQuery({});
   const meetings = (meetingsRaw as any[] | undefined) || [];
@@ -93,8 +98,11 @@ export default function Meetings() {
 
   const processMeetingMutation = trpc.fireflies.processMeeting.useMutation({
     onSuccess: (data) => {
+      const d = data as any;
+      const linked = d.linkedContactCount ?? 0;
+      const linkedSuffix = linked > 0 ? `, ${linked} linked` : "";
       toast.success(
-        `Processed: ${(data as any).contactsCreated ?? 0} contacts, ${(data as any).tasksCreated ?? 0} tasks created`
+        `Processed: ${d.contactsCreated ?? 0} contacts${linkedSuffix}, ${d.tasksCreated ?? 0} tasks created`
       );
       setShowProcessDialog(false);
       setSelectedMeetingId(null);
@@ -282,6 +290,8 @@ export default function Meetings() {
     setSelectedMeetingId(meeting.id);
     setProcessProjectName("");
     setProcessAssigneeId(undefined);
+    setExistingContactIds([]);
+    setContactSearch("");
     const predicted = predictProject(meeting.title || "");
     setPredictedProjectId(predicted);
     if (predicted !== undefined) {
@@ -304,6 +314,7 @@ export default function Meetings() {
       projectName: projectMode === "new" ? (processProjectName || undefined) : undefined,
       projectId: projectMode === "existing" ? processExistingProjectId : undefined,
       assigneeId: processAssigneeId,
+      existingContactIds: existingContactIds.length ? existingContactIds : undefined,
     } as any);
   };
 
@@ -768,13 +779,73 @@ export default function Meetings() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="flex items-center gap-3 rounded-lg border p-3">
-              <Users className="h-5 w-5 text-blue-600 shrink-0" />
-              <div className="flex-1">
-                <div className="text-sm font-medium">Create CRM Contacts</div>
-                <div className="text-xs text-muted-foreground">From meeting participants</div>
+            <div className="space-y-3 rounded-lg border p-3">
+              <div className="flex items-center gap-3">
+                <Users className="h-5 w-5 text-blue-600 shrink-0" />
+                <div className="flex-1">
+                  <div className="text-sm font-medium">Create CRM Contacts</div>
+                  <div className="text-xs text-muted-foreground">From meeting participants</div>
+                </div>
+                <Switch checked={processCreateContacts} onCheckedChange={setProcessCreateContacts} />
               </div>
-              <Switch checked={processCreateContacts} onCheckedChange={setProcessCreateContacts} />
+              <div className="pl-7 space-y-1">
+                <Label className="text-xs">Link to existing contacts (optional)</Label>
+                {existingContactIds.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {existingContactIds.map((id) => {
+                      const c = availableContacts.find((x) => x.id === id);
+                      const label = c?.fullName || [c?.firstName, c?.lastName].filter(Boolean).join(" ") || c?.email || `#${id}`;
+                      return (
+                        <Badge key={id} variant="secondary" className="gap-1 pr-1">
+                          {label}
+                          <button
+                            type="button"
+                            className="ml-1 rounded-sm hover:bg-muted-foreground/20"
+                            onClick={() => setExistingContactIds((ids) => ids.filter((x) => x !== id))}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                )}
+                <Input
+                  placeholder="Search contacts to link…"
+                  value={contactSearch}
+                  onChange={(e) => setContactSearch(e.target.value)}
+                  className="mt-1 text-xs h-8"
+                />
+                {contactSearch.trim() && (
+                  <div className="max-h-40 overflow-y-auto rounded-md border bg-popover">
+                    {availableContacts
+                      .filter((c) => {
+                        if (existingContactIds.includes(c.id)) return false;
+                        const q = contactSearch.toLowerCase();
+                        const hay = [c.fullName, c.firstName, c.lastName, c.email].filter(Boolean).join(" ").toLowerCase();
+                        return hay.includes(q);
+                      })
+                      .slice(0, 8)
+                      .map((c) => {
+                        const label = c.fullName || [c.firstName, c.lastName].filter(Boolean).join(" ") || c.email || `#${c.id}`;
+                        return (
+                          <button
+                            key={c.id}
+                            type="button"
+                            className="w-full px-2 py-1.5 text-left text-xs hover:bg-accent"
+                            onClick={() => {
+                              setExistingContactIds((ids) => [...ids, c.id]);
+                              setContactSearch("");
+                            }}
+                          >
+                            <div className="font-medium">{label}</div>
+                            {c.email && <div className="text-[10px] text-muted-foreground">{c.email}</div>}
+                          </button>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="space-y-3 rounded-lg border p-3">
               <div className="flex items-center gap-3">

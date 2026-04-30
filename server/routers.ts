@@ -18809,8 +18809,36 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Fireflies not configured. Go to Settings → Fireflies to enter your API key.' });
       }
       console.log(`[Fireflies Sync] Fetching transcripts for user ${ctx.user.id} with key ${config.apiKey.substring(0, 8)}...`);
-      const transcripts = await listAllTranscripts(config.apiKey, input?.limit ?? 100);
-      console.log(`[Fireflies Sync] Got ${transcripts.length} transcripts from API`);
+
+      // Two-pass sync to work around Fireflies' broken `skip` pagination:
+      //   1. Catch up on anything new since our newest stored meeting.
+      //   2. Walk backwards from our oldest stored meeting to pull more history.
+      // Each pass is bounded so a single click stays responsive — repeat
+      // clicks keep extending coverage until exhausted.
+      const existing = await db.getFirefliesMeetings();
+      const dates = existing
+        .map((m: any) => (m?.date ? new Date(m.date).getTime() : 0))
+        .filter((n: number) => n > 0);
+      const newestStoredMs = dates.length ? Math.max(...dates) : undefined;
+      const oldestStoredMs = dates.length ? Math.min(...dates) : undefined;
+      const perClickCap = input?.limit ?? 100;
+
+      const fresh = await listAllTranscripts(config.apiKey, {
+        maxItems: perClickCap,
+        untilDateMs: newestStoredMs,
+      });
+      const backfill = oldestStoredMs
+        ? await listAllTranscripts(config.apiKey, {
+            maxItems: perClickCap,
+            startToDateMs: oldestStoredMs - 1,
+          })
+        : [];
+
+      // Dedup by id in case the two passes overlap.
+      const byId = new Map<string, typeof fresh[number]>();
+      for (const t of [...fresh, ...backfill]) if (t?.id) byId.set(t.id, t);
+      const transcripts = Array.from(byId.values());
+      console.log(`[Fireflies Sync] Got ${fresh.length} new + ${backfill.length} backfill = ${transcripts.length} unique transcripts`);
       let synced = 0;
       let skipped = 0;
       let dealsCreated = 0;
@@ -18946,6 +18974,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         projectName: z.string().optional(),
         projectId: z.number().optional(),
         assigneeId: z.number().optional(),
+        existingContactIds: z.array(z.number()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const meeting = await db.getFirefliesMeetingById(input.meetingId);
@@ -18974,6 +19003,29 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
                 if (created) contactsCreated++;
               } catch { /* skip on error */ }
             }
+          }
+        }
+
+        // Log this meeting as a CRM interaction for any explicitly chosen
+        // existing contacts (separate from the auto-create-from-participants
+        // path above so users can link meetings to contacts who weren't on
+        // the call).
+        let linkedContactCount = 0;
+        if (input.existingContactIds?.length) {
+          const overview = (() => {
+            try { return JSON.parse(meeting.summary || "")?.overview || ""; } catch { return ""; }
+          })();
+          for (const contactId of input.existingContactIds) {
+            try {
+              await db.createCrmInteraction({
+                contactId,
+                channel: "meeting",
+                interactionType: "meeting_completed",
+                subject: meeting.title || "Meeting",
+                content: overview.substring(0, 500) || undefined,
+              });
+              linkedContactCount++;
+            } catch { /* skip duplicates / failures */ }
           }
         }
 
@@ -19026,9 +19078,10 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           }
         }
 
+        const totalContactWork = contactsCreated + linkedContactCount;
         const status: 'fully_processed' | 'contacts_created' | 'tasks_created' | 'pending' =
-          contactsCreated > 0 && tasksCreated > 0 ? 'fully_processed'
-          : contactsCreated > 0 ? 'contacts_created'
+          totalContactWork > 0 && tasksCreated > 0 ? 'fully_processed'
+          : totalContactWork > 0 ? 'contacts_created'
           : tasksCreated > 0 ? 'tasks_created'
           : 'pending';
 
@@ -19036,13 +19089,13 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           processingStatus: status,
           processedAt: new Date(),
           processedBy: ctx.user.id,
-          processingNotes: JSON.stringify({ contactsCreated, tasksCreated, projectId }),
-          autoCreatedContactCount: contactsCreated,
+          processingNotes: JSON.stringify({ contactsCreated, linkedContactCount, tasksCreated, projectId }),
+          autoCreatedContactCount: contactsCreated + linkedContactCount,
           autoCreatedTaskCount: tasksCreated,
           autoCreatedProjectId: projectId,
         });
 
-        return { contactsCreated, tasksCreated, projectId };
+        return { contactsCreated, linkedContactCount, tasksCreated, projectId };
       }),
     taskRoutingOptions: protectedProcedure.query(async () => {
       const projects = await db.getProjects();
