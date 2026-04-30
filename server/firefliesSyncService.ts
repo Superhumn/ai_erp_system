@@ -188,17 +188,29 @@ export async function syncFirefliesMeetingsForUser(
 
                 if (contact) {
                   if (created) {
-                    // Only create a deal the first time we see this contact —
-                    // subsequent meetings with the same person just add interactions.
-                    await db.createCrmDeal({
-                      pipelineId,
-                      contactId: contact.id,
-                      name: `Deal from: ${fullTranscript?.title || t.title || "Meeting"}`,
-                      stage: "discovery",
-                      source: "meeting",
-                      notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
-                    });
-                    result.dealsCreated++;
+                    // Auto-deals from meetings flow through the approval queue.
+                    // Title = contact's company; skip if missing or duplicate company.
+                    const company = (contact.organization || "").trim();
+                    const existingDeal = company ? await db.findCrmDealByCompany(company) : null;
+                    if (company && !existingDeal) {
+                      const taskData = {
+                        pipelineId,
+                        contactId: contact.id,
+                        company,
+                        stage: "discovery",
+                        source: "meeting",
+                        notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
+                      };
+                      await db.createAiAgentTask({
+                        taskType: 'create_crm_deal',
+                        priority: 'medium',
+                        status: 'pending_approval',
+                        taskData: JSON.stringify(taskData),
+                        aiReasoning: `Deal signals in Fireflies meeting "${fullTranscript?.title || t.title || 'Meeting'}" with ${contact.fullName} at ${company}.`,
+                        aiConfidence: '80.00',
+                      });
+                      result.dealsCreated++;
+                    }
                   }
 
                   // Always log meeting as CRM interaction regardless of whether

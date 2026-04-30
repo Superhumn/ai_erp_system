@@ -4693,14 +4693,21 @@ ONLY return the JSON array, no other text.`;
                       }
                     } catch {}
 
-                    // Create a placeholder contact for the deal (name-only; no unique identifier to match on)
-                    const dealName = record.name || record.deal || record.opportunity || `Deal ${imported + 1}`;
+                    // Resolve company name — that's the deal title.
+                    const company = (record.company || record.organization || record.account || record.client || record.name || record.deal || record.opportunity || '').toString().trim();
+                    if (!company) { imported++; break; }
+
+                    // Skip duplicates — by existing deal or already-pending approval task.
+                    if (await db.findCrmDealByCompany(company)) { imported++; break; }
+
+                    // Create a placeholder contact tied to that company.
                     let contactId: number;
                     try {
                       const { id } = await db.findOrCreateCrmContact({
-                        firstName: dealName,
+                        firstName: company,
                         lastName: '',
-                        fullName: dealName,
+                        fullName: company,
+                        organization: company,
                         source: 'import',
                         contactType: 'lead',
                       });
@@ -4709,14 +4716,22 @@ ONLY return the JSON array, no other text.`;
                       contactId = 1;
                     }
 
-                    await db.createCrmDeal({
+                    const taskData = {
                       pipelineId,
                       contactId,
-                      name: dealName,
+                      company,
                       stage: record.stage || record.status || 'discovery',
                       amount: record.amount || record.value || record['deal size'] || undefined,
                       source: 'google_sheets',
                       notes: record.notes || undefined,
+                    };
+                    await db.createAiAgentTask({
+                      taskType: 'create_crm_deal',
+                      priority: 'medium',
+                      status: 'pending_approval',
+                      taskData: JSON.stringify(taskData),
+                      aiReasoning: `Imported CRM deal for "${company}" from Google Sheets — pending approval.`,
+                      aiConfidence: '90.00',
                     });
                     imported++;
                     break;
@@ -5784,7 +5799,7 @@ Be concise and helpful. Always give actionable guidance.`;
       
       create: protectedProcedure
         .input(z.object({
-          taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query', 'reply_email', 'approve_po', 'approve_invoice', 'create_vendor', 'create_material', 'create_product', 'create_bom', 'create_customer']),
+          taskType: z.enum(['generate_po', 'send_rfq', 'send_quote_request', 'send_email', 'update_inventory', 'create_shipment', 'generate_invoice', 'reconcile_payment', 'reorder_materials', 'vendor_followup', 'create_work_order', 'query', 'reply_email', 'approve_po', 'approve_invoice', 'create_vendor', 'create_material', 'create_product', 'create_bom', 'create_customer', 'create_crm_deal']),
           priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
           taskData: z.string(), // JSON string with task-specific data
           aiReasoning: z.string().optional(),
@@ -6245,7 +6260,39 @@ Be concise and helpful. Always give actionable guidance.`;
                 result = { created: true, customerId: customer.id, customerName: taskData.name };
                 break;
               }
-              
+
+              case 'create_crm_deal': {
+                // Resolve company name from contact's organization (the deal's title).
+                const contact = taskData.contactId ? await db.getCrmContactById(taskData.contactId) : null;
+                if (!contact) throw new Error('Contact not found for CRM deal');
+                const company = (contact.organization || '').trim();
+                if (!company) {
+                  throw new Error(`Cannot create deal: contact "${contact.fullName}" has no company set`);
+                }
+
+                // Re-check duplicates at execution time in case another deal was approved
+                // for the same company while this one was waiting.
+                const existing = await db.findCrmDealByCompany(company);
+                if (existing) {
+                  throw new Error(`A deal already exists for company "${company}" (deal #${existing.id})`);
+                }
+
+                if (!taskData.pipelineId) throw new Error('Pipeline required to create CRM deal');
+
+                const dealId = await db.createCrmDeal({
+                  pipelineId: taskData.pipelineId,
+                  contactId: taskData.contactId,
+                  name: company,
+                  stage: taskData.stage || 'discovery',
+                  amount: taskData.amount || undefined,
+                  source: taskData.source || undefined,
+                  notes: taskData.notes || undefined,
+                  assignedTo: taskData.assignedTo || undefined,
+                });
+                result = { created: true, dealId, dealName: company };
+                break;
+              }
+
               case 'create_work_order': {
                 // Create work order from BOM
                 const bom = taskData.bomId ? await db.getBomById(taskData.bomId) : null;
@@ -17529,7 +17576,7 @@ Ask if they received the original request and if they can provide a quote.`;
         .input(z.object({
           pipelineId: z.number(),
           contactId: z.number(),
-          name: z.string().min(1),
+          name: z.string().min(1).optional(), // Ignored — deal title is always the contact's company.
           description: z.string().optional(),
           stage: z.string(),
           amount: z.string().optional(),
@@ -17542,12 +17589,73 @@ Ask if they received the original request and if they can provide a quote.`;
           assignedTo: z.number().optional(),
         }))
         .mutation(async ({ input, ctx }) => {
-          const id = await db.createCrmDeal({
-            ...input,
-            assignedTo: input.assignedTo || ctx.user.id,
+          // Deal title must be the contact's client company name.
+          const contact = await db.getCrmContactById(input.contactId);
+          if (!contact) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Contact not found' });
+          }
+          const company = (contact.organization || '').trim();
+          if (!company) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: `Cannot create deal: contact "${contact.fullName}" has no company. Add a company to the contact first.`,
+            });
+          }
+
+          // Reject duplicates up front — same company can't have two deals.
+          const existing = await db.findCrmDealByCompany(company);
+          if (existing) {
+            throw new TRPCError({
+              code: 'CONFLICT',
+              message: `A deal already exists for "${company}" (deal #${existing.id}).`,
+            });
+          }
+
+          // Block if another approval task is already queued for this company.
+          const pendingTasks = await db.getAiAgentTasks({
+            taskType: 'create_crm_deal',
+            status: 'pending_approval',
           });
-          await createAuditLog(ctx.user.id, 'create', 'crm_deal', id, input.name);
-          return { id };
+          const dupePending = (pendingTasks as any[]).find((t: any) => {
+            try {
+              const data = JSON.parse(t.taskData || '{}');
+              return (data.company || '').trim().toLowerCase() === company.toLowerCase();
+            } catch { return false; }
+          });
+          if (dupePending) {
+            throw new TRPCError({
+              code: 'CONFLICT',
+              message: `An approval is already pending for "${company}".`,
+            });
+          }
+
+          const taskData = {
+            pipelineId: input.pipelineId,
+            contactId: input.contactId,
+            company,
+            stage: input.stage,
+            amount: input.amount,
+            source: input.source,
+            notes: input.notes,
+            assignedTo: input.assignedTo || ctx.user.id,
+          };
+          const task = await db.createAiAgentTask({
+            taskType: 'create_crm_deal',
+            priority: 'medium',
+            status: 'pending_approval',
+            taskData: JSON.stringify(taskData),
+            aiReasoning: `New CRM deal for "${company}" submitted by ${ctx.user.name} for approval.`,
+            aiConfidence: '100.00',
+          });
+          await db.createAiAgentLog({
+            taskId: task.id,
+            action: 'task_created',
+            status: 'info',
+            message: `CRM deal approval requested by ${ctx.user.name}`,
+            details: JSON.stringify(taskData),
+          });
+          await createAuditLog(ctx.user.id, 'create', 'crm_deal_request', task.id, company);
+          return { taskId: task.id, pendingApproval: true, company };
         }),
 
       update: protectedProcedure
@@ -18880,17 +18988,29 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
 
                   if (contact) {
                     if (created) {
-                      // Only create a deal the first time we see this contact —
-                      // subsequent meetings with the same person just add interactions.
-                      await db.createCrmDeal({
-                        pipelineId,
-                        contactId: contact.id,
-                        name: `Deal from: ${fullTranscript?.title || t.title || "Meeting"}`,
-                        stage: "discovery",
-                        source: "meeting",
-                        notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
-                      });
-                      dealsCreated++;
+                      // Auto-deals from meetings also flow through the approval queue.
+                      // Deal title must be the contact's company; skip if missing or duplicate.
+                      const company = (contact.organization || "").trim();
+                      const existingDeal = company ? await db.findCrmDealByCompany(company) : null;
+                      if (company && !existingDeal) {
+                        const taskData = {
+                          pipelineId,
+                          contactId: contact.id,
+                          company,
+                          stage: "discovery",
+                          source: "meeting",
+                          notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
+                        };
+                        await db.createAiAgentTask({
+                          taskType: 'create_crm_deal',
+                          priority: 'medium',
+                          status: 'pending_approval',
+                          taskData: JSON.stringify(taskData),
+                          aiReasoning: `Deal signals detected in Fireflies meeting "${fullTranscript?.title || t.title || 'Meeting'}" with ${contact.fullName} at ${company}.`,
+                          aiConfidence: '80.00',
+                        });
+                        dealsCreated++;
+                      }
                     }
 
                     // Always log meeting as CRM interaction regardless of whether
