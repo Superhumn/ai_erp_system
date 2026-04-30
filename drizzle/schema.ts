@@ -6527,3 +6527,52 @@ export const notes = mysqlTable("notes", {
 
 export type Note = typeof notes.$inferSelect;
 export type InsertNote = typeof notes.$inferInsert;
+
+// ─── EMAIL SEQUENCES ──────────────────────────────────────────────────────────
+
+export const emailSequences = mysqlTable("email_sequences", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  status: mysqlEnum("status", ["draft", "active", "paused", "archived"]).default("draft").notNull(),
+  totalContacts: int("totalContacts").default(0).notNull(),
+  openRate: decimal("openRate", { precision: 5, scale: 2 }),
+  replyRate: decimal("replyRate", { precision: 5, scale: 2 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailSequence = typeof emailSequences.$inferSelect;
+export type InsertEmailSequence = typeof emailSequences.$inferInsert;
+
+export const emailSequenceSteps = mysqlTable("email_sequence_steps", {
+  id: int("id").autoincrement().primaryKey(),
+  sequenceId: int("sequenceId").notNull().references(() => emailSequences.id),
+  stepOrder: int("stepOrder").notNull(),
+  subject: varchar("subject", { length: 500 }).notNull(),
+  body: text("body").notNull(),
+  delayDays: int("delayDays").default(1).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailSequenceStep = typeof emailSequenceSteps.$inferSelect;
+export type InsertEmailSequenceStep = typeof emailSequenceSteps.$inferInsert;
+
+// ─── EMAIL CANNED RESPONSES ───────────────────────────────────────────────────
+
+export const emailCannedResponses = mysqlTable("email_canned_responses", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id),
+  name: varchar("name", { length: 255 }).notNull(),
+  content: text("content").notNull(),
+  shortcut: varchar("shortcut", { length: 50 }),
+  category: varchar("category", { length: 100 }),
+  usageCount: int("usageCount").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type EmailCannedResponse = typeof emailCannedResponses.$inferSelect;
+export type InsertEmailCannedResponse = typeof emailCannedResponses.$inferInsert;
