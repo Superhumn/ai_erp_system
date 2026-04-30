@@ -9203,6 +9203,18 @@ export async function findCrmDealByCompany(company: string) {
   return result[0]?.deal;
 }
 
+// True iff a `create_crm_deal` approval task is already queued for this company.
+export async function hasPendingDealApprovalForCompany(company: string): Promise<boolean> {
+  const lc = company.trim().toLowerCase();
+  if (!lc) return false;
+  const tasks = await getAiAgentTasks({ taskType: 'create_crm_deal', status: 'pending_approval' });
+  return (tasks as any[]).some(t => {
+    try {
+      return ((JSON.parse(t.taskData || '{}').company) || '').toString().trim().toLowerCase() === lc;
+    } catch { return false; }
+  });
+}
+
 export async function getCrmDealStats(pipelineId?: number) {
   const db = await getDb();
   if (!db) return null;

@@ -4699,6 +4699,7 @@ ONLY return the JSON array, no other text.`;
 
                     // Skip duplicates — by existing deal or already-pending approval task.
                     if (await db.findCrmDealByCompany(company)) { imported++; break; }
+                    if (await db.hasPendingDealApprovalForCompany(company)) { imported++; break; }
 
                     // Create a placeholder contact tied to that company.
                     let contactId: number;
@@ -5854,6 +5855,60 @@ Be concise and helpful. Always give actionable guidance.`;
             status: 'success',
             message: `Task approved by ${ctx.user.name}`,
           });
+
+          // CRM deal approvals create the deal immediately on approval —
+          // no separate execute step required.
+          const task = await db.getAiAgentTaskById(input.id);
+          if (task?.taskType === 'create_crm_deal') {
+            try {
+              const taskData = JSON.parse(task.taskData || '{}');
+              const contact = taskData.contactId ? await db.getCrmContactById(taskData.contactId) : null;
+              if (!contact) throw new Error('Contact not found for CRM deal');
+              const company = (contact.organization || '').trim();
+              if (!company) throw new Error(`Contact "${contact.fullName}" has no company set`);
+              const existing = await db.findCrmDealByCompany(company);
+              if (existing) throw new Error(`A deal already exists for "${company}" (deal #${existing.id})`);
+              if (!taskData.pipelineId) throw new Error('Pipeline required to create CRM deal');
+
+              const dealId = await db.createCrmDeal({
+                pipelineId: taskData.pipelineId,
+                contactId: taskData.contactId,
+                name: company,
+                stage: taskData.stage || 'discovery',
+                amount: taskData.amount || undefined,
+                source: taskData.source || undefined,
+                notes: taskData.notes || undefined,
+                assignedTo: taskData.assignedTo || undefined,
+              });
+              const result = { created: true, dealId, dealName: company };
+              await db.updateAiAgentTask(input.id, {
+                status: 'completed',
+                executedAt: new Date(),
+                executionResult: JSON.stringify(result),
+              });
+              await db.createAiAgentLog({
+                taskId: input.id,
+                action: 'task_executed',
+                status: 'success',
+                message: `CRM deal created for ${company}`,
+                details: JSON.stringify(result),
+              });
+              return { success: true, autoExecuted: true, dealId, company };
+            } catch (error: any) {
+              await db.updateAiAgentTask(input.id, {
+                status: 'failed',
+                errorMessage: error.message,
+              });
+              await db.createAiAgentLog({
+                taskId: input.id,
+                action: 'task_execution_failed',
+                status: 'error',
+                message: `CRM deal creation failed: ${error.message}`,
+              });
+              throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: error.message });
+            }
+          }
+
           return { success: true };
         }),
       
@@ -17612,17 +17667,7 @@ Ask if they received the original request and if they can provide a quote.`;
           }
 
           // Block if another approval task is already queued for this company.
-          const pendingTasks = await db.getAiAgentTasks({
-            taskType: 'create_crm_deal',
-            status: 'pending_approval',
-          });
-          const dupePending = (pendingTasks as any[]).find((t: any) => {
-            try {
-              const data = JSON.parse(t.taskData || '{}');
-              return (data.company || '').trim().toLowerCase() === company.toLowerCase();
-            } catch { return false; }
-          });
-          if (dupePending) {
+          if (await db.hasPendingDealApprovalForCompany(company)) {
             throw new TRPCError({
               code: 'CONFLICT',
               message: `An approval is already pending for "${company}".`,
@@ -17661,7 +17706,7 @@ Ask if they received the original request and if they can provide a quote.`;
       update: protectedProcedure
         .input(z.object({
           id: z.number(),
-          name: z.string().optional(),
+          // Deal title is locked to the contact's company — not editable.
           description: z.string().optional(),
           stage: z.string().optional(),
           amount: z.string().optional(),
@@ -18921,7 +18966,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       console.log(`[Fireflies Sync] Got ${transcripts.length} transcripts from API`);
       let synced = 0;
       let skipped = 0;
-      let dealsCreated = 0;
+      let dealApprovalsQueued = 0;
       let contactsCreated = 0;
       let tasksSuggested = 0;
 
@@ -18991,8 +19036,10 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
                       // Auto-deals from meetings also flow through the approval queue.
                       // Deal title must be the contact's company; skip if missing or duplicate.
                       const company = (contact.organization || "").trim();
-                      const existingDeal = company ? await db.findCrmDealByCompany(company) : null;
-                      if (company && !existingDeal) {
+                      const dupe = company
+                        ? (await db.findCrmDealByCompany(company)) || (await db.hasPendingDealApprovalForCompany(company))
+                        : true;
+                      if (company && !dupe) {
                         const taskData = {
                           pipelineId,
                           contactId: contact.id,
@@ -19009,7 +19056,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
                           aiReasoning: `Deal signals detected in Fireflies meeting "${fullTranscript?.title || t.title || 'Meeting'}" with ${contact.fullName} at ${company}.`,
                           aiConfidence: '80.00',
                         });
-                        dealsCreated++;
+                        dealApprovalsQueued++;
                       }
                     }
 
@@ -19048,7 +19095,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           console.warn("[CRM Auto-Deal] Failed to create deal from meeting:", e);
         }
       }
-      return { synced, skipped, dealsCreated, contactsCreated, tasksSuggested };
+      return { synced, skipped, dealApprovalsQueued, contactsCreated, tasksSuggested };
     }),
     processMeeting: protectedProcedure
       .input(z.object({

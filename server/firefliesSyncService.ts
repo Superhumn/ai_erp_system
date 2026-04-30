@@ -26,7 +26,8 @@ export interface FirefliesSyncResult {
   totalSynced: number;
   totalSkipped: number;
   contactsCreated: number;
-  dealsCreated: number;
+  // CRM deals queued in the approval queue (not yet inserted as deals).
+  dealApprovalsQueued: number;
   notificationsCreated: number;
   tasksSuggested: number;
   errors: string[];
@@ -95,7 +96,7 @@ export async function syncFirefliesMeetingsForUser(
     totalSynced: 0,
     totalSkipped: 0,
     contactsCreated: 0,
-    dealsCreated: 0,
+    dealApprovalsQueued: 0,
     notificationsCreated: 0,
     tasksSuggested: 0,
     errors: [],
@@ -191,8 +192,10 @@ export async function syncFirefliesMeetingsForUser(
                     // Auto-deals from meetings flow through the approval queue.
                     // Title = contact's company; skip if missing or duplicate company.
                     const company = (contact.organization || "").trim();
-                    const existingDeal = company ? await db.findCrmDealByCompany(company) : null;
-                    if (company && !existingDeal) {
+                    const dupe = company
+                      ? (await db.findCrmDealByCompany(company)) || (await db.hasPendingDealApprovalForCompany(company))
+                      : true;
+                    if (company && !dupe) {
                       const taskData = {
                         pipelineId,
                         contactId: contact.id,
@@ -209,7 +212,7 @@ export async function syncFirefliesMeetingsForUser(
                         aiReasoning: `Deal signals in Fireflies meeting "${fullTranscript?.title || t.title || 'Meeting'}" with ${contact.fullName} at ${company}.`,
                         aiConfidence: '80.00',
                       });
-                      result.dealsCreated++;
+                      result.dealApprovalsQueued++;
                     }
                   }
 
@@ -270,7 +273,7 @@ export async function syncAllFirefliesMeetings(): Promise<FirefliesSyncResult> {
     totalSynced: 0,
     totalSkipped: 0,
     contactsCreated: 0,
-    dealsCreated: 0,
+    dealApprovalsQueued: 0,
     notificationsCreated: 0,
     tasksSuggested: 0,
     errors: [],
@@ -289,7 +292,7 @@ export async function syncAllFirefliesMeetings(): Promise<FirefliesSyncResult> {
         aggregate.totalSynced += result.totalSynced;
         aggregate.totalSkipped += result.totalSkipped;
         aggregate.contactsCreated += result.contactsCreated;
-        aggregate.dealsCreated += result.dealsCreated;
+        aggregate.dealApprovalsQueued += result.dealApprovalsQueued;
         aggregate.notificationsCreated += result.notificationsCreated;
         aggregate.tasksSuggested += result.tasksSuggested;
         aggregate.errors.push(...result.errors);
