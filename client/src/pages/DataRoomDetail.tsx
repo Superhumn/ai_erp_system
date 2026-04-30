@@ -270,20 +270,6 @@ export default function DataRoomDetail() {
     },
   });
 
-  const syncGoogleDriveMutation = trpc.dataRoom.googleDrive.syncFolder.useMutation({
-    onSuccess: (data) => {
-      toast.success(`Synced ${data.foldersCreated} new folders and ${data.filesCreated} new files from Google Drive`);
-      setGoogleDriveSyncOpen(false);
-      setSelectedDriveFolderId("");
-      refetchFolders();
-      refetchDocuments();
-      refetchRoom();
-    },
-    onError: (error) => {
-      toast.error(error.message);
-    },
-  });
-
   const { data: driveFilesData, isLoading: driveFilesLoading } = trpc.dataRoom.googleDrive.listFiles.useQuery(
     { folderId: driveFileBrowseFolderId },
     { enabled: !!driveFileBrowseFolderId }
@@ -306,6 +292,8 @@ export default function DataRoomDetail() {
   const syncFromDriveMutation = trpc.dataRoom.syncFromDrive.useMutation({
     onSuccess: (data) => {
       toast.success(`Synced ${data.filesCreated} files and ${data.foldersCreated} folders from Google Drive${data.folderName ? ` (${data.folderName})` : ''}`);
+      setGoogleDriveSyncOpen(false);
+      setSelectedDriveFolderId("");
       refetchFolders();
       refetchDocuments();
       refetchRoom();
@@ -1797,11 +1785,11 @@ export default function DataRoomDetail() {
                         toast.error("Please enter a Google Drive folder ID");
                         return;
                       }
-                      syncGoogleDriveMutation.mutate({ dataRoomId: roomId, googleDriveFolderId: selectedDriveFolderId });
+                      syncFromDriveMutation.mutate({ dataRoomId: roomId, driveFolderId: selectedDriveFolderId });
                     }}
-                    disabled={syncGoogleDriveMutation.isPending}
+                    disabled={syncFromDriveMutation.isPending}
                   >
-                    {syncGoogleDriveMutation.isPending ? "Syncing..." : "Sync Folder"}
+                    {syncFromDriveMutation.isPending ? "Syncing..." : "Sync Folder"}
                   </Button>
                 </DialogFooter>
               </TabsContent>
