@@ -228,7 +228,7 @@ export default function EmailInbox() {
     },
   });
 
-  const scanNowMutation = (trpc.emailScanning as any).scanNow.useMutation({
+  const scanNowMutation = trpc.emailScanning.scanNow.useMutation({
     onSuccess: (result: any) => {
       toast.success(`Scanned inbox: ${result.emailsProcessed} emails, ${result.attachmentsParsed} attachments parsed`);
       utils.emailScanning.list.invalidate();

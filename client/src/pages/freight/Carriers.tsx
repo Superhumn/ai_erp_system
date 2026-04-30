@@ -102,7 +102,7 @@ export default function Carriers() {
     },
   });
 
-  const discoverMutation = (trpc.freight as any).discoverCarriers.useMutation({
+  const discoverMutation = trpc.freight.discoverCarriers.useMutation({
     onSuccess: (data: any) => {
       setDiscoveredCarriers(data.carriers || []);
       if (data.carriers?.length > 0) {

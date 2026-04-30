@@ -123,7 +123,7 @@ export default function CRMHub() {
   const { data: pipelines } = trpc.crm.pipelines.list.useQuery();
 
   // AI Next Steps for expanded deal
-  const { data: nextStepsData, isLoading: nextStepsLoading } = (trpc.crm as any).deals.getNextSteps.useQuery(
+  const { data: nextStepsData, isLoading: nextStepsLoading } = trpc.crm.deals.getNextSteps.useQuery(
     { dealId: expandedDealId! },
     { enabled: !!expandedDealId }
   );
@@ -139,17 +139,13 @@ export default function CRMHub() {
     onError: (error) => toast.error(error.message),
   });
 
-  const updateDeal = (trpc.crm as any).deals.update.useMutation({
+  const updateDeal = trpc.crm.deals.update.useMutation({
     onSuccess: () => refetchDeals(),
   });
 
-  const createDeal = (trpc.crm as any).deals.create.useMutation({
-    onSuccess: (res: any) => {
-      if (res?.pendingApproval) {
-        toast.success(`Deal for "${res.company}" submitted for approval`);
-      } else {
-        toast.success("Deal created");
-      }
+  const createDeal = trpc.crm.deals.create.useMutation({
+    onSuccess: () => {
+      toast.success("Deal created");
       setIsDealDialogOpen(false);
       setDealForm({ name: "", contactId: 0, contactName: "", contactEmail: "", contactCompany: "", stage: "discovery", amount: "", source: "", notes: "" });
       refetchDeals();
