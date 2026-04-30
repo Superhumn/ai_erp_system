@@ -60,7 +60,7 @@ export const ENV = {
     quickbooksClientId: process.env.QUICKBOOKS_CLIENT_ID ?? "",
     quickbooksClientSecret: process.env.QUICKBOOKS_CLIENT_SECRET ?? "",
     quickbooksRedirectUri: process.env.QUICKBOOKS_REDIRECT_URI ?? "",
-    quickbooksEnvironment: process.env.QUICKBOOKS_ENVIRONMENT ?? "sandbox", // sandbox or production
+    quickbooksEnvironment: process.env.QUICKBOOKS_ENVIRONMENT ?? "production", // sandbox or production
 
     // Shopify OAuth configuration
     shopifyClientId: process.env.SHOPIFY_CLIENT_ID ?? "",
