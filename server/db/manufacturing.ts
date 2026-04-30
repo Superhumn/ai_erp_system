@@ -280,6 +280,15 @@ export async function updateWorkOrder(id: number, data: Partial<InsertWorkOrder>
   await db.update(workOrders).set(data).where(eq(workOrders.id, id));
 }
 
+export async function deleteWorkOrder(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.delete(workOrderMaterials).where(eq(workOrderMaterials.workOrderId, id));
+    await tx.delete(workOrders).where(eq(workOrders.id, id));
+  });
+}
+
 // ============================================
 // WORK ORDER MATERIALS
 // ============================================
@@ -1000,6 +1009,17 @@ export async function updateRecipe(id: number, data: Partial<InsertRecipe>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(recipes).set({ ...data, updatedAt: new Date() }).where(eq(recipes.id, id));
+}
+
+export async function deleteRecipe(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.delete(recipeCopackerShares).where(eq(recipeCopackerShares.recipeId, id));
+    await tx.delete(recipeProcedures).where(eq(recipeProcedures.recipeRowId, id));
+    await tx.delete(recipeLines).where(eq(recipeLines.recipeRowId, id));
+    await tx.delete(recipes).where(eq(recipes.id, id));
+  });
 }
 
 export async function getRecipeLineById(id: number) {

@@ -28,9 +28,17 @@ setInterval(() => {
  * Resolve the redirect URI the server will send to Intuit.
  * The exact same string must be registered in the Intuit app's
  * "Keys & OAuth → Redirect URIs" list or Intuit rejects the request.
+ *
+ * We normalise both sources to prevent common mismatches:
+ *   - trimmed whitespace (accidental copy-paste spaces)
+ *   - trailing slash on the base URL (e.g. PUBLIC_APP_URL="https://app.com/")
+ *     which would produce a double-slash like "https://app.com//api/…"
  */
 export function getQuickBooksRedirectUri(): string {
-  return ENV.quickbooksRedirectUri || `${ENV.publicAppUrl}/api/oauth/quickbooks/callback`;
+  const explicit = ENV.quickbooksRedirectUri.trim();
+  if (explicit) return explicit;
+  const base = ENV.publicAppUrl.replace(/\/+$/, "");
+  return `${base}/api/oauth/quickbooks/callback`;
 }
 
 /**
@@ -93,6 +101,8 @@ export async function exchangeCodeForToken(code: string): Promise<{
   token_type?: string;
   realmId?: string;
   error?: string;
+  /** Raw error code returned by Intuit (e.g. "invalid_grant") */
+  intuitError?: string;
 }> {
   const clientId = ENV.quickbooksClientId;
   const clientSecret = ENV.quickbooksClientSecret;
@@ -125,9 +135,16 @@ export async function exchangeCodeForToken(code: string): Promise<{
     });
     
     if (!response.ok) {
-      const error = await response.text();
-      console.error("QuickBooks token exchange failed:", error);
-      return { error: "Failed to exchange authorization code for token" };
+      const errorBody = await response.text();
+      console.error("QuickBooks token exchange failed:", errorBody);
+      let intuitError: string | undefined;
+      try {
+        const parsed = JSON.parse(errorBody);
+        intuitError = parsed.error || parsed.error_description || undefined;
+      } catch {
+        // response body is not JSON; leave intuitError undefined
+      }
+      return { error: "Failed to exchange authorization code for token", intuitError };
     }
     
     const data = await response.json();
@@ -274,6 +291,75 @@ export async function getProfitAndLoss(
     realmId,
     `reports/ProfitAndLoss${qs ? `?${qs}` : ""}`
   );
+}
+
+// Parsed shape of a QuickBooks P&L report. Used by the CFO dashboard.
+export type ProfitAndLossMonth = { label: string; income: number; cogs: number; expense: number };
+export type ProfitAndLossExpenseAccount = { name: string; total: number };
+export type ParsedProfitAndLoss = {
+  months: ProfitAndLossMonth[];
+  expenseAccounts: ProfitAndLossExpenseAccount[];
+};
+
+/**
+ * Walk a QuickBooks P&L report tree and return monthly income/COGS/expense
+ * totals plus a per-account expense breakdown. Pulled out of the routers so
+ * both the legacy and extracted trees can share one implementation.
+ */
+export function parseProfitAndLossReport(report: any): ParsedProfitAndLoss {
+  const columns: string[] = (report?.Columns?.Column ?? []).map((c: any) => c?.ColTitle ?? "");
+
+  const walkSummaryRows = (rows: any[], out: { label: string; values: number[] }[] = []) => {
+    for (const r of rows ?? []) {
+      if (r?.Summary?.ColData) {
+        out.push({
+          label: r.Summary.ColData[0]?.value ?? r.group ?? "Row",
+          values: (r.Summary.ColData as any[]).slice(1).map((c) => parseFloat(c?.value ?? "0") || 0),
+        });
+      }
+      if (r?.Rows?.Row) walkSummaryRows(r.Rows.Row, out);
+    }
+    return out;
+  };
+  const summaryRows = walkSummaryRows(report?.Rows?.Row ?? []);
+  const findRow = (needle: string) =>
+    summaryRows.find((r) => r.label.toLowerCase().includes(needle.toLowerCase()));
+  const income  = findRow("Total Income")?.values ?? [];
+  const cogs    = findRow("Total Cost of Goods Sold")?.values ?? [];
+  const expense = findRow("Total Expenses")?.values ?? [];
+
+  const months: ProfitAndLossMonth[] = columns.slice(1, -1).map((label, i) => ({
+    label,
+    income:  income[i]  ?? 0,
+    cogs:    cogs[i]    ?? 0,
+    expense: expense[i] ?? 0,
+  }));
+
+  const EXPENSE_GROUPS = new Set(["Expenses", "OtherExpenses"]);
+  const walkExpenseAccounts = (
+    rows: any[],
+    inExpense: boolean,
+    out: { label: string; values: number[] }[] = [],
+  ) => {
+    for (const r of rows ?? []) {
+      const nowInExpense = inExpense || EXPENSE_GROUPS.has(r?.group ?? "");
+      if (nowInExpense && r?.ColData && !r?.Rows) {
+        const label: string = r.ColData[0]?.value ?? r.group ?? "Row";
+        const values: number[] = (r.ColData as any[]).slice(1).map((c: any) => parseFloat(c?.value ?? "0") || 0);
+        if (label) out.push({ label, values });
+      }
+      if (r?.Rows?.Row) walkExpenseAccounts(r.Rows.Row, nowInExpense, out);
+    }
+    return out;
+  };
+  const expenseAccounts: ProfitAndLossExpenseAccount[] = walkExpenseAccounts(report?.Rows?.Row ?? [], false)
+    .map((r) => ({
+      name: r.label,
+      total: r.values.slice(0, -1).reduce((s, v) => s + v, 0),
+    }))
+    .filter((r) => r.total !== 0);
+
+  return { months, expenseAccounts };
 }
 
 /**

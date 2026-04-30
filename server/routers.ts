@@ -35,13 +35,13 @@ import { detectEdiAnomalies, predictEdiErrors } from "./ediAiService";
 import { scoreSuppliers } from "./supplierScoringService";
 import * as db from "./db";
 import * as manufacturingDb from "./db/manufacturing";
-import { storagePut } from "./storage";
+import { storagePut, storageDelete } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getServiceAccountEmail, isServiceAccountConfigured } from "./_core/googleServiceAccount";
-import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss } from "./_core/quickbooks";
+import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss, parseProfitAndLossReport } from "./_core/quickbooks";
 import { listAllTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { queueFirefliesActionItemsForApproval } from "./firefliesSyncService";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
@@ -1117,6 +1117,13 @@ ONLY return the JSON array, no other text.`;
     approveAndEmail: financeProcedure
       .input(z.object({ invoiceId: z.number() }))
       .mutation(async () => ({ success: true, invoiceNumber: 'INV-STUB' })),
+    delete: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteInvoice(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'invoice', input.id);
+        return { success: true };
+      }),
   }),
 
   // ============================================
@@ -1708,6 +1715,13 @@ ONLY return the JSON array, no other text.`;
         await createAuditLog(ctx.user.id, 'update', 'transfer', input.id, 'Cancelled transfer');
         return { success: true };
       }),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteTransfer(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'transfer', input.id);
+        return { success: true };
+      }),
   }),
 
   // ============================================
@@ -2193,6 +2207,13 @@ ONLY return the JSON array, no other text.`;
       }),
     // Natural language text-to-PO (V2 endpoints)
     createFromTextV2: purchaseOrderTextEndpoints.createFromText,
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deletePurchaseOrder(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'purchaseOrder', input.id);
+        return { success: true };
+      }),
   }),
 
   // ============================================
@@ -2316,6 +2337,13 @@ ONLY return the JSON array, no other text.`;
         } as any);
         await createAuditLog(ctx.user.id, 'create', 'shipment', result.id, shipmentNumber);
         return { trackingNumber, shipmentNumber, id: result.id };
+      }),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteShipment(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'shipment', input.id);
+        return { success: true };
       }),
   }),
 
@@ -2889,6 +2917,13 @@ ONLY return the JSON array, no other text.`;
         const { id, ...data } = input;
         await db.updateProjectTask(id, data);
         await createAuditLog(ctx.user.id, 'update', 'projectTask', id);
+        return { success: true };
+      }),
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteProject(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'project', input.id);
         return { success: true };
       }),
     tasks: protectedProcedure
@@ -5460,56 +5495,7 @@ ONLY return the JSON array, no other text.`;
         });
         if (result.error) return { connected: true, error: result.error, months: [] };
 
-        const report = result.data;
-        const columns: string[] = (report?.Columns?.Column ?? [])
-          .map((c: any) => c?.ColTitle ?? "");
-        const walkRows = (rows: any[], out: { label: string; values: number[] }[] = []): { label: string; values: number[] }[] => {
-          for (const r of rows ?? []) {
-            if (r?.Summary?.ColData) {
-              out.push({
-                label: r.Summary.ColData[0]?.value ?? r.group ?? "Row",
-                values: (r.Summary.ColData as any[]).slice(1).map((c) => parseFloat(c?.value ?? "0") || 0),
-              });
-            }
-            if (r?.Rows?.Row) walkRows(r.Rows.Row, out);
-          }
-          return out;
-        };
-        const rows = walkRows(report?.Rows?.Row ?? []);
-        const findRow = (needle: string) => rows.find((r) => r.label.toLowerCase().includes(needle.toLowerCase()));
-        const income  = findRow("Total Income")?.values ?? [];
-        const cogs    = findRow("Total Cost of Goods Sold")?.values ?? [];
-        const expense = findRow("Total Expenses")?.values ?? [];
-        const months = columns.slice(1, -1).map((label, i) => ({
-          label,
-          income:  income[i]  ?? 0,
-          cogs:    cogs[i]    ?? 0,
-          expense: expense[i] ?? 0,
-        }));
-
-        const EXPENSE_GROUPS = new Set(["Expenses", "OtherExpenses"]);
-        const walkExpenseAccounts = (
-          rows: any[],
-          inExpense: boolean,
-          out: { label: string; values: number[] }[] = [],
-        ): { label: string; values: number[] }[] => {
-          for (const r of rows ?? []) {
-            const nowInExpense = inExpense || EXPENSE_GROUPS.has(r?.group ?? "");
-            if (nowInExpense && r?.ColData && !r?.Rows) {
-              const label: string = r.ColData[0]?.value ?? r.group ?? "Row";
-              const values: number[] = (r.ColData as any[]).slice(1).map((c: any) => parseFloat(c?.value ?? "0") || 0);
-              if (label) out.push({ label, values });
-            }
-            if (r?.Rows?.Row) walkExpenseAccounts(r.Rows.Row, nowInExpense, out);
-          }
-          return out;
-        };
-        const expenseAccounts = walkExpenseAccounts(report?.Rows?.Row ?? [], false)
-          .map((r) => ({
-            name: r.label,
-            total: r.values.slice(0, -1).reduce((s, v) => s + v, 0),
-          }))
-          .filter((r) => r.total !== 0);
+        const { months, expenseAccounts } = parseProfitAndLossReport(result.data);
 
         return { connected: true, months, expenseAccounts };
       }),
@@ -9267,6 +9253,13 @@ Provide a brief status summary, any missing documents, and next steps.`;
         }
         return { success: true };
       }),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await manufacturingDb.deleteRecipe(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'recipe', input.id);
+        return { success: true };
+      }),
   }),
 
   moisture: router({
@@ -9486,6 +9479,13 @@ Provide a brief status summary, any missing documents, and next steps.`;
     createFromText: opsProcedure
       .input(z.object({ text: z.string() }))
       .mutation(async () => ({ id: 0, workOrderNumber: 'WO-STUB' })),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await manufacturingDb.deleteWorkOrder(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'work_order', input.id);
+        return { success: true };
+      }),
   }),
 
   // Production Orders
@@ -12779,6 +12779,112 @@ Ask if they received the original request and if they can provide a quote.`;
         .mutation(async ({ input }) => {
           await db.deleteDataRoomDocument(input.id);
           return { success: true };
+        }),
+
+      // Refresh a single Drive-backed document from Google Drive — pulls the
+      // latest metadata (name, size, mime type, web view link, thumbnail) and
+      // bumps the document's version. The bytes themselves still stream
+      // through /api/drive/proxy so no download is needed.
+      refreshFromDrive: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const doc = await db.getDataRoomDocumentById(input.id);
+          if (!doc) throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
+          if (doc.storageType !== 'google_drive' || !doc.googleDriveFileId) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'This file is not linked to Google Drive. Use "Upload new version" instead.',
+            });
+          }
+
+          const room = await db.getDataRoomById(doc.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
+          // Drive bytes are fetched with the data room owner's OAuth token
+          // (matching /api/drive/proxy), so admins can refresh without
+          // having connected their own Google account.
+          const { accessToken, error } = await getValidGoogleToken(room.ownerId);
+          if (error) throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+
+          const { file: driveFile, error: metaError } = await getFileMetadata(accessToken, doc.googleDriveFileId);
+          if (metaError || !driveFile) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: metaError || 'File not found in Google Drive' });
+          }
+
+          const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
+            ? parseInt(driveFile.size)
+            : undefined;
+
+          const newVersion = await db.updateDataRoomDocumentBumpVersion(doc.id, {
+            name: driveFile.name,
+            fileType: getSimpleFileType(driveFile.mimeType),
+            mimeType: driveFile.mimeType,
+            fileSize,
+            storageUrl: driveFile.webViewLink || undefined,
+            googleDriveWebViewLink: driveFile.webViewLink,
+            thumbnailUrl: driveFile.thumbnailLink,
+          });
+
+          return { success: true, name: driveFile.name, version: newVersion };
+        }),
+
+      // Replace a document's contents with a new uploaded file. Bumps version
+      // and stores the new bytes in S3. If the document was previously linked
+      // to Google Drive, the Drive link is detached because the uploaded file
+      // is now the source of truth.
+      uploadNewVersion: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          fileType: z.string(),
+          mimeType: z.string(),
+          fileSize: z.number(),
+          base64Content: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const doc = await db.getDataRoomDocumentById(input.id);
+          if (!doc) throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
+
+          const room = await db.getDataRoomById(doc.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
+          const newName = input.name || doc.name;
+          const buffer = Buffer.from(input.base64Content, 'base64');
+          const key = `dataroom/${doc.dataRoomId}/${nanoid()}-${newName.replace(/[/\\]/g, '_')}`;
+          const { url } = await storagePut(key, buffer, input.mimeType);
+
+          const previousStorageKey = doc.storageType === 's3' ? doc.storageKey : null;
+
+          const newVersion = await db.updateDataRoomDocumentBumpVersion(doc.id, {
+            name: newName,
+            fileType: input.fileType,
+            mimeType: input.mimeType,
+            fileSize: input.fileSize,
+            storageType: 's3',
+            storageUrl: url,
+            storageKey: key,
+            googleDriveFileId: null,
+            googleDriveWebViewLink: null,
+            thumbnailUrl: null,
+          });
+
+          // Best-effort cleanup of the previous S3 object so replacing a
+          // file's bytes doesn't leave an orphaned blob behind. We swallow
+          // failures so a transient delete error doesn't fail the upload —
+          // the new version is already persisted at this point.
+          if (previousStorageKey) {
+            storageDelete(previousStorageKey).catch((err) => {
+              console.warn(`[dataRoom] failed to delete prior storage key ${previousStorageKey}:`, err);
+            });
+          }
+
+          return { id: doc.id, url, version: newVersion };
         }),
     }),
 
@@ -18708,6 +18814,10 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       let dealsCreated = 0;
       let contactsCreated = 0;
       let tasksSuggested = 0;
+
+      // Fetch internal emails once so we never create CRM contacts for team members
+      const internalEmails = await db.getInternalEmailSet();
+
       for (const t of transcripts) {
         const existing = await db.getFirefliesMeetingByFirefliesId(t.id);
         if (existing) {
@@ -18755,7 +18865,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             }
 
             for (const participant of participants) {
-              if (participant.email) {
+              if (participant.email && !internalEmails.has(participant.email.toLowerCase())) {
                 try {
                   const { id: contactFoundId, created } = await db.findOrCreateCrmContact({
                     firstName: (participant.name || participant.email.split("@")[0]).split(" ")[0] || "",
@@ -18767,18 +18877,22 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
                   const contact = await db.getCrmContactById(contactFoundId);
 
                   if (contact) {
-                    // Create CRM deal from meeting
-                    await db.createCrmDeal({
-                      pipelineId,
-                      contactId: contact.id,
-                      name: `Deal from: ${fullTranscript?.title || t.title || "Meeting"}`,
-                      stage: "discovery",
-                      source: "meeting",
-                      notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
-                    });
-                    dealsCreated++;
+                    if (created) {
+                      // Only create a deal the first time we see this contact —
+                      // subsequent meetings with the same person just add interactions.
+                      await db.createCrmDeal({
+                        pipelineId,
+                        contactId: contact.id,
+                        name: `Deal from: ${fullTranscript?.title || t.title || "Meeting"}`,
+                        stage: "discovery",
+                        source: "meeting",
+                        notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
+                      });
+                      dealsCreated++;
+                    }
 
-                    // Log meeting as CRM interaction
+                    // Always log meeting as CRM interaction regardless of whether
+                    // the contact already existed.
                     await db.createCrmInteraction({
                       contactId: contact.id,
                       channel: "meeting",
@@ -18838,8 +18952,9 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
           Array.isArray(meeting.participants) ? meeting.participants : [];
         if (input.createContacts && parsedParticipants.length > 0) {
+          const internalEmails = await db.getInternalEmailSet();
           for (const p of parsedParticipants) {
-            if (p.email) {
+            if (p.email && !internalEmails.has(p.email.toLowerCase())) {
               try {
                 const { created } = await db.findOrCreateCrmContact({
                   firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
@@ -18924,6 +19039,10 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       const doContacts = input?.createContacts !== false;
       const doTasks = input?.createTasks === true;
       const doProjects = input?.createProjects === true;
+
+      // Collect internal user emails once so we never create CRM contacts for them
+      const internalEmails = doContacts ? await db.getInternalEmailSet() : new Set<string>();
+
       for (const meeting of meetings) {
         if (doContacts) {
           // Auto-create contacts from participants
@@ -18931,7 +19050,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
             Array.isArray(meeting.participants) ? meeting.participants : [];
           for (const p of parsedParticipants) {
-            if (p.email) {
+            if (p.email && !internalEmails.has(p.email.toLowerCase())) {
               try {
                 const { created } = await db.findOrCreateCrmContact({
                   firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
