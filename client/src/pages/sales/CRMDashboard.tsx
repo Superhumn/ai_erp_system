@@ -16,7 +16,7 @@ export default function CRMDashboard() {
     dueBefore: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // Next 30 days
   });
 
-  const isLoading = investorsLoading || campaignsLoading || investmentsLoading;
+  const isLoading = investorsLoading || campaignsLoading || investmentsLoading || remindersLoading;
 
   // Calculate metrics
   const totalInvestors = investors?.length || 0;

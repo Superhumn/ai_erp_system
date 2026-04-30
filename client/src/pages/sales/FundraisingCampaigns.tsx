@@ -24,8 +24,8 @@ export default function FundraisingCampaigns() {
     status: "planning" as string, notes: "",
   });
 
-  const { data: campaigns, isLoading, refetch } = trpc.crm.listCampaigns.useQuery();
-  const createCampaign = trpc.crm.createCampaign.useMutation({
+  const { data: campaigns, isLoading, refetch } = (trpc.crm as any).listCampaigns.useQuery();
+  const createCampaign = (trpc.crm as any).createCampaign.useMutation({
     onSuccess: () => {
       toast.success("Round created");
       setIsOpen(false);
@@ -33,7 +33,7 @@ export default function FundraisingCampaigns() {
     },
     onError: (error: any) => toast.error(error.message),
   });
-  const updateCampaign = trpc.crm.updateCampaign.useMutation({
+  const updateCampaign = (trpc.crm as any).updateCampaign.useMutation({
     onSuccess: () => {
       toast.success("Round updated");
       setIsOpen(false);

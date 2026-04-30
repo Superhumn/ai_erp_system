@@ -84,7 +84,7 @@ export default function IntegrationsPage() {
   const shopifyInitiateOAuthMutation = trpc.integrations.shopify.initiateOAuth.useMutation({
     onSuccess: (data) => {
       // Redirect to Shopify OAuth page
-      window.location.href = data.authUrl || data.url;
+      window.location.href = data.authUrl;
     },
     onError: (error) => {
       toast.error(error.message);

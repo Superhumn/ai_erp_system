@@ -123,20 +123,20 @@ export default function CopackerPortal() {
   const { data: warehouse } = trpc.copackerPortal.getWarehouse.useQuery();
   const { data: inventory, isLoading: loadingInventory, refetch: refetchInventory } = trpc.copackerPortal.getInventory.useQuery();
   const { data: shipments } = trpc.copackerPortal.getShipments.useQuery();
-  const { data: currentPeriod } = trpc.copackerPortal.getCurrentPeriod.useQuery();
-  const { data: inventoryUpdates, refetch: refetchUpdates } = trpc.copackerPortal.getInventoryUpdates.useQuery();
-  const { data: invoices, refetch: refetchInvoices } = trpc.copackerPortal.getInvoices.useQuery();
-  const { data: shippingDocs, refetch: refetchShipDocs } = trpc.copackerPortal.getShippingDocuments.useQuery();
-  const { data: sharedRecipes } = trpc.copackerPortal.getSharedRecipes.useQuery();
-  const { data: sharedRecipeDetail } = trpc.copackerPortal.getSharedRecipeDetail.useQuery(
+  const { data: currentPeriod } = (trpc.copackerPortal as any).getCurrentPeriod.useQuery();
+  const { data: inventoryUpdates, refetch: refetchUpdates } = (trpc.copackerPortal as any).getInventoryUpdates.useQuery();
+  const { data: invoices, refetch: refetchInvoices } = (trpc.copackerPortal as any).getInvoices.useQuery();
+  const { data: shippingDocs, refetch: refetchShipDocs } = (trpc.copackerPortal as any).getShippingDocuments.useQuery();
+  const { data: sharedRecipes } = (trpc.copackerPortal as any).getSharedRecipes.useQuery();
+  const { data: sharedRecipeDetail } = (trpc.copackerPortal as any).getSharedRecipeDetail.useQuery(
     { recipeId: viewSharedRecipeId! },
     { enabled: !!viewSharedRecipeId }
   );
-  const { data: updateDetail } = trpc.copackerPortal.getInventoryUpdateDetail.useQuery(
+  const { data: updateDetail } = (trpc.copackerPortal as any).getInventoryUpdateDetail.useQuery(
     { id: viewUpdateId! },
     { enabled: !!viewUpdateId }
   );
-  const { data: invoiceDetail } = trpc.copackerPortal.getInvoiceDetail.useQuery(
+  const { data: invoiceDetail } = (trpc.copackerPortal as any).getInvoiceDetail.useQuery(
     { id: viewInvoiceId! },
     { enabled: !!viewInvoiceId }
   );
@@ -155,7 +155,7 @@ export default function CopackerPortal() {
     onError: (error) => toast.error("Failed to update inventory", { description: error.message }),
   });
 
-  const createInventoryUpdate = trpc.copackerPortal.createInventoryUpdate.useMutation({
+  const createInventoryUpdate = (trpc.copackerPortal as any).createInventoryUpdate.useMutation({
     onSuccess: () => {
       toast.success("Inventory update saved as draft");
       setShowUpdateForm(false);
@@ -165,7 +165,7 @@ export default function CopackerPortal() {
     onError: (error: any) => toast.error("Failed to create inventory update", { description: error.message }),
   });
 
-  const submitInventoryUpdate = trpc.copackerPortal.submitInventoryUpdate.useMutation({
+  const submitInventoryUpdate = (trpc.copackerPortal as any).submitInventoryUpdate.useMutation({
     onSuccess: () => {
       toast.success("Inventory update submitted and applied");
       refetchUpdates();
@@ -174,7 +174,7 @@ export default function CopackerPortal() {
     onError: (error: any) => toast.error("Failed to submit update", { description: error.message }),
   });
 
-  const createInvoice = trpc.copackerPortal.createInvoice.useMutation({
+  const createInvoice = (trpc.copackerPortal as any).createInvoice.useMutation({
     onSuccess: () => {
       toast.success("Invoice submitted successfully");
       setShowInvoiceForm(false);
@@ -184,7 +184,7 @@ export default function CopackerPortal() {
     onError: (error: any) => toast.error("Failed to submit invoice", { description: error.message }),
   });
 
-  const uploadShippingDoc = trpc.copackerPortal.uploadShippingDocument.useMutation({
+  const uploadShippingDoc = (trpc.copackerPortal as any).uploadShippingDocument.useMutation({
     onSuccess: () => {
       toast.success("Shipping document uploaded");
       setShowShipDocUpload(false);
@@ -194,7 +194,7 @@ export default function CopackerPortal() {
     onError: (error: any) => toast.error("Failed to upload document", { description: error.message }),
   });
 
-  const uploadInvoiceMutation = trpc.copackerPortal.uploadInvoice.useMutation({
+  const uploadInvoiceMutation = (trpc.copackerPortal as any).uploadInvoice.useMutation({
     onSuccess: (data: any) => {
       setUploadResult(data);
       toast.success("Invoice uploaded and sent to AP");
