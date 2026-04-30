@@ -177,11 +177,13 @@ export default function IntegrationsPage() {
         'missing_params': 'Missing required parameters from QuickBooks',
         'not_configured': 'QuickBooks integration is not configured. Please contact your administrator.',
         'not_authenticated': 'You must be logged in to connect QuickBooks',
-        'invalid_state': 'Invalid OAuth state parameter',
+        'invalid_state': 'Invalid OAuth state — please try connecting again',
         'token_exchange_failed': 'Failed to exchange authorization code for access token',
         'oauth_failed': 'OAuth authentication failed',
       };
-      toast.error(errorMessages[quickbooksError] || 'Failed to connect QuickBooks');
+      const detail = params.get('detail');
+      const base = errorMessages[quickbooksError] || 'Failed to connect QuickBooks';
+      toast.error(detail ? `${base}: ${detail}` : base);
       // Clean up URL
       window.history.replaceState({}, '', '/settings/integrations');
     }
