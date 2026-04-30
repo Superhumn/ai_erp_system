@@ -771,23 +771,22 @@ async function startServer() {
   // completes via /api/oauth/google/callback (handleGoogleOAuthCallback),
   // which persists the tokens with upsertGoogleOAuthToken.
   app.get('/api/google/chat/auth', oauthCallbackLimiter, async (req, res) => {
+    const sanitizeReturnTo = (value: unknown): string => {
+      if (typeof value !== 'string') return '/messaging';
+      if (!value.startsWith('/') || value.startsWith('//') || value.includes('\\') || /[\r\n\t]/.test(value)) {
+        return '/messaging';
+      }
+      return value;
+    };
+    const returnTo = sanitizeReturnTo(req.query.returnTo);
     try {
       if (!process.env.GOOGLE_CLIENT_ID) {
-        return res.redirect('/messaging?error=google_oauth_not_configured');
+        return res.redirect(`${returnTo}${returnTo.includes('?') ? '&' : '?'}error=google_oauth_not_configured`);
       }
       const { sdk: authSdk } = await import('./sdk');
-      let user: any;
+      let user: Awaited<ReturnType<typeof authSdk.authenticateRequest>> | null = null;
       try { user = await authSdk.authenticateRequest(req); } catch { user = null; }
-      if (!user) return res.redirect('/login?returnTo=%2Fmessaging');
-
-      const sanitizeReturnTo = (value: unknown): string => {
-        if (typeof value !== 'string') return '/messaging';
-        if (!value.startsWith('/') || value.startsWith('//') || value.includes('\\') || /[\r\n\t]/.test(value)) {
-          return '/messaging';
-        }
-        return value;
-      };
-      const returnTo = sanitizeReturnTo(req.query.returnTo);
+      if (!user) return res.redirect(`/login?returnTo=${encodeURIComponent(`/api/google/chat/auth?returnTo=${encodeURIComponent(returnTo)}`)}`);
 
       const { getGoogleChatAuthUrl } = await import('./googleChat');
       return res.redirect(getGoogleChatAuthUrl(user.id, returnTo));
@@ -795,7 +794,7 @@ async function startServer() {
       logger.error('Google Chat OAuth initiation error', {
         error: error instanceof Error ? error.message : String(error),
       });
-      return res.redirect('/messaging?error=google_chat_oauth_failed');
+      return res.redirect(`${returnTo}${returnTo.includes('?') ? '&' : '?'}error=google_chat_oauth_failed`);
     }
   });
 
