@@ -1016,6 +1016,7 @@ async function startServer() {
                 try {
                   // Save inbound email record
                   const savedEmail = await db.createInboundEmail?.({
+                    messageId: email.messageId,
                     fromEmail: email.from.address,
                     fromName: email.from.name || "",
                     toEmail: email.to.join(", ") || "inbox",
