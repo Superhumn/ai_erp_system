@@ -133,6 +133,7 @@ export default function EmailInbox() {
   const [replyText, setReplyText] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [labelFilter, setLabelFilter] = useState<string | null>(null);
   const [starredEmails, setStarredEmails] = useState<Set<number>>(new Set());
   const [pinnedEmails, setPinnedEmails] = useState<Set<number>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -211,6 +212,7 @@ export default function EmailInbox() {
     if (activeFolder !== "inbox") return false;
     if (e.parsingStatus === "archived") return false;
     if (categoryFilter !== "all" && e.category !== categoryFilter) return false;
+    if (labelFilter) { const q = labelFilter.toLowerCase(); if (!((e.subject || "").toLowerCase().includes(q) || (e.fromName || "").toLowerCase().includes(q) || (e.fromEmail || "").toLowerCase().includes(q) || (e.bodyText || "").toLowerCase().includes(q))) return false; }
     if (searchQuery) { const q = searchQuery.toLowerCase(); return (e.subject || "").toLowerCase().includes(q) || (e.fromName || "").toLowerCase().includes(q) || (e.fromEmail || "").toLowerCase().includes(q); }
     return true;
   }) ?? [];
@@ -493,7 +495,7 @@ export default function EmailInbox() {
           </div>
           <nav className="flex-1 overflow-y-auto py-1 space-y-0">
             {sidebarFolders.map(({ key, label, icon: Icon, count }) => (
-              <button key={key} className={`flex items-center gap-2.5 pl-3 pr-2 py-1.5 text-sm w-full rounded-r-full transition-colors hover:bg-accent/60 ${activeFolder === key ? "bg-accent font-semibold" : "font-normal"}`} onClick={() => { setActiveFolder(key); setSelectedEmailId(null); setSelectedSequenceId(null); }}>
+              <button key={key} className={`flex items-center gap-2.5 pl-3 pr-2 py-1.5 text-sm w-full rounded-r-full transition-colors hover:bg-accent/60 ${activeFolder === key ? "bg-accent font-semibold" : "font-normal"}`} onClick={() => { setActiveFolder(key); setSelectedEmailId(null); setSelectedSequenceId(null); setLabelFilter(null); }}>
                 <Icon className="h-4 w-4 shrink-0" />
                 <span className="flex-1 text-left">{label}</span>
                 {count !== undefined && count > 0 && <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${activeFolder === key ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>{count}</span>}
@@ -514,7 +516,7 @@ export default function EmailInbox() {
                 {labelsExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}Labels<Plus className="h-3 w-3 ml-auto" />
               </button>
               {labelsExpanded && userLabels.map(({ label, color }) => (
-                <button key={label} className={`flex items-center gap-2 pl-6 pr-3 py-1 text-sm w-full rounded-r-full hover:bg-accent/60 transition-colors ${categoryFilter === label ? "bg-accent font-medium" : "text-muted-foreground hover:text-foreground"}`} onClick={() => setCategoryFilter(categoryFilter === label ? "all" : label)}>
+                <button key={label} className={`flex items-center gap-2 pl-6 pr-3 py-1 text-sm w-full rounded-r-full hover:bg-accent/60 transition-colors ${labelFilter === label ? "bg-accent font-medium" : "text-muted-foreground hover:text-foreground"}`} onClick={() => setLabelFilter(labelFilter === label ? null : label)}>
                   <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${color}`} /><span className="flex-1 text-left truncate">{label}</span>
                 </button>
               ))}

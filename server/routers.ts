@@ -22945,8 +22945,11 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         const database = await db.getDb();
         if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
         const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+        // Verify ownership before deleting steps
+        const [seq] = await database.select().from(emailSequences).where(and(eq(emailSequences.id, input.id), eq(emailSequences.userId, ctx.user.id)));
+        if (!seq) throw new TRPCError({ code: "NOT_FOUND", message: "Sequence not found" });
         await database.delete(emailSequenceSteps).where(eq(emailSequenceSteps.sequenceId, input.id));
-        await database.delete(emailSequences).where(and(eq(emailSequences.id, input.id), eq(emailSequences.userId, ctx.user.id)));
+        await database.delete(emailSequences).where(eq(emailSequences.id, input.id));
         return { ok: true };
       }),
 
@@ -22983,10 +22986,15 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         body: z.string().min(1).optional(),
         delayDays: z.number().min(0).optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const database = await db.getDb();
         if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-        const { emailSequenceSteps } = await import("../drizzle/schema");
+        const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+        // Verify the step's parent sequence belongs to the user
+        const [step] = await database.select().from(emailSequenceSteps).where(eq(emailSequenceSteps.id, input.stepId));
+        if (!step) throw new TRPCError({ code: "NOT_FOUND", message: "Step not found" });
+        const [seq] = await database.select().from(emailSequences).where(and(eq(emailSequences.id, step.sequenceId), eq(emailSequences.userId, ctx.user.id)));
+        if (!seq) throw new TRPCError({ code: "FORBIDDEN", message: "Not authorized" });
         const patch: Record<string, unknown> = {};
         if (input.subject !== undefined) patch.subject = input.subject;
         if (input.body !== undefined) patch.body = input.body;
@@ -22997,10 +23005,15 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
 
     deleteStep: protectedProcedure
       .input(z.object({ stepId: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const database = await db.getDb();
         if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-        const { emailSequenceSteps } = await import("../drizzle/schema");
+        const { emailSequences, emailSequenceSteps } = await import("../drizzle/schema");
+        // Verify the step's parent sequence belongs to the user
+        const [step] = await database.select().from(emailSequenceSteps).where(eq(emailSequenceSteps.id, input.stepId));
+        if (!step) throw new TRPCError({ code: "NOT_FOUND", message: "Step not found" });
+        const [seq] = await database.select().from(emailSequences).where(and(eq(emailSequences.id, step.sequenceId), eq(emailSequences.userId, ctx.user.id)));
+        if (!seq) throw new TRPCError({ code: "FORBIDDEN", message: "Not authorized" });
         await database.delete(emailSequenceSteps).where(eq(emailSequenceSteps.id, input.stepId));
         return { ok: true };
       }),
@@ -23071,13 +23084,13 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
 
     incrementUsage: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const database = await db.getDb();
         if (!database) return { ok: true };
         const { emailCannedResponses } = await import("../drizzle/schema");
-        const [row] = await database.select().from(emailCannedResponses).where(eq(emailCannedResponses.id, input.id));
+        const [row] = await database.select().from(emailCannedResponses).where(and(eq(emailCannedResponses.id, input.id), eq(emailCannedResponses.userId, ctx.user.id)));
         if (row) {
-          await database.update(emailCannedResponses).set({ usageCount: (row.usageCount ?? 0) + 1 }).where(eq(emailCannedResponses.id, input.id));
+          await database.update(emailCannedResponses).set({ usageCount: (row.usageCount ?? 0) + 1 }).where(and(eq(emailCannedResponses.id, input.id), eq(emailCannedResponses.userId, ctx.user.id)));
         }
         return { ok: true };
       }),
