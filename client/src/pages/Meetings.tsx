@@ -24,6 +24,8 @@ import {
   CheckCircle2,
   Filter,
   X,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 
 export default function Meetings() {
@@ -32,6 +34,7 @@ export default function Meetings() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [panelMeeting, setPanelMeeting] = useState<any | null>(null);
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [showProcessDialog, setShowProcessDialog] = useState(false);
   const [selectedMeetingId, setSelectedMeetingId] = useState<number | null>(null);
@@ -54,6 +57,7 @@ export default function Meetings() {
 
   const openPanel = (meeting: any) => {
     setPanelMeeting(meeting);
+    setTranscriptOpen(false);
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
     if (meeting != null) {
@@ -151,11 +155,16 @@ export default function Meetings() {
         const parsedActionItems = storedArr.length > 0
           ? storedArr.map((it: any) => ({ ...it, text: cleanActionText(typeof it === "string" ? it : it?.text || "") }))
           : parseActionItemsFromSummary(parsedSummary?.action_items);
+        const parsedTranscript: Array<{ speaker: string; text: string }> = (() => {
+          const raw = parseSafe(meeting.transcriptText);
+          return Array.isArray(raw) ? raw.filter((s: any) => s?.text) : [];
+        })();
         return {
           ...meeting,
           parsedParticipants: parseSafe(meeting.participants) || [],
           parsedSummary,
           parsedActionItems,
+          parsedTranscript,
         };
       }),
     [meetings]
@@ -679,6 +688,39 @@ export default function Meetings() {
                       </div>
                     </section>
                   )}
+
+                  {/* Full transcript (collapsed by default) */}
+                  {(m.parsedTranscript?.length ?? 0) > 0 && (() => {
+                    // Group consecutive sentences from the same speaker.
+                    const blocks: Array<{ speaker: string; text: string }> = [];
+                    for (const s of m.parsedTranscript as Array<{ speaker: string; text: string }>) {
+                      const last = blocks[blocks.length - 1];
+                      if (last && last.speaker === s.speaker) last.text += " " + s.text;
+                      else blocks.push({ speaker: s.speaker, text: s.text });
+                    }
+                    return (
+                      <section>
+                        <button
+                          type="button"
+                          onClick={() => setTranscriptOpen((v) => !v)}
+                          className="flex w-full items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground"
+                        >
+                          {transcriptOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                          Transcript ({m.parsedTranscript.length} lines)
+                        </button>
+                        {transcriptOpen && (
+                          <div className="mt-3 space-y-3">
+                            {blocks.map((b, i) => (
+                              <div key={i}>
+                                <div className="text-[11px] font-medium text-blue-600 dark:text-blue-400">{b.speaker}</div>
+                                <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{b.text}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </section>
+                    );
+                  })()}
                 </div>
 
                 {/* Footer actions */}

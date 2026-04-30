@@ -18828,6 +18828,11 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         }
         const fullTranscript = await getTranscript(config.apiKey, t.id);
         const participants = fullTranscript ? extractParticipants(fullTranscript) : [];
+        const sentences = Array.isArray(fullTranscript?.sentences)
+          ? fullTranscript!.sentences!
+              .map((s) => ({ speaker: s.speaker_name || "Unknown", text: (s.text || "").trim() }))
+              .filter((s) => s.text)
+          : [];
         const createdMeeting = await db.createFirefliesMeeting({
           firefliesId: t.id,
           title: t.title || 'Untitled Meeting',
@@ -18837,6 +18842,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           participants: JSON.stringify(participants),
           transcriptUrl: fullTranscript?.transcript_url || null,
           recordingUrl: fullTranscript?.audio_url || null,
+          transcriptText: sentences.length > 0 ? JSON.stringify(sentences) : null,
           summary: fullTranscript?.summary ? JSON.stringify(fullTranscript.summary) : null,
           actionItems: fullTranscript ? JSON.stringify(parseActionItems(fullTranscript?.summary?.action_items || [])) : null,
           processingStatus: 'pending',
