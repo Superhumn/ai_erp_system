@@ -17980,6 +17980,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           roundType: input.roundType,
           status: input.status,
           createdBy: ctx.user.id,
+          companyId: (ctx.user as any).companyId ?? null,
         };
         if (input.description) cleaned.description = input.description;
         if (input.targetAmount) cleaned.targetAmount = input.targetAmount;
