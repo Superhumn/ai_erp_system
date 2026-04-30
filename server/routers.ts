@@ -18836,6 +18836,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           organizerEmail: fullTranscript?.organizer_email || t.organizer_email || null,
           participants: JSON.stringify(participants),
           transcriptUrl: fullTranscript?.transcript_url || null,
+          recordingUrl: fullTranscript?.audio_url || null,
           summary: fullTranscript?.summary ? JSON.stringify(fullTranscript.summary) : null,
           actionItems: fullTranscript ? JSON.stringify(parseActionItems(fullTranscript?.summary?.action_items || [])) : null,
           processingStatus: 'pending',
@@ -19139,8 +19140,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           return null;
         }),
       getStats: protectedProcedure.query(async () => {
-        const stats = await db.getFirefliesMeetingStats();
-        return { ...stats, contactsCreated: 0, tasksCreated: 0 };
+        return db.getFirefliesMeetingStats();
       }),
     }),
   }),

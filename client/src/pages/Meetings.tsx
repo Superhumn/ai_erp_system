@@ -42,9 +42,13 @@ export default function Meetings() {
   const [processProjectName, setProcessProjectName] = useState("");
   const [processExistingProjectId, setProcessExistingProjectId] = useState<number | undefined>(undefined);
   const [predictedProjectId, setPredictedProjectId] = useState<number | undefined>(undefined);
+  const [processAssigneeId, setProcessAssigneeId] = useState<number | undefined>(undefined);
 
   const { data: projectsRaw } = trpc.projects.list.useQuery();
   const availableProjects = (projectsRaw as Array<{ id: number; name: string }> | undefined) || [];
+
+  const { data: routingOptions } = trpc.fireflies.taskRoutingOptions.useQuery();
+  const availableAssignees = (routingOptions?.assignees as Array<{ id: number; name: string; email: string }> | undefined) || [];
 
   const { data: meetingsRaw, isLoading, refetch, error: meetingsError } = trpc.fireflies.meetings.list.useQuery({});
   const meetings = (meetingsRaw as any[] | undefined) || [];
@@ -106,14 +110,14 @@ export default function Meetings() {
     }
   };
 
-  // Strip Fireflies transcript timestamps like "(00:30)" / "(1:23:45)" and
-  // markdown bullet/header artifacts from a single action-item string.
+  // Remove Fireflies transcript timestamps like "(00:30)" / "(1:23:45)".
+  const stripTimestamps = (s: string) =>
+    s.replace(/\s*\(\d{1,2}:\d{2}(?::\d{2})?\)\s*/g, " ").replace(/\s+/g, " ").trim();
+
+  // Strip timestamps + markdown bullet/header artifacts from a single
+  // action-item string.
   const cleanActionText = (s: string) =>
-    s
-      .replace(/\s*\(\d{1,2}:\d{2}(?::\d{2})?\)\s*/g, " ")
-      .replace(/^\s*(?:[-*•]|\d+[.)])\s+/, "")
-      .replace(/\s+/g, " ")
-      .trim();
+    stripTimestamps(s.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, ""));
 
   // Fireflies returns `summary.action_items` as a markdown string with
   // "**Speaker**" headers. Parse it client-side as a fallback for meetings
@@ -260,6 +264,7 @@ export default function Meetings() {
   const openProcessDialog = (meeting: any) => {
     setSelectedMeetingId(meeting.id);
     setProcessProjectName("");
+    setProcessAssigneeId(undefined);
     const predicted = predictProject(meeting.title || "");
     setPredictedProjectId(predicted);
     if (predicted !== undefined) {
@@ -281,6 +286,7 @@ export default function Meetings() {
       createProject: projectMode === "new",
       projectName: projectMode === "new" ? (processProjectName || undefined) : undefined,
       projectId: projectMode === "existing" ? processExistingProjectId : undefined,
+      assigneeId: processAssigneeId,
     } as any);
   };
 
@@ -316,12 +322,12 @@ export default function Meetings() {
     const raw = summary.shorthand_bullet;
     if (!raw) return [];
     const arr = Array.isArray(raw) ? raw : [raw];
-    return arr.slice(0, 4);
+    return arr.slice(0, 4).map((b: string) => stripTimestamps(b));
   };
 
-  /** Render inline markdown bold (**text**) as <strong> elements. */
+  /** Render inline markdown bold (**text**) as <strong>, stripping timestamps. */
   const renderInlineMd = (text: string): React.ReactNode => {
-    const parts = text.split(/\*\*(.+?)\*\*/g);
+    const parts = stripTimestamps(text).split(/\*\*(.+?)\*\*/g);
     return parts.map((part, i) =>
       i % 2 === 1 ? <strong key={i} className="font-semibold text-foreground">{part}</strong> : part
     );
@@ -521,7 +527,7 @@ export default function Meetings() {
                       </ul>
                     )}
                     {!bullets.length && summary?.overview && (
-                      <p className="mt-0.5 text-[12px] text-muted-foreground line-clamp-1 leading-[1.4]">{summary.overview}</p>
+                      <p className="mt-0.5 text-[12px] text-muted-foreground line-clamp-1 leading-[1.4]">{stripTimestamps(summary.overview)}</p>
                     )}
 
                     {/* Inline task preview */}
@@ -715,13 +721,36 @@ export default function Meetings() {
               </div>
               <Switch checked={processCreateContacts} onCheckedChange={setProcessCreateContacts} />
             </div>
-            <div className="flex items-center gap-3 rounded-lg border p-3">
-              <ListTodo className="h-5 w-5 text-purple-600 shrink-0" />
-              <div className="flex-1">
-                <div className="text-sm font-medium">Create Tasks</div>
-                <div className="text-xs text-muted-foreground">From meeting action items</div>
+            <div className="space-y-3 rounded-lg border p-3">
+              <div className="flex items-center gap-3">
+                <ListTodo className="h-5 w-5 text-purple-600 shrink-0" />
+                <div className="flex-1">
+                  <div className="text-sm font-medium">Create Tasks</div>
+                  <div className="text-xs text-muted-foreground">From meeting action items</div>
+                </div>
+                <Switch checked={processCreateTasks} onCheckedChange={setProcessCreateTasks} />
               </div>
-              <Switch checked={processCreateTasks} onCheckedChange={setProcessCreateTasks} />
+              {processCreateTasks && availableAssignees.length > 0 && (
+                <div className="pl-7 space-y-1">
+                  <Label className="text-xs">Default Assignee (optional)</Label>
+                  <Select
+                    value={processAssigneeId !== undefined ? String(processAssigneeId) : "auto"}
+                    onValueChange={(v) => setProcessAssigneeId(v === "auto" ? undefined : Number(v))}
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">Auto-detect from action items</SelectItem>
+                      {availableAssignees.map((a) => (
+                        <SelectItem key={a.id} value={String(a.id)}>
+                          {a.name || a.email}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
             <div className="space-y-3 rounded-lg border p-3">
               <div className="flex items-center gap-2">
