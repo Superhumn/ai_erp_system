@@ -13041,7 +13041,10 @@ export async function getSocialPlatformCredentials(filters?: { companyId?: numbe
 }
 
 // Clears the tokens and marks a credential as inactive. Used by the
-// disconnectCredential router endpoint to avoid null-as-any casts.
+// disconnectCredential router endpoint. Matches rows where companyId IS NULL,
+// which covers the current single-tenant pattern. When a per-user companyId
+// becomes available in context, pass it as the second argument so only that
+// company's row is cleared.
 export async function disconnectSocialPlatformCredential(
   platform: "tiktok" | "youtube" | "instagram",
   companyId?: number | null,
