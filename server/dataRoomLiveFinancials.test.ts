@@ -18,6 +18,7 @@ import { computeLiveFinancials } from "./dataRoomLiveFinancials";
 
 function monthsAgo(n: number): Date {
   const d = new Date();
+  d.setDate(1); // prevent month overflow on dates like Jan 31
   d.setMonth(d.getMonth() - n);
   d.setDate(15);
   return d;
