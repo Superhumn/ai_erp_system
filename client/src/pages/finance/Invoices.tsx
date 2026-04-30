@@ -220,7 +220,7 @@ export default function Invoices() {
     },
   });
 
-  const approveAndEmail = (trpc.invoices as any).approveAndEmail.useMutation({
+  const approveAndEmail = trpc.invoices.approveAndEmail.useMutation({
     onSuccess: (data) => {
       toast.success(`Invoice ${data.invoiceNumber} approved and emailed to customer`);
       setIsPreviewOpen(false);

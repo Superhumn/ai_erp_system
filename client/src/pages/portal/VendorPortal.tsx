@@ -54,7 +54,7 @@ export default function VendorPortal() {
     },
   });
 
-  const uploadCustomsDocument = (trpc.vendorPortal as any).uploadCustomsDocument.useMutation({
+  const uploadCustomsDocument = trpc.vendorPortal.uploadCustomsDocument.useMutation({
     onSuccess: () => {
       toast.success("Customs document uploaded");
       setCustomsUploadOpen(false);
