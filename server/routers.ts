@@ -13242,18 +13242,14 @@ Ask if they received the original request and if they can provide a quote.`;
             .map(d => d.googleDriveFileId!)
         );
 
-        // Create folder hierarchy in data room
+        // Create folder hierarchy in data room.
+        // syncDriveFolder pushes folders in DFS pre-order, so parents
+        // already precede their children — no sort needed.
         const folderMap = new Map<string, number>();
-        const sortedFolders = [...syncResult.folders].sort((a, b) => {
-          const aDepth = a.parents?.length || 0;
-          const bDepth = b.parents?.length || 0;
-          return aDepth - bDepth;
-        });
-
         const results: { name: string; type: string; status: string }[] = [];
 
         // Process folders
-        for (const driveFolder of sortedFolders) {
+        for (const driveFolder of syncResult.folders) {
           if (existingFoldersByDriveId.has(driveFolder.id)) {
             folderMap.set(driveFolder.id, existingFoldersByDriveId.get(driveFolder.id)!);
             results.push({ name: driveFolder.name, type: 'folder', status: 'exists' });
@@ -13402,18 +13398,13 @@ Ask if they received the original request and if they can provide a quote.`;
           );
 
           // Create folder hierarchy in data room
+          // syncDriveFolder pushes folders in DFS pre-order, so parents
+          // already precede their children — no sort needed.
           const folderMap = new Map<string, number>(); // Google Drive folder ID -> data room folder ID
-          
-          // Sort folders by depth to ensure parents are created before children
-          const sortedFolders = [...syncResult.folders].sort((a, b) => {
-            const aDepth = a.parents?.length || 0;
-            const bDepth = b.parents?.length || 0;
-            return aDepth - bDepth;
-          });
-          
+
           // Process folders
           let foldersCreated = 0;
-          for (const driveFolder of sortedFolders) {
+          for (const driveFolder of syncResult.folders) {
             // Check if folder already exists
             if (existingFoldersByDriveId.has(driveFolder.id)) {
               folderMap.set(driveFolder.id, existingFoldersByDriveId.get(driveFolder.id)!);
@@ -14108,6 +14099,7 @@ Ask if they received the original request and if they can provide a quote.`;
               includeFileTypes: config.includeFileTypes ? JSON.parse(config.includeFileTypes) : undefined,
               excludeFileTypes: config.excludeFileTypes ? JSON.parse(config.excludeFileTypes) : undefined,
               maxFileSizeMb: config.maxFileSizeMb || 100,
+              uploadedBy: ctx.user.id,
             });
 
             // Update sync log with results
