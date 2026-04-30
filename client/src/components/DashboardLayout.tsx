@@ -88,21 +88,6 @@ export function getMenuGroups(role: string = "user") {
     ],
   });
 
-  if (hasOps) {
-    groups.push({
-      label: "Operations",
-      items: [
-        { icon: Package, label: "Operations", path: "/operations" },
-        { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
-        // Recipes restricted to admin + ops only (trade secrets) — exec excluded
-        ...(role === "admin" || role === "ops" ? [
-          { icon: Factory, label: "Recipes", path: "/operations/recipes" },
-        ] : []),
-        { icon: Users, label: "Vendors", path: "/operations/vendors" },
-      ],
-    });
-  }
-
   if (inSalesSection) {
     groups.push({
       label: "Sales",
@@ -125,6 +110,21 @@ export function getMenuGroups(role: string = "user") {
         { icon: TrendingUp, label: "Fundraising", path: "/crm/campaigns" },
         { icon: Users, label: "Investors", path: "/hr/investors" },
         { icon: FolderLock, label: "Data Room", path: "/dataroom/1" },
+      ],
+    });
+  }
+
+  if (hasOps) {
+    groups.push({
+      label: "Operations",
+      items: [
+        { icon: Package, label: "Operations", path: "/operations" },
+        { icon: Truck, label: "Logistics", path: "/operations/logistics-hub" },
+        // Recipes restricted to admin + ops only (trade secrets) — exec excluded
+        ...(role === "admin" || role === "ops" ? [
+          { icon: Factory, label: "Recipes", path: "/operations/recipes" },
+        ] : []),
+        { icon: Users, label: "Vendors", path: "/operations/vendors" },
       ],
     });
   }
