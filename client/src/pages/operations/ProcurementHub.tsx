@@ -21,12 +21,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
 import { SpreadsheetTable, Column } from "@/components/SpreadsheetTable";
 import { DetailSheet } from "@/components/DetailSheet";
 import { QuickCreateButton } from "@/components/QuickCreateDialog";
@@ -1025,7 +1019,6 @@ function MaterialDetailPanel({ material, onClose }: { material: any; onClose: ()
 }
 
 export default function ProcurementHub() {
-  const [activeTab, setActiveTab] = useState("purchase-orders");
   const [isPoDialogOpen, setIsPoDialogOpen] = useState(false);
   const [isVendorDialogOpen, setIsVendorDialogOpen] = useState(false);
   const [isMaterialDialogOpen, setIsMaterialDialogOpen] = useState(false);
@@ -1474,154 +1467,127 @@ export default function ProcurementHub() {
 
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-          <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("purchase-orders")}>
+          <Card className="p-4">
             <div className="text-xl font-semibold tracking-[-0.02em]">{stats.totalPos}</div>
             <div className="text-xs text-muted-foreground">Total POs</div>
           </Card>
-          <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("purchase-orders")}>
+          <Card className="p-4">
             <div className="text-xl font-semibold tracking-[-0.02em] text-blue-600">{stats.pendingPos}</div>
             <div className="text-xs text-muted-foreground">Pending POs</div>
           </Card>
-          <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("vendors")}>
+          <Card className="p-4">
             <div className="text-xl font-semibold tracking-[-0.02em]">{stats.totalVendors}</div>
             <div className="text-xs text-muted-foreground">Vendors</div>
           </Card>
-          <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("vendors")}>
+          <Card className="p-4">
             <div className="text-xl font-semibold tracking-[-0.02em] text-green-600">{stats.activeVendors}</div>
             <div className="text-xs text-muted-foreground">Active</div>
           </Card>
-          <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("materials")}>
+          <Card className="p-4">
             <div className="text-xl font-semibold tracking-[-0.02em]">{stats.totalMaterials}</div>
             <div className="text-xs text-muted-foreground">Materials</div>
           </Card>
-          <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("materials")}>
+          <Card className="p-4">
             <div className="text-xl font-semibold tracking-[-0.02em] text-orange-600">{stats.lowStock}</div>
             <div className="text-xs text-muted-foreground">Low Stock</div>
           </Card>
-          <Card className="p-4 cursor-pointer hover:bg-muted/50" onClick={() => setActiveTab("materials")}>
+          <Card className="p-4">
             <div className="text-xl font-semibold tracking-[-0.02em] text-purple-600">{stats.inTransit}</div>
             <div className="text-xs text-muted-foreground">In Transit</div>
           </Card>
         </div>
 
-        {/* Tabs with Expandable Spreadsheet Views */}
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList>
-            <TabsTrigger value="purchase-orders" className="gap-2">
-              <FileText className="h-4 w-4" />
-              Purchase Orders
-            </TabsTrigger>
-            <TabsTrigger value="vendors" className="gap-2">
-              <Users className="h-4 w-4" />
-              Vendors
-            </TabsTrigger>
-            <TabsTrigger value="materials" className="gap-2">
-              <Package className="h-4 w-4" />
-              Raw Materials
-            </TabsTrigger>
-            <TabsTrigger value="quotes" className="gap-2">
-              <Mail className="h-4 w-4" />
-              Vendor Quotes
-            </TabsTrigger>
-          </TabsList>
+        {/* Purchase Orders */}
+        <Card>
+          <CardContent className="pt-6">
+            <SpreadsheetTable
+              data={purchaseOrders || []}
+              columns={poColumns}
+              isLoading={posLoading}
+              emptyMessage="No purchase orders found"
+              showSearch
+              showFilters
+              showExport
+              onAdd={() => setIsPoDialogOpen(true)}
+              addLabel="New PO"
+              onRowClick={(po) => setSelectedPo(po)}
+              expandedRowId={selectedPo?.id ?? null}
+              onCellEdit={handlePoCellEdit}
+              selectedRows={selectedPos}
+              onSelectionChange={setSelectedPos}
+              bulkActions={poBulkActions}
+              onBulkAction={handlePoBulkAction}
+              compact
+            />
+          </CardContent>
+        </Card>
 
-          <TabsContent value="purchase-orders" className="mt-4">
-            <Card>
-              <CardContent className="pt-6">
-                <SpreadsheetTable
-                  data={purchaseOrders || []}
-                  columns={poColumns}
-                  isLoading={posLoading}
-                  emptyMessage="No purchase orders found"
-                  showSearch
-                  showFilters
-                  showExport
-                  onAdd={() => setIsPoDialogOpen(true)}
-                  addLabel="New PO"
-                  onRowClick={(po) => setSelectedPo(po)}
-                  expandedRowId={selectedPo?.id ?? null}
-                  onCellEdit={handlePoCellEdit}
-                  selectedRows={selectedPos}
-                  onSelectionChange={setSelectedPos}
-                  bulkActions={poBulkActions}
-                  onBulkAction={handlePoBulkAction}
-                  compact
+        {/* Vendors */}
+        <Card>
+          <CardContent className="pt-6">
+            <SpreadsheetTable
+              data={vendors || []}
+              columns={vendorColumns}
+              isLoading={vendorsLoading}
+              emptyMessage="No vendors found. Add your first vendor to start managing suppliers."
+              emptyAction={
+                <QuickCreateButton
+                  entityType="vendor"
+                  label="Create First Vendor"
+                  variant="default"
+                  onCreated={() => refetchVendors()}
                 />
-              </CardContent>
-            </Card>
-          </TabsContent>
+              }
+              showSearch
+              showExport
+              onAdd={() => setIsVendorDialogOpen(true)}
+              addLabel="New Vendor"
+              onRowClick={(vendor) => setSelectedVendor(vendor)}
+              expandedRowId={selectedVendor?.id ?? null}
+              onCellEdit={handleVendorCellEdit}
+              selectedRows={selectedVendors}
+              onSelectionChange={setSelectedVendors}
+              bulkActions={vendorBulkActions}
+              onBulkAction={handleVendorBulkAction}
+              compact
+            />
+          </CardContent>
+        </Card>
 
-          <TabsContent value="vendors" className="mt-4">
-            <Card>
-              <CardContent className="pt-6">
-                <SpreadsheetTable
-                  data={vendors || []}
-                  columns={vendorColumns}
-                  isLoading={vendorsLoading}
-                  emptyMessage="No vendors found. Add your first vendor to start managing suppliers."
-                  emptyAction={
-                    <QuickCreateButton
-                      entityType="vendor"
-                      label="Create First Vendor"
-                      variant="default"
-                      onCreated={() => refetchVendors()}
-                    />
-                  }
-                  showSearch
-                  showExport
-                  onAdd={() => setIsVendorDialogOpen(true)}
-                  addLabel="New Vendor"
-                  onRowClick={(vendor) => setSelectedVendor(vendor)}
-                  expandedRowId={selectedVendor?.id ?? null}
-                  onCellEdit={handleVendorCellEdit}
-                  selectedRows={selectedVendors}
-                  onSelectionChange={setSelectedVendors}
-                  bulkActions={vendorBulkActions}
-                  onBulkAction={handleVendorBulkAction}
-                  compact
+        {/* Raw Materials */}
+        <Card>
+          <CardContent className="pt-6">
+            <SpreadsheetTable
+              data={rawMaterials || []}
+              columns={materialColumns}
+              isLoading={materialsLoading}
+              emptyMessage="No raw materials found. Add materials to track inventory and create purchase orders."
+              emptyAction={
+                <QuickCreateButton
+                  entityType="material"
+                  label="Create First Material"
+                  variant="default"
+                  onCreated={() => refetchMaterials()}
                 />
-              </CardContent>
-            </Card>
-          </TabsContent>
+              }
+              showSearch
+              showExport
+              onAdd={() => setIsMaterialDialogOpen(true)}
+              addLabel="New Material"
+              onRowClick={(material) => setSelectedMaterial(material)}
+              expandedRowId={selectedMaterial?.id ?? null}
+              onCellEdit={handleMaterialCellEdit}
+              selectedRows={selectedMaterials}
+              onSelectionChange={setSelectedMaterials}
+              bulkActions={materialBulkActions}
+              onBulkAction={handleMaterialBulkAction}
+              compact
+            />
+          </CardContent>
+        </Card>
 
-          <TabsContent value="materials" className="mt-4">
-            <Card>
-              <CardContent className="pt-6">
-                <SpreadsheetTable
-                  data={rawMaterials || []}
-                  columns={materialColumns}
-                  isLoading={materialsLoading}
-                  emptyMessage="No raw materials found. Add materials to track inventory and create purchase orders."
-                  emptyAction={
-                    <QuickCreateButton
-                      entityType="material"
-                      label="Create First Material"
-                      variant="default"
-                      onCreated={() => refetchMaterials()}
-                    />
-                  }
-                  showSearch
-                  showExport
-                  onAdd={() => setIsMaterialDialogOpen(true)}
-                  addLabel="New Material"
-                  onRowClick={(material) => setSelectedMaterial(material)}
-                  expandedRowId={selectedMaterial?.id ?? null}
-                  onCellEdit={handleMaterialCellEdit}
-                  selectedRows={selectedMaterials}
-                  onSelectionChange={setSelectedMaterials}
-                  bulkActions={materialBulkActions}
-                  onBulkAction={handleMaterialBulkAction}
-                  compact
-                />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="quotes" className="mt-4">
-            <VendorQuotesTab vendors={vendors || []} rawMaterials={rawMaterials || []} />
-          </TabsContent>
-
-        </Tabs>
+        {/* Vendor Quotes */}
+        <VendorQuotesTab vendors={vendors || []} rawMaterials={rawMaterials || []} />
 
         {/* Side panels for PO / Vendor / Material */}
         <DetailSheet

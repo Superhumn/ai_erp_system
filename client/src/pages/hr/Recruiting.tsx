@@ -13,7 +13,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import {
-  UserPlus, Plus, Search, Loader2, Sparkles, Star, ChevronDown,
+  UserPlus, Plus, Search, Loader2, Sparkles, Star, ChevronDown, Trash2,
   FileText, Calendar, Mail, Phone, Briefcase, GraduationCap,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -105,6 +105,12 @@ Provide: 1) Score X/10, 2) Key strengths, 3) Concerns, 4) Recommendation (advanc
   const handleStageChange = (id: number, stage: string) => {
     setCandidates(candidates.map(c => c.id === id ? { ...c, stage } : c));
     toast.success(`Moved to ${stage}`);
+  };
+
+  const handleDelete = (id: number) => {
+    setCandidates(candidates.filter(c => c.id !== id));
+    if (expandedId === id) setExpandedId(null);
+    toast.success("Candidate removed");
   };
 
   const filtered = candidates.filter(c => {
@@ -261,6 +267,14 @@ Provide: 1) Score X/10, 2) Key strengths, 3) Concerns, 4) Recommendation (advanc
                               <Mail className="h-3 w-3 mr-1" /> Email
                             </Button>
                           )}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-xs text-destructive hover:text-destructive"
+                            onClick={() => handleDelete(c.id)}
+                          >
+                            <Trash2 className="h-3 w-3 mr-1" /> Remove
+                          </Button>
                         </div>
                       </div>
                     )}

@@ -100,6 +100,7 @@ const Payroll = lazy(() => import("./pages/hr/Payroll"));
 const EquityPortal = lazy(() => import("./pages/hr/EquityPortal"));
 const EquityReports = lazy(() => import("./pages/hr/EquityReports"));
 const InvestorsHub = lazy(() => import("./pages/hr/InvestorsHub"));
+const InvestorPortal = lazy(() => import("./pages/InvestorPortal"));
 const TimeTracking = lazy(() => import("./pages/hr/TimeTracking"));
 
 // Marketing
@@ -144,6 +145,9 @@ const SOPs = lazy(() => import("./pages/SOPs"));
 // Meetings
 const Meetings = lazy(() => import("./pages/Meetings"));
 
+// Quick Notes
+const Notes = lazy(() => import("./pages/Notes"));
+
 // Messaging
 const Messaging = lazy(() => import("./pages/Messaging"));
 
@@ -154,6 +158,7 @@ const InvestorUpdates = lazy(() => import("./pages/InvestorUpdates"));
 const DataRooms = lazy(() => import("./pages/DataRooms"));
 const DataRoomDetail = lazy(() => import("./pages/DataRoomDetail"));
 const DataRoomPublic = lazy(() => import("./pages/DataRoomPublic"));
+const DataRoomFinancialsPublic = lazy(() => import("./pages/DataRoomFinancialsPublic"));
 
 // Component Showcase
 const ComponentShowcase = lazy(() => import("./pages/ComponentShowcase"));
@@ -302,6 +307,7 @@ function Router() {
           <Route path="/hr/equity-portal" component={EquityPortal} />
           <Route path="/hr/equity-reports" component={EquityReports} />
           <Route path="/hr/investors" component={InvestorsHub} />
+          <Route path="/investor-portal" component={InvestorPortal} />
           <Route path="/hr/time-tracking" component={TimeTracking} />
 
           {/* Legal */}
@@ -325,6 +331,9 @@ function Router() {
 
           {/* Meetings */}
           <Route path="/meetings" component={Meetings} />
+
+          {/* Quick Notes */}
+          <Route path="/notes" component={Notes} />
 
           {/* Messaging */}
           <Route path="/messaging" component={Messaging} />
@@ -375,6 +384,8 @@ function App() {
                 <Route path="/login" component={Login} />
                 <Route path="/reset-password" component={ResetPassword} />
                 {/* Public Data Room Access (outside dashboard) */}
+                <Route path="/share/:code/financials" component={DataRoomFinancialsPublic} />
+                <Route path="/dr/:code/financials" component={DataRoomFinancialsPublic} />
                 <Route path="/share/:code" component={DataRoomPublic} />
                 <Route path="/dr/:code" component={DataRoomPublic} />
                 {/* Supplier Portal (public) */}

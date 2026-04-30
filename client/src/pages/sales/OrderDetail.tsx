@@ -3,19 +3,79 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, ShoppingCart, Calendar, DollarSign, User } from "lucide-react";
+import { ArrowLeft, ShoppingCart, Calendar, DollarSign, User, Loader2 } from "lucide-react";
 import { Link, useParams } from "wouter";
 import { format } from "date-fns";
 import { formatCurrency } from "@/lib/format";
+import { useEffect, useState } from "react";
+import { useOfflineMutation } from "@/hooks/useOfflineMutation";
+import { toast } from "sonner";
+
+const ORDER_STATUSES = [
+  "pending",
+  "confirmed",
+  "processing",
+  "shipped",
+  "delivered",
+  "cancelled",
+  "refunded",
+] as const;
+type OrderStatus = (typeof ORDER_STATUSES)[number];
 
 export default function OrderDetail() {
   const params = useParams<{ id: string }>();
   const orderId = parseInt(params.id || "0");
 
+  const utils = trpc.useUtils();
   const { data: order, isLoading } = trpc.orders.get.useQuery({ id: orderId });
   const { data: orderItems } = trpc.orderItems.list.useQuery({ orderId });
   const { data: products } = trpc.products.list.useQuery();
+
+  const updateOrderTrpc = trpc.orders.update.useMutation({
+    onSuccess: () => {
+      utils.orders.get.invalidate({ id: orderId });
+      utils.orders.list.invalidate();
+    },
+  });
+
+  // Track an optimistic local status so the UI updates instantly, even when
+  // the request is queued offline. Cleared as soon as the server's value
+  // catches up (online refetch or queued replay), otherwise the UI would be
+  // stuck on the optimistic value forever.
+  const [pendingStatus, setPendingStatus] = useState<OrderStatus | null>(null);
+  useEffect(() => {
+    if (pendingStatus && order?.status === pendingStatus) {
+      setPendingStatus(null);
+    }
+  }, [order?.status, pendingStatus]);
+
+  const updateStatus = useOfflineMutation<{ id: number; status: OrderStatus }>({
+    path: "orders.update",
+    label: "Order status",
+    online: (input) => updateOrderTrpc.mutateAsync(input),
+    optimistic: (input) => setPendingStatus(input.status),
+  });
+
+  async function handleStatusChange(next: string) {
+    if (!ORDER_STATUSES.includes(next as OrderStatus)) return;
+    try {
+      const result = await updateStatus.mutate({ id: orderId, status: next as OrderStatus });
+      if (!result.queued) {
+        toast.success(`Order marked as ${next}`);
+      }
+    } catch (err) {
+      setPendingStatus(null);
+      toast.error(err instanceof Error ? err.message : "Failed to update status");
+    }
+  }
 
   if (isLoading) {
     return (
@@ -28,6 +88,8 @@ export default function OrderDetail() {
       <div className="p-6">Order not found</div>
     );
   }
+
+  const displayStatus = pendingStatus ?? order.status;
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -54,7 +116,12 @@ export default function OrderDetail() {
           <h1 className="text-xl font-semibold tracking-[-0.02em]">{order.orderNumber}</h1>
           <p className="text-muted-foreground">Order Details</p>
         </div>
-        <Badge className={getStatusColor(order.status)}>{order.status}</Badge>
+        <div className="flex items-center gap-2">
+          <Badge className={getStatusColor(displayStatus)}>{displayStatus}</Badge>
+          {updateStatus.isPending && (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+          )}
+        </div>
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">
@@ -91,8 +158,26 @@ export default function OrderDetail() {
             </div>
             <div>
               <Label className="text-muted-foreground">Status</Label>
-              <div className="mt-1">
-                <Badge className={getStatusColor(order.status)}>{order.status}</Badge>
+              <div className="mt-1 flex items-center gap-2">
+                <Select
+                  value={displayStatus || ""}
+                  onValueChange={handleStatusChange}
+                  disabled={updateStatus.isPending}
+                >
+                  <SelectTrigger className="w-full sm:w-[180px] h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ORDER_STATUSES.map((s) => (
+                      <SelectItem key={s} value={s}>
+                        {s}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {updateStatus.isPending && (
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                )}
               </div>
             </div>
           </CardContent>

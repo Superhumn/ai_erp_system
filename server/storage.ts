@@ -3,7 +3,7 @@
 // Falls back to AWS S3 when Forge API credentials are not configured.
 
 import { ENV } from './_core/env';
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 // ── Forge proxy helpers ────────────────────────────────────────────────────────
@@ -70,6 +70,87 @@ function toFormData(
 
 function buildAuthHeaders(apiKey: string): HeadersInit {
   return { Authorization: `Bearer ${apiKey}` };
+}
+
+// ── R2 helpers ─────────────────────────────────────────────────────────────────
+
+function isR2Configured(): boolean {
+  return !!(
+    ENV.r2AccountId &&
+    ENV.r2AccessKeyId &&
+    ENV.r2SecretAccessKey &&
+    ENV.r2Bucket
+  );
+}
+
+function getR2Client(): S3Client {
+  if (!ENV.r2AccountId || !ENV.r2AccessKeyId || !ENV.r2SecretAccessKey) {
+    throw new Error("R2 credentials missing: set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY.");
+  }
+  return new S3Client({
+    region: "auto",
+    endpoint: `https://${ENV.r2AccountId}.r2.cloudflarestorage.com`,
+    credentials: {
+      accessKeyId: ENV.r2AccessKeyId,
+      secretAccessKey: ENV.r2SecretAccessKey,
+    },
+  });
+}
+
+function buildR2Url(key: string): string {
+  if (ENV.r2PublicUrl) {
+    return `${ENV.r2PublicUrl.replace(/\/+$/, "")}/${key}`;
+  }
+  return "";
+}
+
+async function r2Put(
+  relKey: string,
+  data: Buffer | Uint8Array | string,
+  contentType: string
+): Promise<{ key: string; url: string }> {
+  const key = normalizeKey(relKey);
+  const body = typeof data === "string" ? Buffer.from(data) : data;
+  const r2 = getR2Client();
+  await r2.send(
+    new PutObjectCommand({
+      Bucket: ENV.r2Bucket,
+      Key: key,
+      Body: body,
+      ContentType: contentType,
+    })
+  );
+  const publicUrl = buildR2Url(key);
+  if (publicUrl) {
+    return { key, url: publicUrl };
+  }
+  const url = await getSignedUrl(
+    r2,
+    new GetObjectCommand({ Bucket: ENV.r2Bucket, Key: key }),
+    { expiresIn: S3_PRESIGNED_URL_EXPIRES }
+  );
+  return { key, url };
+}
+
+async function r2Get(relKey: string): Promise<{ key: string; url: string }> {
+  const key = normalizeKey(relKey);
+  const publicUrl = buildR2Url(key);
+  if (publicUrl) {
+    return { key, url: publicUrl };
+  }
+  const r2 = getR2Client();
+  const url = await getSignedUrl(
+    r2,
+    new GetObjectCommand({ Bucket: ENV.r2Bucket, Key: key }),
+    { expiresIn: S3_PRESIGNED_URL_EXPIRES }
+  );
+  return { key, url };
+}
+
+async function r2Delete(relKey: string): Promise<void> {
+  const key = normalizeKey(relKey);
+  const r2 = getR2Client();
+  await r2.send(new DeleteObjectCommand({ Bucket: ENV.r2Bucket, Key: key }));
 }
 
 // ── S3 helpers ─────────────────────────────────────────────────────────────────
@@ -144,14 +225,18 @@ export async function storagePut(
   data: Buffer | Uint8Array | string,
   contentType = "application/octet-stream"
 ): Promise<{ key: string; url: string }> {
+  if (isR2Configured()) {
+    return r2Put(relKey, data, contentType);
+  }
   // Prefer S3 when Forge credentials are absent but S3 is configured
   if (!ENV.forgeApiUrl || !ENV.forgeApiKey) {
     if (isS3Configured()) {
       return s3Put(relKey, data, contentType);
     }
     throw new Error(
-      "No storage backend configured. Set FORGE_API_URL + FORGE_API_KEY (Forge proxy) " +
-      "or AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + AWS_S3_BUCKET (S3)."
+      "No storage backend configured. Set R2_ACCOUNT_ID + R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY + R2_BUCKET (Cloudflare R2), " +
+      "or AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + AWS_S3_BUCKET (S3), " +
+      "or FORGE_API_URL + FORGE_API_KEY (Forge proxy)."
     );
   }
 
@@ -176,14 +261,18 @@ export async function storagePut(
 }
 
 export async function storageGet(relKey: string): Promise<{ key: string; url: string; }> {
+  if (isR2Configured()) {
+    return r2Get(relKey);
+  }
   // Prefer S3 when Forge credentials are absent but S3 is configured
   if (!ENV.forgeApiUrl || !ENV.forgeApiKey) {
     if (isS3Configured()) {
       return s3Get(relKey);
     }
     throw new Error(
-      "No storage backend configured. Set FORGE_API_URL + FORGE_API_KEY (Forge proxy) " +
-      "or AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + AWS_S3_BUCKET (S3)."
+      "No storage backend configured. Set R2_ACCOUNT_ID + R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY + R2_BUCKET (Cloudflare R2), " +
+      "or AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + AWS_S3_BUCKET (S3), " +
+      "or FORGE_API_URL + FORGE_API_KEY (Forge proxy)."
     );
   }
 
@@ -193,5 +282,30 @@ export async function storageGet(relKey: string): Promise<{ key: string; url: st
     key,
     url: await buildDownloadUrl(baseUrl, key, apiKey),
   };
+}
+
+// Delete an object from the configured backend. S3 is implemented; the Forge
+// proxy doesn't currently expose a delete API, so we no-op there with a
+// warning rather than failing the caller.
+export async function storageDelete(relKey: string): Promise<void> {
+  if (!relKey) return;
+  const key = normalizeKey(relKey);
+  if (isR2Configured()) {
+    await r2Delete(key);
+    return;
+  }
+  if (isS3Configured() && (!ENV.forgeApiUrl || !ENV.forgeApiKey)) {
+    const s3 = getS3Client();
+    await s3.send(new DeleteObjectCommand({ Bucket: ENV.awsS3Bucket, Key: key }));
+    return;
+  }
+  if (isS3Configured()) {
+    // Both backends configured — prefer S3 for deletion since that's where
+    // S3-keyed blobs live.
+    const s3 = getS3Client();
+    await s3.send(new DeleteObjectCommand({ Bucket: ENV.awsS3Bucket, Key: key }));
+    return;
+  }
+  console.warn(`[storage] delete skipped for key ${key}: Forge proxy has no delete API`);
 }
 

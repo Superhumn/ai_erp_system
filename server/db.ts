@@ -144,6 +144,8 @@ import {
   // Cap table & equity management
   shareClasses, InsertShareClass,
   stakeholders, InsertStakeholder,
+  stakeholderDocuments, InsertStakeholderDocument,
+  proRataIndications, InsertProRataIndication,
   equityGrants, InsertEquityGrant,
   valuations409a, InsertValuation409a,
   equityTransactions, InsertEquityTransaction,
@@ -173,6 +175,8 @@ import {
   marketingVideos, InsertMarketingVideo,
   socialPosts, InsertSocialPost,
   socialPlatformCredentials, InsertSocialPlatformCredential,
+  // Quick Notes
+  notes, InsertNote,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -278,6 +282,17 @@ export async function getAllUsers() {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(users).orderBy(desc(users.createdAt));
+}
+
+/**
+ * Returns a Set of lowercased email addresses for all internal (registered)
+ * users. Use this to exclude team members from auto-created CRM contacts.
+ */
+export async function getInternalEmailSet(): Promise<Set<string>> {
+  const db = await getDb();
+  if (!db) return new Set();
+  const rows = await db.select({ email: users.email }).from(users);
+  return new Set(rows.map(r => (r.email ?? "").toLowerCase()).filter(Boolean));
 }
 
 export async function updateUserRole(userId: number, role: InsertUser['role']) {
@@ -703,6 +718,15 @@ export async function updateInvoice(id: number, data: Partial<InsertInvoice>) {
   await db.update(invoices).set(data).where(eq(invoices.id, id));
 }
 
+export async function deleteInvoice(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.delete(invoiceItems).where(eq(invoiceItems.invoiceId, id));
+    await tx.delete(invoices).where(eq(invoices.id, id));
+  });
+}
+
 export async function createInvoiceItem(data: typeof invoiceItems.$inferInsert) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -1124,6 +1148,15 @@ export async function updatePurchaseOrder(id: number, data: Partial<InsertPurcha
   await db.update(purchaseOrders).set(data).where(eq(purchaseOrders.id, id));
 }
 
+export async function deletePurchaseOrder(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.delete(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, id));
+    await tx.delete(purchaseOrders).where(eq(purchaseOrders.id, id));
+  });
+}
+
 export async function getAllPurchaseOrderItems() {
   const db = await getDb();
   if (!db) return [];
@@ -1174,6 +1207,32 @@ export async function updateShipment(id: number, data: Partial<typeof shipments.
   const db = await getDb();
   if (!db) return;
   await db.update(shipments).set(data).where(eq(shipments.id, id));
+}
+
+export async function deleteShipment(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const receivingRecord = await db
+    .select({ id: poReceivingRecords.id })
+    .from(poReceivingRecords)
+    .where(eq(poReceivingRecords.shipmentId, id))
+    .limit(1);
+
+  if (receivingRecord.length > 0) {
+    throw new Error("Cannot delete shipment with linked receiving records");
+  }
+
+  const freightAllocation = await db
+    .select({ id: freightCostAllocations.id })
+    .from(freightCostAllocations)
+    .where(eq(freightCostAllocations.shipmentId, id))
+    .limit(1);
+
+  if (freightAllocation.length > 0) {
+    throw new Error("Cannot delete shipment with linked freight cost allocations");
+  }
+  await db.delete(shipments).where(eq(shipments.id, id));
 }
 
 // ============================================
@@ -1660,6 +1719,16 @@ export async function updateProject(id: number, data: Partial<InsertProject>) {
   const db = await getDb();
   if (!db) return;
   await db.update(projects).set(data).where(eq(projects.id, id));
+}
+
+export async function deleteProject(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.delete(projectTasks).where(eq(projectTasks.projectId, id));
+    await tx.delete(projectMilestones).where(eq(projectMilestones.projectId, id));
+    await tx.delete(projects).where(eq(projects.id, id));
+  });
 }
 
 export async function createProjectMilestone(data: typeof projectMilestones.$inferInsert) {
@@ -2593,6 +2662,15 @@ export async function updateTransferItem(id: number, data: Partial<InsertInvento
   if (!db) throw new Error("Database not available");
   await db.update(inventoryTransferItems).set(data).where(eq(inventoryTransferItems.id, id));
   return { success: true };
+}
+
+export async function deleteTransfer(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.transaction(async (tx) => {
+    await tx.delete(inventoryTransferItems).where(eq(inventoryTransferItems.transferId, id));
+    await tx.delete(inventoryTransfers).where(eq(inventoryTransfers.id, id));
+  });
 }
 
 export async function processTransferShipment(transferId: number) {
@@ -6464,6 +6542,28 @@ export async function updateDataRoomDocument(id: number, data: Partial<InsertDat
   await db.update(dataRoomDocuments).set(data).where(eq(dataRoomDocuments.id, id));
 }
 
+// Update a document and bump its version atomically. The version increment
+// runs as `version = version + 1` in the same UPDATE so concurrent refreshes
+// can't both observe the same starting value and write the same new version.
+// Returns the new version read back from the row.
+export async function updateDataRoomDocumentBumpVersion(
+  id: number,
+  data: Partial<InsertDataRoomDocument>,
+): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .update(dataRoomDocuments)
+    .set({ ...data, version: sql`${dataRoomDocuments.version} + 1` })
+    .where(eq(dataRoomDocuments.id, id));
+  const [row] = await db
+    .select({ version: dataRoomDocuments.version })
+    .from(dataRoomDocuments)
+    .where(eq(dataRoomDocuments.id, id))
+    .limit(1);
+  return row?.version ?? 1;
+}
+
 export async function deleteDataRoomDocument(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -9921,8 +10021,20 @@ export async function autoMatchChecklistDocuments(checklistId: number) {
         matchedDocuments: scored.map(s => ({ id: s.doc.id, name: s.doc.name, score: s.score })),
         status: 'complete',
       });
+    } else if (item.status === 'complete' && item.linkedDocumentIds) {
+      // Was auto-matched but no longer has scoring documents — reset to missing.
+      // Manually-ticked items (linkedDocumentIds is null) are left unchanged.
+      await updateChecklistItem(item.id, {
+        status: 'missing',
+        linkedDocumentIds: null,
+        linkedDocumentCount: 0,
+      } as any);
     }
   }
+
+  await recalculateChecklistProgress(checklistId);
+
+  return { matched: matchedCount, items: matchedItems };
 }
 
 // ============================================
@@ -10441,6 +10553,108 @@ const SERIES_B_DD_CATEGORIES: Record<string, { name: string; items: Array<{ name
   },
 };
 
+const FUNDRAISING_DD_CATEGORIES: Record<string, { name: string; items: Array<{ name: string; keywords: string[] }> }> = {
+  pitch: {
+    name: "Pitch Materials",
+    items: [
+      { name: "Pitch Deck", keywords: ["pitch deck", "investor deck", "presentation"] },
+      { name: "Executive Summary", keywords: ["executive summary", "one pager", "overview"] },
+      { name: "Company Overview", keywords: ["company overview", "about us"] },
+    ],
+  },
+  financial: {
+    name: "Financial Documents",
+    items: [
+      { name: "Financial Model / Projections", keywords: ["financial model", "projection", "forecast"] },
+      { name: "Income Statement (P&L)", keywords: ["income statement", "profit loss", "P&L"] },
+      { name: "Cash Flow Statement", keywords: ["cash flow", "burn rate", "runway"] },
+      { name: "Bank Statements", keywords: ["bank statement"] },
+      { name: "Cap Table", keywords: ["cap table", "capitalization", "equity", "share structure"] },
+    ],
+  },
+  corporate: {
+    name: "Corporate Documents",
+    items: [
+      { name: "Certificate of Incorporation", keywords: ["incorporation", "certificate", "articles"] },
+      { name: "Bylaws / Operating Agreement", keywords: ["bylaws", "operating agreement"] },
+      { name: "Shareholder Agreement", keywords: ["shareholder", "stockholder"] },
+      { name: "Board Approval Minutes", keywords: ["board minutes", "board resolutions"] },
+    ],
+  },
+  product: {
+    name: "Product & Market",
+    items: [
+      { name: "Product Demo or Screenshots", keywords: ["demo", "screenshot", "product video"] },
+      { name: "Market Size Analysis", keywords: ["market size", "TAM", "SAM", "SOM"] },
+      { name: "Competitive Analysis", keywords: ["competitive", "competitor", "differentiation"] },
+      { name: "Customer Testimonials / References", keywords: ["testimonial", "reference", "customer quote"] },
+    ],
+  },
+  team: {
+    name: "Team",
+    items: [
+      { name: "Org Chart", keywords: ["org chart", "organization", "team structure"] },
+      { name: "Founder Bios / Resumes", keywords: ["bio", "resume", "founder background", "linkedin"] },
+      { name: "Advisory Board List", keywords: ["advisory board", "advisor", "advisors"] },
+    ],
+  },
+  legal: {
+    name: "Legal & IP",
+    items: [
+      { name: "IP Portfolio / Patents", keywords: ["intellectual property", "patent", "trademark", "IP"] },
+      { name: "Key Contracts", keywords: ["contract", "agreement", "material"] },
+      { name: "Regulatory Licenses", keywords: ["license", "permit", "regulatory"] },
+    ],
+  },
+};
+
+const MA_DD_CATEGORIES: Record<string, { name: string; items: Array<{ name: string; keywords: string[] }> }> = {
+  ...STANDARD_DD_CATEGORIES,
+  business: {
+    name: "Business Overview",
+    items: [
+      { name: "Company Information Memo", keywords: ["information memo", "CIM", "company overview"] },
+      { name: "Customer List / Concentration Analysis", keywords: ["customer list", "customer concentration", "top customers"] },
+      { name: "Revenue by Customer / Product", keywords: ["revenue breakdown", "revenue by customer", "product revenue"] },
+      { name: "Backlog / Pipeline", keywords: ["backlog", "pipeline", "order book"] },
+    ],
+  },
+  hr: {
+    name: "Human Resources",
+    items: [
+      { name: "Employee List with Compensation", keywords: ["employee list", "compensation", "salary"] },
+      { name: "Key Employee Agreements", keywords: ["employment agreement", "key employee", "retention"] },
+      { name: "Non-Compete / NDA Agreements", keywords: ["non-compete", "NDA", "non-disclosure", "confidentiality"] },
+      { name: "Employee Benefits & Pension Plans", keywords: ["benefits", "pension", "401k", "ERISA"] },
+      { name: "HR Policies Manual", keywords: ["HR policy", "employee handbook", "code of conduct"] },
+    ],
+  },
+  real_estate: {
+    name: "Real Estate & Assets",
+    items: [
+      { name: "Lease Agreements", keywords: ["lease", "real estate", "property", "landlord"] },
+      { name: "Fixed Asset Register", keywords: ["fixed asset", "asset register", "PPE"] },
+      { name: "Equipment Schedules", keywords: ["equipment", "machinery", "asset schedule"] },
+    ],
+  },
+  it: {
+    name: "IT & Systems",
+    items: [
+      { name: "IT Systems Inventory", keywords: ["IT systems", "software", "systems inventory"] },
+      { name: "Cybersecurity Policies", keywords: ["cybersecurity", "information security", "security policy"] },
+      { name: "Data Privacy Compliance", keywords: ["GDPR", "CCPA", "data privacy", "privacy policy"] },
+    ],
+  },
+  environmental: {
+    name: "Environmental & Regulatory",
+    items: [
+      { name: "Environmental Compliance Reports", keywords: ["environmental", "EPA", "compliance report"] },
+      { name: "Regulatory Filings", keywords: ["regulatory filing", "government filing", "compliance"] },
+      { name: "Permits & Licenses", keywords: ["permit", "license", "certification"] },
+    ],
+  },
+};
+
 // Create a standard due diligence checklist
 export async function createStandardChecklist(
   dataRoomId: number,
@@ -10449,9 +10663,11 @@ export async function createStandardChecklist(
   customName?: string
 ) {
   // Select the appropriate category template
-  const categories = checklistType === 'series_b'
-    ? SERIES_B_DD_CATEGORIES
-    : STANDARD_DD_CATEGORIES;
+  const categories =
+    checklistType === 'series_b' ? SERIES_B_DD_CATEGORIES :
+    checklistType === 'fundraising' ? FUNDRAISING_DD_CATEGORIES :
+    checklistType === 'ma' ? MA_DD_CATEGORIES :
+    STANDARD_DD_CATEGORIES;
 
   // Generate name based on template type
   const templateNames: Record<string, string> = {
@@ -10481,10 +10697,11 @@ export async function createStandardChecklist(
         dataRoomId,
         categoryName: category.name,
         itemName: item.name,
-        matchKeywords: item.keywords ? JSON.stringify(item.keywords) : undefined,
+        requirement: 'required',
+        matchKeywords: item.keywords ? JSON.stringify(item.keywords) : null,
         sortOrder: sortOrder++,
         status: 'missing',
-      } as any);
+      });
     }
   }
 
@@ -12118,6 +12335,88 @@ export async function getEquityGrantsByStakeholder(stakeholderId: number) {
   return db.select().from(equityGrants).where(eq(equityGrants.stakeholderId, stakeholderId)).orderBy(desc(equityGrants.grantDate));
 }
 
+// Investor Portal: resolve the logged-in user to their cap-table row.
+// Returns undefined when the user isn't linked (e.g. an admin invites a
+// stakeholder via teamInvites but they haven't accepted yet, or a user
+// is an employee rather than an investor).
+export async function getStakeholderByUserId(userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(stakeholders)
+    .where(eq(stakeholders.userId, userId))
+    .limit(1);
+  return result[0];
+}
+
+// --- Stakeholder Documents (investor portal "My Documents" locker) ---
+
+export async function getStakeholderDocuments(stakeholderId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(stakeholderDocuments)
+    .where(eq(stakeholderDocuments.stakeholderId, stakeholderId))
+    .orderBy(desc(stakeholderDocuments.createdAt));
+}
+
+export async function getStakeholderDocumentById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(stakeholderDocuments)
+    .where(eq(stakeholderDocuments.id, id))
+    .limit(1);
+  return result[0];
+}
+
+export async function createStakeholderDocument(data: InsertStakeholderDocument) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(stakeholderDocuments).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function deleteStakeholderDocument(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(stakeholderDocuments).where(eq(stakeholderDocuments.id, id));
+}
+
+// --- Pro-rata indications (investor portal "Active Round" signaling) ---
+
+export async function getProRataIndicationsForCampaign(campaignId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(proRataIndications)
+    .where(eq(proRataIndications.campaignId, campaignId))
+    .orderBy(desc(proRataIndications.createdAt));
+}
+
+export async function getProRataIndication(campaignId: number, stakeholderId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(proRataIndications)
+    .where(and(
+      eq(proRataIndications.campaignId, campaignId),
+      eq(proRataIndications.stakeholderId, stakeholderId),
+    ))
+    .limit(1);
+  return result[0];
+}
+
+export async function upsertProRataIndication(data: InsertProRataIndication) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // The unique (campaignId, stakeholderId) index makes this an upsert via
+  // ON DUPLICATE KEY UPDATE — re-signaling replaces the prior record.
+  await db.insert(proRataIndications).values(data).onDuplicateKeyUpdate({
+    set: {
+      indicatedAmount: data.indicatedAmount,
+      notes: data.notes,
+      status: data.status ?? "interested",
+      updatedAt: new Date(),
+    },
+  });
+}
+
 export async function createEquityGrant(data: InsertEquityGrant) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -12765,4 +13064,82 @@ export async function upsertSocialPlatformCredential(data: InsertSocialPlatformC
   }
   const result = await db.insert(socialPlatformCredentials).values(data);
   return { id: result[0].insertId };
+}
+
+// ============================================
+// QUICK NOTES
+// ============================================
+
+export async function createNote(data: InsertNote) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(notes).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateNote(id: number, data: Partial<InsertNote>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(notes).set({ ...data, updatedAt: new Date() } as any).where(eq(notes.id, id));
+}
+
+export async function getNoteById(id: number, userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(notes)
+    .where(and(eq(notes.id, id), eq(notes.userId, userId)))
+    .limit(1);
+  return result[0] || null;
+}
+
+export async function listNotesForUser(userId: number, limit = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(notes)
+    .where(eq(notes.userId, userId))
+    .orderBy(desc(notes.createdAt))
+    .limit(limit);
+}
+
+export async function deleteNote(id: number, userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(notes).where(and(eq(notes.id, id), eq(notes.userId, userId)));
+}
+
+// In-process cache so concurrent applyItems calls for the same user
+// never race to create two Notes Inbox projects.  Works for single-instance
+// deployments; replace with a DB unique-index strategy when running replicas.
+const _notesInboxCache = new Map<number, Promise<number>>();
+
+// Find or create the per-user "Notes Inbox" project that holds tasks
+// promoted from quick notes. projectTasks.projectId is NOT NULL, so
+// we need a parent project to attach to.
+export async function getOrCreateNotesInboxProject(userId: number): Promise<number> {
+  const existing = _notesInboxCache.get(userId);
+  if (existing) return existing;
+  const promise = (async () => {
+    const db = await getDb();
+    if (!db) throw new Error("Database not available");
+    const projectNumber = `NOTES-INBOX-${userId}`;
+    const rows = await db.select().from(projects)
+      .where(eq(projects.projectNumber, projectNumber))
+      .limit(1);
+    if (rows[0]) return rows[0].id;
+    const result = await db.insert(projects).values({
+      projectNumber,
+      name: "Notes Inbox",
+      description: "Tasks captured from quick notes.",
+      type: "internal",
+      status: "active",
+      priority: "medium",
+      ownerId: userId,
+      createdBy: userId,
+    });
+    return result[0].insertId;
+  })();
+  _notesInboxCache.set(userId, promise);
+  // Remove from cache after resolution so errors don't stay cached forever
+  promise.catch(() => _notesInboxCache.delete(userId));
+  return promise;
 }

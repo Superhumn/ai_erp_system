@@ -21,6 +21,8 @@ import { addCostLayer, recordCogs, getInventoryValuation, generateCogsPeriodSumm
 import { analyzeNegotiationOpportunity, initiateNegotiation, addNegotiationRound, generateNegotiationDraft } from "./vendorNegotiationService";
 import { autonomousWorkflowRouter } from "./autonomousWorkflowRouter";
 import { agentRouter } from "./agent";
+import { parseNoteWithLLM } from "./notesParser";
+import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/notes";
 import { employeePortalRouter } from "./routers/employeePortal";
 import { parseCopackerInventoryEmail, applyCopackerInventoryUpdate } from "./copackerEmailExtractor";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
@@ -33,13 +35,13 @@ import { detectEdiAnomalies, predictEdiErrors } from "./ediAiService";
 import { scoreSuppliers } from "./supplierScoringService";
 import * as db from "./db";
 import * as manufacturingDb from "./db/manufacturing";
-import { storagePut } from "./storage";
+import { storagePut, storageDelete } from "./storage";
 import { nanoid } from "nanoid";
 import { sendGmailMessage, createGmailDraft, listGmailMessages, getGmailMessage, replyToGmailMessage, getGmailProfile, type GmailSendOptions, type GmailDraftOptions } from "./_core/gmail";
 import { createGoogleDoc, insertTextInDoc, getGoogleDoc, updateGoogleDoc, createGoogleSheet, updateGoogleSheet, appendToGoogleSheet, getGoogleSheetValues, shareGoogleFile, getFileShareableLink } from "./_core/googleWorkspace";
 import { getGoogleFullAccessAuthUrl, syncDriveFolder, listDriveFolders, listDriveFiles, getFileMetadata, getFolderInfo, getSimpleFileType } from "./_core/googleDrive";
 import { getServiceAccountEmail, isServiceAccountConfigured } from "./_core/googleServiceAccount";
-import { getQuickBooksAuthUrl, validateOAuthState, exchangeCodeForToken, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems } from "./_core/quickbooks";
+import { getQuickBooksAuthUrl, refreshQuickBooksToken, getCompanyInfo, getChartOfAccounts, getQuickBooksItems, getProfitAndLoss, parseProfitAndLossReport } from "./_core/quickbooks";
 import { listAllTranscripts, getTranscript, extractParticipants, parseActionItems, validateApiKey as validateFirefliesApiKey } from "./_core/fireflies";
 import { queueFirefliesActionItemsForApproval } from "./firefliesSyncService";
 import { processInboundEdi, convertEdi850ToOrder, generateOutboundEdi, getTransactionSetDescription, type Edi855Acknowledgment, type Edi810Invoice, type Edi856ShipNotice } from "./ediService";
@@ -1117,6 +1119,13 @@ ONLY return the JSON array, no other text.`;
     approveAndEmail: financeProcedure
       .input(z.object({ invoiceId: z.number() }))
       .mutation(async () => ({ success: true, invoiceNumber: 'INV-STUB' })),
+    delete: financeProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteInvoice(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'invoice', input.id);
+        return { success: true };
+      }),
   }),
 
   // ============================================
@@ -1708,6 +1717,13 @@ ONLY return the JSON array, no other text.`;
         await createAuditLog(ctx.user.id, 'update', 'transfer', input.id, 'Cancelled transfer');
         return { success: true };
       }),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteTransfer(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'transfer', input.id);
+        return { success: true };
+      }),
   }),
 
   // ============================================
@@ -2193,6 +2209,13 @@ ONLY return the JSON array, no other text.`;
       }),
     // Natural language text-to-PO (V2 endpoints)
     createFromTextV2: purchaseOrderTextEndpoints.createFromText,
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deletePurchaseOrder(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'purchaseOrder', input.id);
+        return { success: true };
+      }),
   }),
 
   // ============================================
@@ -2316,6 +2339,13 @@ ONLY return the JSON array, no other text.`;
         } as any);
         await createAuditLog(ctx.user.id, 'create', 'shipment', result.id, shipmentNumber);
         return { trackingNumber, shipmentNumber, id: result.id };
+      }),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteShipment(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'shipment', input.id);
+        return { success: true };
       }),
   }),
 
@@ -2889,6 +2919,13 @@ ONLY return the JSON array, no other text.`;
         const { id, ...data } = input;
         await db.updateProjectTask(id, data);
         await createAuditLog(ctx.user.id, 'update', 'projectTask', id);
+        return { success: true };
+      }),
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await db.deleteProject(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'project', input.id);
         return { success: true };
       }),
     tasks: protectedProcedure
@@ -5421,8 +5458,48 @@ ONLY return the JSON array, no other text.`;
         });
 
         await createAuditLog(ctx.user.id, 'create', 'quickbooks_mapping', result.id, `Mapped ${input.mappingType} to QB account ${input.quickbooksAccountId}`);
-        
+
         return { success: true, id: result.id };
+      }),
+
+    // Fetch Profit & Loss from QuickBooks and return parsed monthly totals.
+    // Drives actual burn / gross margin / EBITDA on the CFO dashboard.
+    getProfitAndLoss: protectedProcedure
+      .input(z.object({
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+        summarizeBy: z.enum(["Month", "Quarter", "Year"]).optional(),
+      }).optional())
+      .query(async ({ input, ctx }) => {
+        const token = await db.getQuickBooksOAuthToken(ctx.user.id);
+        if (!token || !token.realmId) return { connected: false, months: [] };
+
+        let accessToken = token.accessToken;
+        const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+        if (isExpired && token.refreshToken) {
+          const refreshResult = await refreshQuickBooksToken(token.refreshToken);
+          if (!refreshResult.error && refreshResult.access_token && refreshResult.expires_in) {
+            await db.upsertQuickBooksOAuthToken({
+              userId: ctx.user.id,
+              accessToken: refreshResult.access_token,
+              refreshToken: refreshResult.refresh_token ?? token.refreshToken,
+              expiresAt: new Date(Date.now() + refreshResult.expires_in * 1000),
+              realmId: token.realmId,
+            });
+            accessToken = refreshResult.access_token;
+          }
+        }
+
+        const result = await getProfitAndLoss(accessToken, token.realmId, {
+          startDate: input?.startDate,
+          endDate: input?.endDate,
+          summarizeBy: input?.summarizeBy ?? "Month",
+        });
+        if (result.error) return { connected: true, error: result.error, months: [] };
+
+        const { months, expenseAccounts } = parseProfitAndLossReport(result.data);
+
+        return { connected: true, months, expenseAccounts };
       }),
   }),
 
@@ -5534,13 +5611,19 @@ const assistantMessage = typeof rawContent === 'string' ? rawContent : 'I apolog
           db.getPurchaseOrders(),
         ]);
 
-        const systemPrompt = `You are the AI assistant for Superhumn's ERP system. You have FULL access to create, read, update, and delete all data.
+        const systemPrompt = `You are the AI assistant for Superhumn's ERP system. You can read and analyze business data.
 
-CRITICAL: When a user asks you to CREATE something (PO, invoice, product, vendor, etc.), tell them you are creating it NOW and describe what you created. Do NOT list manual steps. Do NOT say "navigate to" or "click on". Just do it.
+IMPORTANT: You do NOT have write access. Do NOT pretend to create, update, or delete records. If a user asks you to create something (a PO, invoice, vendor, etc.), tell them clearly that you are a read-only assistant and guide them to use the AI command bar at the top of the page with the exact phrasing they need.
 
-For example:
-- "make a PO for 5000kg mushrooms" → "I've created PO #PO-2604-1234 for 5000kg of Chopped Mushrooms. I assigned it to your default vendor. You can view it in Purchase Orders."
-- "create vendor Pacific Foods" → "Done — Pacific Foods has been added as a vendor."
+For navigation questions, always give the exact location:
+- Purchase Orders are in the Operations section at path /operations/purchase-orders
+- Vendors are in the Operations section at path /operations/vendors
+- Invoices are in the Finance section
+- Orders are in the Sales section
+
+For creation requests, guide the user to type a command directly in the search bar at the top, for example:
+- To create a PO: type "make po for 3 tons of hemp protein" in the search bar
+- To create a vendor: type "create vendor Pacific Foods" in the search bar
 
 Current Business Data:
 - Invoices: ${recentInvoices.length} total
@@ -5548,7 +5631,7 @@ Current Business Data:
 - Purchase Orders: ${recentPOs.length} total
 - Dashboard: ${JSON.stringify(metrics)}
 
-Be concise. Don't explain what you can't do — just do it or ask for the one missing detail.`;
+Be concise and helpful. Always give actionable guidance.`;
 
         const response = await invokeLLM({
           messages: [
@@ -9172,6 +9255,13 @@ Provide a brief status summary, any missing documents, and next steps.`;
         }
         return { success: true };
       }),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await manufacturingDb.deleteRecipe(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'recipe', input.id);
+        return { success: true };
+      }),
   }),
 
   moisture: router({
@@ -9391,6 +9481,13 @@ Provide a brief status summary, any missing documents, and next steps.`;
     createFromText: opsProcedure
       .input(z.object({ text: z.string() }))
       .mutation(async () => ({ id: 0, workOrderNumber: 'WO-STUB' })),
+    delete: opsProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        await manufacturingDb.deleteWorkOrder(input.id);
+        await createAuditLog(ctx.user.id, 'delete', 'work_order', input.id);
+        return { success: true };
+      }),
   }),
 
   // Production Orders
@@ -11302,7 +11399,7 @@ Ask if they received the original request and if they can provide a quote.`;
               limit,
               since,
               fullAiParsing: true,
-              markAsSeen: true,
+              markAsSeen: false,
             });
 
             for (const { email } of parsedResults) {
@@ -12509,6 +12606,8 @@ Ask if they received the original request and if they can provide a quote.`;
         brandingLogo: z.string().nullable().optional(),
         brandingColor: z.string().nullable().optional(),
         brandingCompanyName: z.string().nullable().optional(),
+        showLiveFinancials: z.boolean().optional(),
+        liveFinancialsIncludeAr: z.boolean().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const room = await db.getDataRoomById(input.id);
@@ -12682,6 +12781,112 @@ Ask if they received the original request and if they can provide a quote.`;
         .mutation(async ({ input }) => {
           await db.deleteDataRoomDocument(input.id);
           return { success: true };
+        }),
+
+      // Refresh a single Drive-backed document from Google Drive — pulls the
+      // latest metadata (name, size, mime type, web view link, thumbnail) and
+      // bumps the document's version. The bytes themselves still stream
+      // through /api/drive/proxy so no download is needed.
+      refreshFromDrive: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const doc = await db.getDataRoomDocumentById(input.id);
+          if (!doc) throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
+          if (doc.storageType !== 'google_drive' || !doc.googleDriveFileId) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'This file is not linked to Google Drive. Use "Upload new version" instead.',
+            });
+          }
+
+          const room = await db.getDataRoomById(doc.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
+          // Drive bytes are fetched with the data room owner's OAuth token
+          // (matching /api/drive/proxy), so admins can refresh without
+          // having connected their own Google account.
+          const { accessToken, error } = await getValidGoogleToken(room.ownerId);
+          if (error) throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error });
+
+          const { file: driveFile, error: metaError } = await getFileMetadata(accessToken, doc.googleDriveFileId);
+          if (metaError || !driveFile) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: metaError || 'File not found in Google Drive' });
+          }
+
+          const fileSize: number | undefined = driveFile.size && !isNaN(parseInt(driveFile.size))
+            ? parseInt(driveFile.size)
+            : undefined;
+
+          const newVersion = await db.updateDataRoomDocumentBumpVersion(doc.id, {
+            name: driveFile.name,
+            fileType: getSimpleFileType(driveFile.mimeType),
+            mimeType: driveFile.mimeType,
+            fileSize,
+            storageUrl: driveFile.webViewLink || undefined,
+            googleDriveWebViewLink: driveFile.webViewLink,
+            thumbnailUrl: driveFile.thumbnailLink,
+          });
+
+          return { success: true, name: driveFile.name, version: newVersion };
+        }),
+
+      // Replace a document's contents with a new uploaded file. Bumps version
+      // and stores the new bytes in S3. If the document was previously linked
+      // to Google Drive, the Drive link is detached because the uploaded file
+      // is now the source of truth.
+      uploadNewVersion: protectedProcedure
+        .input(z.object({
+          id: z.number(),
+          name: z.string().optional(),
+          fileType: z.string(),
+          mimeType: z.string(),
+          fileSize: z.number(),
+          base64Content: z.string(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const doc = await db.getDataRoomDocumentById(input.id);
+          if (!doc) throw new TRPCError({ code: 'NOT_FOUND', message: 'Document not found' });
+
+          const room = await db.getDataRoomById(doc.dataRoomId);
+          if (!room) throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          if (room.ownerId !== ctx.user.id && ctx.user.role !== 'admin') {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+          }
+
+          const newName = input.name || doc.name;
+          const buffer = Buffer.from(input.base64Content, 'base64');
+          const key = `dataroom/${doc.dataRoomId}/${nanoid()}-${newName.replace(/[/\\]/g, '_')}`;
+          const { url } = await storagePut(key, buffer, input.mimeType);
+
+          const previousStorageKey = doc.storageType === 's3' ? doc.storageKey : null;
+
+          const newVersion = await db.updateDataRoomDocumentBumpVersion(doc.id, {
+            name: newName,
+            fileType: input.fileType,
+            mimeType: input.mimeType,
+            fileSize: input.fileSize,
+            storageType: 's3',
+            storageUrl: url,
+            storageKey: key,
+            googleDriveFileId: null,
+            googleDriveWebViewLink: null,
+            thumbnailUrl: null,
+          });
+
+          // Best-effort cleanup of the previous S3 object so replacing a
+          // file's bytes doesn't leave an orphaned blob behind. We swallow
+          // failures so a transient delete error doesn't fail the upload —
+          // the new version is already persisted at this point.
+          if (previousStorageKey) {
+            storageDelete(previousStorageKey).catch((err) => {
+              console.warn(`[dataRoom] failed to delete prior storage key ${previousStorageKey}:`, err);
+            });
+          }
+
+          return { id: doc.id, url, version: newVersion };
         }),
     }),
 
@@ -13590,6 +13795,7 @@ Ask if they received the original request and if they can provide a quote.`;
               brandingLogo: room.brandingLogo,
               brandingColor: room.brandingColor,
               brandingCompanyName: room.brandingCompanyName,
+              showLiveFinancials: room.showLiveFinancials,
             },
             folders: folders.filter(f => !f.googleDriveFolderId || true),
             documents: documents.filter(d => !d.isHidden),
@@ -13666,6 +13872,103 @@ Ask if they received the original request and if they can provide a quote.`;
           }
 
           return { id };
+        }),
+
+      // Live current-financials feed for the data room's public page.
+      // This is the investor-facing counterpart to the frozen projections
+      // snapshot: metrics are recomputed at request time, gated by a valid
+      // link + any NDA requirement that applied to `accessByLink`.
+      //
+      // Intentionally narrow: cash, last-3-mo revenue, last-3-mo burn,
+      // avg burn, runway, and optionally an AR total when the room owner
+      // has explicitly opted in. No customer-level detail, no AR aging,
+      // no risk radar.
+      getFinancials: publicProcedure
+        .input(z.object({
+          linkCode: z.string(),
+          visitorId: z.number().optional(),
+        }))
+        .query(async ({ input }) => {
+          const link = await db.getDataRoomLinkByCode(input.linkCode);
+          if (!link || !link.isActive) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Invalid link' });
+          }
+          if (link.expiresAt && new Date(link.expiresAt) < new Date()) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Link has expired' });
+          }
+
+          const room = await db.getDataRoomById(link.dataRoomId);
+          if (!room) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Data room not found' });
+          }
+          if (!room.showLiveFinancials) {
+            throw new TRPCError({
+              code: 'FORBIDDEN',
+              message: 'Live financials are not enabled for this data room',
+            });
+          }
+
+          // Re-enforce every gate that applied at `accessByLink` time.
+          // This endpoint is separately reachable with only a link code, so
+          // any gate the room relies on (password, required visitor info,
+          // NDA) has to be checked here too — otherwise a caller who knows
+          // the link could skip the password/info prompt and fetch
+          // financials directly. The gates we implement via "visitor must
+          // exist" because `accessByLink` only issues a visitor row once
+          // its own checks pass.
+          const requiresVisitor =
+            !!link.password ||
+            !!link.requireEmail ||
+            !!link.requireName ||
+            !!link.requireCompany ||
+            !!room.requiresEmail ||
+            !!room.requiresNda;
+
+          if (requiresVisitor) {
+            if (!input.visitorId) {
+              throw new TRPCError({
+                code: 'FORBIDDEN',
+                message: 'Please access the data room through the normal flow before viewing live financials.',
+              });
+            }
+            const visitor = await db.getDataRoomVisitorById(input.visitorId);
+            if (!visitor || visitor.dataRoomId !== room.id) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'Invalid visitor for this data room' });
+            }
+            if (visitor.accessStatus === 'blocked' || visitor.accessStatus === 'revoked') {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'Your access has been revoked' });
+            }
+            if (room.requiresNda && !visitor.ndaAcceptedAt) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'NDA signature required' });
+            }
+          } else if (input.visitorId) {
+            // Even without gates, still honor blocked/revoked on known visitors.
+            const visitor = await db.getDataRoomVisitorById(input.visitorId);
+            if (visitor && (visitor.accessStatus === 'blocked' || visitor.accessStatus === 'revoked')) {
+              throw new TRPCError({ code: 'FORBIDDEN', message: 'Your access has been revoked' });
+            }
+          }
+
+          const { computeLiveFinancials } = await import('./dataRoomLiveFinancials');
+          // dataRooms has no companyId column today (single-tenant); the helper
+          // still accepts one for when multi-tenancy lands per-room.
+          const snapshot = await computeLiveFinancials({
+            includeAr: !!room.liveFinancialsIncludeAr,
+          });
+
+          return {
+            room: {
+              name: room.name,
+              brandingCompanyName: room.brandingCompanyName,
+              brandingLogo: room.brandingLogo,
+              brandingColor: room.brandingColor,
+              brandColor: room.brandColor,
+              logoUrl: room.logoUrl,
+              watermarkEnabled: room.watermarkEnabled,
+              watermarkText: room.watermarkText,
+            },
+            financials: snapshot,
+          };
         }),
     }),
 
@@ -17721,6 +18024,34 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
     listReminders: protectedProcedure
       .input(z.object({ status: z.string().optional(), dueBefore: z.date().optional() }).optional())
       .query(({ input }) => db.getFundraisingReminders(input ? { status: input.status } : undefined)),
+
+    // Admin view of pro-rata interest signaled by existing investors on
+    // an open round. Joined with the stakeholder name so IR can follow
+    // up offline. Counterpart to `investorPortal.indicateInterest`.
+    listProRataIndications: protectedProcedure
+      .input(z.object({ campaignId: z.number() }))
+      .query(async ({ input }) => {
+        const indications = await db.getProRataIndicationsForCampaign(input.campaignId);
+        const stakeholderById = new Map(
+          (await db.getStakeholders()).map((s: { id: number; name: string; email?: string | null }) => [s.id, s]),
+        );
+        return (indications as Array<{
+          id: number; stakeholderId: number; indicatedAmount: string | null;
+          notes: string | null; status: string; createdAt: Date;
+        }>).map((i) => {
+          const s = stakeholderById.get(i.stakeholderId);
+          return {
+            id: i.id,
+            stakeholderId: i.stakeholderId,
+            stakeholderName: s?.name ?? "Unknown",
+            stakeholderEmail: s?.email ?? null,
+            indicatedAmount: i.indicatedAmount,
+            notes: i.notes,
+            status: i.status,
+            createdAt: i.createdAt,
+          };
+        });
+      }),
   }),
   inventoryCosting: router({
     // Costing config per product
@@ -18485,6 +18816,10 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       let dealsCreated = 0;
       let contactsCreated = 0;
       let tasksSuggested = 0;
+
+      // Fetch internal emails once so we never create CRM contacts for team members
+      const internalEmails = await db.getInternalEmailSet();
+
       for (const t of transcripts) {
         const existing = await db.getFirefliesMeetingByFirefliesId(t.id);
         if (existing) {
@@ -18532,7 +18867,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             }
 
             for (const participant of participants) {
-              if (participant.email) {
+              if (participant.email && !internalEmails.has(participant.email.toLowerCase())) {
                 try {
                   const { id: contactFoundId, created } = await db.findOrCreateCrmContact({
                     firstName: (participant.name || participant.email.split("@")[0]).split(" ")[0] || "",
@@ -18544,18 +18879,22 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
                   const contact = await db.getCrmContactById(contactFoundId);
 
                   if (contact) {
-                    // Create CRM deal from meeting
-                    await db.createCrmDeal({
-                      pipelineId,
-                      contactId: contact.id,
-                      name: `Deal from: ${fullTranscript?.title || t.title || "Meeting"}`,
-                      stage: "discovery",
-                      source: "meeting",
-                      notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
-                    });
-                    dealsCreated++;
+                    if (created) {
+                      // Only create a deal the first time we see this contact —
+                      // subsequent meetings with the same person just add interactions.
+                      await db.createCrmDeal({
+                        pipelineId,
+                        contactId: contact.id,
+                        name: `Deal from: ${fullTranscript?.title || t.title || "Meeting"}`,
+                        stage: "discovery",
+                        source: "meeting",
+                        notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
+                      });
+                      dealsCreated++;
+                    }
 
-                    // Log meeting as CRM interaction
+                    // Always log meeting as CRM interaction regardless of whether
+                    // the contact already existed.
                     await db.createCrmInteraction({
                       contactId: contact.id,
                       channel: "meeting",
@@ -18615,8 +18954,9 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
           Array.isArray(meeting.participants) ? meeting.participants : [];
         if (input.createContacts && parsedParticipants.length > 0) {
+          const internalEmails = await db.getInternalEmailSet();
           for (const p of parsedParticipants) {
-            if (p.email) {
+            if (p.email && !internalEmails.has(p.email.toLowerCase())) {
               try {
                 const { created } = await db.findOrCreateCrmContact({
                   firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
@@ -18701,6 +19041,10 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
       const doContacts = input?.createContacts !== false;
       const doTasks = input?.createTasks === true;
       const doProjects = input?.createProjects === true;
+
+      // Collect internal user emails once so we never create CRM contacts for them
+      const internalEmails = doContacts ? await db.getInternalEmailSet() : new Set<string>();
+
       for (const meeting of meetings) {
         if (doContacts) {
           // Auto-create contacts from participants
@@ -18708,7 +19052,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
             Array.isArray(meeting.participants) ? meeting.participants : [];
           for (const p of parsedParticipants) {
-            if (p.email) {
+            if (p.email && !internalEmails.has(p.email.toLowerCase())) {
               try {
                 const { created } = await db.findOrCreateCrmContact({
                   firstName: (p.name || p.email.split('@')[0]).split(' ')[0] || '',
@@ -19780,7 +20124,12 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           type: z.enum(["founder", "employee", "investor", "advisor", "board_member", "contractor"]).optional(),
           title: z.string().optional(),
           relationship: z.string().optional(),
+          // Investor-portal entitlement tier — admin-only setting that drives
+          // which gated portal sections become visible.
+          tier: z.enum(["ordinary", "major", "board"]).optional(),
           address: z.string().optional(),
+          mailingAddress: z.string().optional(),
+          paymentPreference: z.string().optional(),
           taxId: z.string().optional(),
           accreditedInvestor: z.boolean().optional(),
           notes: z.string().optional(),
@@ -19816,6 +20165,67 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           await createAuditLog(ctx.user.id, 'delete', 'stakeholder', 0, `Deleted ${placeholders.length} placeholder stakeholders`);
           return { deleted: placeholders.length };
         }),
+
+      // Admin-side per-stakeholder document locker. Mirrors the
+      // investor-facing `investorPortal.documents.*` endpoints but lets
+      // an admin manage docs for any stakeholder. Files come up the wire
+      // as base64 — fine for typical investor docs (PDFs <10MB), and
+      // saves a presigned-URL round trip. We cap upload size at 25MB.
+      documents: router({
+        list: adminProcedure
+          .input(z.object({ stakeholderId: z.number() }))
+          .query(({ input }) => db.getStakeholderDocuments(input.stakeholderId)),
+        upload: adminProcedure
+          .input(z.object({
+            stakeholderId: z.number(),
+            title: z.string().min(1).max(256),
+            description: z.string().max(2000).optional(),
+            category: z.enum(["agreement", "side_letter", "k1", "capital_call", "distribution", "other"]).default("other"),
+            fileName: z.string().min(1).max(256),
+            mimeType: z.string().max(128),
+            // base64-encoded file body. 25MB raw → ~33MB base64; reject anything bigger.
+            base64: z.string().max(35_000_000),
+          }))
+          .mutation(async ({ input, ctx }) => {
+            const stakeholder = await db.getStakeholderById(input.stakeholderId);
+            if (!stakeholder) {
+              throw new TRPCError({ code: "NOT_FOUND", message: "Stakeholder not found" });
+            }
+            const buffer = Buffer.from(input.base64, "base64");
+            if (buffer.length > 25 * 1024 * 1024) {
+              throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: "File exceeds 25MB upload limit" });
+            }
+            // Slug the filename so storage keys stay tame; timestamp prefix
+            // prevents collisions across re-uploads of the same name.
+            const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 200);
+            const key = `investor-docs/${stakeholder.id}/${Date.now()}-${safeName}`;
+            const { storagePut } = await import("./storage");
+            const { url } = await storagePut(key, buffer, input.mimeType);
+            const ext = input.fileName.split(".").pop()?.toLowerCase() ?? null;
+            const result = await db.createStakeholderDocument({
+              companyId: stakeholder.companyId ?? undefined,
+              stakeholderId: stakeholder.id,
+              title: input.title,
+              description: input.description,
+              category: input.category,
+              fileType: ext,
+              mimeType: input.mimeType,
+              fileSize: buffer.length,
+              storageKey: key,
+              storageUrl: url,
+              uploadedBy: ctx.user.id,
+            });
+            await createAuditLog(ctx.user.id, "create", "stakeholder_document", result.id, input.title);
+            return { id: result.id };
+          }),
+        delete: adminProcedure
+          .input(z.object({ id: z.number() }))
+          .mutation(async ({ input, ctx }) => {
+            await db.deleteStakeholderDocument(input.id);
+            await createAuditLog(ctx.user.id, "delete", "stakeholder_document", input.id);
+            return { success: true };
+          }),
+      }),
     }),
 
     grants: router({
@@ -21150,6 +21560,552 @@ Return JSON array only. No markdown.`;
     }),
   }),
 
+  // ============================================
+  // INVESTOR PORTAL (logged-in existing-investor view)
+  // ============================================
+  //
+  // Three procedures are gated to users with role='investor' (or admin/exec
+  // for support/testing). A fourth, `inviteToPortal`, is admin-only and
+  // drives the invite flow that turns a cap-table stakeholder into a user.
+  investorPortal: router({
+    // The logged-in investor's own cap-table position. Returns their
+    // stakeholder row, every grant, and the total-shares figure used to
+    // derive ownership % — but never data about other stakeholders.
+    me: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+      }
+      const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+      if (!stakeholder) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "No cap-table record is linked to your account. Ask the admin to link your stakeholder row.",
+        });
+      }
+      const grants = await db.getEquityGrantsByStakeholder(stakeholder.id);
+      const allGrants = await db.getEquityGrants(stakeholder.companyId ?? undefined);
+      const shareClasses = await db.getShareClasses(stakeholder.companyId ?? undefined);
+
+      const totalShares = allGrants.reduce(
+        (s: number, g: { shares?: string | number | null }) =>
+          s + parseFloat(String(g.shares ?? "0")),
+        0,
+      );
+      const mySharesOutstanding = grants.reduce(
+        (s, g: { shares?: string | number | null }) =>
+          s + parseFloat(String(g.shares ?? "0")),
+        0,
+      );
+      const ownershipPct = totalShares > 0 ? (mySharesOutstanding / totalShares) * 100 : 0;
+
+      // Decorate each grant with its share-class name so the UI doesn't
+      // have to make another call to resolve `shareClassId`.
+      const classById = new Map(shareClasses.map((c: { id: number }) => [c.id, c]));
+      const decoratedGrants = grants.map((g: { shareClassId: number } & Record<string, unknown>) => ({
+        ...g,
+        shareClass: classById.get(g.shareClassId) ?? null,
+      }));
+
+      return {
+        stakeholder: {
+          id: stakeholder.id,
+          name: stakeholder.name,
+          email: stakeholder.email,
+          type: stakeholder.type,
+          title: stakeholder.title,
+          relationship: stakeholder.relationship,
+          // Surfaced so the client can hide tier-gated sections (board
+          // materials, top-holder list) without a wasted FORBIDDEN call.
+          tier: stakeholder.tier,
+          accreditedInvestor: stakeholder.accreditedInvestor,
+        },
+        grants: decoratedGrants,
+        ownershipPct,
+        sharesOutstanding: mySharesOutstanding,
+        totalSharesOutstanding: totalShares,
+      };
+    }),
+
+    // Wider financials snapshot than the prospect-facing /dr/:code page.
+    financials: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+      }
+      // Gate on stakeholder linkage too — admins hitting this for support
+      // are fine, but an investor-role user without a cap-table link is a
+      // broken onboarding state and should surface the same message as `me`.
+      // Also picks up the stakeholder's companyId so the snapshot is
+      // scoped rather than aggregated across all companies in the DB.
+      const stakeholder = ctx.user.role === "investor"
+        ? await db.getStakeholderByUserId(ctx.user.id)
+        : undefined;
+      if (ctx.user.role === "investor" && !stakeholder) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+      }
+      const { computeInvestorPortalFinancials } = await import("./investorPortalFinancials");
+      return computeInvestorPortalFinancials({
+        companyId: stakeholder?.companyId ?? undefined,
+      });
+    }),
+
+    // Investor updates the admin has published. We only show `status='sent'`
+    // so drafts and in-review pieces don't leak.
+    updates: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+      }
+      const updates = await db.getInvestorUpdates({ status: "sent" });
+      return updates.map((u: Record<string, unknown>) => ({
+        id: u.id,
+        title: u.title,
+        period: u.period,
+        type: u.type,
+        content: u.content,
+        highlights: u.highlights,
+        sentAt: u.sentAt,
+      }));
+    }),
+
+    // Admin-only: provision an investor user by inviting a stakeholder to
+    // the portal. Creates a `team_invites` row with role=investor and a
+    // link back to the stakeholder; when the invite is accepted,
+    // localAuth attaches the new user to that cap-table row.
+    inviteToPortal: adminProcedure
+      .input(z.object({ stakeholderId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const stakeholder = await db.getStakeholderById(input.stakeholderId);
+        if (!stakeholder) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Stakeholder not found" });
+        }
+        if (!stakeholder.email) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Stakeholder has no email on file — add one before inviting.",
+          });
+        }
+        if (stakeholder.userId) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Stakeholder is already linked to a user account.",
+          });
+        }
+
+        const crypto = await import("crypto");
+        const token = crypto.randomBytes(32).toString("hex");
+        const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+
+        await db.createTeamInvite({
+          email: stakeholder.email.toLowerCase(),
+          name: stakeholder.name,
+          role: "investor",
+          invitedBy: ctx.user.id,
+          token,
+          expiresAt,
+          linkedStakeholderId: stakeholder.id,
+        });
+
+        const inviteUrl = `${ENV.publicAppUrl}/login?invite=${token}`;
+        // Names come from admin-editable fields, so they can contain '<' / '&'
+        // that would either break the email HTML or smuggle markup into the
+        // investor's inbox. Escape before interpolation.
+        const escapeHtml = (s: string) => s
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+        const safeStakeholder = escapeHtml(stakeholder.name || "");
+        const safeInviter = escapeHtml(ctx.user.name || "The team");
+
+        let emailResult: { success: boolean; error?: unknown };
+        try {
+          emailResult = await sendEmail({
+            to: stakeholder.email,
+            subject: "You have access to your investor portal",
+            html: `
+              <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2>Welcome to your investor portal</h2>
+                <p>Hi ${safeStakeholder},</p>
+                <p>${safeInviter} has invited you to log in to your investor portal, where you can review your equity position and the company's current financials whenever you'd like.</p>
+                <a href="${inviteUrl}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin: 16px 0;">
+                  Activate your portal
+                </a>
+                <p style="color: #888; font-size: 12px;">This invitation expires in 14 days. If the button doesn't work, copy this link: ${inviteUrl}</p>
+              </div>
+            `,
+          });
+        } catch (e) {
+          console.warn("[Investor Portal] sendEmail threw:", e);
+          emailResult = { success: false, error: e };
+        }
+
+        // `sendEmail` returns `{ success: false, error }` when SendGrid or its
+        // env is missing — it does NOT throw. Surface that to the admin so
+        // they know to reconfigure or resend. The invite row still exists
+        // and remains valid, so the admin can hit "Invite" again after
+        // fixing the email setup.
+        if (!emailResult.success) {
+          console.warn("[Investor Portal] invite created but email not sent:", emailResult.error);
+        }
+        return { success: true, emailSent: emailResult.success };
+      }),
+
+    // ─── Active rounds + pro-rata signaling ─────────────────────────
+    //
+    // Surfaces fundraisingCampaigns with status='active' so existing
+    // investors can see when a round is open and signal pro-rata
+    // interest. The signal is non-binding — IR follows up offline to
+    // collect subscription docs. We deliberately don't expose the
+    // campaign's existing investor list (other check sizes / commits)
+    // here; that's an IR/founder view, not an investor view.
+    activeRounds: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+      }
+      const stakeholder = ctx.user.role === "investor"
+        ? await db.getStakeholderByUserId(ctx.user.id)
+        : undefined;
+      if (ctx.user.role === "investor" && !stakeholder) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+      }
+
+      const all = await db.getFundraisingCampaigns(stakeholder?.companyId ?? undefined);
+      type Campaign = {
+        id: number; name: string; description: string | null;
+        targetAmount: string | null; raisedAmount: string | null;
+        minimumInvestment: string | null; valuation: string | null;
+        roundType: string; equityOffered: string | null;
+        startDate: Date | null; targetCloseDate: Date | null;
+        status: string;
+      };
+      const open = (all as Campaign[]).filter((c) => c.status === "active");
+
+      // Decorate each open round with the caller's existing pro-rata
+      // signal (if any) so the UI can show "you indicated $X" instead
+      // of a generic CTA. Admins viewing for support get null here.
+      const decorated = await Promise.all(
+        open.map(async (c) => {
+          const myIndication = stakeholder
+            ? await db.getProRataIndication(c.id, stakeholder.id)
+            : undefined;
+          return {
+            id: c.id,
+            name: c.name,
+            description: c.description,
+            roundType: c.roundType,
+            targetAmount: c.targetAmount,
+            raisedAmount: c.raisedAmount,
+            minimumInvestment: c.minimumInvestment,
+            valuation: c.valuation,
+            equityOffered: c.equityOffered,
+            targetCloseDate: c.targetCloseDate,
+            myIndication: myIndication
+              ? {
+                  indicatedAmount: myIndication.indicatedAmount,
+                  notes: myIndication.notes,
+                  status: myIndication.status,
+                  createdAt: myIndication.createdAt,
+                }
+              : null,
+          };
+        }),
+      );
+      return decorated;
+    }),
+
+    indicateInterest: protectedProcedure
+      .input(z.object({
+        campaignId: z.number(),
+        // Decimal-as-string: stays out of float-rounding territory and
+        // matches how Drizzle's decimal column accepts values.
+        indicatedAmount: z.string()
+          .regex(/^\d+(\.\d{1,2})?$/, "Enter an amount like 50000 or 50000.00")
+          .optional(),
+        notes: z.string().max(2000).optional(),
+        // Investors can withdraw a prior indication; the IR team still
+        // sees the row historically so they know it was withdrawn.
+        withdraw: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (ctx.user.role !== "investor") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Only investors can signal pro-rata interest." });
+        }
+        const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+        if (!stakeholder) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+        }
+        // Verify the campaign is real, active, and in the same company.
+        const all = await db.getFundraisingCampaigns(stakeholder.companyId ?? undefined);
+        const campaign = (all as Array<{ id: number; status: string }>).find((c) => c.id === input.campaignId);
+        if (!campaign) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Round not found" });
+        }
+        if (campaign.status !== "active") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "This round is no longer open." });
+        }
+        await db.upsertProRataIndication({
+          campaignId: input.campaignId,
+          stakeholderId: stakeholder.id,
+          indicatedAmount: input.indicatedAmount,
+          notes: input.notes,
+          status: input.withdraw ? "withdrawn" : "interested",
+        });
+        return { success: true };
+      }),
+
+    // ─── Board materials (board-tier only) ──────────────────────────
+    //
+    // Surfaces approved/signed board resolutions to investors with a
+    // board seat. Only `tier='board'` (or admin/exec for support) sees
+    // them — major investors without a seat get a clear FORBIDDEN, not
+    // an empty list, so they know the section exists but isn't theirs.
+    //
+    // Drafts and in-review resolutions are excluded so we don't leak
+    // pre-decisional material.
+    boardMaterials: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+      }
+      const stakeholder = ctx.user.role === "investor"
+        ? await db.getStakeholderByUserId(ctx.user.id)
+        : undefined;
+
+      // Tier gate: investor must hold tier='board'. Admin/exec bypass.
+      const allowed = ctx.user.role === "admin"
+        || ctx.user.role === "exec"
+        || stakeholder?.tier === "board";
+      if (!allowed) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Board materials are only available to investors with a board seat.",
+        });
+      }
+
+      const resolutions = await db.getBoardResolutions({
+        companyId: stakeholder?.companyId ?? undefined,
+      });
+      // Whitelist statuses we're willing to show. `approved`/`signed`/
+      // `archived` are board-history; everything else is pre-decisional.
+      const visible = (resolutions as Array<{
+        id: number; title: string; type: string; description: string | null;
+        documentUrl: string | null; status: string | null;
+        approvedAt: Date | null; submittedAt: Date | null;
+      }>).filter((r) =>
+        r.status === "approved" || r.status === "signed" || r.status === "archived",
+      );
+      return visible.map((r) => ({
+        id: r.id,
+        title: r.title,
+        type: r.type,
+        description: r.description,
+        documentUrl: r.documentUrl,
+        status: r.status,
+        approvedAt: r.approvedAt,
+      }));
+    }),
+
+    // ─── Cap table summary (tier-aware) ─────────────────────────────
+    //
+    // Every authenticated investor sees aggregate share-class totals and
+    // the option-pool size. Major / board tiers additionally see a top-
+    // holders list (name + ownership %, never check size). Ordinary
+    // tier deliberately doesn't get other-investor names — that's the
+    // line-item leak we want to avoid.
+    capTableSummary: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "investor" && ctx.user.role !== "admin" && ctx.user.role !== "exec") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Investor portal is for investor-role users" });
+      }
+      const stakeholder = ctx.user.role === "investor"
+        ? await db.getStakeholderByUserId(ctx.user.id)
+        : undefined;
+      if (ctx.user.role === "investor" && !stakeholder) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+      }
+
+      const companyId = stakeholder?.companyId ?? undefined;
+      const [grants, classes, allStakeholders] = await Promise.all([
+        db.getEquityGrants(companyId),
+        db.getShareClasses(companyId),
+        db.getStakeholders(companyId),
+      ]);
+
+      // Aggregate by share class. We only count grants that aren't fully
+      // cancelled / expired; partially-vested counts since the underlying
+      // shares still exist.
+      type Grant = { stakeholderId: number; shareClassId: number; shares: string | number | null; status?: string | null };
+      type ShareClass = { id: number; name: string; type: string; authorizedShares?: string | number | null };
+      type Stk = { id: number; name: string };
+
+      const live = (grants as Grant[]).filter(
+        (g) => g.status !== "cancelled" && g.status !== "expired",
+      );
+      const totalOutstanding = live.reduce(
+        (s, g) => s + parseFloat(String(g.shares ?? "0")),
+        0,
+      );
+
+      const classBreakdown = (classes as ShareClass[]).map((c) => {
+        const classGrants = live.filter((g) => g.shareClassId === c.id);
+        const sharesIssued = classGrants.reduce(
+          (s, g) => s + parseFloat(String(g.shares ?? "0")),
+          0,
+        );
+        const authorized = c.authorizedShares
+          ? parseFloat(String(c.authorizedShares))
+          : null;
+        return {
+          id: c.id,
+          name: c.name,
+          type: c.type,
+          sharesIssued,
+          authorized,
+          ownershipPct: totalOutstanding > 0 ? (sharesIssued / totalOutstanding) * 100 : 0,
+        };
+      });
+
+      // Option pool: the total of share classes with type="option_pool"
+      // (already in classBreakdown), so callers don't need to compute it.
+      const optionPool = classBreakdown.find((c) => c.type === "option_pool") ?? null;
+
+      // Top-holder list — only exposed to major / board tiers (or when
+      // the caller is an admin/exec doing support work). Aggregates each
+      // stakeholder's grants across all their share classes.
+      const tier = stakeholder?.tier ?? "ordinary";
+      const showTopHolders = tier === "major" || tier === "board"
+        || ctx.user.role === "admin" || ctx.user.role === "exec";
+
+      let topHolders: Array<{ name: string; sharesOutstanding: number; ownershipPct: number }> | null = null;
+      if (showTopHolders) {
+        const stakeholderById = new Map((allStakeholders as Stk[]).map((s) => [s.id, s]));
+        const bySh = new Map<number, number>();
+        for (const g of live) {
+          bySh.set(
+            g.stakeholderId,
+            (bySh.get(g.stakeholderId) ?? 0) + parseFloat(String(g.shares ?? "0")),
+          );
+        }
+        topHolders = Array.from(bySh.entries())
+          .map(([sid, shares]) => ({
+            name: stakeholderById.get(sid)?.name ?? "Unknown",
+            sharesOutstanding: shares,
+            ownershipPct: totalOutstanding > 0 ? (shares / totalOutstanding) * 100 : 0,
+          }))
+          .sort((a, b) => b.sharesOutstanding - a.sharesOutstanding)
+          .slice(0, 10);
+      }
+
+      return {
+        tier,
+        totalSharesOutstanding: totalOutstanding,
+        classBreakdown,
+        optionPool,
+        topHolders,
+      };
+    }),
+
+    // ─── My Documents (per-stakeholder document locker) ─────────────
+    //
+    // The investor sees only documents attached to their own stakeholder
+    // record. Admins can browse any stakeholder's locker via the
+    // `capTable.stakeholders.documents.*` admin endpoints.
+    documents: router({
+      list: protectedProcedure.query(async ({ ctx }) => {
+        const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+        if (!stakeholder) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+        }
+        const docs = await db.getStakeholderDocuments(stakeholder.id);
+        // Strip storageKey from the wire response — it's an internal
+        // bucket path the client has no business holding. Downloads go
+        // through `downloadUrl` which re-resolves it server-side.
+        return docs.map((d) => ({
+          id: d.id,
+          title: d.title,
+          description: d.description,
+          category: d.category,
+          fileType: d.fileType,
+          mimeType: d.mimeType,
+          fileSize: d.fileSize,
+          createdAt: d.createdAt,
+        }));
+      }),
+      // Returns a short-lived signed URL the browser can hit directly.
+      // We re-validate ownership on every call so a leaked id from one
+      // investor can't be replayed by another.
+      downloadUrl: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ input, ctx }) => {
+          const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+          if (!stakeholder) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+          }
+          const doc = await db.getStakeholderDocumentById(input.id);
+          if (!doc || doc.stakeholderId !== stakeholder.id) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "Document not found" });
+          }
+          const { storageGet } = await import("./storage");
+          const { url } = await storageGet(doc.storageKey);
+          return { url, mimeType: doc.mimeType, title: doc.title };
+        }),
+    }),
+
+    // ─── Profile & Preferences (self-service) ───────────────────────
+    //
+    // The investor edits their own contact + payment + accreditation
+    // info. Email is editable but `userId` and `type` aren't — those
+    // are admin-controlled.
+    profile: router({
+      get: protectedProcedure.query(async ({ ctx }) => {
+        const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+        if (!stakeholder) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+        }
+        return {
+          name: stakeholder.name,
+          email: stakeholder.email,
+          address: stakeholder.address,
+          mailingAddress: stakeholder.mailingAddress,
+          paymentPreference: stakeholder.paymentPreference,
+          accreditedInvestor: stakeholder.accreditedInvestor,
+          accreditedReAttestedAt: stakeholder.accreditedReAttestedAt,
+        };
+      }),
+      update: protectedProcedure
+        .input(z.object({
+          name: z.string().min(1).max(256).optional(),
+          email: z.string().email().optional(),
+          address: z.string().max(2000).optional(),
+          mailingAddress: z.string().max(2000).optional(),
+          paymentPreference: z.string().max(2000).optional(),
+        }))
+        .mutation(async ({ input, ctx }) => {
+          const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+          if (!stakeholder) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+          }
+          await db.updateStakeholder(stakeholder.id, input);
+          return { success: true };
+        }),
+      // Re-attestation creates a timestamped self-certification that the
+      // investor still qualifies as accredited under the SEC's Reg D
+      // criteria. We don't re-validate the criteria here — that's a
+      // legal review the investor does themselves.
+      reAttestAccreditation: protectedProcedure
+        .input(z.object({ accredited: z.boolean() }))
+        .mutation(async ({ input, ctx }) => {
+          const stakeholder = await db.getStakeholderByUserId(ctx.user.id);
+          if (!stakeholder) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "No cap-table record is linked to your account." });
+          }
+          await db.updateStakeholder(stakeholder.id, {
+            accreditedInvestor: input.accredited,
+            accreditedReAttestedAt: new Date(),
+          });
+          return { success: true };
+        }),
+    }),
+  }),
+
   // Investor Updates
   investorUpdates: router({
     list: protectedProcedure
@@ -21953,6 +22909,239 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         });
         await createAuditLog(ctx.user.id, 'update', 'socialPlatformCredential', result.id, input.platform);
         return result;
+      }),
+  }),
+
+  // ============================================
+  // QUICK NOTES — Apple-Notes-style capture + LLM routing
+  // ============================================
+  notes: router({
+    list: protectedProcedure
+      .input(z.object({ limit: z.number().min(1).max(200).optional() }).optional())
+      .query(async ({ input, ctx }) => {
+        return db.listNotesForUser(ctx.user.id, input?.limit ?? 100);
+      }),
+
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input, ctx }) => {
+        const note = await db.getNoteById(input.id, ctx.user.id);
+        if (!note) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
+        return note;
+      }),
+
+    create: protectedProcedure
+      .input(z.object({
+        content: z.string().min(1, "Note is empty"),
+        title: z.string().optional(),
+        autoParse: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { id } = await db.createNote({
+          userId: ctx.user.id,
+          title: input.title,
+          content: input.content,
+          status: "draft",
+        });
+
+        if (input.autoParse === false) {
+          return { id, parsed: null as NoteParseResult | null };
+        }
+
+        try {
+          const parsed = await parseNoteWithLLM(input.content, new Date().toISOString().slice(0, 10));
+          await db.updateNote(id, {
+            title: input.title || parsed.title || undefined,
+            parsedItems: parsed,
+            status: "parsed",
+            parsedAt: new Date(),
+            parseError: null,
+          });
+          return { id, parsed };
+        } catch (err) {
+          await db.updateNote(id, {
+            parseError: err instanceof Error ? err.message : String(err),
+          });
+          return { id, parsed: null };
+        }
+      }),
+
+    parse: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const note = await db.getNoteById(input.id, ctx.user.id);
+        if (!note) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
+        try {
+          const parsed = await parseNoteWithLLM(note.content, new Date().toISOString().slice(0, 10));
+          await db.updateNote(input.id, {
+            title: note.title || parsed.title || undefined,
+            parsedItems: parsed,
+            status: "parsed",
+            parsedAt: new Date(),
+            parseError: null,
+          });
+          return parsed;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await db.updateNote(input.id, { parseError: msg });
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: msg });
+        }
+      }),
+
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        content: z.string().optional(),
+        title: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const note = await db.getNoteById(input.id, ctx.user.id);
+        if (!note) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
+
+        // When the content changes, any prior parse is stale — clear parse
+        // state and drop the note back to draft so the user re-parses.
+        const patch: Partial<typeof note> = { title: input.title };
+        if (input.content !== undefined && input.content !== note.content) {
+          patch.content = input.content;
+          patch.parsedItems = null;
+          patch.parsedAt = null;
+          patch.parseError = null;
+          patch.status = "draft";
+        }
+        await db.updateNote(input.id, patch);
+        return { ok: true };
+      }),
+
+    applyItems: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        itemIds: z.array(z.string()).min(1, "Pick at least one item to apply"),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const note = await db.getNoteById(input.id, ctx.user.id);
+        if (!note) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
+        const parsed = note.parsedItems;
+        if (!parsed || !Array.isArray(parsed.items)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Note has not been parsed yet" });
+        }
+
+        const selected = parsed.items.filter((it) => input.itemIds.includes(it.id));
+        const applied: NoteAppliedItem[] = [];
+
+        for (const item of selected) {
+          if (item.kind === "task") {
+            const projectId = await db.getOrCreateNotesInboxProject(ctx.user.id);
+            const due = item.dueDate ? new Date(item.dueDate) : undefined;
+            const { id: taskId } = await db.createProjectTask({
+              projectId,
+              name: item.title || item.summary.slice(0, 200),
+              description: item.description || `From note #${note.id}`,
+              status: "todo",
+              priority: item.priority || "medium",
+              dueDate: due && !isNaN(due.getTime()) ? due : undefined,
+              sourceType: "manual",
+              sourceRefType: "note",
+              sourceRefId: note.id,
+              createdBy: ctx.user.id,
+            });
+            applied.push({
+              kind: "task",
+              itemId: item.id,
+              entityType: "project_task",
+              entityId: Number(taskId),
+              label: item.title || item.summary,
+            });
+          } else if (item.kind === "crm_contact") {
+            const fullName = [item.firstName, item.lastName].filter(Boolean).join(" ").trim()
+              || item.firstName || item.organization || "Unnamed contact";
+            const { id: contactId, created } = await db.findOrCreateCrmContact({
+              firstName: item.firstName || fullName,
+              lastName: item.lastName,
+              fullName,
+              email: item.email,
+              phone: item.phone,
+              organization: item.organization,
+              jobTitle: item.jobTitle,
+              contactType: item.contactType || "lead",
+              source: "manual",
+              notes: item.notes || `From note #${note.id}`,
+              capturedBy: ctx.user.id,
+              captureData: JSON.stringify({ noteId: note.id, sourceQuote: item.sourceQuote }),
+            });
+            applied.push({
+              kind: "crm_contact",
+              itemId: item.id,
+              entityType: "crm_contact",
+              entityId: Number(contactId),
+              label: `${created ? "Created" : "Merged into"} ${fullName}`,
+            });
+          } else if (item.kind === "reminder") {
+            const remindAt = item.remindAt ? new Date(item.remindAt) : undefined;
+            // Reminders piggyback on the notifications table so they show up
+            // in the existing notification center.
+            const notificationId = await db.createNotification({
+              userId: ctx.user.id,
+              type: "reminder",
+              title: item.title || "Reminder",
+              message: item.summary,
+              entityType: "note",
+              entityId: note.id,
+              link: `/notes`,
+              metadata: remindAt && !isNaN(remindAt.getTime())
+                ? { remindAt: remindAt.toISOString(), noteId: note.id }
+                : { noteId: note.id },
+            });
+            applied.push({
+              kind: "reminder",
+              itemId: item.id,
+              entityType: "notification",
+              entityId: notificationId ? Number(notificationId) : null,
+              label: item.title || item.summary,
+            });
+          } else if (item.kind === "idea") {
+            // Ideas just stay on the note — no external entity to create.
+            applied.push({
+              kind: "idea",
+              itemId: item.id,
+              entityType: "idea",
+              entityId: null,
+              label: item.title || item.summary,
+            });
+          }
+        }
+
+        // Idempotent merge: if an item was already applied (by itemId),
+        // keep the older record so retries don't create duplicate entries.
+        const existingApplied = note.appliedItems ?? [];
+        const existingIds = new Set(existingApplied.map((a) => a.itemId));
+        const newOnes = applied.filter((a) => !existingIds.has(a.itemId));
+        const merged: NoteAppliedItem[] = [...existingApplied, ...newOnes];
+
+        await db.updateNote(note.id, {
+          appliedItems: merged,
+          status: "applied",
+          appliedAt: new Date(),
+        });
+
+        return { applied };
+      }),
+
+    discard: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const note = await db.getNoteById(input.id, ctx.user.id);
+        if (!note) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
+        await db.updateNote(input.id, { status: "discarded" });
+        return { ok: true };
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const note = await db.getNoteById(input.id, ctx.user.id);
+        if (!note) throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
+        await db.deleteNote(input.id, ctx.user.id);
+        return { ok: true };
       }),
   }),
 });

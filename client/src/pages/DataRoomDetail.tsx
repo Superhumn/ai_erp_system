@@ -101,6 +101,7 @@ export default function DataRoomDetail() {
   } | null>(null);
   const [docVisible, setDocVisible] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const versionInputRef = useRef<HTMLInputElement>(null);
 
   const { data: room, isLoading: roomLoading, refetch: refetchRoom } = trpc.dataRoom.getById.useQuery({ id: roomId });
   const { data: folders, refetch: refetchFolders } = trpc.dataRoom.folders.list.useQuery({ dataRoomId: roomId, parentId: currentFolderId });
@@ -154,6 +155,39 @@ export default function DataRoomDetail() {
       toast.success("Invitation sent");
       setInviteOpen(false);
       setNewInvite({ email: "", name: "", message: "" });
+    },
+  });
+
+  const refreshDocMutation = trpc.dataRoom.documents.refreshFromDrive.useMutation({
+    onSuccess: async (data) => {
+      toast.success(`Refreshed from Drive (v${data.version})`);
+      const selectedId = selectedDoc?.id;
+      const refetched = await refetchDocuments();
+      if (selectedId) {
+        const fresh = refetched.data?.find((d) => d.id === selectedId);
+        if (fresh) setSelectedDoc(fresh);
+      }
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const uploadNewVersionMutation = trpc.dataRoom.documents.uploadNewVersion.useMutation({
+    onSuccess: async (data) => {
+      toast.success(`New version uploaded (v${data.version})`);
+      const selectedId = selectedDoc?.id;
+      const refetched = await refetchDocuments();
+      if (selectedId) {
+        const fresh = refetched.data?.find((d) => d.id === selectedId);
+        if (fresh) setSelectedDoc(fresh);
+      }
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+    onSettled: () => {
+      if (versionInputRef.current) versionInputRef.current.value = "";
     },
   });
 
@@ -294,6 +328,13 @@ export default function DataRoomDetail() {
     },
   });
 
+  const updateRoomMutation = trpc.dataRoom.update.useMutation({
+    onSuccess: () => {
+      refetchRoom();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   const finalizeMutation = trpc.dataRoom.finalizeInvestment.useMutation({
     onSuccess: () => {
       toast.success("Investment finalized and added to cap table!");
@@ -323,10 +364,31 @@ export default function DataRoomDetail() {
     reader.onload = async () => {
       const base64 = (reader.result as string).split(",")[1];
       const fileType = file.name.split(".").pop()?.toLowerCase() || "unknown";
-      
+
       uploadMutation.mutate({
         dataRoomId: roomId,
         folderId: currentFolderId,
+        name: file.name,
+        fileType,
+        mimeType: file.type,
+        fileSize: file.size,
+        base64Content: base64,
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleVersionUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedDoc?.id) return;
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64 = (reader.result as string).split(",")[1];
+      const fileType = file.name.split(".").pop()?.toLowerCase() || "unknown";
+
+      uploadNewVersionMutation.mutate({
+        id: selectedDoc.id!,
         name: file.name,
         fileType,
         mimeType: file.type,
@@ -771,6 +833,36 @@ export default function DataRoomDetail() {
                           <Download className="h-3.5 w-3.5" />
                         </Button>
                       )}
+                      {selectedDoc.storageType === "google_drive" && selectedDoc.id != null && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 shrink-0"
+                          title="Refresh from Google Drive"
+                          disabled={refreshDocMutation.isPending}
+                          onClick={() => refreshDocMutation.mutate({ id: selectedDoc.id! })}
+                        >
+                          <RefreshCw className={`h-3.5 w-3.5 ${refreshDocMutation.isPending ? "animate-spin" : ""}`} />
+                        </Button>
+                      )}
+                      {selectedDoc.id != null && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 shrink-0"
+                          title="Upload new version"
+                          disabled={uploadNewVersionMutation.isPending}
+                          onClick={() => versionInputRef.current?.click()}
+                        >
+                          <Upload className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      <input
+                        ref={versionInputRef}
+                        type="file"
+                        className="hidden"
+                        onChange={handleVersionUpload}
+                      />
                       <Button
                         variant="ghost"
                         size="icon"
@@ -1574,6 +1666,51 @@ export default function DataRoomDetail() {
                         <p className="text-sm">{room.watermarkText}</p>
                       </div>
                     )}
+                  </div>
+                </div>
+
+                <div className="border-t pt-6 mt-6">
+                  <h3 className="font-medium mb-4">Live Financials Page</h3>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Expose a JSON-driven, always-current financials page at
+                    <code className="mx-1 px-1 py-0.5 rounded bg-muted text-xs">/dr/:code/financials</code>
+                    inside this data room. Respects the same password, email, and NDA gates as
+                    the document viewer. Intentionally narrow: cash, last-3-month revenue and burn,
+                    runway, and (optionally) outstanding AR.
+                  </p>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="min-w-0 pr-4">
+                        <Label>Include Live Financials page</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Visitors with a valid link can view current cash, revenue, burn, and runway.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={!!room.showLiveFinancials}
+                        disabled={updateRoomMutation.isPending}
+                        onCheckedChange={(checked) =>
+                          updateRoomMutation.mutate({ id: roomId, showLiveFinancials: checked })
+                        }
+                      />
+                    </div>
+                    <div className="flex items-center justify-between pl-4 border-l-2 border-muted">
+                      <div className="min-w-0 pr-4">
+                        <Label className={room.showLiveFinancials ? undefined : "text-muted-foreground"}>
+                          Also show outstanding AR total
+                        </Label>
+                        <p className="text-sm text-muted-foreground">
+                          Adds a single AR total figure. No per-customer or aging detail.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={!!room.liveFinancialsIncludeAr}
+                        disabled={!room.showLiveFinancials || updateRoomMutation.isPending}
+                        onCheckedChange={(checked) =>
+                          updateRoomMutation.mutate({ id: roomId, liveFinancialsIncludeAr: checked })
+                        }
+                      />
+                    </div>
                   </div>
                 </div>
                 {/* Google Drive sync — use header button only */}
@@ -2972,7 +3109,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                 <div className="text-left">
                   <div className="font-medium">General Fundraising</div>
                   <div className="text-sm text-muted-foreground">
-                    Optimized for seed and Series A fundraising
+                    20 items covering pitch materials, financials, team, and legal — optimized for seed and Series A
                   </div>
                 </div>
               </Button>
@@ -2985,7 +3122,7 @@ function DueDiligenceChecklist({ dataRoomId }: { dataRoomId: number }) {
                 <div className="text-left">
                   <div className="font-medium">M&A Due Diligence</div>
                   <div className="text-sm text-muted-foreground">
-                    Comprehensive for acquisitions
+                    40+ items including standard DD plus HR, real estate, IT systems, and environmental compliance
                   </div>
                 </div>
               </Button>
