@@ -137,12 +137,10 @@ export async function publishToPlatform(input: PublishInput): Promise<PublishRes
     };
   }
 
-  // TikTok / Instagram remain stubbed so the pipeline is testable end-to-end.
-  // Replace with real platform calls when wiring those OAuth flows.
-  const fakeId = `${input.platform}_${Date.now()}`;
-  return {
-    externalId: fakeId,
-    externalUrl: `https://example.com/${input.platform}/${fakeId}`,
-    refreshedTokens: null,
-  };
+  // TikTok / Instagram are not wired yet. Throwing instead of returning a
+  // fake id makes the post row clearly fail (status=failed, errorMessage set)
+  // rather than misleadingly read as "published" in the UI.
+  throw new Error(
+    `${input.platform} publishing is not yet implemented. YouTube is currently the only supported platform; TikTok and Instagram require their OAuth + upload integrations to be wired.`,
+  );
 }

@@ -37,9 +37,9 @@ const STATUS_STYLES: Record<string, { icon: any; cls: string }> = {
 
 export default function SocialPosts() {
   const utils = trpc.useUtils?.();
-  const videosQuery = (trpc as any).marketing.listVideos.useQuery();
-  const postsQuery = (trpc as any).marketing.listPosts.useQuery();
-  const credsQuery = (trpc as any).marketing.listCredentials.useQuery();
+  const videosQuery = trpc.marketing.listVideos.useQuery();
+  const postsQuery = trpc.marketing.listPosts.useQuery();
+  const credsQuery = trpc.marketing.listCredentials.useQuery();
 
   // The YouTube OAuth callback redirects back to /marketing with a query
   // string. Surface success/error as toasts and clean the URL.
@@ -55,14 +55,14 @@ export default function SocialPosts() {
     }
   }, [utils]);
 
-  const connectMut = (trpc as any).marketing.getConnectUrl.useMutation({
+  const connectMut = trpc.marketing.getConnectUrl.useMutation({
     onSuccess: (data: any) => {
       // Top-level redirect (rather than popup) so the session cookie carries.
       window.location.href = data.url;
     },
     onError: (e: any) => toast.error(e.message),
   });
-  const disconnectMut = (trpc as any).marketing.disconnectCredential.useMutation({
+  const disconnectMut = trpc.marketing.disconnectCredential.useMutation({
     onSuccess: () => {
       toast.success("Disconnected");
       utils?.marketing?.listCredentials?.invalidate();
@@ -78,7 +78,7 @@ export default function SocialPosts() {
   const [squareUrl, setSquareUrl] = useState("");
   const [tags, setTags] = useState("");
 
-  const createVideo = (trpc as any).marketing.createVideo.useMutation({
+  const createVideo = trpc.marketing.createVideo.useMutation({
     onSuccess: () => {
       toast.success("Video saved");
       setCreateOpen(false);
@@ -271,12 +271,12 @@ function VideoRow({ video, onChanged }: { video: any; onChanged: () => void }) {
   );
   const [caption, setCaption] = useState("");
 
-  const planQuery = (trpc as any).marketing.planPosts.useQuery(
+  const planQuery = trpc.marketing.planPosts.useQuery(
     { videoId: video.id, platforms: selected },
     { enabled: open && selected.length > 0 },
   );
 
-  const publish = (trpc as any).marketing.publish.useMutation({
+  const publish = trpc.marketing.publish.useMutation({
     onSuccess: (data: any) => {
       const ok = data.results.filter((r: any) => r.status === "published").length;
       const skipped = data.results.filter((r: any) => r.status === "skipped").length;

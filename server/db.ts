@@ -12741,16 +12741,20 @@ export async function getSocialPlatformCredentials(filters?: { companyId?: numbe
   return db.select().from(socialPlatformCredentials);
 }
 
+// Upserts a credential row keyed by (companyId, platform). When companyId is
+// null/undefined the lookup uses IS NULL — without that, an undefined input
+// would try to match `companyId = NULL` literally and never hit, producing
+// duplicate rows on every call.
 export async function upsertSocialPlatformCredential(data: InsertSocialPlatformCredential) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  const companyCondition = data.companyId == null
+    ? isNull(socialPlatformCredentials.companyId)
+    : eq(socialPlatformCredentials.companyId, data.companyId);
   const existing = await db
     .select()
     .from(socialPlatformCredentials)
-    .where(and(
-      eq(socialPlatformCredentials.companyId, data.companyId ?? 0),
-      eq(socialPlatformCredentials.platform, data.platform),
-    ))
+    .where(and(companyCondition, eq(socialPlatformCredentials.platform, data.platform)))
     .limit(1);
   if (existing[0]) {
     await db

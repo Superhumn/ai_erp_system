@@ -21797,6 +21797,16 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
         const credFor = (p: SocialPlatform) =>
           credentials.find((c: any) => c.platform === baseFor(p) && c.isActive) ?? null;
 
+        // Per-platform preferred aspect ratio. Used as the recorded ratio when
+        // a publish is skipped so the row reflects what the platform expects.
+        const PREFERRED_RATIO: Record<SocialPlatform, "horizontal" | "vertical" | "square"> = {
+          tiktok: "vertical",
+          youtube: "horizontal",
+          youtube_shorts: "vertical",
+          instagram_reels: "vertical",
+          instagram_feed: "square",
+        };
+
         const results = [];
         for (const fit of plan) {
           if (!fit.pickedUrl || !fit.pickedRatio) {
@@ -21804,7 +21814,7 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
               companyId: video.companyId,
               videoId: video.id,
               platform: fit.platform,
-              aspectRatio: "horizontal",
+              aspectRatio: PREFERRED_RATIO[fit.platform],
               caption: input.caption,
               hashtags: input.hashtags,
               status: "skipped",
@@ -21840,22 +21850,23 @@ Format as markdown with: TL;DR (3 bullets), Financial Highlights, Operations, Te
               title: video.title,
               caption: input.caption ?? video.description ?? video.title,
               hashtags: input.hashtags ?? video.tags ?? undefined,
+              // Tokens stored encrypted-at-rest. Decrypt for the API client.
               tokens: cred
                 ? {
-                    accessToken: cred.accessToken ?? "",
-                    refreshToken: cred.refreshToken,
+                    accessToken: cred.accessToken ? safeDecryptToken(cred.accessToken) : "",
+                    refreshToken: cred.refreshToken ? safeDecryptToken(cred.refreshToken) : null,
                     expiresAt: cred.tokenExpiresAt,
                   }
                 : null,
             });
-            // If OAuth refresh produced new tokens, persist them so the next
-            // upload doesn't re-spend the refresh budget.
+            // If OAuth refresh produced new tokens, persist them encrypted so
+            // the next upload doesn't re-spend the refresh budget.
             if (pub.refreshedTokens && cred) {
               await db.upsertSocialPlatformCredential({
                 companyId: cred.companyId,
                 platform: cred.platform,
-                accessToken: pub.refreshedTokens.accessToken,
-                refreshToken: pub.refreshedTokens.refreshToken,
+                accessToken: encrypt(pub.refreshedTokens.accessToken),
+                refreshToken: pub.refreshedTokens.refreshToken ? encrypt(pub.refreshedTokens.refreshToken) : null,
                 tokenExpiresAt: pub.refreshedTokens.expiresAt,
               });
             }

@@ -13,8 +13,53 @@
 
 import { ENV } from "./env";
 import { createSignedOAuthState } from "./crypto";
+import { promises as dns } from "node:dns";
+import { isIP } from "node:net";
 
 const YT_REDIRECT_PATH = "/api/oauth/youtube/callback";
+
+// SSRF guard. Rejects URLs that aren't http(s), and resolves the hostname to
+// confirm it isn't a loopback / link-local / private / cloud-metadata address.
+// Called before any server-initiated fetch of a user-provided video URL.
+async function assertSafeRemoteUrl(raw: string): Promise<void> {
+  let parsed: URL;
+  try { parsed = new URL(raw); }
+  catch { throw new Error(`Invalid video URL: ${raw}`); }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`Video URL must use http(s): ${raw}`);
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("Video URL must not contain credentials.");
+  }
+  // Resolve host to all A/AAAA records. If hostname is already an IP literal,
+  // dns.lookup just returns it unchanged.
+  const host = parsed.hostname;
+  const records = isIP(host) ? [{ address: host }] : await dns.lookup(host, { all: true });
+  for (const r of records) {
+    if (isPrivateAddress(r.address)) {
+      throw new Error(`Video URL resolves to a non-public address (${r.address}). Use a public CDN.`);
+    }
+  }
+}
+
+function isPrivateAddress(ip: string): boolean {
+  if (!ip) return true;
+  // IPv6 loopback / link-local / unique-local / IPv4-mapped private
+  if (ip === "::1" || ip.startsWith("fe80:") || ip.startsWith("fc") || ip.startsWith("fd")) return true;
+  if (ip.startsWith("::ffff:")) return isPrivateAddress(ip.slice(7));
+  // IPv4
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4 || parts.some(p => Number.isNaN(p))) return true;
+  const [a, b] = parts;
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 0) return true;
+  if (a === 169 && b === 254) return true; // link-local incl. AWS/GCP metadata 169.254.169.254
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a >= 224) return true; // multicast / reserved
+  return false;
+}
 
 function youtubeRedirectUri(): string {
   const base = process.env.VITE_APP_URL || ENV.appUrl || "http://localhost:3000";
@@ -180,6 +225,11 @@ export async function uploadVideoToYouTube(
   tokens: OAuthTokens,
   input: YouTubeUploadInput,
 ): Promise<YouTubeUploadResult & { refreshedTokens: OAuthTokens | null }> {
+  // Reject anything that isn't a public http(s) URL pointing at a non-private
+  // host. Without this, a user could supply http://169.254.169.254/... or a
+  // file:// scheme and force the server to fetch internal metadata.
+  await assertSafeRemoteUrl(input.videoUrl);
+
   const { accessToken, refreshed } = await ensureYouTubeAccessToken(tokens);
 
   // Step 1: figure out content length so we can announce it for the resumable

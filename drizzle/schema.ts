@@ -6425,9 +6425,10 @@ export type InsertCodeAiSession = typeof codeAiSessions.$inferInsert;
 // MARKETING — VIDEO ASSETS & SOCIAL POSTING
 // ============================================
 
-// One uploaded video, optionally with both horizontal and vertical cuts.
-// `aspectRatios` records which cuts are present so the publisher can match
-// each platform to its preferred orientation.
+// One uploaded video, optionally with multiple orientation-specific cuts.
+// Availability is determined by which of `horizontalUrl`, `verticalUrl`,
+// and `squareUrl` are populated so the publisher can match each platform
+// to its preferred orientation.
 export const marketingVideos = mysqlTable("marketing_videos", {
   id: int("id").autoincrement().primaryKey(),
   companyId: int("companyId"),
