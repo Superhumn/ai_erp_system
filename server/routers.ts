@@ -18975,6 +18975,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         projectId: z.number().optional(),
         assigneeId: z.number().optional(),
         existingContactIds: z.array(z.number()).optional(),
+        selectedActionItemIndices: z.array(z.number()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const meeting = await db.getFirefliesMeetingById(input.meetingId);
@@ -19060,7 +19061,23 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
             } catch { /* leave empty */ }
           }
           actionItemsAvailable = storedItems.length;
-          if (storedItems.length > 0) {
+          // Honor the user's explicit selection from the preview UI. If
+          // selectedActionItemIndices is omitted, default to all items so
+          // existing callers stay backwards-compatible. If it's an empty
+          // array, the user unchecked everything — process zero.
+          let selectedItems: typeof storedItems;
+          let stableIndices: number[];
+          if (input.selectedActionItemIndices === undefined) {
+            selectedItems = storedItems;
+            stableIndices = storedItems.map((_, i) => i);
+          } else {
+            const set = new Set(input.selectedActionItemIndices);
+            selectedItems = storedItems.filter((_, i) => set.has(i));
+            stableIndices = storedItems
+              .map((_, i) => i)
+              .filter((i) => set.has(i));
+          }
+          if (selectedItems.length > 0) {
             const parsedParticipants: Array<{ name: string; email: string }> =
               typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
               Array.isArray(meeting.participants) ? meeting.participants : [];
@@ -19070,11 +19087,12 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
               userId: ctx.user.id,
               meetingId: meeting.id,
               meetingTitle: meeting.title || 'Untitled meeting',
-              actionItems: storedItems,
+              actionItems: selectedItems,
               participants: parsedParticipants,
               preferredProjectId: projectId,
               preferredAssigneeId: input.assigneeId,
               forceCreate: true,
+              stableIndices,
             });
             await db.updateFirefliesMeeting(input.meetingId, {
               actionItems: JSON.stringify(storedItems),

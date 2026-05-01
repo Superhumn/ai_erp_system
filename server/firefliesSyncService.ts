@@ -52,6 +52,7 @@ export async function extractFirefliesActionItems(params: {
   forceCreate?: boolean;
   preferredProjectId?: number;
   preferredAssigneeId?: number;
+  stableIndices?: number[];
 }): Promise<{ created: number; rejected: number; skipped: number }> {
   const outcomes = await extractMeetingActionItems(
     params.actionItems,
@@ -66,6 +67,7 @@ export async function extractFirefliesActionItems(params: {
       forceCreate: params.forceCreate,
       preferredProjectId: params.preferredProjectId,
       preferredAssigneeId: params.preferredAssigneeId,
+      stableIndices: params.stableIndices,
     },
   );
   return {
@@ -91,6 +93,7 @@ export async function queueFirefliesActionItemsForApproval(params: {
   preferredProjectId?: number;
   preferredAssigneeId?: number;
   forceCreate?: boolean;
+  stableIndices?: number[];
 }): Promise<number> {
   if (!params.meetingId) return 0;
   const result = await extractFirefliesActionItems({
@@ -102,6 +105,7 @@ export async function queueFirefliesActionItemsForApproval(params: {
     forceCreate: params.forceCreate,
     preferredProjectId: params.preferredProjectId,
     preferredAssigneeId: params.preferredAssigneeId,
+    stableIndices: params.stableIndices,
   });
   return result.created;
 }

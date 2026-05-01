@@ -47,6 +47,7 @@ export default function Meetings() {
   const [processAssigneeId, setProcessAssigneeId] = useState<number | undefined>(undefined);
   const [existingContactIds, setExistingContactIds] = useState<number[]>([]);
   const [contactSearch, setContactSearch] = useState("");
+  const [selectedTaskIndices, setSelectedTaskIndices] = useState<Set<number>>(new Set());
 
   const { data: projectsRaw } = trpc.projects.list.useQuery();
   const availableProjects = (projectsRaw as Array<{ id: number; name: string }> | undefined) || [];
@@ -299,6 +300,8 @@ export default function Meetings() {
     setProcessAssigneeId(undefined);
     setExistingContactIds([]);
     setContactSearch("");
+    const itemCount = (meeting.parsedActionItems || []).length;
+    setSelectedTaskIndices(new Set(Array.from({ length: itemCount }, (_, i) => i)));
     const predicted = predictProject(meeting.title || "");
     setPredictedProjectId(predicted);
     if (predicted !== undefined) {
@@ -322,6 +325,7 @@ export default function Meetings() {
       projectId: projectMode === "existing" ? processExistingProjectId : undefined,
       assigneeId: processAssigneeId,
       existingContactIds: existingContactIds.length ? existingContactIds : undefined,
+      selectedActionItemIndices: processCreateTasks ? Array.from(selectedTaskIndices) : [],
     } as any);
   };
 
@@ -854,37 +858,98 @@ export default function Meetings() {
                 )}
               </div>
             </div>
-            <div className="space-y-3 rounded-lg border p-3">
-              <div className="flex items-center gap-3">
-                <ListTodo className="h-5 w-5 text-purple-600 shrink-0" />
-                <div className="flex-1">
-                  <div className="text-sm font-medium">Create Tasks</div>
-                  <div className="text-xs text-muted-foreground">From meeting action items</div>
+            {(() => {
+              const selectedMeeting = meetingsWithParsed.find((m: any) => m.id === selectedMeetingId);
+              const dialogTasks: Array<{ text: string; assignee?: string }> = selectedMeeting?.parsedActionItems || [];
+              return (
+                <div className="space-y-3 rounded-lg border p-3">
+                  <div className="flex items-center gap-3">
+                    <ListTodo className="h-5 w-5 text-purple-600 shrink-0" />
+                    <div className="flex-1">
+                      <div className="text-sm font-medium">Create Tasks</div>
+                      <div className="text-xs text-muted-foreground">
+                        {dialogTasks.length === 0
+                          ? "No action items detected in this meeting"
+                          : `${selectedTaskIndices.size} of ${dialogTasks.length} selected`}
+                      </div>
+                    </div>
+                    <Switch checked={processCreateTasks} onCheckedChange={setProcessCreateTasks} />
+                  </div>
+                  {processCreateTasks && dialogTasks.length > 0 && (
+                    <div className="pl-7 space-y-2">
+                      <div className="flex items-center gap-2 text-[11px]">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTaskIndices(new Set(dialogTasks.map((_, i) => i)))}
+                          className="text-purple-600 hover:underline"
+                        >
+                          Select all
+                        </button>
+                        <span className="text-muted-foreground">·</span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTaskIndices(new Set())}
+                          className="text-muted-foreground hover:underline"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                      <ul className="max-h-56 overflow-y-auto space-y-1.5 rounded-md border p-2">
+                        {dialogTasks.map((task, i) => {
+                          const checked = selectedTaskIndices.has(i);
+                          return (
+                            <li key={i}>
+                              <label className="flex items-start gap-2 cursor-pointer text-[13px] leading-snug">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(e) => {
+                                    setSelectedTaskIndices((prev) => {
+                                      const next = new Set(prev);
+                                      if (e.target.checked) next.add(i);
+                                      else next.delete(i);
+                                      return next;
+                                    });
+                                  }}
+                                  className="mt-0.5 shrink-0"
+                                />
+                                <span className="flex-1">
+                                  {task.assignee && (
+                                    <span className="font-medium text-blue-600 dark:text-blue-400 mr-1">@{task.assignee}</span>
+                                  )}
+                                  <span className={checked ? "" : "text-muted-foreground line-through"}>{task.text}</span>
+                                </span>
+                              </label>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
+                  {processCreateTasks && dialogTasks.length > 0 && availableAssignees.length > 0 && (
+                    <div className="pl-7 space-y-1">
+                      <Label className="text-xs">Default Assignee (optional)</Label>
+                      <Select
+                        value={processAssigneeId !== undefined ? String(processAssigneeId) : "auto"}
+                        onValueChange={(v) => setProcessAssigneeId(v === "auto" ? undefined : Number(v))}
+                      >
+                        <SelectTrigger className="mt-1">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="auto">Auto-detect from action items</SelectItem>
+                          {availableAssignees.map((a) => (
+                            <SelectItem key={a.id} value={String(a.id)}>
+                              {a.name || a.email}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                 </div>
-                <Switch checked={processCreateTasks} onCheckedChange={setProcessCreateTasks} />
-              </div>
-              {processCreateTasks && availableAssignees.length > 0 && (
-                <div className="pl-7 space-y-1">
-                  <Label className="text-xs">Default Assignee (optional)</Label>
-                  <Select
-                    value={processAssigneeId !== undefined ? String(processAssigneeId) : "auto"}
-                    onValueChange={(v) => setProcessAssigneeId(v === "auto" ? undefined : Number(v))}
-                  >
-                    <SelectTrigger className="mt-1">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="auto">Auto-detect from action items</SelectItem>
-                      {availableAssignees.map((a) => (
-                        <SelectItem key={a.id} value={String(a.id)}>
-                          {a.name || a.email}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-            </div>
+              );
+            })()}
             <div className="space-y-3 rounded-lg border p-3">
               <div className="flex items-center gap-2">
                 <FolderPlus className="h-5 w-5 text-indigo-600 shrink-0" />

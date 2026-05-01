@@ -207,6 +207,9 @@ export async function extractActionItemToTask(
     forceCreate?: boolean;
     preferredProjectId?: number;
     preferredAssigneeId?: number;
+    /** Stable index used for externalId so dedup survives re-processing with
+     * different selections. Falls back to the loop index. */
+    stableIndex?: number;
   } = {},
 ): Promise<MeetingExtractionOutcome> {
   const cfg: MeetingExtractionConfig = { ...DEFAULT_MEETING_CONFIG, ...(opts.config ?? {}) };
@@ -222,7 +225,7 @@ export async function extractActionItemToTask(
     return { kind: "skipped", reason: "empty text" };
   }
 
-  const externalId = `${ctx.firefliesId}#${index + 1}`;
+  const externalId = `${ctx.firefliesId}#${(opts.stableIndex ?? index) + 1}`;
   const existing = await getProjectTaskBySourceExternalId("meeting", externalId).catch(() => undefined);
   if (existing) return { kind: "deduped", existingTaskId: existing.id };
 
@@ -326,12 +329,25 @@ async function logExtraction(ctx: MeetingContext, index: number, item: Fireflies
 export async function extractMeetingActionItems(
   items: FirefliesActionItem[],
   ctx: MeetingContext,
-  opts: { forceCreate?: boolean; preferredProjectId?: number; preferredAssigneeId?: number } = {},
+  opts: {
+    forceCreate?: boolean;
+    preferredProjectId?: number;
+    preferredAssigneeId?: number;
+    /** Optional stable indices parallel to `items`. Used to keep externalIds
+     * (and therefore dedup) consistent when the caller has filtered the
+     * full action-item list down to a user-selected subset. */
+    stableIndices?: number[];
+  } = {},
 ): Promise<MeetingExtractionOutcome[]> {
   const outcomes: MeetingExtractionOutcome[] = [];
   for (let i = 0; i < items.length; i++) {
     try {
-      outcomes.push(await extractActionItemToTask(items[i], ctx, i, opts));
+      outcomes.push(
+        await extractActionItemToTask(items[i], ctx, i, {
+          ...opts,
+          stableIndex: opts.stableIndices?.[i],
+        }),
+      );
     } catch (err: any) {
       outcomes.push({ kind: "skipped", reason: `error: ${err?.message ?? "unknown"}` });
     }
