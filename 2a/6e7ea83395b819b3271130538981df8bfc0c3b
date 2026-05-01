@@ -1,0 +1,60 @@
+server/_core/index.ts
+  649de1583d3ac07f 1436,1440
+client/src/components/DataRoomDocumentViewer.tsx
+  0ea47f59679736f7 80-81
+client/src/pages/DataRoomDetail.tsx
+  55212b135f44c4ab 295-296,1788,1790,1792
+  357cdf2e5f664ceb 2198-2199,2204,2435-2437,2442,2453,2464,2719,2721,2740,2747,2948-2949,2955,2966,2981,2988
+client/src/pages/finance/Invoices.tsx
+  1599e15fc3b93b84 223
+client/src/pages/marketing/ContentHub.tsx
+  1599e15fc3b93b84 52
+server/googleDriveSyncService.ts
+  15d6ad495cb989af 23,212
+client/src/pages/operations/EmailInbox.tsx
+  1599e15fc3b93b84 231
+server/_core/googleDrive.ts
+  cacc99809f41e1b1 149-176,193-220
+client/src/pages/hr/Recruiting.tsx
+  1599e15fc3b93b84 60
+client/src/pages/crm/CRMHub.tsx
+  062eeacb9611c013 1186
+  1599e15fc3b93b84 126,142,146
+ROUTERS_INDEX.md
+  43e8d470eb0a1c61 5,98-117,141-158,231-232
+  ecc2d8dbfb1d3c0c 85-97,137-140,222-230
+client/src/pages/ai/ApprovalQueue.tsx
+  649de1583d3ac07f 349,364,664-683
+client/src/pages/freight/Carriers.tsx
+  1599e15fc3b93b84 105
+server/routers/dataRoom.ts
+  2f3bcaee7d8ee5f0 602-603
+server/db.ts
+  649de1583d3ac07f 9206-9217
+  062eeacb9611c013 9184-9205
+client/src/pages/sales/CRMDashboard.tsx
+  1599e15fc3b93b84 11-14
+  36c4a805fccf82a2 19
+client/src/pages/projects/Projects.tsx
+  1599e15fc3b93b84 240,270
+server/firefliesSyncService.ts
+  649de1583d3ac07f 29-30,125,221-224,241,303,322
+  062eeacb9611c013 218-220,225-240,242
+client/src/pages/autonomous/Settings.tsx
+  1599e15fc3b93b84 82
+server/routers.ts
+  649de1583d3ac07f 4702,5858-5911,16694,16733,18021,18098-18101,18118,18157
+  15d6ad495cb989af 13347-13349,13354,14039
+  062eeacb9611c013 4696-4701,4703-4704,4708,4710-4711,4720,4723,4728-4735,5803,6318-6350,16658,16671-16693,16695-16708,16710-16717,16719-16727,18095-18097,18102-18117,18119
+drizzle/schema.ts
+  062eeacb9611c013 3813
+client/src/pages/settings/Integrations.tsx
+  36c4a805fccf82a2 87
+  1599e15fc3b93b84 84,95,105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "2a6e7ea83395b819b3271130538981df8bfc0c3b",
+  "prompts": {}
+}
