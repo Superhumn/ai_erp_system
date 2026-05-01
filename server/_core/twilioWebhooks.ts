@@ -1,6 +1,6 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import twilio from "twilio";
-import { eq } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import { ENV } from "./env";
 import { getDb } from "../db";
 import {
@@ -25,7 +25,6 @@ function buildFullUrl(req: Request): string {
 function makeSignatureMiddleware() {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!ENV.twilioAuthToken) {
-      // No auth token configured: in production refuse, in dev allow.
       if (ENV.isProduction) {
         return res.status(403).json({ error: "Twilio not configured" });
       }
@@ -69,9 +68,31 @@ function mapTwilioCallStatus(status: string | undefined):
   }
 }
 
+// Twilio always delivers `From`/`To` in E.164. CRM data may have been entered
+// with formatting (parens, spaces, dashes). Match both representations.
+function normalizeToE164(phone: string): string | null {
+  if (!phone) return null;
+  const digits = phone.replace(/[^\d]/g, "");
+  if (digits.length === 0) return null;
+  if (phone.startsWith("+")) return `+${digits}`;
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return `+${digits}`;
+}
+
+async function findCrmContactByPhone(db: any, phone: string) {
+  if (!phone) return undefined;
+  const e164 = normalizeToE164(phone);
+  const candidates = e164 && e164 !== phone
+    ? or(eq(crmContacts.phone, phone), eq(crmContacts.phone, e164))
+    : eq(crmContacts.phone, phone);
+  const [existing] = await db.select().from(crmContacts).where(candidates).limit(1);
+  return existing;
+}
+
 async function findOrCreateInboundCrmContact(db: any, phone: string): Promise<number | undefined> {
   if (!phone) return undefined;
-  const [existing] = await db.select().from(crmContacts).where(eq(crmContacts.phone, phone)).limit(1);
+  const existing = await findCrmContactByPhone(db, phone);
   if (existing) return existing.id;
   const [created] = await db.insert(crmContacts).values({
     firstName: "Unknown",
@@ -84,10 +105,12 @@ async function findOrCreateInboundCrmContact(db: any, phone: string): Promise<nu
   return created.id;
 }
 
+const EMPTY_TWIML = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response/>";
+
 export function registerTwilioWebhooks(app: Express): void {
   const verify = makeSignatureMiddleware();
 
-  // Outbound call status callback (statusCallback URL set when creating the call)
+  // Outbound (and optionally inbound, if configured in Twilio console) call status callback.
   app.post("/api/twilio/call-status", verify, async (req: Request, res: Response) => {
     try {
       const params = (req.body ?? {}) as TwilioParams;
@@ -119,7 +142,7 @@ export function registerTwilioWebhooks(app: Express): void {
     }
   });
 
-  // Outbound SMS status callback
+  // Outbound SMS status callback.
   app.post("/api/twilio/sms-status", verify, async (req: Request, res: Response) => {
     try {
       const params = (req.body ?? {}) as TwilioParams;
@@ -149,7 +172,7 @@ export function registerTwilioWebhooks(app: Express): void {
     }
   });
 
-  // Inbound SMS — log it, link to CRM, send empty TwiML acknowledgement
+  // Inbound SMS — idempotent on Twilio's MessageSid (Twilio retries on 5xx/timeout).
   app.post("/api/twilio/sms/inbound", verify, async (req: Request, res: Response) => {
     try {
       const params = (req.body ?? {}) as TwilioParams;
@@ -160,6 +183,17 @@ export function registerTwilioWebhooks(app: Express): void {
       const numSegments = params.NumSegments ? Number(params.NumSegments) : undefined;
 
       const db = await getDb();
+
+      if (messageSid) {
+        const [dup] = await db.select().from(agentSmsLogs)
+          .where(eq(agentSmsLogs.twilioMessageSid, messageSid))
+          .limit(1);
+        if (dup) {
+          res.set("Content-Type", "text/xml");
+          return res.status(200).send(EMPTY_TWIML);
+        }
+      }
+
       const crmContactId = await findOrCreateInboundCrmContact(db, from);
 
       let contactName = "Unknown";
@@ -199,14 +233,14 @@ export function registerTwilioWebhooks(app: Express): void {
       }
 
       res.set("Content-Type", "text/xml");
-      res.status(200).send("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response/>");
+      res.status(200).send(EMPTY_TWIML);
     } catch (err) {
       console.error("[Twilio Webhook] sms/inbound error:", err);
       res.status(500).json({ error: "Internal server error" });
     }
   });
 
-  // Inbound voice — log the call and play a short greeting via TwiML
+  // Inbound voice — idempotent on CallSid; voicemail Record verb posts to /voice/recording.
   app.post("/api/twilio/voice/inbound", verify, async (req: Request, res: Response) => {
     try {
       const params = (req.body ?? {}) as TwilioParams;
@@ -214,6 +248,17 @@ export function registerTwilioWebhooks(app: Express): void {
       const callSid = params.CallSid;
 
       const db = await getDb();
+
+      if (callSid) {
+        const [dup] = await db.select().from(agentCallLogs)
+          .where(eq(agentCallLogs.twilioCallSid, callSid))
+          .limit(1);
+        if (dup) {
+          res.set("Content-Type", "text/xml");
+          return res.status(200).send(buildInboundVoiceTwiml());
+        }
+      }
+
       const crmContactId = await findOrCreateInboundCrmContact(db, from);
 
       let contactName = "Unknown";
@@ -246,20 +291,55 @@ export function registerTwilioWebhooks(app: Express): void {
           .where(eq(agentCallLogs.id, callLog.id));
       }
 
-      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="Polly.Amy">Thank you for calling Superhumn. Please leave a message after the tone.</Say>
-  <Record maxLength="120" playBeep="true" />
-  <Say voice="Polly.Amy">We did not receive a message. Goodbye.</Say>
-  <Hangup/>
-</Response>`;
-
       res.set("Content-Type", "text/xml");
-      res.status(200).send(twiml);
+      res.status(200).send(buildInboundVoiceTwiml());
     } catch (err) {
       console.error("[Twilio Webhook] voice/inbound error:", err);
       res.set("Content-Type", "text/xml");
       res.status(500).send("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Say>An error occurred. Goodbye.</Say><Hangup/></Response>");
     }
   });
+
+  // Voicemail callback — fires when <Record> finishes (caller hangs up or maxLength reached).
+  // We use it both to attach the recording URL and to mark the inbound call as completed.
+  app.post("/api/twilio/voice/recording", verify, async (req: Request, res: Response) => {
+    try {
+      const params = (req.body ?? {}) as TwilioParams;
+      const callSid = params.CallSid;
+      const recordingUrl = params.RecordingUrl;
+      const recordingDuration = params.RecordingDuration ? Number(params.RecordingDuration) : undefined;
+
+      if (!callSid) {
+        res.set("Content-Type", "text/xml");
+        return res.status(400).send(EMPTY_TWIML);
+      }
+
+      const db = await getDb();
+      const update: Record<string, unknown> = { status: "completed" };
+      if (recordingUrl) update.recordingUrl = recordingUrl;
+      if (recordingDuration !== undefined) update.duration = recordingDuration;
+
+      await db.update(agentCallLogs)
+        .set(update)
+        .where(eq(agentCallLogs.twilioCallSid, callSid));
+
+      res.set("Content-Type", "text/xml");
+      res.status(200).send(EMPTY_TWIML);
+    } catch (err) {
+      console.error("[Twilio Webhook] voice/recording error:", err);
+      res.set("Content-Type", "text/xml");
+      res.status(500).send(EMPTY_TWIML);
+    }
+  });
+}
+
+function buildInboundVoiceTwiml(): string {
+  const recordingAction = `${ENV.publicAppUrl.replace(/\/$/, "")}/api/twilio/voice/recording`;
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Amy">Thank you for calling Superhumn. Please leave a message after the tone.</Say>
+  <Record maxLength="120" playBeep="true" action="${recordingAction}" method="POST" />
+  <Say voice="Polly.Amy">We did not receive a message. Goodbye.</Say>
+  <Hangup/>
+</Response>`;
 }
