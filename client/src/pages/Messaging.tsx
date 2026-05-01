@@ -618,10 +618,20 @@ export default function Messaging() {
             </div>
             <h3 className="text-base font-medium text-foreground mb-1">Connect Google Chat</h3>
             <p className="text-sm text-center max-w-sm mb-4">
-              Google Chat API integration is not yet configured. You can embed Google Chat
-              directly or wait for the API connector to be set up.
+              Authorize your Google account so we can connect to Google Chat. Message
+              send/read support will be wired up in a follow-up — for now you can also
+              embed Google Chat directly.
             </p>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap justify-center">
+              <Button
+                size="sm"
+                onClick={() => {
+                  window.location.href = "/api/google/chat/auth?returnTo=/messaging";
+                }}
+              >
+                <Hash className="h-3.5 w-3.5 mr-1.5" />
+                Connect Google Chat
+              </Button>
               <Button
                 variant="outline"
                 size="sm"

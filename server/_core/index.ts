@@ -766,6 +766,38 @@ async function startServer() {
     return handleGoogleOAuthCallback(req, res, redirectUri);
   });
 
+  // Google Chat OAuth initiation — redirects the authenticated user to
+  // Google's consent screen requesting the chat.messages scope. The flow
+  // completes via /api/oauth/google/callback (handleGoogleOAuthCallback),
+  // which persists the tokens with upsertGoogleOAuthToken.
+  app.get('/api/google/chat/auth', oauthCallbackLimiter, async (req, res) => {
+    const sanitizeReturnTo = (value: unknown): string => {
+      if (typeof value !== 'string') return '/messaging';
+      if (!value.startsWith('/') || value.startsWith('//') || value.includes('\\') || /[\r\n\t]/.test(value)) {
+        return '/messaging';
+      }
+      return value;
+    };
+    const returnTo = sanitizeReturnTo(req.query.returnTo);
+    try {
+      if (!process.env.GOOGLE_CLIENT_ID) {
+        return res.redirect('/messaging?error=google_oauth_not_configured');
+      }
+      const { sdk: authSdk } = await import('./sdk');
+      let user: Awaited<ReturnType<typeof authSdk.authenticateRequest>> | null = null;
+      try { user = await authSdk.authenticateRequest(req); } catch { user = null; }
+      if (!user) return res.redirect(`/login?returnTo=${encodeURIComponent(`/api/google/chat/auth?returnTo=${encodeURIComponent(returnTo)}`)}`);
+
+      const { getGoogleChatAuthUrl } = await import('./googleChat');
+      return res.redirect(getGoogleChatAuthUrl(user.id, returnTo));
+    } catch (error) {
+      logger.error('Google Chat OAuth initiation error', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return res.redirect('/messaging?error=google_chat_oauth_failed');
+    }
+  });
+
   // Google Drive streaming proxy — fetches a Drive file's bytes using the
   // connected account's OAuth token (with service-account fallback) and pipes
   // them straight to the browser. This lets the data room viewer iframe load
