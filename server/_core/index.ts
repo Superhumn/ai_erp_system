@@ -74,11 +74,14 @@ async function runMigrationsAtStartup() {
     }
   } catch (error) {
     console.error(
-      `[migrate] Migration failed at ${migrationsFolder}. ` +
-      "Verify that the migration files exist and DATABASE_URL is correct.",
+      `[migrate] Migration failed at ${migrationsFolder} — continuing without applying. ` +
+      "Verify journal vs files in drizzle/meta/_journal.json. " +
+      "Set STRICT_MIGRATIONS=1 in production to make this fatal.",
       error
     );
-    throw error;
+    if (process.env.NODE_ENV === "production" && process.env.STRICT_MIGRATIONS === "1") {
+      throw error;
+    }
   }
 }
 
