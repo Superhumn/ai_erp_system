@@ -74,11 +74,12 @@ async function findOrCreateInboundCrmContact(db: any, phone: string): Promise<nu
   const [existing] = await db.select().from(crmContacts).where(eq(crmContacts.phone, phone)).limit(1);
   if (existing) return existing.id;
   const [created] = await db.insert(crmContacts).values({
-    firstName: phone,
+    firstName: "Unknown",
+    lastName: phone,
     fullName: `Unknown (${phone})`,
     phone,
     contactType: "lead",
-    source: "inbound_twilio",
+    source: "manual",
   }).$returningId();
   return created.id;
 }
