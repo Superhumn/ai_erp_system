@@ -19047,6 +19047,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
         // an empty `actionItems` column (the previous parser didn't handle
         // Fireflies' markdown string format) — fall back to re-parsing from
         // the stored `summary` JSON so the Process button still works.
+        let actionItemsAvailable = 0;
         if (input.createTasks) {
           let storedItems: Array<{ text: string; assignee?: string; dueDate?: string }> = [];
           try {
@@ -19058,10 +19059,13 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
               storedItems = parseActionItems(summaryObj?.action_items);
             } catch { /* leave empty */ }
           }
+          actionItemsAvailable = storedItems.length;
           if (storedItems.length > 0) {
             const parsedParticipants: Array<{ name: string; email: string }> =
               typeof meeting.participants === 'string' ? JSON.parse(meeting.participants) :
               Array.isArray(meeting.participants) ? meeting.participants : [];
+            // forceCreate: user is explicitly invoking Process, so bypass the
+            // importance/confidence gates that exist to keep auto-sync quiet.
             tasksCreated += await queueFirefliesActionItemsForApproval({
               userId: ctx.user.id,
               meetingId: meeting.id,
@@ -19070,8 +19074,8 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
               participants: parsedParticipants,
               preferredProjectId: projectId,
               preferredAssigneeId: input.assigneeId,
+              forceCreate: true,
             });
-            // Persist the freshly parsed items so subsequent reads see them
             await db.updateFirefliesMeeting(input.meetingId, {
               actionItems: JSON.stringify(storedItems),
             });
@@ -19095,7 +19099,7 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
           autoCreatedProjectId: projectId,
         });
 
-        return { contactsCreated, linkedContactCount, tasksCreated, projectId };
+        return { contactsCreated, linkedContactCount, tasksCreated, projectId, actionItemsAvailable };
       }),
     taskRoutingOptions: protectedProcedure.query(async () => {
       const projects = await db.getProjects();

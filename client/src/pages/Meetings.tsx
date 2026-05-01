@@ -101,8 +101,15 @@ export default function Meetings() {
       const d = data as any;
       const linked = d.linkedContactCount ?? 0;
       const linkedSuffix = linked > 0 ? `, ${linked} linked` : "";
+      const tasks = d.tasksCreated ?? 0;
+      const available = d.actionItemsAvailable ?? 0;
+      const taskNote = tasks === 0 && available === 0
+        ? " (no action items found in transcript)"
+        : tasks === 0 && available > 0
+          ? ` (${available} action items, none could be routed to a project)`
+          : "";
       toast.success(
-        `Processed: ${d.contactsCreated ?? 0} contacts${linkedSuffix}, ${d.tasksCreated ?? 0} tasks created`
+        `Processed: ${d.contactsCreated ?? 0} contacts${linkedSuffix}, ${tasks} tasks created${taskNote}`
       );
       setShowProcessDialog(false);
       setSelectedMeetingId(null);

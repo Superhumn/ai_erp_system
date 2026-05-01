@@ -49,20 +49,37 @@ export async function extractFirefliesActionItems(params: {
   meetingDate?: Date;
   actionItems: FirefliesActionItem[];
   participants: Array<{ name?: string; email?: string }>;
-}): Promise<number> {
-  const outcomes = await extractMeetingActionItems(params.actionItems, {
-    meetingId: params.meetingId,
-    firefliesId: params.firefliesId,
-    title: params.meetingTitle,
-    date: params.meetingDate,
-    participants: params.participants,
-  });
-  return outcomes.filter(o => o.kind === "created").length;
+  forceCreate?: boolean;
+  preferredProjectId?: number;
+  preferredAssigneeId?: number;
+}): Promise<{ created: number; rejected: number; skipped: number }> {
+  const outcomes = await extractMeetingActionItems(
+    params.actionItems,
+    {
+      meetingId: params.meetingId,
+      firefliesId: params.firefliesId,
+      title: params.meetingTitle,
+      date: params.meetingDate,
+      participants: params.participants,
+    },
+    {
+      forceCreate: params.forceCreate,
+      preferredProjectId: params.preferredProjectId,
+      preferredAssigneeId: params.preferredAssigneeId,
+    },
+  );
+  return {
+    created: outcomes.filter(o => o.kind === "created").length,
+    rejected: outcomes.filter(o => o.kind === "rejected").length,
+    skipped: outcomes.filter(o => o.kind === "skipped").length,
+  };
 }
 
 /**
- * Backward-compatible shim for callers in routers.ts. New code should use
- * extractFirefliesActionItems directly.
+ * Backward-compatible shim for callers in routers.ts. Returns the count of
+ * tasks that were actually created. Set `forceCreate` when the user
+ * explicitly invokes Process Meeting from the UI to bypass importance
+ * gates.
  */
 export async function queueFirefliesActionItemsForApproval(params: {
   userId: number;
@@ -73,15 +90,20 @@ export async function queueFirefliesActionItemsForApproval(params: {
   participants: Array<{ name: string; email: string }>;
   preferredProjectId?: number;
   preferredAssigneeId?: number;
+  forceCreate?: boolean;
 }): Promise<number> {
   if (!params.meetingId) return 0;
-  return extractFirefliesActionItems({
+  const result = await extractFirefliesActionItems({
     meetingId: params.meetingId,
     meetingTitle: params.meetingTitle,
     firefliesId: params.firefliesId ?? `meeting-${params.meetingId}`,
     actionItems: params.actionItems,
     participants: params.participants,
+    forceCreate: params.forceCreate,
+    preferredProjectId: params.preferredProjectId,
+    preferredAssigneeId: params.preferredAssigneeId,
   });
+  return result.created;
 }
 
 /**
@@ -218,7 +240,7 @@ export async function syncFirefliesMeetingsForUser(
           }
         }
 
-        const suggested = await extractFirefliesActionItems({
+        const extractResult = await extractFirefliesActionItems({
           meetingId: newMeetingDbId,
           meetingTitle: fullTranscript?.title || t.title || "Unknown meeting",
           firefliesId: t.id,
@@ -226,6 +248,7 @@ export async function syncFirefliesMeetingsForUser(
           actionItems: parseActionItems(actionItems),
           participants,
         });
+        const suggested = extractResult.created;
         result.tasksSuggested += suggested;
         if (suggested > 0) {
           await db.updateFirefliesMeeting(newMeetingDbId, {

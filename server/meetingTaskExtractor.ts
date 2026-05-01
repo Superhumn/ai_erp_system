@@ -202,14 +202,24 @@ export async function extractActionItemToTask(
   item: FirefliesActionItem,
   ctx: MeetingContext,
   index: number,
-  opts: { config?: Partial<MeetingExtractionConfig> } = {},
+  opts: {
+    config?: Partial<MeetingExtractionConfig>;
+    forceCreate?: boolean;
+    preferredProjectId?: number;
+    preferredAssigneeId?: number;
+  } = {},
 ): Promise<MeetingExtractionOutcome> {
   const cfg: MeetingExtractionConfig = { ...DEFAULT_MEETING_CONFIG, ...(opts.config ?? {}) };
 
+  // When the user explicitly invokes Process Meeting we still drop empty /
+  // FYI text, but skip the importance/confidence gates entirely.
   const pre = preFilter(item, cfg);
-  if (pre.skip) {
+  if (pre.skip && !opts.forceCreate) {
     await logExtraction(ctx, index, item, { stage: "pre_filter", reason: pre.reason }).catch(() => {});
     return { kind: "skipped", reason: pre.reason ?? "pre-filter" };
+  }
+  if (pre.skip && opts.forceCreate && (item.text ?? "").trim().length < 3) {
+    return { kind: "skipped", reason: "empty text" };
   }
 
   const externalId = `${ctx.firefliesId}#${index + 1}`;
@@ -223,36 +233,43 @@ export async function extractActionItemToTask(
   let cleanedName = item.text.trim();
   let reasoning = `signals: ${det.signals.join(", ") || "none"}`;
 
-  // LLM fallback only when borderline (cost optimization)
-  if (importance >= cfg.llmFallbackLow && importance <= cfg.llmFallbackHigh) {
+  // LLM fallback only when borderline (cost optimization). Skipped for
+  // explicit user invocation — they've already approved.
+  if (!opts.forceCreate && importance >= cfg.llmFallbackLow && importance <= cfg.llmFallbackHigh) {
     const scored = await llmScore(item, ctx);
     if (scored) {
-      // Take max importance from deterministic + LLM (don't let LLM downgrade strong signals)
       importance = Math.max(importance, scored.importance);
       confidence = scored.confidence;
       if (scored.cleanedName && scored.cleanedName.length >= cfg.minTextLength) cleanedName = scored.cleanedName;
       reasoning = `${scored.reasoning} [det=${det.importance}, llm_imp=${scored.importance}, signals=${det.signals.join(",")}]`;
     }
   } else if (importance > cfg.llmFallbackHigh) {
-    confidence = 90; // strong deterministic signals
+    confidence = 90;
   }
 
-  if (importance < cfg.importanceThreshold) {
-    await logExtraction(ctx, index, item, { stage: "rejected_importance", importance, confidence }).catch(() => {});
-    return { kind: "rejected", reason: `importance_below_threshold (${importance} < ${cfg.importanceThreshold})`, importance, confidence };
-  }
-  if (confidence < cfg.confidenceThreshold) {
-    await logExtraction(ctx, index, item, { stage: "rejected_confidence", importance, confidence }).catch(() => {});
-    return { kind: "rejected", reason: `confidence_below_threshold (${confidence} < ${cfg.confidenceThreshold})`, importance, confidence };
+  if (!opts.forceCreate) {
+    if (importance < cfg.importanceThreshold) {
+      await logExtraction(ctx, index, item, { stage: "rejected_importance", importance, confidence }).catch(() => {});
+      return { kind: "rejected", reason: `importance_below_threshold (${importance} < ${cfg.importanceThreshold})`, importance, confidence };
+    }
+    if (confidence < cfg.confidenceThreshold) {
+      await logExtraction(ctx, index, item, { stage: "rejected_confidence", importance, confidence }).catch(() => {});
+      return { kind: "rejected", reason: `confidence_below_threshold (${confidence} < ${cfg.confidenceThreshold})`, importance, confidence };
+    }
   }
 
-  const project = await pickProject();
+  let project: { id: number; name: string } | null = null;
+  if (opts.preferredProjectId) {
+    project = { id: opts.preferredProjectId, name: "" };
+  } else {
+    project = await pickProject();
+  }
   if (!project) {
     await logExtraction(ctx, index, item, { stage: "rejected_no_project", importance, confidence }).catch(() => {});
     return { kind: "rejected", reason: "no_project_route", importance, confidence };
   }
 
-  const assigneeId = await resolveAssigneeUserId(item, ctx);
+  const assigneeId = opts.preferredAssigneeId ?? (await resolveAssigneeUserId(item, ctx));
   const dueDate = parseDueHint(item.dueDate, ctx.date);
 
   const created = await createProjectTaskFromSource({
@@ -266,7 +283,7 @@ export async function extractActionItemToTask(
     sourceExternalId: externalId,
     priority: pickPriority(importance),
     dueDate,
-    aiReasoning: `${reasoning} [importance=${importance}, confidence=${confidence}]`,
+    aiReasoning: `${reasoning} [importance=${importance}, confidence=${confidence}${opts.forceCreate ? ", forced" : ""}]`,
     aiConfidence: confidence,
   });
 
@@ -306,11 +323,15 @@ async function logExtraction(ctx: MeetingContext, index: number, item: Fireflies
  * meeting. Returns a per-item outcome list so the caller can update meeting
  * processing status.
  */
-export async function extractMeetingActionItems(items: FirefliesActionItem[], ctx: MeetingContext): Promise<MeetingExtractionOutcome[]> {
+export async function extractMeetingActionItems(
+  items: FirefliesActionItem[],
+  ctx: MeetingContext,
+  opts: { forceCreate?: boolean; preferredProjectId?: number; preferredAssigneeId?: number } = {},
+): Promise<MeetingExtractionOutcome[]> {
   const outcomes: MeetingExtractionOutcome[] = [];
   for (let i = 0; i < items.length; i++) {
     try {
-      outcomes.push(await extractActionItemToTask(items[i], ctx, i));
+      outcomes.push(await extractActionItemToTask(items[i], ctx, i, opts));
     } catch (err: any) {
       outcomes.push({ kind: "skipped", reason: `error: ${err?.message ?? "unknown"}` });
     }
