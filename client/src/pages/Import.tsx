@@ -14,6 +14,10 @@ import {
   CloudDownload,
   FileUp,
   History,
+  FileText,
+  File,
+  Download,
+  HardDrive,
 } from "lucide-react";
 import React, { useState, useEffect, useCallback } from "react";
 import * as XLSX from "xlsx";
@@ -145,6 +149,175 @@ function DriveFileBrowser({ onSyncAll }: { onSyncAll: () => void }) {
         Select specific files to sync, or click "Sync All" to import everything.
       </p>
     </div>
+  );
+}
+
+const DRIVE_TABS = [
+  { label: "All", mimeType: undefined },
+  { label: "Docs", mimeType: "application/vnd.google-apps.document" },
+  { label: "Sheets", mimeType: "application/vnd.google-apps.spreadsheet" },
+  { label: "PDFs", mimeType: "application/pdf" },
+] as const;
+
+function driveFileIcon(mimeType: string) {
+  if (mimeType === "application/vnd.google-apps.document") return <FileText className="h-4 w-4 text-blue-600 shrink-0" />;
+  if (mimeType === "application/vnd.google-apps.spreadsheet") return <FileSpreadsheet className="h-4 w-4 text-green-600 shrink-0" />;
+  if (mimeType === "application/pdf") return <File className="h-4 w-4 text-red-500 shrink-0" />;
+  if (mimeType?.includes("presentation") || mimeType === "application/vnd.google-apps.presentation") return <File className="h-4 w-4 text-yellow-500 shrink-0" />;
+  return <File className="h-4 w-4 text-muted-foreground shrink-0" />;
+}
+
+function driveExportLabel(mimeType: string): { label: string; format: "pdf" | "xlsx" | "docx" | "csv" } | null {
+  if (mimeType === "application/vnd.google-apps.document") return { label: "PDF", format: "pdf" };
+  if (mimeType === "application/vnd.google-apps.spreadsheet") return { label: "XLSX", format: "xlsx" };
+  if (mimeType === "application/pdf") return { label: "PDF", format: "pdf" };
+  if (mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") return { label: "XLSX", format: "xlsx" };
+  if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") return { label: "DOCX", format: "docx" };
+  return null;
+}
+
+function formatFileSize(bytes: string | number | undefined) {
+  if (!bytes) return "";
+  const n = typeof bytes === "string" ? parseInt(bytes, 10) : bytes;
+  if (isNaN(n) || n === 0) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function GoogleDriveFiles() {
+  const [activeTab, setActiveTab] = useState(0);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const mimeType = DRIVE_TABS[activeTab].mimeType;
+
+  const { data, isLoading, refetch } = trpc.sheetsImport.listDriveFiles.useQuery(
+    mimeType ? { mimeType } : {},
+  );
+
+  const exportMutation = trpc.sheetsImport.exportFile.useMutation({
+    onSuccess: (result) => {
+      // Convert base64 to blob and trigger download
+      const byteChars = atob(result.base64);
+      const byteArray = new Uint8Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
+      const blob = new Blob([byteArray], { type: result.mimeType });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = result.filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      setDownloadingId(null);
+      toast.success(`Downloaded ${result.filename}`);
+    },
+    onError: (error) => {
+      setDownloadingId(null);
+      toast.error(error.message);
+    },
+  });
+
+  const handleDownload = (file: any) => {
+    const exp = driveExportLabel(file.mimeType);
+    if (!exp) {
+      toast.error("Unsupported file type for download");
+      return;
+    }
+    setDownloadingId(file.id);
+    exportMutation.mutate({
+      fileId: file.id,
+      fileName: file.name,
+      fileMimeType: file.mimeType,
+      exportFormat: exp.format,
+    });
+  };
+
+  const files = data?.files || [];
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2">
+          <HardDrive className="h-5 w-5" />
+          Google Drive Files
+        </CardTitle>
+        <CardDescription>Browse and download files from your Drive</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {/* Tabs */}
+        <div className="flex gap-1 mb-3 border-b">
+          {DRIVE_TABS.map((tab, i) => (
+            <button
+              key={tab.label}
+              onClick={() => setActiveTab(i)}
+              className={`px-3 py-1.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
+                activeTab === i
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+          <div className="flex-1" />
+          <button onClick={() => refetch()} className="text-muted-foreground hover:text-foreground p-1.5" title="Refresh">
+            <RefreshCw className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        {/* File list */}
+        {isLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : files.length === 0 ? (
+          <div className="text-center py-6 text-sm text-muted-foreground">No files found.</div>
+        ) : (
+          <div className="border rounded-lg divide-y max-h-80 overflow-y-auto">
+            {files.map((file: any) => {
+              const exp = driveExportLabel(file.mimeType);
+              const isDownloading = downloadingId === file.id;
+              return (
+                <div key={file.id} className="flex items-center gap-2 px-3 py-2 hover:bg-muted/50 transition-colors">
+                  {driveFileIcon(file.mimeType)}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{file.name}</div>
+                  </div>
+                  <span className="text-xs text-muted-foreground shrink-0">
+                    {formatFileSize(file.size)}
+                  </span>
+                  <span className="text-xs text-muted-foreground shrink-0 w-[70px] text-right">
+                    {file.modifiedTime
+                      ? new Date(file.modifiedTime).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+                      : ""}
+                  </span>
+                  {exp ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs shrink-0"
+                      disabled={isDownloading}
+                      onClick={() => handleDownload(file)}
+                    >
+                      {isDownloading ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <>
+                          <Download className="h-3 w-3 mr-1" />
+                          {file.mimeType.startsWith("application/vnd.google-apps.")
+                            ? `as ${exp.label}`
+                            : "Download"}
+                        </>
+                      )}
+                    </Button>
+                  ) : (
+                    <span className="text-xs text-muted-foreground shrink-0 w-[70px]" />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -738,8 +911,11 @@ export default function Import() {
         </CardContent>
       </Card>
 
-      {/* Section 2: File Upload */}
-      <Card>
+      {/* Section 2: Google Drive File Browser */}
+      {isGoogleConnected && <GoogleDriveFiles />}
+
+      {/* Section 3: File Upload */}
+      <Card className="mt-6">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <FileUp className="h-5 w-5" />

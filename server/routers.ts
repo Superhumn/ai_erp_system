@@ -4017,6 +4017,128 @@ ONLY return the JSON array, no other text.`;
         return { results, totalSheets: files.length };
       }),
 
+    // List files from Google Drive (all types, not just spreadsheets)
+    listDriveFiles: protectedProcedure
+      .input(z.object({
+        mimeType: z.string().optional(),
+        pageToken: z.string().optional(),
+      }).optional())
+      .query(async ({ ctx, input }) => {
+        const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
+        if (tokenError || !accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected' });
+        }
+
+        let query = 'trashed=false';
+        if (input?.mimeType) {
+          query += ` and mimeType='${input.mimeType}'`;
+        }
+
+        const params = new URLSearchParams({
+          q: query,
+          fields: 'files(id,name,mimeType,modifiedTime,size),nextPageToken',
+          orderBy: 'modifiedTime desc',
+          pageSize: '30',
+        });
+        if (input?.pageToken) {
+          params.set('pageToken', input.pageToken);
+        }
+
+        const response = await fetch(
+          `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+
+        if (!response.ok) {
+          if (response.status === 401) {
+            throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Google token expired. Please reconnect.' });
+          }
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to list Drive files' });
+        }
+
+        const data = await response.json();
+        return {
+          files: data.files || [],
+          nextPageToken: data.nextPageToken || null,
+        };
+      }),
+
+    // Export / download a file from Google Drive
+    exportFile: protectedProcedure
+      .input(z.object({
+        fileId: z.string().min(1),
+        fileName: z.string(),
+        fileMimeType: z.string(),
+        exportFormat: z.enum(['pdf', 'xlsx', 'docx', 'csv']),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { accessToken, error: tokenError } = await getValidGoogleToken(ctx.user.id);
+        if (tokenError || !accessToken) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: tokenError || 'Google not connected' });
+        }
+
+        const { fileId, fileName, fileMimeType, exportFormat } = input;
+
+        // Determine the download URL based on file type
+        let url: string;
+        let outputMimeType: string;
+        let extension: string;
+
+        const isGoogleDoc = fileMimeType === 'application/vnd.google-apps.document';
+        const isGoogleSheet = fileMimeType === 'application/vnd.google-apps.spreadsheet';
+        const isGoogleSlides = fileMimeType === 'application/vnd.google-apps.presentation';
+
+        if (isGoogleDoc || isGoogleSheet || isGoogleSlides) {
+          // Google Workspace files need export
+          const exportMimeTypes: Record<string, string> = {
+            pdf: 'application/pdf',
+            xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            csv: 'text/csv',
+          };
+          outputMimeType = exportMimeTypes[exportFormat];
+          url = `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=${encodeURIComponent(outputMimeType)}`;
+          extension = exportFormat;
+        } else {
+          // Native files (PDF, XLSX, etc.) — direct download
+          url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+          outputMimeType = fileMimeType;
+          const extMap: Record<string, string> = {
+            'application/pdf': 'pdf',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+            'text/csv': 'csv',
+          };
+          extension = extMap[fileMimeType] || exportFormat;
+        }
+
+        const response = await fetch(url, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+
+        if (!response.ok) {
+          const errText = await response.text().catch(() => 'Unknown error');
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: `Failed to export file: ${response.status} ${errText.slice(0, 200)}`,
+          });
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const base64 = Buffer.from(arrayBuffer).toString('base64');
+
+        // Build filename with correct extension
+        const baseName = fileName.replace(/\.[^/.]+$/, '');
+        const outputFilename = `${baseName}.${extension}`;
+
+        return {
+          filename: outputFilename,
+          base64,
+          mimeType: outputMimeType,
+          size: arrayBuffer.byteLength,
+        };
+      }),
+
     // Get past Google Drive sync history so results persist across page reloads
     getSyncHistory: protectedProcedure.query(async ({ ctx }) => {
       const history = await db.getSyncHistory(20);

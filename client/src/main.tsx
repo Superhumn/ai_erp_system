@@ -7,11 +7,33 @@ import superjson from "superjson";
 import App from "./App";
 import { getLoginUrl } from "./const";
 import "./index.css";
+import {
+  cacheQueryResult,
+  getCachedQuery,
+  queueMutation,
+  getPendingMutations,
+  clearPendingMutation,
+  setLastSyncTime,
+  isCacheableQuery,
+} from "@/lib/offlineStore";
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: 1,
+      retry: (failureCount, error) => {
+        // Don't retry if offline — serve from cache instead
+        if (!navigator.onLine) return false;
+        // Skip retry for ignorable errors
+        if (error instanceof TRPCClientError) {
+          const msg = error.message || "";
+          if (msg.includes("not configured") || msg.includes("not available") ||
+              msg.includes("PRECONDITION_FAILED") || msg.includes("Database not available") ||
+              (msg.includes("table") && msg.includes("doesn't exist"))) {
+            return false;
+          }
+        }
+        return failureCount < 1;
+      },
       staleTime: 30_000, // 30s — prevents constant refetching
       refetchOnWindowFocus: false,
     },
@@ -45,8 +67,27 @@ queryClient.getQueryCache().subscribe(event => {
   if (event.type === "updated" && event.action.type === "error") {
     const error = event.query.state.error;
     redirectToLoginIfUnauthorized(error);
-    if (!isIgnorableError(error)) {
+
+    // Offline fallback: serve cached data when network fails
+    if (!navigator.onLine || (error instanceof TRPCClientError && error.message === "Failed to fetch")) {
+      const queryKey = JSON.stringify(event.query.queryKey);
+      if (isCacheableQuery(queryKey)) {
+        getCachedQuery(queryKey).then((cached) => {
+          if (cached != null) {
+            event.query.setData(cached);
+          }
+        });
+      }
+    } else if (!isIgnorableError(error)) {
       console.error("[API Query Error]", error);
+    }
+  }
+
+  // Cache successful query results to IndexedDB
+  if (event.type === "updated" && event.action.type === "success") {
+    const queryKey = JSON.stringify(event.query.queryKey);
+    if (isCacheableQuery(queryKey) && event.query.state.data != null) {
+      cacheQueryResult(queryKey, event.query.state.data);
     }
   }
 });
@@ -55,10 +96,40 @@ queryClient.getMutationCache().subscribe(event => {
   if (event.type === "updated" && event.action.type === "error") {
     const error = event.mutation.state.error;
     redirectToLoginIfUnauthorized(error);
-    if (!isIgnorableError(error)) {
+
+    // Offline: queue failed mutations for replay on reconnect
+    if (!navigator.onLine || (error instanceof TRPCClientError && error.message === "Failed to fetch")) {
+      const mutKey = JSON.stringify(event.mutation.options.mutationKey ?? []);
+      const input = event.mutation.state.variables;
+      queueMutation(mutKey, input);
+    } else if (!isIgnorableError(error)) {
       console.error("[API Mutation Error]", error);
     }
   }
+});
+
+// Replay pending mutations when coming back online
+async function replayPendingMutations() {
+  const pending = await getPendingMutations();
+  for (const m of pending) {
+    try {
+      // Re-fire the mutation through the queryClient
+      await queryClient.getMutationCache().build(queryClient, {
+        mutationKey: JSON.parse(m.mutationKey),
+      }).execute(m.input);
+      await clearPendingMutation(m.id);
+    } catch {
+      // Leave in queue if it still fails
+      break;
+    }
+  }
+  await setLastSyncTime();
+  // Refetch active queries to get fresh server state
+  queryClient.invalidateQueries();
+}
+
+window.addEventListener("online", () => {
+  replayPendingMutations();
 });
 
 const trpcClient = trpc.createClient({
