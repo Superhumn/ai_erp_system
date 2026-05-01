@@ -1,0 +1,33 @@
+client/src/main.tsx
+  467d1be36bbfe615 10-18,23-36,70-81,85-92,99-105,111-132
+client/src/pages/Import.tsx
+  467d1be36bbfe615 17-20,155-323,914-918
+client/src/App.tsx
+  467d1be36bbfe615 10,339
+client/src/lib/offlineStore.ts
+  467d1be36bbfe615 1-183
+client/src/components/OfflineIndicator.tsx
+  467d1be36bbfe615 1-59
+server/routers.ts
+  467d1be36bbfe615 4020-4141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "ad763117d94ab22a386b374a51180770d2acf8e8",
+  "prompts": {
+    "467d1be36bbfe615": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "065df830-4118-4506-a524-8981232cd53b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Jade Cheng",
+      "messages": [],
+      "total_additions": 1623,
+      "total_deletions": 9,
+      "accepted_lines": 1619,
+      "overriden_lines": 0
+    }
+  }
+}
