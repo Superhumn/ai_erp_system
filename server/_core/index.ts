@@ -110,6 +110,7 @@ async function verifyDatabaseReadiness() {
   }
 }
 import { ENV, validateEmailConfig, validateCriticalConfig, validateRequiredSecrets } from "./env";
+import { registerTwilioWebhooks } from "./twilioWebhooks";
 import * as sendgridProvider from "./sendgridProvider";
 import * as emailService from "./emailService";
 import * as db from "../db";
@@ -701,6 +702,11 @@ async function startServer() {
       res.status(500).json({ error: 'Internal server error' });
     }
   });
+
+  // ============================================
+  // TWILIO WEBHOOK ENDPOINTS (voice + SMS)
+  // ============================================
+  registerTwilioWebhooks(app);
 
   // Shared handler for Google OAuth callbacks.
   // `selfRedirectUri` must exactly match the redirect_uri used when the auth URL was generated.
