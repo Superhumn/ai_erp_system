@@ -53,6 +53,8 @@ import {
   UserPlus,
   Package,
   StickyNote,
+  Headphones,
+  Zap,
 } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -96,6 +98,10 @@ export function getMenuGroups(role: string = "user") {
         ...(hasSales ? [
           { icon: UserCircle, label: "CRM", path: "/crm/hub" },
           { icon: PenTool, label: "Marketing", path: "/marketing" },
+        ] : []),
+        { icon: Headphones, label: "CX", path: "/cx/support" },
+        ...(isAdmin ? [
+          { icon: Zap, label: "Sales AI", path: "/sales/automation" },
         ] : []),
       ],
     });
