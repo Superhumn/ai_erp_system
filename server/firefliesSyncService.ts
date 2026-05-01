@@ -26,7 +26,8 @@ export interface FirefliesSyncResult {
   totalSynced: number;
   totalSkipped: number;
   contactsCreated: number;
-  dealsCreated: number;
+  // CRM deals queued in the approval queue (not yet inserted as deals).
+  dealApprovalsQueued: number;
   notificationsCreated: number;
   tasksSuggested: number;
   errors: string[];
@@ -121,7 +122,7 @@ export async function syncFirefliesMeetingsForUser(
     totalSynced: 0,
     totalSkipped: 0,
     contactsCreated: 0,
-    dealsCreated: 0,
+    dealApprovalsQueued: 0,
     notificationsCreated: 0,
     tasksSuggested: 0,
     errors: [],
@@ -214,17 +215,31 @@ export async function syncFirefliesMeetingsForUser(
 
                 if (contact) {
                   if (created) {
-                    // Only create a deal the first time we see this contact —
-                    // subsequent meetings with the same person just add interactions.
-                    await db.createCrmDeal({
-                      pipelineId,
-                      contactId: contact.id,
-                      name: `Deal from: ${fullTranscript?.title || t.title || "Meeting"}`,
-                      stage: "discovery",
-                      source: "meeting",
-                      notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
-                    });
-                    result.dealsCreated++;
+                    // Auto-deals from meetings flow through the approval queue.
+                    // Title = contact's company; skip if missing or duplicate company.
+                    const company = (contact.organization || "").trim();
+                    const dupe = company
+                      ? (await db.findCrmDealByCompany(company)) || (await db.hasPendingDealApprovalForCompany(company))
+                      : true;
+                    if (company && !dupe) {
+                      const taskData = {
+                        pipelineId,
+                        contactId: contact.id,
+                        company,
+                        stage: "discovery",
+                        source: "meeting",
+                        notes: `Auto-created from Fireflies meeting. Key topics: ${overview.substring(0, 200)}`,
+                      };
+                      await db.createAiAgentTask({
+                        taskType: 'create_crm_deal',
+                        priority: 'medium',
+                        status: 'pending_approval',
+                        taskData: JSON.stringify(taskData),
+                        aiReasoning: `Deal signals in Fireflies meeting "${fullTranscript?.title || t.title || 'Meeting'}" with ${contact.fullName} at ${company}.`,
+                        aiConfidence: '80.00',
+                      });
+                      result.dealApprovalsQueued++;
+                    }
                   }
 
                   // Always log meeting as CRM interaction regardless of whether
@@ -285,7 +300,7 @@ export async function syncAllFirefliesMeetings(): Promise<FirefliesSyncResult> {
     totalSynced: 0,
     totalSkipped: 0,
     contactsCreated: 0,
-    dealsCreated: 0,
+    dealApprovalsQueued: 0,
     notificationsCreated: 0,
     tasksSuggested: 0,
     errors: [],
@@ -304,7 +319,7 @@ export async function syncAllFirefliesMeetings(): Promise<FirefliesSyncResult> {
         aggregate.totalSynced += result.totalSynced;
         aggregate.totalSkipped += result.totalSkipped;
         aggregate.contactsCreated += result.contactsCreated;
-        aggregate.dealsCreated += result.dealsCreated;
+        aggregate.dealApprovalsQueued += result.dealApprovalsQueued;
         aggregate.notificationsCreated += result.notificationsCreated;
         aggregate.tasksSuggested += result.tasksSuggested;
         aggregate.errors.push(...result.errors);
