@@ -884,7 +884,7 @@ export default function CRMHub() {
                         <div className="flex items-center gap-1">
                           {expandedDealId === deal.id ? <ChevronUp className="h-3 w-3 text-muted-foreground" /> : <ChevronDown className="h-3 w-3 text-muted-foreground" />}
                           <span onClick={(e) => e.stopPropagation()}>
-                            <InlineEdit value={deal.name} onSave={(v) => updateDeal.mutate({ id: deal.id, name: v })} />
+                            <span className="text-xs">{deal.name}</span>
                           </span>
                         </div>
                       </TableCell>
