@@ -19,7 +19,6 @@
  *      the same Projects card UI, source badge, and AI-reasoning panel.
  */
 
-import { invokeLLM } from "./_core/llm";
 import * as db from "./db";
 import { getProjectTaskBySourceExternalId } from "./db/projects";
 import { createProjectTaskFromSource } from "./taskAgentBridge";
@@ -33,12 +32,16 @@ export type MeetingExtractionConfig = {
   llmFallbackHigh: number;
 };
 
+// Fireflies already filters its summary down to action items, so we don't
+// run a second importance/confidence gate over what it returns. preFilter
+// still drops genuinely empty / FYI / passive lines. The deterministic
+// scorer is kept so we can set task priority from it.
 export const DEFAULT_MEETING_CONFIG: MeetingExtractionConfig = {
-  importanceThreshold: 50,   // lower than email — Fireflies already filtered
-  confidenceThreshold: 60,
-  minTextLength: 12,
-  llmFallbackLow: 40,        // below this we reject without LLM
-  llmFallbackHigh: 80,       // above this we accept without LLM
+  importanceThreshold: 0,
+  confidenceThreshold: 0,
+  minTextLength: 8,
+  llmFallbackLow: 0,
+  llmFallbackHigh: 100,
 };
 
 export type MeetingContext = {
@@ -118,56 +121,6 @@ function resolveAssigneeEmailFromName(name: string, ctx: MeetingContext): string
   return null;
 }
 
-// ---------- LLM fallback (borderline only) ----------
-
-const SCORER_SYSTEM = `You score whether a single action item from a meeting transcript is
-worth creating as a project task. Be strict — vague or low-stakes items
-should score low. Return JSON only.`;
-
-const SCORER_SCHEMA = {
-  type: "object",
-  properties: {
-    importance: { type: "integer", minimum: 0, maximum: 100 },
-    confidence: { type: "integer", minimum: 0, maximum: 100 },
-    cleaned_name: { type: "string", description: "imperative one-line task title (<80 chars), or empty if not actionable" },
-    reasoning: { type: "string" },
-  },
-  required: ["importance", "confidence", "cleaned_name", "reasoning"],
-  additionalProperties: false,
-};
-
-async function llmScore(item: FirefliesActionItem, ctx: MeetingContext): Promise<{ importance: number; confidence: number; cleanedName: string; reasoning: string } | null> {
-  try {
-    const response = await invokeLLM({
-      messages: [
-        { role: "system", content: SCORER_SYSTEM },
-        {
-          role: "user",
-          content: `Meeting: ${ctx.title}
-Action item: "${item.text}"
-${item.assignee ? `Assignee: ${item.assignee}\n` : ""}${item.dueDate ? `Due hint: ${item.dueDate}\n` : ""}`,
-        },
-      ],
-      response_format: { type: "json_schema", json_schema: { name: "meeting_action_score", strict: true, schema: SCORER_SCHEMA } },
-    });
-    const raw = response.choices?.[0]?.message?.content;
-    const text = typeof raw === "string" ? raw.replace(/```json\n?|\n?```/g, "").trim() : "{}";
-    const parsed = JSON.parse(text);
-    return {
-      importance: clamp(parsed.importance, 0, 100),
-      confidence: clamp(parsed.confidence, 0, 100),
-      cleanedName: String(parsed.cleaned_name ?? "").slice(0, 255),
-      reasoning: String(parsed.reasoning ?? ""),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function clamp(n: any, lo: number, hi: number): number {
-  if (typeof n !== "number" || Number.isNaN(n)) return lo;
-  return Math.max(lo, Math.min(hi, Math.round(n)));
-}
 
 // ---------- Routing ----------
 
@@ -229,37 +182,13 @@ export async function extractActionItemToTask(
   const existing = await getProjectTaskBySourceExternalId("meeting", externalId).catch(() => undefined);
   if (existing) return { kind: "deduped", existingTaskId: existing.id };
 
-  // Deterministic score first
+  // Deterministic score is used to assign priority on the created task —
+  // not to gate creation. Fireflies has already filtered for actionability.
   const det = deterministicScore(item, ctx);
-  let importance = det.importance;
-  let confidence = 70; // start moderate; LLM can adjust
-  let cleanedName = item.text.trim();
-  let reasoning = `signals: ${det.signals.join(", ") || "none"}`;
-
-  // LLM fallback only when borderline (cost optimization). Skipped for
-  // explicit user invocation — they've already approved.
-  if (!opts.forceCreate && importance >= cfg.llmFallbackLow && importance <= cfg.llmFallbackHigh) {
-    const scored = await llmScore(item, ctx);
-    if (scored) {
-      importance = Math.max(importance, scored.importance);
-      confidence = scored.confidence;
-      if (scored.cleanedName && scored.cleanedName.length >= cfg.minTextLength) cleanedName = scored.cleanedName;
-      reasoning = `${scored.reasoning} [det=${det.importance}, llm_imp=${scored.importance}, signals=${det.signals.join(",")}]`;
-    }
-  } else if (importance > cfg.llmFallbackHigh) {
-    confidence = 90;
-  }
-
-  if (!opts.forceCreate) {
-    if (importance < cfg.importanceThreshold) {
-      await logExtraction(ctx, index, item, { stage: "rejected_importance", importance, confidence }).catch(() => {});
-      return { kind: "rejected", reason: `importance_below_threshold (${importance} < ${cfg.importanceThreshold})`, importance, confidence };
-    }
-    if (confidence < cfg.confidenceThreshold) {
-      await logExtraction(ctx, index, item, { stage: "rejected_confidence", importance, confidence }).catch(() => {});
-      return { kind: "rejected", reason: `confidence_below_threshold (${confidence} < ${cfg.confidenceThreshold})`, importance, confidence };
-    }
-  }
+  const importance = det.importance;
+  const confidence = importance >= 60 ? 90 : 70;
+  const cleanedName = item.text.trim();
+  const reasoning = `signals: ${det.signals.join(", ") || "none"}`;
 
   let project: { id: number; name: string } | null = null;
   if (opts.preferredProjectId) {
