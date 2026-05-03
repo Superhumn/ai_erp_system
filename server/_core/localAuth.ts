@@ -36,41 +36,18 @@ setInterval(() => {
 // EMAIL VERIFICATION
 // ============================================
 
-// TODO: For multi-instance deployments, replace in-memory Map with database-backed token store
-// In-memory store for verification tokens (simple approach)
-const verificationTokens = new Map<string, { email: string; expiresAt: number }>();
-
-// TODO: For multi-instance deployments, replace in-memory Set with a persisted emailVerified column on the users table
-// In-memory set of verified emails (avoids schema migration)
-const verifiedEmails = new Set<string>();
-
-/** Check if an email address has been verified */
-export function isEmailVerified(email: string): boolean {
-  return verifiedEmails.has(email.toLowerCase());
+/** Check if an email address has been verified (DB-backed). */
+export async function isEmailVerified(email: string): Promise<boolean> {
+  return db.isUserEmailVerified(email.toLowerCase());
 }
 
-// Cleanup expired verification tokens every 30 minutes
+// Cleanup expired auth tokens (verification + reset) every 30 minutes.
+// Single periodic sweep handles both types.
 setInterval(() => {
-  const now = Date.now();
-  for (const [token, data] of verificationTokens) {
-    if (now > data.expiresAt) verificationTokens.delete(token);
-  }
+  db.deleteExpiredAuthTokens().catch((err) => {
+    console.warn("[Local Auth] Failed to clean expired auth tokens:", err);
+  });
 }, 30 * 60 * 1000);
-
-// ============================================
-// PASSWORD RESET TOKENS
-// ============================================
-
-// TODO: For multi-instance deployments, replace in-memory Map with database-backed token store
-const resetTokens = new Map<string, { email: string; expiresAt: number }>();
-
-// Cleanup expired reset tokens every 15 minutes
-setInterval(() => {
-  const now = Date.now();
-  for (const [token, data] of resetTokens) {
-    if (now > data.expiresAt) resetTokens.delete(token);
-  }
-}, 15 * 60 * 1000);
 
 /**
  * Check and update rate limit for an IP address
@@ -305,7 +282,7 @@ export function registerLocalAuthRoutes(app: Express) {
       // Skip email verification for invited users — they were invited via email
       if (inviteAccepted) {
         const normalizedEmail = email.toLowerCase();
-        verifiedEmails.add(normalizedEmail);
+        await db.setUserEmailVerified(normalizedEmail, true);
 
         return res.status(201).json({
           success: true,
@@ -317,9 +294,11 @@ export function registerLocalAuthRoutes(app: Express) {
       // Generate email verification token (24-hour expiry)
       const verificationToken = randomBytes(32).toString("hex");
       const normalizedEmail = email.toLowerCase();
-      verificationTokens.set(verificationToken, {
+      await db.createAuthToken({
+        token: verificationToken,
+        type: "email_verification",
         email: normalizedEmail,
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       });
 
       // Send verification email if SendGrid is configured, otherwise log to console
@@ -361,21 +340,21 @@ export function registerLocalAuthRoutes(app: Express) {
         return res.status(400).json({ error: "Missing verification token" });
       }
 
-      const tokenData = verificationTokens.get(token);
+      const tokenData = await db.getAuthToken(token, "email_verification");
       if (!tokenData) {
         return res.status(400).json({ error: "Invalid or expired verification token" });
       }
 
-      if (Date.now() > tokenData.expiresAt) {
-        verificationTokens.delete(token);
+      if (new Date() > tokenData.expiresAt) {
+        await db.deleteAuthToken(token);
         return res.status(400).json({ error: "Verification token has expired" });
       }
 
-      // Mark email as verified in-memory
-      verifiedEmails.add(tokenData.email);
+      // Mark email as verified
+      await db.setUserEmailVerified(tokenData.email, true);
 
       // Clean up the used token
-      verificationTokens.delete(token);
+      await db.deleteAuthToken(token);
 
       await logAuthEvent("update", "auth_email_verified", undefined, undefined, tokenData.email);
 
@@ -570,9 +549,11 @@ export function registerLocalAuthRoutes(app: Express) {
       if (credentials) {
         // Generate a secure reset token (32 bytes hex)
         const token = randomBytes(32).toString("hex");
-        resetTokens.set(token, {
+        await db.createAuthToken({
+          token,
+          type: "password_reset",
           email: normalizedEmail,
-          expiresAt: Date.now() + 60 * 60 * 1000, // 1 hour
+          expiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour
         });
 
         const resetUrl = `${ENV.publicAppUrl}/reset-password?token=${token}`;
@@ -634,13 +615,13 @@ export function registerLocalAuthRoutes(app: Express) {
       }
 
       // Validate the token
-      const tokenData = resetTokens.get(token);
+      const tokenData = await db.getAuthToken(token, "password_reset");
       if (!tokenData) {
         return res.status(400).json({ error: "Invalid or expired reset token" });
       }
 
-      if (Date.now() > tokenData.expiresAt) {
-        resetTokens.delete(token);
+      if (new Date() > tokenData.expiresAt) {
+        await db.deleteAuthToken(token);
         return res.status(400).json({ error: "Reset token has expired" });
       }
 
@@ -648,7 +629,7 @@ export function registerLocalAuthRoutes(app: Express) {
       const credentials = await db.getLocalAuthCredentialByEmail(tokenData.email);
       if (!credentials) {
         // Token was valid but credential no longer exists — invalidate and return error
-        resetTokens.delete(token);
+        await db.deleteAuthToken(token);
         return res.status(400).json({ error: "Account not found" });
       }
 
@@ -662,13 +643,8 @@ export function registerLocalAuthRoutes(app: Express) {
         salt: newSalt,
       });
 
-      // Invalidate the used token
-      resetTokens.delete(token);
-
-      // Also invalidate any other reset tokens for this email
-      for (const [t, data] of resetTokens) {
-        if (data.email === tokenData.email) resetTokens.delete(t);
-      }
+      // Invalidate every reset token for this email (used + any others)
+      await db.deleteAuthTokensByEmail(tokenData.email, "password_reset");
 
       const user = await db.getUserByOpenId(credentials.openId);
       await logAuthEvent("update", "auth_password_reset_completed", user?.id, clientIp, tokenData.email);

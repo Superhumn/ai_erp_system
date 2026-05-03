@@ -378,6 +378,74 @@ export async function sendPOEmail(
 }
 
 /**
+ * Send an Invoice email to a customer
+ */
+export async function sendInvoiceEmail(
+  invoiceId: number,
+  options?: {
+    triggeredBy?: number;
+    customSubject?: string;
+    customPayload?: Record<string, any>;
+    pdfUrl?: string;
+  }
+): Promise<QueueEmailResult> {
+  try {
+    const invoice = await db.getInvoiceById(invoiceId);
+    if (!invoice) {
+      return { success: false, error: "Invoice not found" };
+    }
+
+    if (!invoice.customerId) {
+      return { success: false, error: "Invoice has no customer" };
+    }
+
+    const customer = await db.getCustomerById(invoice.customerId);
+    if (!customer || !customer.email) {
+      return { success: false, error: "Customer email not found" };
+    }
+
+    const payload = {
+      invoice_number: invoice.invoiceNumber,
+      customer_name: customer.name,
+      issue_date: new Date(invoice.issueDate).toLocaleDateString(),
+      due_date: invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : "Upon receipt",
+      subtotal: invoice.subtotal,
+      tax_amount: invoice.taxAmount,
+      total_amount: invoice.totalAmount,
+      currency: invoice.currency || "USD",
+      notes: invoice.notes,
+      terms: invoice.terms,
+      line_items: ((invoice as any).items || []).map((item: any, index: number) => ({
+        line_number: index + 1,
+        description: item.description,
+        quantity: item.quantity,
+        unit_price: item.unitPrice,
+        total: item.totalAmount,
+      })),
+      view_invoice_url: `${ENV.publicAppUrl}/finance/invoices`,
+      pdf_url: options?.pdfUrl,
+      ...options?.customPayload,
+    };
+
+    const idempotencyKey = `invoice-${invoiceId}-${invoice.status}-${Date.now()}`;
+
+    return await queueEmail({
+      templateName: "INVOICE",
+      to: { email: customer.email, name: customer.name },
+      subject: options?.customSubject || `Invoice ${invoice.invoiceNumber}`,
+      payload,
+      idempotencyKey,
+      relatedEntityType: "invoice",
+      relatedEntityId: invoiceId,
+      triggeredBy: options?.triggeredBy,
+    });
+  } catch (error: any) {
+    console.error(`[EmailService] Error sending invoice email for ${invoiceId}:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
  * Send a Shipment notification email
  */
 export async function sendShipmentEmail(

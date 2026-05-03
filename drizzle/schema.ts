@@ -20,6 +20,7 @@ export const users = mysqlTable("users", {
   linkedVendorId: int("linkedVendorId"),
   linkedWarehouseId: int("linkedWarehouseId"),
   isActive: boolean("isActive").default(true).notNull(),
+  emailVerified: boolean("emailVerified").default(false).notNull(),
   invitedBy: int("invitedBy"),
   invitedAt: timestamp("invitedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -29,6 +30,20 @@ export const users = mysqlTable("users", {
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
+
+// Single-use auth tokens (email verification, password reset).
+// Backed by the database so verification/reset flows work across multiple
+// app instances.
+export const authTokens = mysqlTable("authTokens", {
+  token: varchar("token", { length: 128 }).primaryKey(),
+  type: mysqlEnum("type", ["email_verification", "password_reset"]).notNull(),
+  email: varchar("email", { length: 320 }).notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type AuthToken = typeof authTokens.$inferSelect;
+export type InsertAuthToken = typeof authTokens.$inferInsert;
 
 // Local authentication credentials for email/password auth
 export const localAuthCredentials = mysqlTable("localAuthCredentials", {

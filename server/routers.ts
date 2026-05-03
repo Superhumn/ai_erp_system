@@ -26,6 +26,8 @@ import type { NoteAppliedItem, NoteParseResult, NoteParsedItem } from "@shared/n
 import { employeePortalRouter } from "./routers/employeePortal";
 import { parseCopackerInventoryEmail, applyCopackerInventoryUpdate } from "./copackerEmailExtractor";
 import { parseTextToPO, createPOPreview, createPOFromPreview } from "./textToPOService";
+import { parseInvoiceText } from "./_core/invoiceTextParser";
+import { parseEntityText } from "./_core/universalTextParser";
 import { detectFinancialAnomalies, forecastRevenue, predictCashFlow, classifyTransactions } from "./financeAiService";
 import { predictAttrition, benchmarkCompensation, analyzePerformance, planWorkforce } from "./hrAiService";
 import { predictYield, forecastQuality, optimizeProduction, predictMaintenance } from "./manufacturingAiService";
@@ -1112,11 +1114,84 @@ ONLY return the JSON array, no other text.`;
         };
       }),
     createFromText: financeProcedure
-      .input(z.object({ text: z.string() }))
-      .mutation(async () => ({ id: 0, invoiceNumber: 'INV-STUB', parsed: null as any, invoiceId: 0 })),
+      .input(z.object({ text: z.string().min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        const parsed = await parseInvoiceText(input.text);
+
+        let customer = await db.getCustomerByName(parsed.customerName);
+        if (!customer) {
+          const created = await db.createCustomer({
+            name: parsed.customerName,
+            type: "business",
+            status: "active",
+          });
+          customer = await db.getCustomerById(created.id);
+        }
+        if (!customer) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Failed to resolve customer" });
+        }
+
+        const invoiceNumber = `INV-${Date.now().toString(36).toUpperCase()}`;
+        const issueDate = new Date();
+        const dueDate = parsed.dueInDays
+          ? new Date(issueDate.getTime() + parsed.dueInDays * 24 * 60 * 60 * 1000)
+          : null;
+
+        const total = parsed.amount.toFixed(2);
+        const created = await db.createInvoice({
+          invoiceNumber,
+          customerId: customer.id,
+          type: "invoice",
+          status: "draft",
+          issueDate,
+          dueDate: dueDate ?? undefined,
+          subtotal: total,
+          totalAmount: total,
+          terms: parsed.paymentTerms,
+          createdBy: ctx.user.id,
+        });
+
+        await db.createInvoiceItem({
+          invoiceId: created.id,
+          description: parsed.quantity && parsed.unit
+            ? `${parsed.description} (${parsed.quantity} ${parsed.unit})`
+            : parsed.description,
+          quantity: (parsed.quantity ?? 1).toString(),
+          unitPrice: (parsed.amount / (parsed.quantity ?? 1)).toFixed(2),
+          totalAmount: total,
+        });
+
+        await createAuditLog(ctx.user.id, 'create', 'invoice', created.id, invoiceNumber);
+
+        return { id: created.id, invoiceNumber, parsed, invoiceId: created.id };
+      }),
     approveAndEmail: financeProcedure
       .input(z.object({ invoiceId: z.number() }))
-      .mutation(async () => ({ success: true, invoiceNumber: 'INV-STUB' })),
+      .mutation(async ({ input, ctx }) => {
+        const invoice = await db.getInvoiceById(input.invoiceId);
+        if (!invoice) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found" });
+        }
+
+        await db.updateInvoice(input.invoiceId, {
+          status: "sent",
+          approvedBy: ctx.user.id,
+          approvedAt: new Date(),
+        });
+
+        const emailResult = await emailService.sendInvoiceEmail(input.invoiceId, {
+          triggeredBy: ctx.user.id,
+        });
+
+        await createAuditLog(ctx.user.id, 'approve', 'invoice', input.invoiceId, invoice.invoiceNumber);
+
+        return {
+          success: true,
+          invoiceNumber: invoice.invoiceNumber,
+          emailQueued: emailResult.success,
+          emailError: emailResult.success ? undefined : emailResult.error,
+        };
+      }),
     delete: financeProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
@@ -1133,7 +1208,12 @@ ONLY return the JSON array, no other text.`;
     list: protectedProcedure.query(() => [] as any[]),
     createFromText: opsProcedure
       .input(z.object({ text: z.string() }))
-      .mutation(async () => ({ id: 0, billNumber: 'BILL-STUB' })),
+      .mutation(async () => {
+        throw new TRPCError({
+          code: "NOT_IMPLEMENTED",
+          message: "Vendor bill ingestion is not yet supported. Use Purchase Orders for vendor liabilities, or import bills via QuickBooks sync.",
+        });
+      }),
   }),
 
   // ============================================
@@ -2076,9 +2156,6 @@ ONLY return the JSON array, no other text.`;
         sendEmail: z.boolean().default(false),
       }))
       .mutation(async ({ input, ctx }) => {
-        if (!input.preview) {
-          return { success: true, po: { id: 0, poNumber: 'PO-STUB', status: 'draft' as const }, emailSent: false, emailError: undefined as string | undefined };
-        }
         // Create the PO from preview
         const po = await createPOFromPreview(input.preview as any, ctx.user.id);
         
@@ -9722,8 +9799,65 @@ Provide a brief status summary, any missing documents, and next steps.`;
         return { success: true };
       }),
     createFromText: opsProcedure
-      .input(z.object({ text: z.string() }))
-      .mutation(async () => ({ id: 0, workOrderNumber: 'WO-STUB' })),
+      .input(z.object({ text: z.string().min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        const parsed = await parseEntityText(input.text, "work_order");
+        const productName = (parsed.productName as string | undefined)?.trim();
+        const quantity = Number(parsed.quantity);
+        if (!productName || !Number.isFinite(quantity) || quantity <= 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Could not extract a product and quantity from the text.",
+          });
+        }
+
+        const allProducts = await db.getProducts();
+        const product = allProducts.find(
+          (p) => p.name?.toLowerCase() === productName.toLowerCase()
+            || p.sku?.toLowerCase() === productName.toLowerCase(),
+        )
+          ?? allProducts.find((p) => p.name?.toLowerCase().includes(productName.toLowerCase()));
+        if (!product) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: `No product matched "${productName}". Create the product first or use an existing SKU.`,
+          });
+        }
+
+        const boms = await db.getBillOfMaterials({ productId: product.id, status: "active" });
+        const bom = boms[0];
+        if (!bom) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: `No active BOM exists for product "${product.name}". Create a BOM before scheduling production.`,
+          });
+        }
+
+        const priorityMap: Record<string, "low" | "normal" | "high" | "urgent"> = {
+          low: "low",
+          medium: "normal",
+          normal: "normal",
+          high: "high",
+          urgent: "urgent",
+        };
+        const rawPriority = (parsed.priority as string | undefined)?.toLowerCase() ?? "normal";
+        const priority = priorityMap[rawPriority] ?? "normal";
+
+        const created = await manufacturingDb.createWorkOrder({
+          productId: product.id,
+          bomId: bom.id,
+          quantity: quantity.toString(),
+          unit: (parsed.unit as string | undefined) ?? "EA",
+          status: "draft",
+          priority,
+          scheduledEndDate: parsed.dueDate ? new Date(parsed.dueDate as string) : undefined,
+          notes: (parsed.notes as string | undefined) ?? `Created from text: "${input.text}"`,
+          createdBy: ctx.user.id,
+        });
+
+        await createAuditLog(ctx.user.id, 'create', 'work_order', created.id, created.workOrderNumber);
+        return { id: created.id, workOrderNumber: created.workOrderNumber };
+      }),
     delete: opsProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
@@ -9738,7 +9872,12 @@ Provide a brief status summary, any missing documents, and next steps.`;
     list: protectedProcedure.query(() => [] as any[]),
     createFromText: opsProcedure
       .input(z.object({ text: z.string() }))
-      .mutation(async () => ({ id: 0, orderNumber: 'PROD-STUB' })),
+      .mutation(async () => {
+        throw new TRPCError({
+          code: "NOT_IMPLEMENTED",
+          message: "Production Orders are not a separate entity in this system. Use Work Orders (workOrders.createFromText) for production scheduling.",
+        });
+      }),
   }),
 
   // Raw Material Inventory
@@ -20726,13 +20865,22 @@ Recent interactions: ${(interactions as any[]).slice(0, 5).map((i: any) => `${i.
   banking: router({
     // Get all Mercury accounts with balances
     accounts: protectedProcedure.query(async () => {
-      const { getMercuryAccounts } = await import("./mercuryService");
+      const { getMercuryAccounts, isMercuryConfigured } = await import("./mercuryService");
+      if (!isMercuryConfigured()) {
+        return { accounts: [], configured: false };
+      }
       return getMercuryAccounts();
     }),
 
     // Sync transactions from Mercury
     syncTransactions: protectedProcedure.mutation(async () => {
-      const { getMercuryAccounts, getMercuryTransactions } = await import("./mercuryService");
+      const { getMercuryAccounts, getMercuryTransactions, isMercuryConfigured } = await import("./mercuryService");
+      if (!isMercuryConfigured()) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Mercury banking is not configured. Set MERCURY_API_TOKEN to enable transaction sync.",
+        });
+      }
       const accounts = await getMercuryAccounts();
       let totalImported = 0;
       let totalSkipped = 0;
