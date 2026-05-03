@@ -24,6 +24,7 @@ import { aiRouter } from "./ai";
 import { boardRouter } from "./board";
 import { investorUpdatesRouter } from "./investorUpdates";
 import { codeRouter } from "./code";
+import { marketingRouter } from "./marketing";
 
 const baseRouter = router({
   system: systemRouter,
@@ -62,6 +63,7 @@ export const appRouter = mergeRouters(
   boardRouter,
   investorUpdatesRouter,
   codeRouter,
+  marketingRouter,
 );
 
 export type AppRouter = typeof appRouter;
